@@ -1,0 +1,98 @@
+import * as PIXI from "pixi.js";
+import { AgentSprite } from "./AgentSprite";
+import { SPRITE_CONFIG } from "../../lib/spriteConfig";
+
+export interface AgentData {
+  _id?: string;
+  id?: string;
+  name: string;
+  position: { x: number; y: number };
+  currentAction?: { type?: string } | string;
+}
+
+/** Manages all AgentSprite instances, creating/removing as needed. */
+export class SpritePool {
+  private sprites: Map<string, AgentSprite> = new Map();
+  private agentIndexMap: Map<string, number> = new Map();
+  private nextIndex = 0;
+  readonly container: PIXI.Container;
+
+  constructor(parentContainer: PIXI.Container) {
+    this.container = new PIXI.Container();
+    parentContainer.addChild(this.container);
+  }
+
+  /**
+   * Sync the pool with the current list of agents.
+   * Creates new sprites, updates existing ones, removes stale ones.
+   */
+  update(agents: AgentData[], deltaTime: number, selectedAgentId: string | null) {
+    const activeIds = new Set<string>();
+
+    for (const agent of agents) {
+      const id = agent._id ?? agent.id;
+      if (!id) continue;
+      activeIds.add(id);
+
+      const px = (agent.position?.x ?? 0) * SPRITE_CONFIG.TILE_SIZE;
+      const py = (agent.position?.y ?? 0) * SPRITE_CONFIG.TILE_SIZE;
+
+      let sprite = this.sprites.get(id);
+      if (!sprite) {
+        // Assign a stable sprite-sheet index
+        if (!this.agentIndexMap.has(id)) {
+          this.agentIndexMap.set(id, this.nextIndex++);
+        }
+        const idx = this.agentIndexMap.get(id)!;
+        const hue = hashStringToHue(agent.name ?? id);
+
+        sprite = new AgentSprite(idx % 12, agent.name ?? "Agent", hue);
+        sprite.setPositionImmediate(px, py);
+        this.sprites.set(id, sprite);
+        this.container.addChild(sprite.container);
+      }
+
+      sprite.updatePosition(px, py, deltaTime);
+      sprite.setSelected(id === selectedAgentId);
+
+      // Update action
+      const actionType =
+        typeof agent.currentAction === "string"
+          ? agent.currentAction
+          : agent.currentAction?.type ?? "idle";
+      sprite.setAction(actionType);
+    }
+
+    // Remove sprites for agents no longer present
+    for (const [id, sprite] of this.sprites) {
+      if (!activeIds.has(id)) {
+        sprite.destroy();
+        this.sprites.delete(id);
+      }
+    }
+  }
+
+  getSprite(agentId: string): AgentSprite | undefined {
+    return this.sprites.get(agentId);
+  }
+
+  getAllIds(): string[] {
+    return Array.from(this.sprites.keys());
+  }
+
+  destroy() {
+    for (const [, sprite] of this.sprites) {
+      sprite.destroy();
+    }
+    this.sprites.clear();
+    this.container.destroy({ children: true });
+  }
+}
+
+function hashStringToHue(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash) % 360;
+}
