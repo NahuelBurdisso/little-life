@@ -3,14 +3,17 @@ import { useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
+import { GameCanvas } from "./components/canvas/GameCanvas";
 import { useWorldState } from "./hooks/useWorldState";
 import { useAgents } from "./hooks/useAgents";
+import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
 import { useKeyboardControls } from "./hooks/useKeyboardControls";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
   const { agents } = useAgents();
+  const { conversations } = useConversations();
   const nudge = useNudge();
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [showEventMenu, setShowEventMenu] = useState(false);
@@ -48,14 +51,16 @@ export default function App() {
         onShowStats={() => setShowTownStats(true)}
       />
       <div className="flex-1 flex overflow-hidden">
-        {/* Canvas area - placeholder for now, Task 19 adds PixiJS */}
-        <div className="flex-1 bg-gray-800 flex items-center justify-center relative">
-          <p className="text-gray-500">Canvas loads here (Task 19)</p>
-          {/* Agent count for debugging/interaction before canvas exists */}
-          <div className="absolute bottom-4 left-4 text-xs text-gray-400">
-            {agents.length} agents active
-          </div>
-        </div>
+        {/* PixiJS game canvas */}
+        <GameCanvas
+          agents={agents}
+          world={world}
+          conversations={conversations ?? []}
+          onAgentSelect={setSelectedAgentId}
+          onAgentContextMenu={(_id, _pos) => { /* Task 22 */ }}
+          onAgentHover={(_id, _pos) => { /* Task 22 */ }}
+          selectedAgentId={selectedAgentId}
+        />
         {/* AgentPanel sidebar - placeholder, Task 21 */}
         {selectedAgentId && (
           <div className="w-[300px] bg-gray-850 border-l border-gray-700 p-4">
