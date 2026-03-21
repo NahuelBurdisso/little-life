@@ -1,0 +1,352 @@
+/**
+ * Memory Retrieval and Creation
+ *
+ * Functions for scoring/retrieving relevant memories and creating new ones
+ * from conversations and observations.
+ *
+ * retrieveMemories requires an action context (uses Ollama embeddings).
+ * Creation functions are pure — they return insert data for the caller.
+ */
+
+import { Doc, Id } from "../_generated/dataModel";
+import { CONFIG } from "../engine/constants";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** The shape of a memory document returned from a query. */
+type MemoryDoc = Doc<"memories">;
+
+/** Data ready to be inserted into the memories table. */
+export interface MemoryInsertData {
+  agentId: Id<"agents">;
+  content: string;
+  type: string;
+  importance: number;
+  emotional_valence: number;
+  embedding: number[];
+  relatedAgents: Id<"agents">[];
+  relatedLocation: Id<"locations"> | null;
+  tags: string[];
+  timestamp: number;
+  accessCount: number;
+  lastAccessed: number;
+}
+
+export interface MemoryQuery {
+  queryText: string;
+  relatedAgents?: string[];
+  relatedLocation?: string;
+  limit: number;
+  recencyBias?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval
+// ---------------------------------------------------------------------------
+
+/**
+ * Retrieve and rank memories for an agent.
+ *
+ * Currently uses importance + recency + agent/location bonuses for ranking.
+ * Vector search (via Ollama embeddings) will be enabled when query functions
+ * are added in Task 16. For now, candidates must be pre-fetched by the caller
+ * or we fall back to recent memories.
+ *
+ * @param candidates - Pre-fetched memory docs for the agent (newest first).
+ * @param query - Query parameters for scoring.
+ * @param currentTick - The current world tick for recency calculation.
+ * @returns Scored and sorted memories, limited to query.limit.
+ */
+export function rankMemories(
+  candidates: MemoryDoc[],
+  query: MemoryQuery,
+  currentTick: number,
+): MemoryDoc[] {
+  if (candidates.length === 0) return [];
+
+  const limit = query.limit;
+  const relatedAgentSet = new Set(query.relatedAgents ?? []);
+  const relatedLocation = query.relatedLocation ?? null;
+
+  const scored = candidates.map((memory) => {
+    // Recency: exponential decay with ~5 day half-life
+    // Each tick = 1 game minute, so 24*60 = 1440 ticks per day
+    const ticksAgo = Math.max(0, currentTick - memory.timestamp);
+    const hoursAgo = ticksAgo / 60;
+    const recency = Math.exp(-hoursAgo / (24 * 7));
+
+    // Importance: normalized 0-1
+    const importance = memory.importance / 10;
+
+    // Agent bonus: +0.15 per matching related agent
+    let agentBonus = 0;
+    for (const agentId of memory.relatedAgents) {
+      if (relatedAgentSet.has(agentId as string)) {
+        agentBonus += 0.15;
+      }
+    }
+
+    // Location bonus
+    const locationBonus =
+      relatedLocation && memory.relatedLocation === relatedLocation ? 0.1 : 0;
+
+    // Access penalty: discourages over-retrieval of same memories
+    const accessPenalty = Math.min(
+      memory.accessCount * CONFIG.AI.MEMORY_ACCESS_PENALTY,
+      CONFIG.AI.MEMORY_ACCESS_PENALTY_MAX,
+    );
+
+    // Without vector search, relevance defaults to 0.
+    // Score formula: relevance * 0.35 + recency * 0.3 + importance * 0.2 + bonuses
+    // Since relevance=0 for now, recency and importance dominate.
+    const relevance = 0;
+    const score =
+      relevance * 0.35 +
+      recency * 0.3 +
+      importance * 0.2 +
+      agentBonus +
+      locationBonus -
+      accessPenalty;
+
+    return { memory, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, limit).map((s) => s.memory);
+}
+
+/**
+ * Full retrieval with vector search (action context required).
+ *
+ * This is the primary entry point. It calls Ollama for embeddings,
+ * performs vector search, then scores results. Falls back to timestamp-based
+ * retrieval if embedding fails.
+ *
+ * NOTE: This function must be called from within a Convex action because it
+ * uses Ollama HTTP calls and ctx.runQuery. The caller is responsible for
+ * providing the action context and the appropriate internal query reference.
+ *
+ * Usage pattern (in an action):
+ * ```
+ * const memories = await retrieveMemories(
+ *   async (agentId, embedding, limit) => {
+ *     // vector search via ctx.runQuery or ctx.vectorSearch
+ *     return await ctx.vectorSearch("memories", "by_embedding", {
+ *       vector: embedding, limit, filter: (q) => q.eq("agentId", agentId),
+ *     });
+ *   },
+ *   async (agentId, limit) => {
+ *     // fallback: recent memories via ctx.runQuery
+ *     return await ctx.runQuery(...);
+ *   },
+ *   agentId, query, currentTick,
+ * );
+ * ```
+ */
+export async function retrieveMemories(
+  vectorSearchFn: (
+    agentId: Id<"agents">,
+    embedding: number[],
+    limit: number,
+  ) => Promise<Array<MemoryDoc & { _score?: number }>>,
+  fallbackFn: (agentId: Id<"agents">, limit: number) => Promise<MemoryDoc[]>,
+  agentId: Id<"agents">,
+  query: MemoryQuery,
+  currentTick: number,
+): Promise<MemoryDoc[]> {
+  const candidateLimit = query.limit * 3;
+
+  let candidates: Array<MemoryDoc & { _score?: number }>;
+
+  try {
+    // Import dynamically so pure callers don't need ollama
+    const { callOllamaEmbedding } = await import("./ollama");
+    const embedding = await callOllamaEmbedding(query.queryText);
+    candidates = await vectorSearchFn(agentId, embedding, candidateLimit);
+  } catch {
+    // Fallback: get most recent memories without vector similarity
+    candidates = await fallbackFn(agentId, candidateLimit);
+  }
+
+  if (candidates.length === 0) return [];
+
+  // Score with vector relevance if available
+  const relatedAgentSet = new Set(query.relatedAgents ?? []);
+  const relatedLocation = query.relatedLocation ?? null;
+
+  const scored = candidates.map((memory) => {
+    const ticksAgo = Math.max(0, currentTick - memory.timestamp);
+    const hoursAgo = ticksAgo / 60;
+    const recency = Math.exp(-hoursAgo / (24 * 7));
+    const importance = memory.importance / 10;
+
+    let agentBonus = 0;
+    for (const aid of memory.relatedAgents) {
+      if (relatedAgentSet.has(aid as string)) {
+        agentBonus += 0.15;
+      }
+    }
+
+    const locationBonus =
+      relatedLocation && memory.relatedLocation === relatedLocation ? 0.1 : 0;
+
+    const accessPenalty = Math.min(
+      memory.accessCount * CONFIG.AI.MEMORY_ACCESS_PENALTY,
+      CONFIG.AI.MEMORY_ACCESS_PENALTY_MAX,
+    );
+
+    // Use vector score if available, otherwise 0.5 as neutral
+    const relevance = (memory as { _score?: number })._score ?? 0.5;
+
+    const score =
+      relevance * 0.35 +
+      recency * 0.3 +
+      importance * 0.2 +
+      agentBonus +
+      locationBonus -
+      accessPenalty;
+
+    return { memory, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, query.limit).map((s) => s.memory);
+}
+
+// ---------------------------------------------------------------------------
+// Creation: Conversation Memory
+// ---------------------------------------------------------------------------
+
+/**
+ * Create memory insert data from a completed conversation.
+ *
+ * Uses rule-based summary generation (no LLM call needed).
+ * Returns the data object — caller is responsible for inserting.
+ */
+export function createConversationMemory(
+  agentId: Id<"agents">,
+  conversation: Doc<"conversations">,
+  otherAgentNames: string[],
+  otherAgentIds: Id<"agents">[],
+  worldTick: number,
+  locationId: Id<"locations"> | null,
+): MemoryInsertData {
+  const names = otherAgentNames.join(" and ");
+  const sentiment = conversation.sentiment;
+
+  // Extract topics from messages
+  const messages = conversation.messages as Array<{ text: string }>;
+  const topicKeywords = extractSimpleTopics(messages);
+  const topicsStr =
+    topicKeywords.length > 0 ? topicKeywords.join(", ") : "various things";
+
+  // Build summary based on sentiment
+  let content: string;
+  if (sentiment > 0.5) {
+    content = `Had a great conversation with ${names} about ${topicsStr}.`;
+  } else if (sentiment > 0) {
+    content = `Chatted with ${names} about ${topicsStr}. It was pleasant.`;
+  } else if (sentiment > -0.3) {
+    content = `Talked with ${names} about ${topicsStr}. Nothing special.`;
+  } else if (sentiment > -0.6) {
+    content = `Had an awkward conversation with ${names}. It was tense.`;
+  } else {
+    content = `Got into an argument with ${names} about ${topicsStr}. It went badly.`;
+  }
+
+  // importance = ceil(|sentiment| * 5) + 2, clamped to 2-7
+  const importance = Math.min(7, Math.ceil(Math.abs(sentiment) * 5) + 2);
+
+  return {
+    agentId,
+    content,
+    type: "conversation",
+    importance,
+    emotional_valence: sentiment,
+    embedding: [], // Caller should compute via Ollama if in action context
+    relatedAgents: otherAgentIds,
+    relatedLocation: locationId,
+    tags: topicKeywords,
+    timestamp: worldTick,
+    accessCount: 0,
+    lastAccessed: worldTick,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Creation: Observation Memory
+// ---------------------------------------------------------------------------
+
+/**
+ * Create memory insert data for an observation.
+ * Returns the data object — caller is responsible for inserting.
+ */
+export function createObservationMemory(
+  agentId: Id<"agents">,
+  description: string,
+  involvedAgents: Id<"agents">[],
+  locationId: Id<"locations"> | null,
+  importance: number,
+  valence: number,
+  worldTick: number,
+): MemoryInsertData {
+  return {
+    agentId,
+    content: description,
+    type: "observation",
+    importance: Math.min(10, Math.max(1, importance)),
+    emotional_valence: Math.min(1, Math.max(-1, valence)),
+    embedding: [], // Caller should compute via Ollama if in action context
+    relatedAgents: involvedAgents,
+    relatedLocation: locationId,
+    tags: [],
+    timestamp: worldTick,
+    accessCount: 0,
+    lastAccessed: worldTick,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight topic extraction from message texts.
+ * Mirrors the approach in topics.ts but returns a short list for memory content.
+ */
+const TOPIC_KEYWORDS: Record<string, string[]> = {
+  work: ["work", "job", "farm", "shop", "harvest", "busy", "salary"],
+  food: ["eat", "hungry", "cook", "bread", "meal", "dinner", "lunch"],
+  weather: ["rain", "sun", "storm", "cold", "warm", "weather"],
+  relationships: ["friend", "love", "like", "together"],
+  health: ["sick", "tired", "doctor", "medicine", "rest"],
+  money: ["coin", "money", "buy", "sell", "price", "expensive"],
+  town: ["town", "festival", "event", "mayor"],
+  feelings: ["happy", "sad", "angry", "worried", "excited"],
+};
+
+function extractSimpleTopics(messages: Array<{ text: string }>): string[] {
+  if (messages.length === 0) return [];
+
+  const combined = messages
+    .map((m) => m.text)
+    .join(" ")
+    .toLowerCase();
+
+  const matched: string[] = [];
+  for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (combined.includes(keyword)) {
+        matched.push(topic);
+        break;
+      }
+    }
+  }
+
+  // Return at most 3 topics
+  return matched.slice(0, 3);
+}

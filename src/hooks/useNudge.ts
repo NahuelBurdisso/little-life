@@ -2,7 +2,7 @@ import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
 export function useNudge() {
-  const nudgeMutation = useMutation(api.actions.nudge.nudge);
+  const nudgeMutation = useMutation(api.nudge.nudge);
 
   return {
     suggestTalk: (agentA: string, agentB: string, topic?: string) =>

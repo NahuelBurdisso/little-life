@@ -154,7 +154,7 @@ export async function tick(ctx: MutationCtx, world: Doc<"worldState">): Promise<
           { agentId: agent._id }
         );
       } catch {
-        // generateReflection action doesn't exist yet (Task 14)
+        // Silently ignore if scheduling fails
       }
     }
 
