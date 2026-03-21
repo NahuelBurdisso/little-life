@@ -3,6 +3,7 @@ import { useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
+import { AgentPanel } from "./components/ui/AgentPanel";
 import { GameCanvas } from "./components/canvas/GameCanvas";
 import { useWorldState } from "./hooks/useWorldState";
 import { useAgents } from "./hooks/useAgents";
@@ -61,17 +62,12 @@ export default function App() {
           onAgentHover={(_id, _pos) => { /* Task 22 */ }}
           selectedAgentId={selectedAgentId}
         />
-        {/* AgentPanel sidebar - placeholder, Task 21 */}
+        {/* AgentPanel sidebar */}
         {selectedAgentId && (
-          <div className="w-[300px] bg-gray-850 border-l border-gray-700 p-4">
-            <button
-              onClick={() => setSelectedAgentId(null)}
-              className="text-gray-400 hover:text-white float-right"
-            >
-              ✕
-            </button>
-            <p className="text-sm text-gray-400">Agent Panel (Task 21)</p>
-          </div>
+          <AgentPanel
+            agentId={selectedAgentId}
+            onClose={() => setSelectedAgentId(null)}
+          />
         )}
       </div>
       <ActivityFeed />
