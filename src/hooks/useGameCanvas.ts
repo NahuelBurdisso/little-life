@@ -32,10 +32,15 @@ export function useGameCanvas() {
 
     return () => {
       destroyed = true;
-      if (pixiApp.canvas?.parentNode) {
-        pixiApp.canvas.parentNode.removeChild(pixiApp.canvas);
+      try {
+        const canvas = pixiApp.canvas;
+        if (canvas?.parentNode) {
+          canvas.parentNode.removeChild(canvas);
+        }
+        pixiApp.destroy(true, { children: true, texture: true });
+      } catch {
+        // App not fully initialized yet — init() promise will handle cleanup via `destroyed` flag
       }
-      pixiApp.destroy(true, { children: true, texture: true });
       setApp(null);
     };
   }, []);
