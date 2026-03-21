@@ -34,8 +34,9 @@ export class SpritePool {
       if (!id) continue;
       activeIds.add(id);
 
-      const px = (agent.position?.x ?? 0) * SPRITE_CONFIG.TILE_SIZE;
-      const py = (agent.position?.y ?? 0) * SPRITE_CONFIG.TILE_SIZE;
+      // Agent positions are already in pixel coordinates
+      const px = agent.position?.x ?? 0;
+      const py = agent.position?.y ?? 0;
 
       let sprite = this.sprites.get(id);
       if (!sprite) {
