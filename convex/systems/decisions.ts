@@ -26,16 +26,27 @@ interface ScoredAction {
 // ---------------------------------------------------------------------------
 
 function isActionComplete(agent: Agent, totalTicks: number): boolean {
-  if (
-    agent.currentAction == null ||
-    (typeof agent.currentAction === "object" && agent.currentAction.type === "idle" && agent.actionDuration === null)
-  ) {
-    return true;
-  }
+  if (agent.currentAction == null) return true;
+
+  const actionType =
+    typeof agent.currentAction === "object" ? agent.currentAction.type : agent.currentAction;
+
+  // Walking agents are never "complete" here — the movement system
+  // handles arrival and pops from actionQueue. Don't reassign them.
+  if (actionType === "walking") return false;
+
+  // Talking agents wait for conversation system to end the conversation
+  if (actionType === "talking") return false;
+
+  // Idle with no duration = needs reassignment
+  if (actionType === "idle" && agent.actionDuration === null) return true;
+
+  // Check duration-based completion
   if (agent.actionDuration !== null) {
     return (totalTicks - agent.actionStarted) >= agent.actionDuration;
   }
-  // No duration set — treat as complete so we can reassign
+
+  // No duration set for non-walking action — treat as complete
   return true;
 }
 
@@ -422,14 +433,33 @@ export async function tick(ctx: MutationCtx, world: WorldState): Promise<void> {
         ? 120
         : minDuration;
 
-    // Patch the agent
-    await ctx.db.patch(agent._id, {
-      currentAction: buildAction(decision),
-      currentDestination: destination,
-      actionStarted: totalTicks,
-      actionDuration: actionDuration,
-      currentPath: null, // movement system handles pathfinding
-    });
+    // If agent needs to travel to destination, walk first then do the action
+    const finalAction = buildAction(decision);
+    const needsToTravel =
+      destination &&
+      (Math.abs(agent.position.x - destination.x) > 4 ||
+        Math.abs(agent.position.y - destination.y) > 4);
+
+    if (needsToTravel) {
+      // Set walking action, queue the final action for when they arrive
+      await ctx.db.patch(agent._id, {
+        currentAction: { type: "walking", to: { x: destination!.x, y: destination!.y } },
+        currentDestination: destination,
+        actionStarted: totalTicks,
+        actionDuration: null, // walking has no fixed duration — ends on arrival
+        actionQueue: [finalAction],
+        currentPath: null, // movement system computes path
+      });
+    } else {
+      // Already at destination (or no destination), start action immediately
+      await ctx.db.patch(agent._id, {
+        currentAction: finalAction,
+        currentDestination: null,
+        actionStarted: totalTicks,
+        actionDuration: actionDuration,
+        currentPath: null,
+      });
+    }
 
     // Phase 5: Social decisions → conversation queue
     if (decision.action === "socializing" && decision.targetAgentId) {

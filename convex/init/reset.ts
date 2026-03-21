@@ -1,4 +1,10 @@
 import { mutation } from "../_generated/server";
+import { loadMap } from "./loadMap";
+import { AGENT_SEEDS, createAgents } from "./agents";
+import { seedRelationships } from "./relationships";
+import { seedMemories } from "./memories";
+import { CONVERSATION_TEMPLATES } from "../../data/templates/conversations";
+import { CONFIG } from "../engine/constants";
 
 const ALL_TABLES = [
   "agents",
@@ -29,17 +35,6 @@ export const resetWorld = mutation({
         await ctx.db.delete(record._id);
       }
     }
-
-    // Re-initialize by importing and calling the initialize handler directly
-    // We inline the import to avoid circular dependency issues at module level
-    const { loadMap } = await import("./loadMap");
-    const { AGENT_SEEDS, createAgents } = await import("./agents");
-    const { seedRelationships } = await import("./relationships");
-    const { seedMemories } = await import("./memories");
-    const { CONVERSATION_TEMPLATES } = await import(
-      "../../data/templates/conversations"
-    );
-    const { CONFIG } = await import("../engine/constants");
 
     const now = Date.now();
 
