@@ -24,6 +24,7 @@ export function TopBar({ world, events, onShowEvents, onShowStats }: TopBarProps
         <span className="text-gray-400 capitalize">
           {seasonEmoji(world.time.season)} {world.time.season}
         </span>
+        <span className="text-gray-600 text-xs">tick:{world.time.totalTicks}</span>
       </div>
 
       {/* Center: Speed controls */}

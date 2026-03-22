@@ -111,48 +111,38 @@ export function GameCanvas({
     };
   }, [app, stableOnSelect, stableOnHover, stableOnContext]);
 
-  // Update agent sprites each render
+  // Update sprite targets when Convex data changes (sets targets, creates/removes sprites)
   useEffect(() => {
     if (!app || !spritePoolRef.current) return;
 
     const spritePool = spritePoolRef.current;
-    // Use a single update tick (deltaTime=1 for immediate positional sync)
+    // Set target positions on all sprites (they'll lerp toward these per-frame)
     spritePool.update(agents, 1, selectedAgentId);
 
     // Rebind interaction events for any new sprites
     interactionRef.current?.updateBindings(spritePool.getAllIds());
-  }, [agents, selectedAgentId, app]);
 
-  // Per-frame sprite position interpolation
+    // Update bubbles with latest data
+    if (bubbleSystemRef.current) {
+      bubbleSystemRef.current.update(conversations ?? [], agents, 1);
+    }
+  }, [agents, selectedAgentId, conversations, app]);
+
+  // Per-frame rendering loop — lerps sprites toward targets, no data dependency
   useEffect(() => {
-    if (!app || !spritePoolRef.current) return;
-
-    const pool = spritePoolRef.current;
-    const bubble = bubbleSystemRef.current;
+    if (!app) return;
 
     const tickFn = (ticker: any) => {
       const delta = ticker.deltaTime;
-      // SpritePool.update handles lerp internally per AgentSprite,
-      // but we need to call it each frame for smooth movement.
-      // We re-pass agents to get smooth interpolation.
-      // Instead, we rely on AgentSprite's internal lerp in updatePosition.
-      // The positions are already set from the agents effect above.
-      // For per-frame lerp we just need to call updatePosition again.
-      // Actually the SpritePool.update already calls updatePosition with lerp.
-      // We'll do a lightweight per-frame update.
-      pool.update(agents, delta, selectedAgentId);
-
-      // Update bubbles
-      if (bubble) {
-        bubble.update(conversations ?? [], agents, delta);
-      }
+      // Lerp all sprites toward their targets each frame
+      spritePoolRef.current?.lerpAll(delta);
     };
 
     app.ticker.add(tickFn);
     return () => {
       app.ticker.remove(tickFn);
     };
-  }, [agents, conversations, selectedAgentId, app]);
+  }, [app]);
 
   // Update day/night cycle
   useEffect(() => {

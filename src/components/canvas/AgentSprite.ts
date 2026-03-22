@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { SPRITE_CONFIG, getAgentSpriteSheet } from "../../lib/spriteConfig";
 
-const LERP_SPEED = 0.08;
+const LERP_SPEED = 0.15;
 const FRAME_DURATION = 1 / SPRITE_CONFIG.WALK_SPEED; // ticks per frame
 
 /** Represents a single agent's visual on the canvas. */
@@ -139,6 +139,45 @@ export class AgentSprite {
         this.frameTimer = 0;
         const idx = this.currentDirection * SPRITE_CONFIG.WALK_FRAMES;
         this.sprite.texture = this.frames[idx];
+      }
+    }
+  }
+
+  /** Per-frame lerp toward the current target — call from ticker without new data. */
+  lerpToTarget(deltaTime: number) {
+    const dx = this.targetPos.x - this.container.x;
+    const dy = this.targetPos.y - this.container.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    this.isMoving = dist > 1;
+
+    if (this.isMoving) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.currentDirection = dx > 0 ? 2 : 1;
+      } else {
+        this.currentDirection = dy > 0 ? 0 : 3;
+      }
+
+      const lerp = Math.min(1, deltaTime * LERP_SPEED);
+      this.container.x += dx * lerp;
+      this.container.y += dy * lerp;
+    }
+
+    // Walk animation
+    if (this.usingSpriteSheet && this.sprite) {
+      if (this.isMoving && this.action !== "sleeping") {
+        this.frameTimer += deltaTime;
+        if (this.frameTimer >= FRAME_DURATION) {
+          this.frameTimer = 0;
+          this.frameIndex = (this.frameIndex + 1) % SPRITE_CONFIG.WALK_FRAMES;
+        }
+        const idx = this.currentDirection * SPRITE_CONFIG.WALK_FRAMES + this.frameIndex;
+        this.sprite.texture = this.frames[idx];
+      } else {
+        this.frameIndex = 0;
+        this.frameTimer = 0;
+        const idx = this.currentDirection * SPRITE_CONFIG.WALK_FRAMES;
+        if (this.frames[idx]) this.sprite.texture = this.frames[idx];
       }
     }
   }

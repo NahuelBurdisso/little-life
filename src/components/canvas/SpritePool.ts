@@ -73,6 +73,13 @@ export class SpritePool {
     }
   }
 
+  /** Per-frame lerp — call from ticker without needing fresh agent data. */
+  lerpAll(deltaTime: number) {
+    for (const sprite of this.sprites.values()) {
+      sprite.lerpToTarget(deltaTime);
+    }
+  }
+
   getSprite(agentId: string): AgentSprite | undefined {
     return this.sprites.get(agentId);
   }

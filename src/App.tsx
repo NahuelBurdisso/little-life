@@ -112,8 +112,14 @@ export default function App() {
 
   if (worldLoading || !world) {
     return (
-      <div className="h-screen w-screen bg-gray-900 text-white flex items-center justify-center">
+      <div className="h-screen w-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-4">
         <p className="text-lg">Loading Little Life...</p>
+        <p className="text-sm text-gray-500">
+          Connecting to Convex at {import.meta.env.VITE_CONVEX_URL || "no URL set"}
+        </p>
+        <p className="text-xs text-gray-600">
+          worldLoading={String(worldLoading)}, world={String(world)}
+        </p>
       </div>
     );
   }
