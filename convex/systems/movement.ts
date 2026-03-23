@@ -20,39 +20,59 @@ export async function tick(
     if (agent.currentAction?.type !== "walking") continue;
 
     const dest = agent.currentDestination;
+    const destPoint = { x: dest.x, y: dest.y };
+    const distToDest = distance(agent.position, destPoint);
 
     // Check arrival
-    if (
-      distance(agent.position, { x: dest.x, y: dest.y }) <
-      CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX
-    ) {
+    if (distToDest < CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX) {
       await handleArrival(ctx, agent, world);
       continue;
     }
 
-    // Get or compute path
-    let path = agent.currentPath;
-    if (!path || path.length === 0) {
-      path = computeAStarPath(
-        agent.position,
-        { x: dest.x, y: dest.y },
-        world.collisionGrid,
-        world.mapWidth,
-        world.mapHeight,
-        CONFIG.MOVEMENT.TILE_SIZE
-      );
-      // Store path immediately so we don't recompute next tick
-      await ctx.db.patch(agent._id, { currentPath: path });
-    }
-
-    // Advance position along path
     const moveDistance =
       CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE * world.tickSpeed;
-    const { position, remainingPath } = advanceAlongPath(
-      agent.position,
-      path,
-      moveDistance
-    );
+
+    // If close to destination (< 48px), skip A* and move directly
+    let position: { x: number; y: number };
+    let remainingPath: number[][];
+
+    if (distToDest < 48) {
+      // Direct movement toward destination — no pathfinding needed
+      if (distToDest <= moveDistance) {
+        position = destPoint;
+      } else {
+        const ratio = moveDistance / distToDest;
+        position = {
+          x: agent.position.x + (destPoint.x - agent.position.x) * ratio,
+          y: agent.position.y + (destPoint.y - agent.position.y) * ratio,
+        };
+      }
+      remainingPath = [];
+    } else {
+      // Get or compute A* path
+      let path = agent.currentPath;
+      if (!path || path.length === 0) {
+        path = computeAStarPath(
+          agent.position,
+          destPoint,
+          world.collisionGrid,
+          world.mapWidth,
+          world.mapHeight,
+          CONFIG.MOVEMENT.TILE_SIZE
+        );
+        // Fallback: if path computation returns empty, move directly
+        if (!path || path.length === 0) {
+          path = [[destPoint.x, destPoint.y]];
+        }
+        // Store path immediately so we don't recompute next tick
+        await ctx.db.patch(agent._id, { currentPath: path });
+      }
+
+      // Advance position along path
+      const result = advanceAlongPath(agent.position, path, moveDistance);
+      position = result.position;
+      remainingPath = result.remainingPath;
+    }
 
     // Update location zones
     const oldLocationId = agent.currentLocation;

@@ -154,8 +154,8 @@ export async function tick(
           type: "talking",
           conversationId: conversationId as string,
         },
-        actionStarted: now,
-        actionDuration: maxTurns * 2000, // rough estimate
+        actionStarted: world.time.totalTicks,
+        actionDuration: maxTurns * 2, // ticks, not milliseconds
       });
     }
 

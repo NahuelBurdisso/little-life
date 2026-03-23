@@ -107,7 +107,7 @@ export const CONFIG = {
   // Movement
   MOVEMENT: {
     PIXELS_PER_GAME_MINUTE: 16,
-    ARRIVAL_THRESHOLD_PX: 2,
+    ARRIVAL_THRESHOLD_PX: 8,
     TILE_SIZE: 32,
   },
 

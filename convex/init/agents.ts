@@ -749,7 +749,7 @@ export async function createAgents(
       currentDestination: null,
       currentLocation: homeId,
       currentAction: { type: "sleeping" as const },
-      actionStarted: now,
+      actionStarted: 0,
       actionDuration: null,
       actionQueue: [],
       currentPath: null,

@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { SPRITE_CONFIG, getAgentSpriteSheet } from "../../lib/spriteConfig";
 
-const LERP_SPEED = 0.15;
+const LERP_SPEED = 0.3;
 const FRAME_DURATION = 1 / SPRITE_CONFIG.WALK_SPEED; // ticks per frame
 
 /** Represents a single agent's visual on the canvas. */
