@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Container } from "pixi.js";
 import { useGameCanvas } from "../../hooks/useGameCanvas";
+import { useAssetLoader } from "../../hooks/useAssetLoader";
 import { TilemapRenderer } from "./TilemapRenderer";
 import { CameraController } from "./CameraController";
 import { DayNightCycle } from "./DayNightCycle";
@@ -29,6 +30,7 @@ export function GameCanvas({
   selectedAgentId,
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
+  const assetsLoaded = useAssetLoader(app);
 
   // Refs for subsystems
   const tilemapRef = useRef<TilemapRenderer | null>(null);
@@ -52,7 +54,7 @@ export function GameCanvas({
 
   // Initialize subsystems when app is ready
   useEffect(() => {
-    if (!app) return;
+    if (!app || !assetsLoaded) return;
 
     // Create layer hierarchy
     const worldContainer = new Container();
@@ -111,7 +113,7 @@ export function GameCanvas({
       bubbleSystem.destroy();
       worldContainer.destroy({ children: true });
     };
-  }, [app, stableOnSelect, stableOnHover, stableOnContext]);
+  }, [app, assetsLoaded, stableOnSelect, stableOnHover, stableOnContext]);
 
   // Update sprite targets when Convex data changes (sets targets, creates/removes sprites)
   useEffect(() => {
@@ -183,7 +185,7 @@ export function GameCanvas({
   return (
     <div
       ref={containerRef}
-      className="flex-1 w-full h-full"
+      className="flex-1 min-w-0 h-full overflow-hidden relative"
       style={{ imageRendering: "pixelated" }}
     />
   );
