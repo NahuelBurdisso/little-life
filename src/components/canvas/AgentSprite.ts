@@ -13,7 +13,12 @@ export class AgentSprite {
   private spriteWrapper: PIXI.Container;
   private sprite: PIXI.Sprite;
   private nameLabel: PIXI.Text;
+  private actionLabel: PIXI.Text;
   readonly statusContainer: PIXI.Container;
+
+  private moodDot: PIXI.Graphics;
+  private moodPulse: boolean = false;
+  private needIcons: PIXI.Container[] = [];
 
   private animations: Map<string, PIXI.Texture[]> = new Map();
   private currentAnimation = "idleAnim";
@@ -81,10 +86,39 @@ export class AgentSprite {
     this.nameLabel.y = AGENT_HEIGHT * SPRITE_SCALE + 2;
     this.container.addChild(this.nameLabel);
 
-    // --- Status container (empty for now — filled in Tasks 11-13) ---
+    // --- Action label (below name) ---
+    this.actionLabel = new PIXI.Text({
+      text: "",
+      style: { fontFamily: "monospace", fontSize: 6, fill: 0x9ca3af, align: "center" },
+    });
+    this.actionLabel.anchor.set(0.5, 0);
+    this.actionLabel.x = AGENT_WIDTH * SPRITE_SCALE / 2;
+    this.actionLabel.y = this.nameLabel.y + 10;
+    this.container.addChild(this.actionLabel);
+
+    // --- Status container (mood dot + need icons) ---
     this.statusContainer = new PIXI.Container();
     this.statusContainer.y = -8; // above sprite
     this.container.addChild(this.statusContainer);
+
+    // --- Mood dot ---
+    this.moodDot = new PIXI.Graphics();
+    this.moodDot.visible = false;
+    this.statusContainer.addChild(this.moodDot);
+
+    // --- Need alert icons ---
+    for (let i = 0; i < 2; i++) {
+      const icon = new PIXI.Container();
+      const circle = new PIXI.Graphics();
+      circle.circle(0, 0, 4).fill(0x888888);
+      const text = new PIXI.Text({ text: "!", style: { fontSize: 6, fill: 0xffffff, fontFamily: "monospace" } });
+      text.anchor.set(0.5);
+      icon.addChild(circle, text);
+      icon.x = 8 + i * 10;
+      icon.visible = false;
+      this.statusContainer.addChild(icon);
+      this.needIcons.push(icon);
+    }
 
     // --- Load animation textures from pre-loaded assets ---
     this.loadAnimations(characterBase);
@@ -255,6 +289,10 @@ export class AgentSprite {
     } else {
       this.showIdleFrame();
     }
+
+    if (this.moodPulse && this.moodDot.visible) {
+      this.moodDot.alpha = 0.4 + 0.6 * ((Math.sin(Date.now() * 0.004) + 1) / 2);
+    }
   }
 
   private showIdleFrame() {
@@ -305,6 +343,47 @@ export class AgentSprite {
     } else {
       this.sprite.alpha = 1;
     }
+  }
+
+  updateMood(mood: number | undefined) {
+    if (mood === undefined || mood > 60) {
+      this.moodDot.visible = false;
+      this.moodPulse = false;
+      return;
+    }
+    this.moodDot.visible = true;
+    this.moodDot.clear();
+    const color = mood > 40 ? 0xeab308 : mood > 20 ? 0xf97316 : 0xef4444;
+    this.moodDot.circle(0, 0, 3).fill(color);
+    this.moodPulse = mood <= 20;
+  }
+
+  updateNeeds(needs: any) {
+    this.needIcons.forEach(i => { i.visible = false; });
+    if (!needs) return;
+    const critical = needs.thresholds?.critical ?? 15;
+    const alerts: { color: number }[] = [];
+    if (needs.hunger < critical) alerts.push({ color: 0xf97316 });
+    if (needs.energy < critical) alerts.push({ color: 0x6366f1 });
+    if (needs.social < critical) alerts.push({ color: 0xf472b6 });
+    if (needs.comfort < critical) alerts.push({ color: 0x60a5fa });
+    if (needs.fun < critical) alerts.push({ color: 0xa78bfa });
+    alerts.sort((a, b) => a.color - b.color);
+    for (let i = 0; i < Math.min(2, alerts.length); i++) {
+      const icon = this.needIcons[i];
+      const circle = icon.children[0] as PIXI.Graphics;
+      circle.clear().circle(0, 0, 4).fill(alerts[i].color);
+      icon.visible = true;
+    }
+  }
+
+  updateActionLabel(action: any, locationName?: string) {
+    if (!action) { this.actionLabel.text = ""; return; }
+    const type = typeof action === "string" ? action : action.type ?? "";
+    const label = type.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+    let text = locationName ? `${label} at ${locationName}` : label;
+    if (text.length > 20) text = text.slice(0, 19) + "…";
+    this.actionLabel.text = text;
   }
 
   destroy() {

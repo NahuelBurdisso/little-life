@@ -8,6 +8,15 @@ export interface AgentData {
   name: string;
   position: { x: number; y: number };
   currentAction?: { type?: string } | string;
+  needs?: {
+    mood?: number;
+    hunger?: number;
+    energy?: number;
+    social?: number;
+    comfort?: number;
+    fun?: number;
+    thresholds?: { critical?: number };
+  };
 }
 
 /** Manages all AgentSprite instances, creating/removing as needed. */
@@ -62,6 +71,11 @@ export class SpritePool {
           ? agent.currentAction
           : agent.currentAction?.type ?? "idle";
       sprite.setAction(actionType);
+
+      // Update visual cues
+      sprite.updateMood(agent.needs?.mood);
+      sprite.updateNeeds(agent.needs);
+      sprite.updateActionLabel(agent.currentAction);
     }
 
     // Remove sprites for agents no longer present
