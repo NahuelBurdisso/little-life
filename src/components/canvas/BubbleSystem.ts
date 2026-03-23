@@ -1,8 +1,8 @@
 import * as PIXI from "pixi.js";
 import { SPRITE_CONFIG } from "../../lib/spriteConfig";
 
-const BUBBLE_MAX_CHARS = 40;
-const SPEECH_DURATION_MS = 3000;
+const BUBBLE_MAX_CHARS = 60;
+const SPEECH_DURATION_MS = 4000;
 const EMOTE_DURATION_MS = 1500;
 const EMOTE_FLOAT_SPEED = 0.3; // pixels per tick
 
@@ -21,8 +21,8 @@ const THOUGHT_STYLE = new PIXI.TextStyle({
 });
 
 const SPEECH_STYLE = new PIXI.TextStyle({
-  fontFamily: "sans-serif",
-  fontSize: 9,
+  fontFamily: "monospace",
+  fontSize: 8,
   fill: 0x222222,
   wordWrap: true,
   wordWrapWidth: 100,
@@ -54,7 +54,7 @@ export class BubbleSystem {
   }
 
   /** Show a speech bubble with text above the agent. Auto-dismisses. */
-  showSpeechBubble(agentId: string, text: string, position: { x: number; y: number }) {
+  showSpeechBubble(agentId: string, text: string, position: { x: number; y: number }, sentiment = 0) {
     this.removeBubble(agentId);
 
     const truncated = text.length > BUBBLE_MAX_CHARS ? text.slice(0, BUBBLE_MAX_CHARS - 1) + "\u2026" : text;
@@ -67,13 +67,18 @@ export class BubbleSystem {
     const bgW = textObj.width + padX * 2;
     const bgH = textObj.height + padY * 2;
 
+    // Sentiment-based colors
+    const bgColor = sentiment > 0.2 ? 0xdcfce7 : sentiment < -0.2 ? 0xfde2e2 : 0xffffff;
+    const borderColor = sentiment > 0.2 ? 0x22c55e : sentiment < -0.2 ? 0xef4444 : 0xd1d5db;
+    const bgAlpha = 0.92;
+
     // Background rounded rect
     const bg = new PIXI.Graphics();
-    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: 0xffffff, alpha: 0.92 });
-    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: 0x000000, width: 1, alpha: 0.25 });
+    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: bgColor, alpha: bgAlpha });
+    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: borderColor, width: 1, alpha: 0.25 });
 
     // Small tail triangle
-    bg.poly([bgW / 2 - 4, bgH, bgW / 2, bgH + 5, bgW / 2 + 4, bgH]).fill({ color: 0xffffff, alpha: 0.92 });
+    bg.poly([bgW / 2 - 4, bgH, bgW / 2, bgH + 5, bgW / 2 + 4, bgH]).fill({ color: bgColor, alpha: bgAlpha });
 
     textObj.x = padX;
     textObj.y = padY;
@@ -199,8 +204,8 @@ export class BubbleSystem {
       const aid = a._id ?? a.id;
       if (aid) {
         posMap.set(aid, {
-          x: (a.position?.x ?? 0) * SPRITE_CONFIG.TILE_SIZE,
-          y: (a.position?.y ?? 0) * SPRITE_CONFIG.TILE_SIZE,
+          x: a.position?.x ?? 0,
+          y: a.position?.y ?? 0,
         });
       }
     }
@@ -232,7 +237,16 @@ export class BubbleSystem {
         const existing = this.bubbles.get(aid);
         // Only show a new speech bubble if we don't already have one (or it expired)
         if (!existing || existing.type === "thought") {
-          this.showSpeechBubble(aid, lastMsg, pos);
+          // Find the conversation this agent is in
+          const convo = conversations.find(c => {
+            const participants = c.participants ?? [];
+            return participants.some(p => {
+              const pid = typeof p === "string" ? p : p?.agentId;
+              return pid === aid;
+            });
+          });
+          const sentiment = (convo as any)?.sentiment ?? 0;
+          this.showSpeechBubble(aid, lastMsg, pos, sentiment);
         }
       } else {
         if (!this.bubbles.has(aid)) {
