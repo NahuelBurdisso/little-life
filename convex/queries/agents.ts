@@ -16,6 +16,23 @@ export const getActiveAgents = query({
   },
 });
 
+export const getActiveAgentsWithNeeds = query({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("agents").collect();
+    const active = all.filter((a) => a.isActive);
+    const result = [];
+    for (const agent of active) {
+      const needs = await ctx.db
+        .query("needs")
+        .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+        .first();
+      result.push({ ...agent, needs: needs ?? null });
+    }
+    return result;
+  },
+});
+
 export const getAgentFull = query({
   args: { id: v.id("agents") },
   handler: async (ctx, args) => {
