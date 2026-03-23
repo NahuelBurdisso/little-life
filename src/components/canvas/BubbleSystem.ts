@@ -35,6 +35,7 @@ export class BubbleSystem {
   private bubbles: Map<string, BubbleEntry> = new Map();
   readonly container: PIXI.Container;
   private emoteTextures: Map<string, PIXI.Texture> = new Map();
+  private prevMoodMap: Map<string, number> = new Map();
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
@@ -54,7 +55,7 @@ export class BubbleSystem {
   }
 
   /** Show a speech bubble with text above the agent. Auto-dismisses. */
-  showSpeechBubble(agentId: string, text: string, position: { x: number; y: number }, sentiment = 0) {
+  showSpeechBubble(agentId: string, text: string, position: { x: number; y: number }, sentiment = 0, offsetX = 0) {
     this.removeBubble(agentId);
 
     const truncated = text.length > BUBBLE_MAX_CHARS ? text.slice(0, BUBBLE_MAX_CHARS - 1) + "\u2026" : text;
@@ -87,7 +88,7 @@ export class BubbleSystem {
 
     // Position above agent
     const half = SPRITE_CONFIG.AGENT_SIZE / 2;
-    bubbleContainer.x = position.x + half - bgW / 2;
+    bubbleContainer.x = position.x + half - bgW / 2 + offsetX;
     bubbleContainer.y = position.y - bgH - 8;
 
     this.container.addChild(bubbleContainer);
@@ -246,7 +247,13 @@ export class BubbleSystem {
             });
           });
           const sentiment = (convo as any)?.sentiment ?? 0;
-          this.showSpeechBubble(aid, lastMsg, pos, sentiment);
+          // Determine bubble offset for multi-agent conversations
+          const participants = convo?.participants ?? [];
+          const participantIds = participants.map((p: any) => typeof p === "string" ? p : p?.agentId).filter(Boolean);
+          const isMultiAgent = participantIds.length > 1;
+          const participantIndex = participantIds.indexOf(aid);
+          const offsetX = isMultiAgent ? (participantIndex === 0 ? -20 : 20) : 0;
+          this.showSpeechBubble(aid, lastMsg, pos, sentiment, offsetX);
         }
       } else {
         if (!this.bubbles.has(aid)) {
@@ -262,6 +269,21 @@ export class BubbleSystem {
         entry.container.destroy({ children: true });
         this.bubbles.delete(key);
       }
+    }
+
+    // Auto-emote triggers based on mood changes
+    for (const a of agents) {
+      const aid = a._id ?? a.id;
+      if (!aid) continue;
+      const pos = posMap.get(aid);
+      if (!pos) continue;
+      const curMood = (a as any).needs?.mood ?? 50;
+      const prevMood = this.prevMoodMap.get(aid) ?? 50;
+
+      if (curMood > 80 && prevMood <= 80) this.showEmote(aid, "heart", pos);
+      if (curMood < 20 && prevMood >= 20) this.showEmote(aid, "cry", pos);
+
+      this.prevMoodMap.set(aid, curMood);
     }
 
     // Update positions and lifetimes
@@ -298,6 +320,7 @@ export class BubbleSystem {
       entry.container.destroy({ children: true });
     }
     this.bubbles.clear();
+    this.prevMoodMap.clear();
     this.container.destroy({ children: true });
   }
 }
