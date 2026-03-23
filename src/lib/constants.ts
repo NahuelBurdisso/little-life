@@ -25,6 +25,24 @@ export const COLORS = {
     stormy: "#6366f1",
     foggy: "#d1d5db",
   },
+  bubble: {
+    positive: "#dcfce7",
+    negative: "#fde2e2",
+    neutral: "#ffffff",
+    border: {
+      positive: "#22c55e",
+      negative: "#ef4444",
+      neutral: "#d1d5db",
+    },
+  },
+  actionIcon: {
+    working: "#60a5fa",
+    eating: "#fbbf24",
+    socializing: "#a78bfa",
+    sleeping: "#6b7280",
+    shopping: "#f472b6",
+    relaxing: "#34d399",
+  },
 };
 
 export const UI = {
