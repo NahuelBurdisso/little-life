@@ -1,6 +1,6 @@
 import * as PIXI from "pixi.js";
 import { AgentSprite } from "./AgentSprite";
-import { SPRITE_CONFIG } from "../../lib/spriteConfig";
+import { SPRITE_CONFIG, getCharacterAssignment } from "../../lib/spriteConfig";
 
 export interface AgentData {
   _id?: string;
@@ -45,9 +45,9 @@ export class SpritePool {
           this.agentIndexMap.set(id, this.nextIndex++);
         }
         const idx = this.agentIndexMap.get(id)!;
-        const hue = hashStringToHue(agent.name ?? id);
+        const { base, hueShift } = getCharacterAssignment(idx % 12);
 
-        sprite = new AgentSprite(idx % 12, agent.name ?? "Agent", hue);
+        sprite = new AgentSprite(base, hueShift, agent.name ?? "Agent");
         sprite.setPositionImmediate(px, py);
         this.sprites.set(id, sprite);
         this.container.addChild(sprite.container);
