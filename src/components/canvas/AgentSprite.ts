@@ -29,6 +29,10 @@ export class AgentSprite {
     this.agentIndex = agentIndex;
     this.container = new PIXI.Container();
 
+    // Hit area for click detection — covers the sprite plus name label below
+    const size = SPRITE_CONFIG.AGENT_SIZE;
+    this.container.hitArea = new PIXI.Rectangle(0, 0, size, size + 16);
+
     // Selection highlight ring (hidden by default)
     this.highlightRing = new PIXI.Graphics();
     const half = SPRITE_CONFIG.AGENT_SIZE / 2;

@@ -56,6 +56,8 @@ export function GameCanvas({
 
     // Create layer hierarchy
     const worldContainer = new Container();
+    worldContainer.eventMode = "passive";
+    worldContainer.interactiveChildren = true;
     worldContainerRef.current = worldContainer;
     app.stage.addChild(worldContainer);
 
