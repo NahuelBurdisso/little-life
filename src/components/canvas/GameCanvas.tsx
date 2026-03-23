@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
-import { Container } from "pixi.js";
+import { Container, Graphics } from "pixi.js";
 import { useGameCanvas } from "../../hooks/useGameCanvas";
 import { useAssetLoader } from "../../hooks/useAssetLoader";
 import { TilemapRenderer } from "./TilemapRenderer";
@@ -14,6 +14,8 @@ interface GameCanvasProps {
   agents: any[];
   world: any;
   conversations: any[];
+  locations?: any[];
+  relationships?: any[];
   onAgentSelect: (agentId: string) => void;
   onAgentContextMenu: (agentId: string, pos: { x: number; y: number }) => void;
   onAgentHover: (agentId: string | null, pos?: { x: number; y: number }) => void;
@@ -24,6 +26,8 @@ export function GameCanvas({
   agents,
   world,
   conversations,
+  locations,
+  relationships,
   onAgentSelect,
   onAgentContextMenu,
   onAgentHover,
@@ -40,6 +44,7 @@ export function GameCanvas({
   const spritePoolRef = useRef<SpritePool | null>(null);
   const bubbleSystemRef = useRef<BubbleSystem | null>(null);
   const interactionRef = useRef<InteractionLayer | null>(null);
+  const relationshipLinesRef = useRef<Graphics | null>(null);
 
   // Layer containers
   const worldContainerRef = useRef<Container | null>(null);
@@ -71,6 +76,11 @@ export function GameCanvas({
     // Sprite pool (agent sprites) — inside world so it moves with camera
     const spritePool = new SpritePool(worldContainer);
     spritePoolRef.current = spritePool;
+
+    // Relationship lines graphics — between sprites and bubbles
+    const relLines = new Graphics();
+    worldContainer.addChild(relLines);
+    relationshipLinesRef.current = relLines;
 
     // Bubble system — also inside world container so bubbles track agents
     const bubbleSystem = new BubbleSystem(worldContainer);
@@ -130,7 +140,12 @@ export function GameCanvas({
     if (bubbleSystemRef.current) {
       bubbleSystemRef.current.update(conversations ?? [], agents, 1);
     }
-  }, [agents, selectedAgentId, conversations, app]);
+
+    // Update occupancy dots
+    if (tilemapRef.current && locations) {
+      tilemapRef.current.updateOccupancy(agents, locations);
+    }
+  }, [agents, selectedAgentId, conversations, locations, app]);
 
   // Per-frame rendering loop — lerps sprites toward targets, no data dependency
   useEffect(() => {
@@ -181,6 +196,35 @@ export function GameCanvas({
       cameraRef.current.focusOn(sprite.container.x, sprite.container.y);
     }
   }, [selectedAgentId]);
+
+  // Draw relationship lines for hovered/selected agent
+  useEffect(() => {
+    const g = relationshipLinesRef.current;
+    if (!g) return;
+    g.clear();
+
+    const agentId = selectedAgentId;
+    if (!agentId || !spritePoolRef.current || !relationships || relationships.length === 0) return;
+
+    const rels = relationships.filter((r: any) => r.agentA === agentId || r.agentB === agentId);
+    for (const rel of rels) {
+      const otherId = rel.agentA === agentId ? rel.agentB : rel.agentA;
+      const fromSprite = spritePoolRef.current.getSprite(agentId);
+      const toSprite = spritePoolRef.current.getSprite(otherId);
+      if (!fromSprite || !toSprite) continue;
+      const strength = Math.max(Math.abs(rel.friendshipAB ?? 0), Math.abs(rel.romanceAB ?? 0));
+      const alpha = Math.min((strength / 100) * 0.6, 0.6);
+      const color =
+        (rel.romanceAB ?? 0) > (rel.friendshipAB ?? 0)
+          ? 0xf472b6
+          : (rel.friendshipAB ?? 0) < 0
+          ? 0xef4444
+          : 0x60a5fa;
+      g.moveTo(fromSprite.container.x + 16, fromSprite.container.y + 32)
+       .lineTo(toSprite.container.x + 16, toSprite.container.y + 32)
+       .stroke({ color, alpha, width: 1 });
+    }
+  }, [selectedAgentId, agents, relationships]);
 
   return (
     <div

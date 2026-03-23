@@ -1,7 +1,8 @@
 import { formatMood } from "../../lib/formatters";
+import { getCharacterSheet } from "../../lib/spriteConfig";
 
 interface AgentPortraitProps {
-  agent: { name: string; age: number; portraitSprite: string };
+  agent: { name: string; age: number; portraitSprite?: string };
   economy: { jobTitle: string } | null;
   mood: number | undefined;
 }
@@ -15,13 +16,22 @@ function moodEmoji(mood: number): string {
 }
 
 export function AgentPortrait({ agent, economy, mood }: AgentPortraitProps) {
+  // Deterministic character base from agent name
+  const nameHash = agent.name.split("").reduce((h, c) => c.charCodeAt(0) + ((h << 5) - h), 0);
+  const idx = Math.abs(nameHash) % 4;
+  const base = ["adam", "alex", "amelia", "bob"][idx];
+  const idleSrc = getCharacterSheet(base, "idle");
+
   return (
     <div className="flex items-center gap-3">
-      <img
-        src={agent.portraitSprite}
-        alt={agent.name}
-        className="w-12 h-12 rounded-full bg-gray-700 object-cover"
-      />
+      <div className="w-12 h-16 rounded bg-gray-700 overflow-hidden" style={{ imageRendering: "pixelated" }}>
+        <img
+          src={idleSrc}
+          alt={agent.name}
+          className="w-[128px] h-[64px]"
+          style={{ objectFit: "none", objectPosition: "0 0" }}
+        />
+      </div>
       <div>
         <div className="font-bold text-white">{agent.name}</div>
         <div className="text-sm text-gray-400">

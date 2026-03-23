@@ -156,9 +156,29 @@ export class TilemapRenderer {
     };
   }
 
-  /** Stub for Task 15 — occupancy dots on locations */
-  updateOccupancy(_occupancy?: Map<string, number>): void {
-    // Will be implemented in Task 15
+  /** Update occupancy dots — shows colored dots below each building for present agents */
+  updateOccupancy(agents: any[], locations: any[]): void {
+    this.occupancyContainer.removeChildren();
+    for (const loc of locations) {
+      const occupants = loc.currentOccupants ?? [];
+      if (occupants.length === 0) continue;
+      const dotCount = Math.min(occupants.length, 5);
+      // Position below the building, centered
+      const centerX = loc.position.x + (loc.position.width * 32) / 2;
+      const y = loc.position.y + loc.position.height * 32 + 14;
+      const startX = centerX - (dotCount * 6) / 2;
+      for (let i = 0; i < dotCount; i++) {
+        const occupantId = occupants[i];
+        const agent = agents.find((a: any) => (a._id ?? a.id) === occupantId);
+        const mood = agent?.needs?.mood ?? 50;
+        const color = mood > 60 ? 0x22c55e : mood > 40 ? 0xeab308 : 0xef4444;
+        const dot = new PIXI.Graphics();
+        dot.circle(0, 0, 3).fill(color);
+        dot.x = startX + i * 6;
+        dot.y = y;
+        this.occupancyContainer.addChild(dot);
+      }
+    }
   }
 
   destroy(): void {

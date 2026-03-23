@@ -23,6 +23,7 @@ export default function App() {
   const { conversations } = useConversations();
   const nudge = useNudge();
   const locations = useQuery(api.queries.locations.getLocations) ?? [];
+  const allRelationships = useQuery(api.queries.relationships.getRelationshipGraph) ?? [];
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [showEventMenu, setShowEventMenu] = useState(false);
@@ -138,6 +139,8 @@ export default function App() {
           agents={agents}
           world={world}
           conversations={conversations ?? []}
+          locations={locations}
+          relationships={allRelationships}
           onAgentSelect={setSelectedAgentId}
           onAgentContextMenu={handleAgentContextMenu}
           onAgentHover={handleAgentHover}
@@ -208,6 +211,11 @@ export default function App() {
         isOpen={showRelGraph}
         onClose={() => setShowRelGraph(false)}
       />
+
+      {/* Attribution */}
+      <div className="fixed bottom-1 left-1 z-10 text-[8px] text-gray-500 opacity-40 pointer-events-none">
+        Art: LimeZu (CC-BY 4.0)
+      </div>
     </div>
   );
 }
