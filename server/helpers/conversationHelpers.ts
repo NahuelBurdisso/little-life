@@ -2,6 +2,7 @@ import { db } from '../db';
 import { agents, needs, economy, conversations, relationships, memories, locations, worldState } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
+import { getEffectivePersonality, getActiveStatePrompts } from '../lib/states';
 
 export function getConversationContext(conversationId: number, speakerId: number) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
@@ -44,6 +45,9 @@ export function getConversationContext(conversationId: number, speakerId: number
   const world = db.select().from(worldState).get();
   if (!world) return null;
 
+  const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
+  const statePrompts = getActiveStatePrompts(speaker.id, world?.time?.totalTicks);
+
   return {
     conversation,
     speaker,
@@ -54,6 +58,8 @@ export function getConversationContext(conversationId: number, speakerId: number
     memories: recentMemories,
     location,
     world,
+    effectivePersonality,
+    statePrompts,
   };
 }
 

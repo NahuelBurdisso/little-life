@@ -5,7 +5,7 @@
  * Pure functions — no I/O.
  */
 
-import { buildPersonalityDescription } from '../lib/personality';
+import { buildPersonalityDescription, PersonalityProfile } from '../lib/personality';
 
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
@@ -135,12 +135,15 @@ export function buildAgentSystemPrompt(
   agent: AgentRow,
   needs: NeedsRow,
   economy: EconomyRow,
+  effectivePersonality?: PersonalityProfile | null,
+  statePrompts?: string[],
 ): string {
-  const personalityDesc = agent.personality
-    ? buildPersonalityDescription(agent.personality, agent.traits as string[])
+  const resolvedPersonality = effectivePersonality ?? agent.personality;
+  const personalityDesc = resolvedPersonality
+    ? buildPersonalityDescription(resolvedPersonality, agent.traits as string[])
     : `Your personality traits: ${(agent.traits as string[]).join(', ')}.`;
 
-  return `You are ${agent.name}, ${agent.age} years old, ${economy.job_title} in a small town.
+  let systemPrompt = `You are ${agent.name}, ${agent.age} years old, ${economy.job_title} in a small town.
 
 ${agent.bio}
 
@@ -158,6 +161,12 @@ RULES:
 - Your responses reflect your current state — tired, hungry, stressed, happy.
 - 1-3 sentences. Natural speech, not formal.
 - Reference your memories and relationships when relevant.`;
+
+  if (statePrompts?.length) {
+    systemPrompt += '\n\nCURRENT STATE:\n' + statePrompts.join('\n');
+  }
+
+  return systemPrompt;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +275,8 @@ export interface ConversationPromptParams {
   memories: MemoryRow[];
   world: WorldStateRow;
   location: LocationRow;
+  effectivePersonality?: PersonalityProfile | null;
+  statePrompts?: string[];
 }
 
 export function buildConversationPrompt(
@@ -281,9 +292,11 @@ export function buildConversationPrompt(
     memories,
     world,
     location,
+    effectivePersonality,
+    statePrompts,
   } = params;
 
-  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon);
+  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts);
 
   // Build context message
   const contextParts: string[] = [];
