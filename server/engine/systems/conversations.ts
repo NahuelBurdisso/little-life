@@ -31,6 +31,7 @@ import { selectTemplate, interpolateTemplate } from '../../ai/templates';
 import { createConversationMemory } from '../../ai/memories';
 import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
+import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -275,17 +276,86 @@ async function processCompletedConversation(
       const agentA = participants[i];
       const agentB = participants[j];
 
-      const friendshipDelta =
-        overallSentiment > 0
-          ? overallSentiment * 5
-          : overallSentiment * 8;
-      const trustDelta =
-        overallSentiment > 0.3 ? 2 : overallSentiment < -0.3 ? -3 : 0;
-
       // Enforce A < B ordering for consistency with relationship table
       const [orderedA, orderedB] = agentA.id < agentB.id
         ? [agentA.id, agentB.id]
         : [agentB.id, agentA.id];
+
+      let friendshipDeltaAB =
+        overallSentiment > 0
+          ? overallSentiment * 5
+          : overallSentiment * 8;
+      let friendshipDeltaBA = friendshipDeltaAB;
+      let trustDeltaAB =
+        overallSentiment > 0.3 ? 2 : overallSentiment < -0.3 ? -3 : 0;
+      let trustDeltaBA = trustDeltaAB;
+
+      // Get both agents' personalities
+      const personalityA = agentA.personality as PersonalityProfile | null;
+      const personalityB = agentB.personality as PersonalityProfile | null;
+
+      // Calculate compatibility multiplier
+      let compat = 1.0;
+      if (personalityA && personalityB) {
+        compat = calculateCompatibility(personalityA, personalityB);
+      }
+
+      // Apply compatibility to friendship and trust deltas
+      friendshipDeltaAB *= compat;
+      friendshipDeltaBA *= compat;
+      trustDeltaAB *= compat;
+      trustDeltaBA *= compat;
+
+      // Generate romance deltas
+      let romanceDeltaAB = 0;
+      let romanceDeltaBA = 0;
+      if (overallSentiment > 0.2 && personalityA && personalityB) {
+        if (personalityA.sensuality > 40) {
+          romanceDeltaAB = overallSentiment * 3 * (personalityA.sensuality / 100) * compat;
+        }
+        if (personalityB.sensuality > 40) {
+          romanceDeltaBA = overallSentiment * 3 * (personalityB.sensuality / 100) * compat;
+        }
+      }
+
+      // Look up existing friendship values to apply loyalty bonus check
+      const existingRelationship = db
+        .select()
+        .from(relationships)
+        .where(
+          and(
+            eq(relationships.agent_a, orderedA),
+            eq(relationships.agent_b, orderedB),
+          ),
+        )
+        .get();
+
+      const existingFriendshipAB = existingRelationship
+        ? existingRelationship.friendship_ab
+        : 0;
+      const existingFriendshipBA = existingRelationship
+        ? existingRelationship.friendship_ba
+        : 0;
+
+      // Personality-amplified effects
+      if (personalityA && personalityA.aggression > 60 && overallSentiment < -0.2) {
+        friendshipDeltaAB *= 1.5; // aggressive agents escalate conflict
+      }
+      if (personalityB && personalityB.aggression > 60 && overallSentiment < -0.2) {
+        friendshipDeltaBA *= 1.5;
+      }
+      if (personalityA && personalityA.vanity > 60 && overallSentiment < -0.2) {
+        friendshipDeltaAB *= 1.5; // vain agents perceive insult
+      }
+      if (personalityB && personalityB.vanity > 60 && overallSentiment < -0.2) {
+        friendshipDeltaBA *= 1.5;
+      }
+      if (personalityA && personalityA.loyalty > 60 && existingFriendshipAB > 50 && overallSentiment > 0.2) {
+        trustDeltaAB *= 1.3; // loyal agents build trust with friends faster
+      }
+      if (personalityB && personalityB.loyalty > 60 && existingFriendshipBA > 50 && overallSentiment > 0.2) {
+        trustDeltaBA *= 1.3;
+      }
 
       db.insert(relationshipEvents)
         .values({
@@ -293,12 +363,12 @@ async function processCompletedConversation(
           agent_b: orderedB,
           event_type: 'conversation',
           description: `Conversation about ${conversation.topic ?? 'various things'}`,
-          friendship_delta_ab: friendshipDelta,
-          friendship_delta_ba: friendshipDelta,
-          romance_delta_ab: 0,
-          romance_delta_ba: 0,
-          trust_delta_ab: trustDelta,
-          trust_delta_ba: trustDelta,
+          friendship_delta_ab: friendshipDeltaAB,
+          friendship_delta_ba: friendshipDeltaBA,
+          romance_delta_ab: romanceDeltaAB,
+          romance_delta_ba: romanceDeltaBA,
+          trust_delta_ab: trustDeltaAB,
+          trust_delta_ba: trustDeltaBA,
           sentiment: overallSentiment,
           processed: false,
           timestamp: now,
@@ -351,17 +421,26 @@ async function processCompletedConversation(
       .get();
 
     if (agentNeeds) {
-      const socialBoost = clamp(8 + overallSentiment * 7, 1, 15);
+      const personality = participant.personality as PersonalityProfile | null;
+
+      let socialBoost = clamp(8 + overallSentiment * 7, 1, 15);
+      if (personality && personality.warmth > 60 && overallSentiment > 0) {
+        socialBoost *= 1.3;
+      }
       const newSocial = clamp(agentNeeds.social + socialBoost, 0, 100);
 
       const currentTime =
         time.day * 24 * 60 + time.hour * 60 + time.minute;
+      let moodModifierDuration: number = CONFIG.NEEDS.MOOD_MODIFIER_DURATION_TICKS;
+      if (personality && personality.neuroticism > 60) {
+        moodModifierDuration = Math.round(moodModifierDuration * 1.5);
+      }
       const moodModifiers = [
         ...agentNeeds.mood_modifiers,
         {
           source: 'conversation',
           value: overallSentiment * 5,
-          expiresAt: currentTime + CONFIG.NEEDS.MOOD_MODIFIER_DURATION_TICKS,
+          expiresAt: currentTime + moodModifierDuration,
         },
       ];
 
@@ -517,8 +596,55 @@ async function processTimedOutEntry(
     .get();
 
   // Lighter relationship event for template conversations
-  const friendshipDelta =
+  const agentA = agentList[0];
+  const agentB = agentList[1];
+
+  let friendshipDeltaAB =
     messageSentiment > 0 ? messageSentiment * 2 : messageSentiment * 3;
+  let friendshipDeltaBA = friendshipDeltaAB;
+
+  // Get both agents' personalities
+  const personalityA = agentA.personality as PersonalityProfile | null;
+  const personalityB = agentB.personality as PersonalityProfile | null;
+
+  // Calculate compatibility multiplier
+  let compat = 1.0;
+  if (personalityA && personalityB) {
+    compat = calculateCompatibility(personalityA, personalityB);
+  }
+
+  // Apply compatibility to friendship deltas
+  friendshipDeltaAB *= compat;
+  friendshipDeltaBA *= compat;
+
+  // Generate romance deltas (smaller base for template conversations)
+  let romanceDeltaAB = 0;
+  let romanceDeltaBA = 0;
+  if (messageSentiment > 0.2 && personalityA && personalityB) {
+    if (personalityA.sensuality > 40) {
+      romanceDeltaAB = messageSentiment * 1.5 * (personalityA.sensuality / 100) * compat;
+    }
+    if (personalityB.sensuality > 40) {
+      romanceDeltaBA = messageSentiment * 1.5 * (personalityB.sensuality / 100) * compat;
+    }
+  }
+
+  // Personality-amplified effects
+  if (personalityA && personalityA.aggression > 60 && messageSentiment < -0.2) {
+    friendshipDeltaAB *= 1.5;
+  }
+  if (personalityB && personalityB.aggression > 60 && messageSentiment < -0.2) {
+    friendshipDeltaBA *= 1.5;
+  }
+  if (personalityA && personalityA.vanity > 60 && messageSentiment < -0.2) {
+    friendshipDeltaAB *= 1.5;
+  }
+  if (personalityB && personalityB.vanity > 60 && messageSentiment < -0.2) {
+    friendshipDeltaBA *= 1.5;
+  }
+
+  // Trust deltas for template are 0 base, loyalty bonus only applies if it would increase something non-zero
+  // (kept at 0 for template fallback as per original design)
 
   db.insert(relationshipEvents)
     .values({
@@ -526,10 +652,10 @@ async function processTimedOutEntry(
       agent_b: orderedB,
       event_type: 'conversation',
       description: 'Brief exchange (template)',
-      friendship_delta_ab: friendshipDelta,
-      friendship_delta_ba: friendshipDelta,
-      romance_delta_ab: 0,
-      romance_delta_ba: 0,
+      friendship_delta_ab: friendshipDeltaAB,
+      friendship_delta_ba: friendshipDeltaBA,
+      romance_delta_ab: romanceDeltaAB,
+      romance_delta_ba: romanceDeltaBA,
       trust_delta_ab: 0,
       trust_delta_ba: 0,
       sentiment: messageSentiment,
