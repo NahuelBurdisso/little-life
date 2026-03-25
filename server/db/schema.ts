@@ -51,6 +51,7 @@ export const agents = sqliteTable(
     name: text('name').notNull(),
     bio: text('bio').notNull(),
     traits: text('traits', { mode: 'json' }).notNull().$type<string[]>(),
+    personality: text('personality', { mode: 'json' }).$type<import('../lib/personality').PersonalityProfile | null>(),
     age: integer('age').notNull(),
     gender: text('gender').notNull(),
     sprite_sheet: text('sprite_sheet').notNull(),

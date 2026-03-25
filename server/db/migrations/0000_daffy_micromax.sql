@@ -14,6 +14,7 @@ CREATE TABLE `agents` (
 	`name` text NOT NULL,
 	`bio` text NOT NULL,
 	`traits` text NOT NULL,
+	`personality` text,
 	`age` integer NOT NULL,
 	`gender` text NOT NULL,
 	`sprite_sheet` text NOT NULL,
