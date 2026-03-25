@@ -19,6 +19,18 @@ export interface AgentSeed {
     lunchTime: number;
     freeTimePreferences: string[];
   };
+  personality: {
+    honesty: number;
+    aggression: number;
+    warmth: number;
+    impulsiveness: number;
+    vanity: number;
+    curiosity: number;
+    loyalty: number;
+    morality: number;
+    sensuality: number;
+    neuroticism: number;
+  };
   backstoryMemories: string[];
   initialRelationships: Array<{
     otherName: string;
@@ -56,6 +68,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       workEnd: 15,
       lunchTime: 12,
       freeTimePreferences: ["park", "home", "tavern"],
+    },
+    personality: {
+      honesty: 65,
+      aggression: 35,
+      warmth: 60,
+      impulsiveness: 25,
+      vanity: 20,
+      curiosity: 40,
+      loyalty: 80,
+      morality: 75,
+      sensuality: 35,
+      neuroticism: 30,
     },
     backstoryMemories: [
       "I inherited Green Acres Farm from my parents five years ago. The first season alone nearly broke me, but I pulled through. This land is my legacy.",
@@ -112,6 +136,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       lunchTime: 11,
       freeTimePreferences: ["tavern", "park", "home"],
     },
+    personality: {
+      honesty: 75,
+      aggression: 60,
+      warmth: 45,
+      impulsiveness: 30,
+      vanity: 20,
+      curiosity: 35,
+      loyalty: 85,
+      morality: 65,
+      sensuality: 25,
+      neuroticism: 30,
+    },
     backstoryMemories: [
       "I've worked this farm for over twenty years, first under Elena's parents, now under her. The soil knows my hands better than I do.",
       "My wife Margaret passed seven years ago. I still set two places at the table sometimes out of habit. The farm keeps me from dwelling too much.",
@@ -167,6 +203,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       lunchTime: 13,
       freeTimePreferences: ["park", "town_square", "home"],
     },
+    personality: {
+      honesty: 40,
+      aggression: 20,
+      warmth: 70,
+      impulsiveness: 55,
+      vanity: 65,
+      curiosity: 70,
+      loyalty: 60,
+      morality: 45,
+      sensuality: 80,
+      neuroticism: 45,
+    },
     backstoryMemories: [
       "I came to Little Life eight years ago with nothing but a suitcase and a recipe for the best sangria this side of the mountains. Nobody asked where I came from, and I loved them for it.",
       "The Rusty Lantern is more than a tavern — it's where people come to be honest. Behind the bar, I've heard confessions that would make a priest blush.",
@@ -221,6 +269,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       workEnd: 18,
       lunchTime: 12,
       freeTimePreferences: ["home", "town_square", "park"],
+    },
+    personality: {
+      honesty: 55,
+      aggression: 30,
+      warmth: 75,
+      impulsiveness: 35,
+      vanity: 45,
+      curiosity: 70,
+      loyalty: 65,
+      morality: 60,
+      sensuality: 40,
+      neuroticism: 45,
     },
     backstoryMemories: [
       "My parents built this store from a market stall. I grew up counting inventory and making change. This store is more than a business — it's their dream made real.",
@@ -290,6 +350,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       lunchTime: 12,
       freeTimePreferences: ["park", "town_square", "tavern"],
     },
+    personality: {
+      honesty: 70,
+      aggression: 10,
+      warmth: 55,
+      impulsiveness: 40,
+      vanity: 30,
+      curiosity: 85,
+      loyalty: 60,
+      morality: 75,
+      sensuality: 50,
+      neuroticism: 75,
+    },
     backstoryMemories: [
       "I taught at the Little Life school for forty years. Every adult in this town sat in my classroom at some point. I remember all their struggles and triumphs.",
       "Retirement was harder than I expected. I missed having purpose. Now I volunteer at the town hall and meddle in everyone's business — for their own good, of course.",
@@ -344,6 +416,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       workEnd: 17,
       lunchTime: 12,
       freeTimePreferences: ["home", "park", "town_square"],
+    },
+    personality: {
+      honesty: 80,
+      aggression: 25,
+      warmth: 65,
+      impulsiveness: 15,
+      vanity: 30,
+      curiosity: 75,
+      loyalty: 70,
+      morality: 85,
+      sensuality: 30,
+      neuroticism: 40,
     },
     backstoryMemories: [
       "I chose Little Life over three city hospital offers. My professors thought I was crazy. But out here, I'm not just another resident — I'm the person people trust with their lives.",
@@ -400,6 +484,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       lunchTime: 12,
       freeTimePreferences: ["park", "home", "town_square"],
     },
+    personality: {
+      honesty: 75,
+      aggression: 20,
+      warmth: 80,
+      impulsiveness: 25,
+      vanity: 25,
+      curiosity: 65,
+      loyalty: 75,
+      morality: 80,
+      sensuality: 30,
+      neuroticism: 35,
+    },
     backstoryMemories: [
       "I came to Little Life with nothing. The town took me in without questions. I owe this place a debt I repay every day by being useful.",
       "I trained as a paramedic before I came here. The skills transferred well. Sofia handles the complex medicine; I handle everything else.",
@@ -454,6 +550,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       workEnd: 17,
       lunchTime: 12,
       freeTimePreferences: ["home", "park", "town_square"],
+    },
+    personality: {
+      honesty: 40,
+      aggression: 45,
+      warmth: 55,
+      impulsiveness: 20,
+      vanity: 70,
+      curiosity: 60,
+      loyalty: 50,
+      morality: 55,
+      sensuality: 35,
+      neuroticism: 50,
     },
     backstoryMemories: [
       "I've been mayor for twelve years. Some days it feels like thirty. Every decision affects someone's life, and I carry that weight whether people see it or not.",
@@ -510,6 +618,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       lunchTime: 11,
       freeTimePreferences: ["tavern", "town_square", "park"],
     },
+    personality: {
+      honesty: 60,
+      aggression: 25,
+      warmth: 75,
+      impulsiveness: 35,
+      vanity: 30,
+      curiosity: 55,
+      loyalty: 70,
+      morality: 70,
+      sensuality: 40,
+      neuroticism: 45,
+    },
     backstoryMemories: [
       "I left my family's restaurant empire to bake bread in a tiny town. They think I'm crazy. But here, every loaf is mine — not part of some brand or franchise.",
       "I wake up at 4 AM every day to bake. By the time the town wakes up, the shop smells like fresh sourdough. That moment when someone takes the first bite — that's why I do it.",
@@ -564,6 +684,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       workEnd: 16,
       lunchTime: 12,
       freeTimePreferences: ["tavern", "town_square", "park"],
+    },
+    personality: {
+      honesty: 50,
+      aggression: 55,
+      warmth: 40,
+      impulsiveness: 60,
+      vanity: 35,
+      curiosity: 30,
+      loyalty: 65,
+      morality: 45,
+      sensuality: 45,
+      neuroticism: 40,
     },
     backstoryMemories: [
       "I never planned to be a handyperson. I just started fixing things for neighbors and never stopped. It's not a career — it's more like a habit that pays.",
@@ -620,6 +752,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       lunchTime: 13,
       freeTimePreferences: ["park", "tavern", "town_square"],
     },
+    personality: {
+      honesty: 55,
+      aggression: 35,
+      warmth: 70,
+      impulsiveness: 50,
+      vanity: 40,
+      curiosity: 55,
+      loyalty: 55,
+      morality: 60,
+      sensuality: 55,
+      neuroticism: 50,
+    },
     backstoryMemories: [
       "I've lived in Little Life my whole life. I love this place, but sometimes the walls feel like they're closing in. There has to be more out there.",
       "I redesigned the store's window display last month and sales went up fifteen percent. Rosa didn't say much, but I caught her smiling at it.",
@@ -674,6 +818,18 @@ export const AGENT_SEEDS: AgentSeed[] = [
       workEnd: 23,
       lunchTime: 14,
       freeTimePreferences: ["park", "town_square", "home"],
+    },
+    personality: {
+      honesty: 45,
+      aggression: 40,
+      warmth: 60,
+      impulsiveness: 75,
+      vanity: 55,
+      curiosity: 50,
+      loyalty: 45,
+      morality: 40,
+      sensuality: 85,
+      neuroticism: 60,
     },
     backstoryMemories: [
       "I came to Little Life for a weekend gig and that was two years ago. Something about this place caught me. Maybe it's the quiet. Maybe it's the people. Maybe it's her.",

@@ -112,6 +112,7 @@ function seed() {
         name: seed.name,
         bio: seed.bio,
         traits: seed.traits,
+        personality: seed.personality,
         age: seed.age,
         gender: seed.gender,
         sprite_sheet: seed.spriteSheet,
