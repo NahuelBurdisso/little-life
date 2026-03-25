@@ -10,6 +10,7 @@ import {
   economy as economyTable,
   economyTransactions,
   relationshipEvents,
+  memories,
 } from '../../db/schema';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
@@ -38,6 +39,12 @@ let previouslyActiveAgents = new Set<number>();
 
 // Track ticks where an agent had stressed state removed (to avoid re-triggering immediately)
 const stressRemovedAtTick = new Map<number, number>();
+
+// Track tick when mood first dropped below 15 (for depressed trigger duration check)
+const lowMoodSince = new Map<number, number>(); // agentId → tick when mood first dropped below 15
+
+// Track tick when social first dropped below 20 (for lonely trigger duration check)
+const lowSocialSince = new Map<number, number>(); // agentId → tick when social dropped below 20
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
@@ -228,7 +235,8 @@ function evaluateTriggers(
 
   // ── Heartbroken ───────────────────────────────────────────────────────────
   if (!activeTypes.has('heartbroken')) {
-    const sinceWindow = currentTick - 60;
+    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const sinceWindow = Date.now() - 60 * msPerTick;
     const recentRomanceDrops = db
       .select()
       .from(relationshipEvents)
@@ -272,7 +280,8 @@ function evaluateTriggers(
 
   // ── Angry ─────────────────────────────────────────────────────────────────
   if (!activeTypes.has('angry') && personality.aggression > 40) {
-    const sinceWindow = currentTick - 60;
+    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const sinceWindow = Date.now() - 60 * msPerTick;
     const badConvos = db
       .select()
       .from(conversations)
@@ -340,7 +349,8 @@ function evaluateTriggers(
 
   // ── Euphoric ──────────────────────────────────────────────────────────────
   if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 80) {
-    const sinceWindow = currentTick - 60;
+    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const sinceWindow = Date.now() - 60 * msPerTick;
     const positiveConvo = db
       .select()
       .from(conversations)
@@ -441,29 +451,39 @@ function evaluateTriggers(
   }
 
   // ── Lonely ────────────────────────────────────────────────────────────────
-  if (!activeTypes.has('lonely') && agentNeeds && agentNeeds.social < 20) {
-    const sinceWindow = currentTick - 1440;
-    const positiveConvo = db
-      .select()
-      .from(conversations)
-      .where(and(gt(conversations.sentiment, 0), gt(conversations.started_at, sinceWindow)))
-      .all()
-      .find((c) => (c.participants as number[]).includes(agent.id));
+  if (!activeTypes.has('lonely') && agentNeeds) {
+    if (agentNeeds.social < 20) {
+      if (!lowSocialSince.has(agent.id)) {
+        lowSocialSince.set(agent.id, currentTick);
+      }
+      const socialDuration = currentTick - lowSocialSince.get(agent.id)!;
+      if (socialDuration >= 60) {
+        const sinceWindow = Date.now() - 1440000; // last 24 minutes real-time (1440 ticks × 1000ms)
+        const positiveConvo = db
+          .select()
+          .from(conversations)
+          .where(and(gt(conversations.sentiment, 0), gt(conversations.started_at, sinceWindow)))
+          .all()
+          .find((c) => (c.participants as number[]).includes(agent.id));
 
-    if (!positiveConvo) {
-      const severity = clamp((20 - agentNeeds.social) / 20, 0.3, 1.0);
-      db.insert(agentStates)
-        .values({
-          agent_id: agent.id,
-          type: 'lonely',
-          severity,
-          started_at: currentTick,
-          duration: 999999, // conditional exit
-          source: 'needs:low_social',
-          metadata: null,
-        })
-        .run();
-      activeTypes.add('lonely');
+        if (!positiveConvo) {
+          const severity = clamp((20 - agentNeeds.social) / 20, 0.3, 1.0);
+          db.insert(agentStates)
+            .values({
+              agent_id: agent.id,
+              type: 'lonely',
+              severity,
+              started_at: currentTick,
+              duration: 999999, // conditional exit
+              source: 'needs:low_social',
+              metadata: null,
+            })
+            .run();
+          activeTypes.add('lonely');
+        }
+      }
+    } else {
+      lowSocialSince.delete(agent.id); // social recovered, reset tracker
     }
   }
 
@@ -483,10 +503,20 @@ function evaluateTriggers(
       depressSource = 'cascade:lonely';
     }
 
-    // Mood < 15 for > 2 days (2880 ticks) — approximated by checking current mood
-    if (!shouldDepress && agentNeeds && agentNeeds.mood < 15) {
-      shouldDepress = true;
-      depressSource = 'trigger:low_mood';
+    // Mood < 15 for > 2 days (2880 ticks) — requires sustained low mood
+    if (!shouldDepress && agentNeeds) {
+      if (agentNeeds.mood < 15) {
+        if (!lowMoodSince.has(agent.id)) {
+          lowMoodSince.set(agent.id, currentTick);
+        }
+        const duration = currentTick - lowMoodSince.get(agent.id)!;
+        if (duration >= 2880) {
+          shouldDepress = true;
+          depressSource = 'trigger:low_mood';
+        }
+      } else {
+        lowMoodSince.delete(agent.id); // mood recovered, reset tracker
+      }
     }
 
     // Both heartbroken and stressed simultaneously
@@ -523,7 +553,8 @@ function evaluateTriggers(
 
   // ── Confident ─────────────────────────────────────────────────────────────
   if (!activeTypes.has('confident') && personality.vanity > 50) {
-    const sinceWindow = currentTick - 1440;
+    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const sinceWindow = Date.now() - 1440 * msPerTick;
     const positiveConvos = db
       .select()
       .from(conversations)
@@ -566,15 +597,9 @@ function checkConditionalExits(
     switch (state.type as StateType) {
       case 'stressed': {
         if (!agentNeeds) break;
-        const needValues = [
-          agentNeeds.hunger,
-          agentNeeds.energy,
-          agentNeeds.social,
-          agentNeeds.comfort,
-          agentNeeds.fun,
-        ];
-        const lowCount = needValues.filter((v) => v < 35).length;
-        shouldExit = lowCount < 2;
+        const { hunger, energy, social, comfort, fun } = agentNeeds;
+        const highCount = [hunger, energy, social, comfort, fun].filter((v) => v > 50).length;
+        shouldExit = highCount >= 2;
         break;
       }
 
@@ -585,7 +610,8 @@ function checkConditionalExits(
 
       case 'depressed': {
         // Exits ONLY when a warm friend initiates a positive conversation
-        const sinceWindow = currentTick - 60;
+        const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+        const sinceWindow = Date.now() - 60 * msPerTick;
         const recentPositiveConvos = db
           .select()
           .from(conversations)
@@ -843,6 +869,19 @@ function processStateEffects(
             timestamp: currentTick,
           })
           .run();
+
+        // Credit receiver
+        const receiverEcon = db
+          .select()
+          .from(economyTable)
+          .where(eq(economyTable.agent_id, target.id))
+          .get();
+        if (receiverEcon) {
+          db.update(economyTable)
+            .set({ money: receiverEcon.money + amount })
+            .where(eq(economyTable.agent_id, target.id))
+            .run();
+        }
         break;
       }
 
@@ -854,11 +893,13 @@ function processStateEffects(
           (a) => a.id !== agent.id && a.current_location === agent.current_location,
         );
 
+        // Read meta once, accumulate all updates, then write once
+        let meta = { ...((state.metadata as Record<string, any> | null) ?? {}) };
+
         for (const other of nearbyAgents) {
-          // Track co-location ticks in metadata
-          const meta = (state.metadata as Record<string, any> | null) ?? {};
           const coLocKey = `coloc_${other.id}`;
-          const coLocTicks = (meta[coLocKey] as number | undefined) ?? 0;
+          meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + 1;
+          const coLocTicks = meta[coLocKey] as number;
 
           if (coLocTicks > 10 && Math.random() < 0.30) {
             // Spread sick only if other doesn't already have it
@@ -885,14 +926,13 @@ function processStateEffects(
                 .run();
             }
           }
-
-          // Update co-location tick counter
-          const updatedMeta = { ...meta, [coLocKey]: coLocTicks + 1 };
-          db.update(agentStates)
-            .set({ metadata: updatedMeta })
-            .where(eq(agentStates.id, state.id))
-            .run();
         }
+
+        // Write accumulated co-location counters once after loop
+        db.update(agentStates)
+          .set({ metadata: meta })
+          .where(eq(agentStates.id, state.id))
+          .run();
         break;
       }
 
@@ -966,6 +1006,19 @@ function processStateEffects(
             timestamp: currentTick,
           })
           .run();
+
+        // Credit receiver
+        const receiverEcon = db
+          .select()
+          .from(economyTable)
+          .where(eq(economyTable.agent_id, target.id))
+          .get();
+        if (receiverEcon) {
+          db.update(economyTable)
+            .set({ money: receiverEcon.money + amount })
+            .where(eq(economyTable.agent_id, target.id))
+            .run();
+        }
 
         // +3 friendship from generous gift
         const rel = db
@@ -1041,7 +1094,8 @@ function processStateEffects(
       case 'confident': {
         if (!personality || personality.vanity <= 60) break;
 
-        const sinceWindow = currentTick - 30;
+        const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+        const sinceWindow = Date.now() - 30 * msPerTick;
         const negativeConvo = db
           .select()
           .from(conversations)
@@ -1078,6 +1132,90 @@ function processStateEffects(
 
         // Remove confident state since it shattered
         db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
+        break;
+      }
+
+      // ── Hungover: review drunk memories for regret ────────────────────────
+      case 'hungover': {
+        if (state.metadata?.regretProcessed) break;
+
+        // Find memories created while agent was drunk (around when this state started)
+        const recentConvoMemories = db
+          .select()
+          .from(memories)
+          .where(
+            and(
+              eq(memories.agent_id, agent.id),
+              eq(memories.type, 'conversation'),
+              gt(memories.timestamp, state.started_at - 300),
+            ),
+          )
+          .all();
+
+        for (const mem of recentConvoMemories) {
+          const relatedAgents = (mem.related_agents as number[]) ?? [];
+          for (const otherId of relatedAgents) {
+            const rel = db
+              .select()
+              .from(relationships)
+              .where(
+                or(
+                  and(
+                    eq(relationships.agent_a, Math.min(agent.id, otherId)),
+                    eq(relationships.agent_b, Math.max(agent.id, otherId)),
+                  ),
+                ),
+              )
+              .get();
+            if (!rel) continue;
+
+            const friendship = agent.id < otherId ? rel.friendship_ab : rel.friendship_ba;
+            if (friendship > 40) {
+              const otherName =
+                db
+                  .select({ name: agents.name })
+                  .from(agents)
+                  .where(eq(agents.id, otherId))
+                  .get()?.name ?? 'them';
+
+              db.insert(memories)
+                .values({
+                  agent_id: agent.id,
+                  content: `I feel terrible about what I said to ${otherName} while drunk.`,
+                  type: 'emotional',
+                  importance: 4,
+                  emotional_valence: -0.6,
+                  embedding: null,
+                  related_agents: [otherId],
+                  related_location: null,
+                  tags: ['regret', 'drunk'],
+                  timestamp: currentTick,
+                  access_count: 0,
+                  last_accessed: currentTick,
+                })
+                .run();
+
+              // Friendship penalty
+              if (agent.id < otherId) {
+                db.update(relationships)
+                  .set({ friendship_ab: clamp(friendship - 5, -100, 100) })
+                  .where(eq(relationships.id, rel.id))
+                  .run();
+              } else {
+                db.update(relationships)
+                  .set({ friendship_ba: clamp(friendship - 5, -100, 100) })
+                  .where(eq(relationships.id, rel.id))
+                  .run();
+              }
+            }
+          }
+        }
+
+        // Mark regret as processed so it only runs once per hangover
+        db.update(agentStates)
+          .set({ metadata: { ...(state.metadata as Record<string, any> | null ?? {}), regretProcessed: true } })
+          .where(eq(agentStates.id, state.id))
+          .run();
         break;
       }
 
