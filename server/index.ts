@@ -13,13 +13,17 @@ import { memories } from './db/schema';
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
 // Load vector store on startup
-const allMemories = db.select({
-  id: memories.id,
-  agentId: memories.agentId,
-  embedding: memories.embedding,
-}).from(memories).all();
-vectorStore.load(allMemories);
-console.log(`Loaded ${vectorStore.size} embeddings into vector store`);
+try {
+  const allMemories = db.select({
+    id: memories.id,
+    agentId: memories.agent_id,
+    embedding: memories.embedding,
+  }).from(memories).all();
+  vectorStore.load(allMemories);
+  console.log(`Loaded ${vectorStore.size} embeddings into vector store`);
+} catch (err) {
+  console.error('Failed to load vector store, continuing with empty store:', err);
+}
 
 // Express for health check
 const app = express();

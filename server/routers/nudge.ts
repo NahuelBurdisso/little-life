@@ -12,7 +12,7 @@ import {
   economyTransactions,
   activityLog,
 } from '../db/schema';
-import { eq, and, ne, inArray, sql } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
 
@@ -67,9 +67,22 @@ function getActionType(currentAction: Record<string, any> | null): string | null
   return typeof currentAction === 'string' ? currentAction : null;
 }
 
+const nudgeInput = z.object({
+  action: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('suggest_talk'), agentA: z.number(), agentB: z.number(), topic: z.string().optional() }),
+    z.object({ type: z.literal('suggest_go_to'), agentId: z.number(), locationId: z.number() }),
+    z.object({ type: z.literal('trigger_event'), eventType: z.string() }),
+    z.object({ type: z.literal('give_money'), agentId: z.number(), amount: z.number() }),
+    z.object({ type: z.literal('change_speed'), speed: z.number() }),
+    z.object({ type: z.literal('toggle_pause') }),
+    z.object({ type: z.literal('introduce_agent'), name: z.string(), bio: z.string(), traits: z.array(z.string()), job: z.string() }),
+    z.object({ type: z.literal('remove_agent'), agentId: z.number() }),
+  ]),
+});
+
 export const nudgeRouter = router({
   execute: publicProcedure
-    .input(z.object({ action: z.any() }))
+    .input(nudgeInput)
     .mutation(({ input }) => {
       const { action } = input;
 
