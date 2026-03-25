@@ -490,13 +490,10 @@ async function processTimedOutEntry(
     max_turns: 1,
   };
 
-  const convResult = db
-    .insert(conversations)
+  db.insert(conversations)
     .values(conversationDoc)
     .returning({ id: conversations.id })
     .get();
-
-  const conversationId = convResult.id;
 
   // Lighter relationship event for template conversations
   const friendshipDelta =
