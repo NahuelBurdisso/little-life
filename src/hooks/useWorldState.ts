@@ -1,8 +1,16 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { trpc } from '../lib/trpc';
 
 export function useWorldState() {
-  const world = useQuery(api.queries.world.getWorldState);
-  const events = useQuery(api.queries.world.getActiveEvents);
-  return { world, events, isLoading: world === undefined };
+  const utils = trpc.useUtils();
+  const { data: world, isLoading } = trpc.world.getState.useQuery();
+  const { data: events } = trpc.world.getActiveEvents.useQuery();
+
+  trpc.world.onStateChange.useSubscription(undefined, {
+    onData: () => {
+      utils.world.getState.invalidate();
+      utils.world.getActiveEvents.invalidate();
+    },
+  });
+
+  return { world: world ?? null, events: events ?? [], isLoading };
 }

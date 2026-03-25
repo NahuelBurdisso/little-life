@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { trpc } from "../../lib/trpc";
 import { useAgents } from "../../hooks/useAgents";
 
 interface RelationshipGraphProps {
@@ -26,7 +25,7 @@ interface GraphEdge {
 
 export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
   const { agents } = useAgents();
-  const relationships = useQuery(api.queries.relationships.getRelationshipGraph);
+  const { data: relationships } = trpc.relationships.getGraph.useQuery();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const nodesRef = useRef<GraphNode[]>([]);

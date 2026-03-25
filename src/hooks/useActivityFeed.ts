@@ -1,7 +1,14 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { trpc } from '../lib/trpc';
 
 export function useActivityFeed(limit: number = 50) {
-  const activities = useQuery(api.queries.activityLog.getRecentActivity, { limit });
-  return { activities: activities ?? [], isLoading: activities === undefined };
+  const utils = trpc.useUtils();
+  const { data: activities, isLoading } = trpc.activity.getRecent.useQuery({ limit });
+
+  trpc.activity.onUpdate.useSubscription(undefined, {
+    onData: () => {
+      utils.activity.getRecent.invalidate();
+    },
+  });
+
+  return { activities: activities ?? [], isLoading };
 }

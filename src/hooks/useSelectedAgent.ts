@@ -1,23 +1,25 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { trpc } from '../lib/trpc';
 
 export function useSelectedAgent(agentId: string | null) {
-  const data = useQuery(
-    api.queries.agents.getAgentFull,
-    agentId ? { id: agentId as any } : "skip"
+  const numericId = agentId ? Number(agentId) : null;
+
+  const { data } = trpc.agents.getFull.useQuery(
+    { agentId: numericId! },
+    { enabled: !!numericId }
   );
-  const relationships = useQuery(
-    api.queries.relationships.getAgentRelationships,
-    agentId ? { agentId: agentId as any } : "skip"
+  const { data: relationships } = trpc.relationships.getAgentRelationships.useQuery(
+    { agentId: numericId! },
+    { enabled: !!numericId }
   );
-  const memories = useQuery(
-    api.queries.memories.getRecentMemories,
-    agentId ? { agentId: agentId as any } : "skip"
+  const { data: memories } = trpc.memories.getRecent.useQuery(
+    { agentId: numericId! },
+    { enabled: !!numericId }
   );
+
   return {
-    data,
-    relationships,
-    memories,
+    data: data ?? undefined,
+    relationships: relationships ?? undefined,
+    memories: memories ?? undefined,
     isLoading: agentId !== null && data === undefined,
   };
 }

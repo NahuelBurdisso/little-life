@@ -1,7 +1,14 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { trpc } from '../lib/trpc';
 
 export function useConversations() {
-  const conversations = useQuery(api.queries.conversations.getActiveConversations);
-  return { conversations: conversations ?? [], isLoading: conversations === undefined };
+  const utils = trpc.useUtils();
+  const { data: conversations, isLoading } = trpc.conversations.getActive.useQuery();
+
+  trpc.conversations.onUpdate.useSubscription(undefined, {
+    onData: () => {
+      utils.conversations.getActive.invalidate();
+    },
+  });
+
+  return { conversations: conversations ?? [], isLoading };
 }

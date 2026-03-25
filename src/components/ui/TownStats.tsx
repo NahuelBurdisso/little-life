@@ -1,5 +1,4 @@
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { trpc } from "../../lib/trpc";
 import { useAgents } from "../../hooks/useAgents";
 import { COLORS } from "../../lib/constants";
 
@@ -25,7 +24,7 @@ function moodLabel(mood: number): string {
 }
 
 export function TownStats({ isOpen, onClose }: TownStatsProps) {
-  const economyStats = useQuery(api.queries.economy.getTownEconomyStats);
+  const { data: economyStats } = trpc.economy.getTownStats.useQuery();
   const { agents } = useAgents();
 
   if (!isOpen) return null;

@@ -1,21 +1,23 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { trpc, trpcClient } from "./lib/trpc";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import "./styles/globals.css";
 
-const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
-console.log("[Little Life] Connecting to Convex at:", convexUrl);
-
-const convex = new ConvexReactClient(convexUrl);
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+});
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <ConvexProvider client={convex}>
-        <App />
-      </ConvexProvider>
+      <trpc.Provider client={trpcClient} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <App />
+        </QueryClientProvider>
+      </trpc.Provider>
     </ErrorBoundary>
   </React.StrictMode>
 );

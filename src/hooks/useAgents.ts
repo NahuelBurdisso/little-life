@@ -1,7 +1,14 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { trpc } from '../lib/trpc';
 
 export function useAgents() {
-  const agents = useQuery(api.queries.agents.getActiveAgentsWithNeeds);
-  return { agents: agents ?? [], isLoading: agents === undefined };
+  const utils = trpc.useUtils();
+  const { data: agents, isLoading } = trpc.agents.getActive.useQuery();
+
+  trpc.agents.onUpdate.useSubscription(undefined, {
+    onData: () => {
+      utils.agents.getActive.invalidate();
+    },
+  });
+
+  return { agents: agents ?? [], isLoading };
 }

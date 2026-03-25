@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
+import { trpc } from "./lib/trpc";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
 import { AgentPanel } from "./components/ui/AgentPanel";
@@ -22,8 +21,8 @@ export default function App() {
   const { agents } = useAgents();
   const { conversations } = useConversations();
   const nudge = useNudge();
-  const locations = useQuery(api.queries.locations.getLocations) ?? [];
-  const allRelationships = useQuery(api.queries.relationships.getRelationshipGraph) ?? [];
+  const { data: locations } = trpc.locations.getAll.useQuery();
+  const { data: allRelationships } = trpc.relationships.getGraph.useQuery();
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [showEventMenu, setShowEventMenu] = useState(false);
@@ -32,20 +31,12 @@ export default function App() {
   const [showRelGraph, setShowRelGraph] = useState(false);
 
   // Tooltip state
-  const [hoveredAgent, setHoveredAgent] = useState<{ name: string; currentAction: any } | null>(null);
+  const [hoveredAgent, setHoveredAgent] = useState<{ name: string; currentAction: { type?: string } | string | null } | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
   // Context menu state
   const [contextMenuAgent, setContextMenuAgent] = useState<string | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-
-  // Initialize world on first load
-  const initialize = useMutation(api.init.initialize.initialize);
-  useEffect(() => {
-    if (!worldLoading && !world) {
-      initialize({});
-    }
-  }, [worldLoading, world, initialize]);
 
   // Close modals on Escape
   useEffect(() => {
@@ -86,7 +77,7 @@ export default function App() {
         setHoverPos(null);
         return;
       }
-      const agent = agents.find((a: any) => a._id === agentId);
+      const agent = agents.find((a) => a._id === agentId);
       if (agent) {
         setHoveredAgent({ name: agent.name, currentAction: agent.currentAction });
         setHoverPos(pos);
@@ -116,10 +107,7 @@ export default function App() {
       <div className="h-screen w-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-4">
         <p className="text-lg">Loading Little Life...</p>
         <p className="text-sm text-gray-500">
-          Connecting to Convex at {import.meta.env.VITE_CONVEX_URL || "no URL set"}
-        </p>
-        <p className="text-xs text-gray-600">
-          worldLoading={String(worldLoading)}, world={String(world)}
+          Connecting to server...
         </p>
       </div>
     );
@@ -139,8 +127,8 @@ export default function App() {
           agents={agents}
           world={world}
           conversations={conversations ?? []}
-          locations={locations}
-          relationships={allRelationships}
+          locations={locations ?? []}
+          relationships={allRelationships ?? []}
           onAgentSelect={setSelectedAgentId}
           onAgentContextMenu={handleAgentContextMenu}
           onAgentHover={handleAgentHover}
@@ -184,7 +172,7 @@ export default function App() {
           selectedAgentId={selectedAgentId}
           position={contextMenuPos}
           agents={agents}
-          locations={locations}
+          locations={locations ?? []}
           onClose={handleCloseContextMenu}
           onSelectAgent={(id) => {
             setSelectedAgentId(id);
