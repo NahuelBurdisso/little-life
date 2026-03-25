@@ -3,6 +3,7 @@ import { agents, needs, economy, conversations, relationships, memories, locatio
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
 import { getEffectivePersonality, getActiveStatePrompts } from '../lib/states';
+import { getShareableFacts } from '../lib/gossip';
 
 export function getConversationContext(conversationId: number, speakerId: number) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
@@ -48,6 +49,10 @@ export function getConversationContext(conversationId: number, speakerId: number
   const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
   const statePrompts = getActiveStatePrompts(speaker.id, world?.time?.totalTicks);
 
+  const gossipFacts = effectivePersonality
+    ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality as any)
+    : [];
+
   return {
     conversation,
     speaker,
@@ -60,6 +65,7 @@ export function getConversationContext(conversationId: number, speakerId: number
     world,
     effectivePersonality,
     statePrompts,
+    gossipFacts,
   };
 }
 

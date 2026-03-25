@@ -277,6 +277,7 @@ export interface ConversationPromptParams {
   location: LocationRow;
   effectivePersonality?: PersonalityProfile | null;
   statePrompts?: string[];
+  gossipFacts?: Array<{ content: string; sensitivity: number }>;
 }
 
 export function buildConversationPrompt(
@@ -294,6 +295,7 @@ export function buildConversationPrompt(
     location,
     effectivePersonality,
     statePrompts,
+    gossipFacts,
   } = params;
 
   const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts);
@@ -315,6 +317,17 @@ export function buildConversationPrompt(
     buildRelationshipContext(relationship, speaker.id, otherAgent),
     "",
   );
+
+  // Gossip facts
+  if (gossipFacts && gossipFacts.length > 0) {
+    const factsText = gossipFacts.map(f => `- ${f.content}`).join('\n');
+    contextParts.push(
+      `## Things you know (that ${params.otherAgent?.name ?? 'they'} might not know)`,
+      factsText,
+      `\nYou can share this, keep it to yourself, or use it however fits your personality.`,
+      "",
+    );
+  }
 
   // Memories
   if (memories.length > 0) {

@@ -33,7 +33,7 @@ import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { getAgentStates } from '../../lib/states';
-import { createFact } from '../../lib/gossip';
+import { createFact, spreadGossip, getShareableFacts } from '../../lib/gossip';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -516,6 +516,18 @@ async function processCompletedConversation(
         .where(eq(needs.id, agentNeeds.id))
         .run();
     }
+  }
+
+  // Spread gossip: for each participant, share known facts if the subject was mentioned
+  const messageTexts = messages.map((m) => m.text);
+  for (const pid of participantIds) {
+    const otherId = participantIds.find((p) => p !== pid);
+    if (!otherId) continue;
+    const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
+    if (!agent?.personality) continue;
+    const personalityData = agent.personality as any;
+    const sharable = getShareableFacts(pid, otherId, personalityData);
+    spreadGossip(pid, otherId, messageTexts, sharable);
   }
 
   // Mark conversation as ended
