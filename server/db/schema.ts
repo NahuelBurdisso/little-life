@@ -436,3 +436,21 @@ export const activityLog = sqliteTable(
     index('idx_activity_log_type_timestamp').on(table.type, table.timestamp),
   ]
 );
+
+// ─── 18. facts ────────────────────────────────────────────────────────────────
+
+export const facts = sqliteTable('facts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  type: text('type').notNull(),
+  subject_id: integer('subject_id').notNull().references(() => agents.id),
+  target_id: integer('target_id').references(() => agents.id),
+  content: text('content').notNull(),
+  sensitivity: integer('sensitivity').notNull(),
+  known_by: text('known_by', { mode: 'json' }).notNull().$type<number[]>(),
+  created_at: integer('created_at').notNull(),
+  is_active: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  source: text('source').notNull(),
+}, (table) => [
+  index('idx_facts_subject').on(table.subject_id),
+  index('idx_facts_active').on(table.is_active),
+]);

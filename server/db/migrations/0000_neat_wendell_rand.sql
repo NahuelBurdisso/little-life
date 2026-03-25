@@ -123,6 +123,23 @@ CREATE TABLE `economy_transactions` (
 --> statement-breakpoint
 CREATE INDEX `idx_economy_transactions_timestamp` ON `economy_transactions` (`timestamp`);--> statement-breakpoint
 CREATE INDEX `idx_economy_transactions_to_agent` ON `economy_transactions` (`to_agent`);--> statement-breakpoint
+CREATE TABLE `facts` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`type` text NOT NULL,
+	`subject_id` integer NOT NULL,
+	`target_id` integer,
+	`content` text NOT NULL,
+	`sensitivity` integer NOT NULL,
+	`known_by` text NOT NULL,
+	`created_at` integer NOT NULL,
+	`is_active` integer DEFAULT true NOT NULL,
+	`source` text NOT NULL,
+	FOREIGN KEY (`subject_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`target_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `idx_facts_subject` ON `facts` (`subject_id`);--> statement-breakpoint
+CREATE INDEX `idx_facts_active` ON `facts` (`is_active`);--> statement-breakpoint
 CREATE TABLE `locations` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,

@@ -1,0 +1,335 @@
+import { db } from '../db';
+import { agents, facts, relationships, agentStates, economy, conversations } from '../db/schema';
+import { eq, and, desc } from 'drizzle-orm';
+import { PersonalityProfile } from './personality';
+
+// ─── Fact Content Templates ───────────────────────────────────────────────────
+
+const FACT_TEMPLATES: Record<string, (subjectName: string, targetName?: string) => string> = {
+  crush: (s, t) => `${s} has a crush on ${t ?? 'someone'}`,
+  heartbreak: (s, t) => `${s} is heartbroken over ${t ?? 'someone'}`,
+  drunk_incident: (s, t) => `${s} got drunk and said terrible things to ${t ?? 'someone'}`,
+  grudge: (s, t) => `${s} holds a grudge against ${t ?? 'someone'}`,
+  affair: (s, t) => `${s} and ${t ?? 'someone'} are getting suspiciously close`,
+  financial: (s) => `${s} is struggling with money`,
+  secret_told: (s, t) => `${s} confided something personal to ${t ?? 'someone'}`,
+  work_issue: (s) => `${s} keeps skipping work`,
+  sickness: (s) => `${s} is sick`,
+  reputation: (s) => `People have been having bad interactions with ${s} lately`,
+};
+
+// ─── getAgentName ─────────────────────────────────────────────────────────────
+
+export function getAgentName(agentId: number): string {
+  const row = db
+    .select({ name: agents.name })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .get();
+  return row?.name ?? `Agent#${agentId}`;
+}
+
+// ─── getRelationshipFriendship ────────────────────────────────────────────────
+
+export function getRelationshipFriendship(agentA: number, agentB: number): number {
+  // relationships always stored with agent_a < agent_b
+  const [lo, hi] = agentA < agentB ? [agentA, agentB] : [agentB, agentA];
+  const row = db
+    .select({
+      friendship_ab: relationships.friendship_ab,
+      friendship_ba: relationships.friendship_ba,
+    })
+    .from(relationships)
+    .where(and(eq(relationships.agent_a, lo), eq(relationships.agent_b, hi)))
+    .get();
+
+  if (!row) return 0;
+  // return friendship value from agentA's perspective toward agentB
+  return agentA < agentB ? row.friendship_ab : row.friendship_ba;
+}
+
+// ─── createFact ───────────────────────────────────────────────────────────────
+
+export function createFact(
+  type: string,
+  subjectId: number,
+  targetId: number | null,
+  sensitivity: number,
+  knownBy: number[],
+  source: string
+): number | null {
+  const subjectName = getAgentName(subjectId);
+  const targetName = targetId != null ? getAgentName(targetId) : undefined;
+
+  const template = FACT_TEMPLATES[type];
+  const content = template ? template(subjectName, targetName) : `${subjectName}: ${type}`;
+
+  // Check for existing active duplicate (same type + subject + target)
+  const existing = db
+    .select({ id: facts.id })
+    .from(facts)
+    .where(
+      and(
+        eq(facts.type, type),
+        eq(facts.subject_id, subjectId),
+        eq(facts.is_active, true),
+        ...(targetId != null
+          ? [eq(facts.target_id, targetId)]
+          : [])
+      )
+    )
+    .get();
+
+  if (existing) return null;
+
+  const result = db
+    .insert(facts)
+    .values({
+      type,
+      subject_id: subjectId,
+      target_id: targetId,
+      content,
+      sensitivity,
+      known_by: knownBy,
+      created_at: Date.now(),
+      is_active: true,
+      source,
+    })
+    .run();
+
+  return Number(result.lastInsertRowid);
+}
+
+// ─── getShareableFacts ────────────────────────────────────────────────────────
+
+export function getShareableFacts(
+  speakerId: number,
+  listenerId: number,
+  personality: PersonalityProfile
+): typeof facts.$inferSelect[] {
+  const allActive = db
+    .select()
+    .from(facts)
+    .where(eq(facts.is_active, true))
+    .orderBy(desc(facts.sensitivity), desc(facts.created_at))
+    .all();
+
+  const shareable = allActive.filter((fact) => {
+    const knownBy: number[] = fact.known_by as number[];
+
+    // Speaker must know this fact
+    if (!knownBy.includes(speakerId)) return false;
+    // Listener must not already know it
+    if (knownBy.includes(listenerId)) return false;
+
+    // Personality gates
+    if (fact.sensitivity >= 2 && personality.honesty > 60) return false;
+    if (fact.sensitivity >= 3 && personality.morality > 60) return false;
+
+    // Loyalty gate: skip facts about the speaker's friends
+    if (personality.loyalty > 60) {
+      const friendshipWithSubject = getRelationshipFriendship(speakerId, fact.subject_id);
+      if (friendshipWithSubject > 50) return false;
+    }
+
+    return true;
+  });
+
+  // Sort: sensitivity desc, then relevance to listener (facts about listener or their friends first)
+  shareable.sort((a, b) => {
+    if (b.sensitivity !== a.sensitivity) return b.sensitivity - a.sensitivity;
+
+    const aRelevant =
+      a.subject_id === listenerId ||
+      a.target_id === listenerId ||
+      getRelationshipFriendship(listenerId, a.subject_id) > 50;
+    const bRelevant =
+      b.subject_id === listenerId ||
+      b.target_id === listenerId ||
+      getRelationshipFriendship(listenerId, b.subject_id) > 50;
+
+    if (aRelevant && !bRelevant) return -1;
+    if (!aRelevant && bRelevant) return 1;
+
+    return b.created_at - a.created_at;
+  });
+
+  return shareable.slice(0, 3);
+}
+
+// ─── spreadGossip ─────────────────────────────────────────────────────────────
+
+export function spreadGossip(
+  _speakerId: number,
+  listenerId: number,
+  messages: string[],
+  speakerFacts: typeof facts.$inferSelect[]
+): void {
+  const combinedText = messages.join(' ').toLowerCase();
+
+  for (const fact of speakerFacts) {
+    const subjectName = getAgentName(fact.subject_id).toLowerCase();
+    if (!combinedText.includes(subjectName)) continue;
+
+    const knownBy: number[] = fact.known_by as number[];
+    if (knownBy.includes(listenerId)) continue;
+
+    const updated = [...new Set([...knownBy, listenerId])];
+
+    db.update(facts)
+      .set({ known_by: updated })
+      .where(eq(facts.id, fact.id))
+      .run();
+  }
+}
+
+// ─── spreadPublicKnowledge ────────────────────────────────────────────────────
+
+export function spreadPublicKnowledge(): void {
+  const publicFacts = db
+    .select()
+    .from(facts)
+    .where(and(eq(facts.is_active, true), eq(facts.sensitivity, 1)))
+    .all();
+
+  if (publicFacts.length === 0) return;
+
+  // Load all agents with their current location
+  const allAgents = db
+    .select({ id: agents.id, current_location: agents.current_location })
+    .from(agents)
+    .where(eq(agents.is_active, true))
+    .all();
+
+  // Build a map: locationId -> agentIds
+  const locationMap = new Map<number, number[]>();
+  for (const agent of allAgents) {
+    if (agent.current_location == null) continue;
+    const existing = locationMap.get(agent.current_location) ?? [];
+    existing.push(agent.id);
+    locationMap.set(agent.current_location, existing);
+  }
+
+  for (const fact of publicFacts) {
+    // Find subject's current location
+    const subjectAgent = allAgents.find((a) => a.id === fact.subject_id);
+    if (!subjectAgent?.current_location) continue;
+
+    const coLocated = locationMap.get(subjectAgent.current_location) ?? [];
+    if (coLocated.length === 0) continue;
+
+    const knownBy: number[] = fact.known_by as number[];
+    const updated = [...new Set([...knownBy, ...coLocated])];
+
+    if (updated.length !== knownBy.length) {
+      db.update(facts)
+        .set({ known_by: updated })
+        .where(eq(facts.id, fact.id))
+        .run();
+    }
+  }
+}
+
+// ─── deactivateStaleFacts ─────────────────────────────────────────────────────
+
+export function deactivateStaleFacts(): void {
+  const activeFacts = db
+    .select()
+    .from(facts)
+    .where(eq(facts.is_active, true))
+    .all();
+
+  for (const fact of activeFacts) {
+    let stale = false;
+
+    switch (fact.type) {
+      case 'crush': {
+        // Deactivate if no active infatuated state for subject targeting the same target
+        const state = db
+          .select({ id: agentStates.id })
+          .from(agentStates)
+          .where(
+            and(
+              eq(agentStates.agent_id, fact.subject_id),
+              eq(agentStates.type, 'infatuated'),
+              ...(fact.target_id != null ? [eq(agentStates.target_agent_id, fact.target_id)] : [])
+            )
+          )
+          .get();
+        if (!state) stale = true;
+        break;
+      }
+
+      case 'heartbreak': {
+        // Deactivate if no active heartbroken state for subject
+        const state = db
+          .select({ id: agentStates.id })
+          .from(agentStates)
+          .where(
+            and(
+              eq(agentStates.agent_id, fact.subject_id),
+              eq(agentStates.type, 'heartbroken')
+            )
+          )
+          .get();
+        if (!state) stale = true;
+        break;
+      }
+
+      case 'sickness': {
+        const state = db
+          .select({ id: agentStates.id })
+          .from(agentStates)
+          .where(
+            and(
+              eq(agentStates.agent_id, fact.subject_id),
+              eq(agentStates.type, 'sick')
+            )
+          )
+          .get();
+        if (!state) stale = true;
+        break;
+      }
+
+      case 'financial': {
+        const eco = db
+          .select({ money: economy.money })
+          .from(economy)
+          .where(eq(economy.agent_id, fact.subject_id))
+          .get();
+        if (eco && eco.money > 30) stale = true;
+        break;
+      }
+
+      case 'work_issue': {
+        // Deactivated externally when agent works consistently; skip here
+        break;
+      }
+
+      case 'reputation': {
+        // Deactivate if no negative conversations involving subject in last 1440 ticks (1440000 ms)
+        const cutoff = Date.now() - 1_440_000;
+        const negConvs = db
+          .select({ id: conversations.id, participants: conversations.participants, sentiment: conversations.sentiment, ended_at: conversations.ended_at })
+          .from(conversations)
+          .where(eq(conversations.status, 'completed'))
+          .all()
+          .filter((c) => {
+            const participants: number[] = c.participants as number[];
+            const endedAt = c.ended_at ?? 0;
+            return participants.includes(fact.subject_id) && c.sentiment < 0 && endedAt > cutoff;
+          });
+
+        if (negConvs.length === 0) stale = true;
+        break;
+      }
+    }
+
+    if (stale) {
+      db.update(facts)
+        .set({ is_active: false })
+        .where(eq(facts.id, fact.id))
+        .run();
+    }
+  }
+}
