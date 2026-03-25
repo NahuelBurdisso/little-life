@@ -6,6 +6,7 @@ import {
   relationships,
   locations,
   conversationQueue,
+  conversations,
 } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -456,10 +457,30 @@ export async function tick(world: WorldRow): Promise<void> {
 
     // Social decisions -> conversation queue
     if (decision.action === 'socializing' && decision.targetAgentId) {
+      const agentId = agent.id;
+      const targetId = decision.targetAgentId;
+
+      // Check if this pair already has a queued conversation
+      const existingQueue = db.select().from(conversationQueue).all()
+        .filter(q => {
+          const p = q.participants as number[];
+          return p.includes(agentId) && p.includes(targetId);
+        });
+      if (existingQueue.length > 0) continue; // Already queued
+
+      // Check if this pair already has an active conversation
+      const existingActive = db.select().from(conversations)
+        .where(eq(conversations.status, 'active')).all()
+        .filter(c => {
+          const p = c.participants as number[];
+          return p.includes(agentId) && p.includes(targetId);
+        });
+      if (existingActive.length > 0) continue; // Already talking
+
       const rel = getRelationshipValues(
         allRelationships,
-        agent.id,
-        decision.targetAgentId,
+        agentId,
+        targetId,
       );
       const friendship = rel?.friendship ?? 0;
       const romance = rel?.romance ?? 0;
@@ -474,7 +495,7 @@ export async function tick(world: WorldRow): Promise<void> {
 
       db.insert(conversationQueue)
         .values({
-          participants: [agent.id, decision.targetAgentId],
+          participants: [agentId, targetId],
           tier,
           priority,
           trigger_reason: 'needs_social',

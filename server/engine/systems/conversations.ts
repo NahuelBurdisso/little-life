@@ -180,7 +180,12 @@ export async function conversationsTick(): Promise<void> {
     const conversationId = result.id;
 
     // Schedule first response via task runner
-    taskRunner.startConversation(conversationId, entry.participants[0]);
+    const accepted = taskRunner.startConversation(conversationId, entry.participants[0]);
+    if (!accepted) {
+      // Slots full — remove the conversation record and skip
+      db.delete(conversations).where(eq(conversations.id, conversationId)).run();
+      continue;
+    }
 
     // Update both agents' currentAction to "talking"
     const time = world.time as { totalTicks: number };
@@ -277,10 +282,15 @@ async function processCompletedConversation(
       const trustDelta =
         overallSentiment > 0.3 ? 2 : overallSentiment < -0.3 ? -3 : 0;
 
+      // Enforce A < B ordering for consistency with relationship table
+      const [orderedA, orderedB] = agentA.id < agentB.id
+        ? [agentA.id, agentB.id]
+        : [agentB.id, agentA.id];
+
       db.insert(relationshipEvents)
         .values({
-          agent_a: agentA.id,
-          agent_b: agentB.id,
+          agent_a: orderedA,
+          agent_b: orderedB,
           event_type: 'conversation',
           description: `Conversation about ${conversation.topic ?? 'various things'}`,
           friendship_delta_ab: friendshipDelta,
@@ -374,6 +384,17 @@ async function processCompletedConversation(
     })
     .where(eq(conversations.id, conversation.id))
     .run();
+
+  // Reset participants back to idle
+  for (const participantId of participantIds) {
+    db.update(agents)
+      .set({
+        current_action: { type: 'idle' },
+        action_duration: null,
+      })
+      .where(eq(agents.id, participantId))
+      .run();
+  }
 
   // Log activity
   db.insert(activityLog)
@@ -501,8 +522,8 @@ async function processTimedOutEntry(
 
   db.insert(relationshipEvents)
     .values({
-      agent_a: entry.participants[0],
-      agent_b: entry.participants[1],
+      agent_a: orderedA,
+      agent_b: orderedB,
       event_type: 'conversation',
       description: 'Brief exchange (template)',
       friendship_delta_ab: friendshipDelta,

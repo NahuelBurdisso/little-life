@@ -44,7 +44,7 @@ export const conversationsRouter = router({
     }),
 
   onUpdate: publicProcedure.subscription(async function* (opts) {
-    for await (const data of emitter.iterate('conversations.all', opts.signal)) {
+    for await (const data of emitter.iterate('conversations', opts.signal)) {
       yield data;
     }
   }),

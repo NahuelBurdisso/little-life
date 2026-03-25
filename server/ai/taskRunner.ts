@@ -3,6 +3,9 @@ import { generateReflection } from './generateReflection';
 import { generateEmbeddingForMemory } from './generateEmbedding';
 import { markConversationEnded } from '../helpers/conversationHelpers';
 import { emitter } from '../engine/emitter';
+import { db } from '../db';
+import { conversations as conversationsTable, agents } from '../db/schema';
+import { eq } from 'drizzle-orm';
 
 class TaskRunner {
   private conversationSlots = 0;
@@ -29,18 +32,32 @@ class TaskRunner {
         this.conversationSlots--;
         return;
       }
-      emitter.markDirty('conversations.active');
+      emitter.markDirty('conversations');
       if (result.messageCount < result.maxTurns && result.otherParticipantId) {
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.runConversationTurn(conversationId, result.otherParticipantId);
       } else {
         this.conversationSlots--;
+        // Conversation reached max turns — reset agents to idle
+        const convo = db.select().from(conversationsTable).where(eq(conversationsTable.id, conversationId)).get();
+        if (convo?.participants) {
+          for (const pid of convo.participants as number[]) {
+            db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null }).where(eq(agents.id, pid)).run();
+          }
+        }
       }
     } catch (err) {
       console.error(`Conversation ${conversationId} error:`, err);
       this.conversationSlots--;
       markConversationEnded(conversationId);
-      emitter.markDirty('conversations.active');
+      // Reset agents back to idle after error
+      const convo = db.select().from(conversationsTable).where(eq(conversationsTable.id, conversationId)).get();
+      if (convo?.participants) {
+        for (const pid of convo.participants as number[]) {
+          db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null }).where(eq(agents.id, pid)).run();
+        }
+      }
+      emitter.markDirty('conversations');
     }
   }
 
