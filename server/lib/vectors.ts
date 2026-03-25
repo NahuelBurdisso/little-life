@@ -5,7 +5,8 @@ export class VectorStore {
   load(memories: Array<{ id: number; agentId: number; embedding: Buffer | null }>) {
     for (const m of memories) {
       if (m.embedding) {
-        this.vectors.set(m.id, new Float32Array(m.embedding.buffer, m.embedding.byteOffset, m.embedding.byteLength / 4));
+        const copy = new Uint8Array(m.embedding);
+        this.vectors.set(m.id, new Float32Array(copy.buffer));
         this.memoryAgentMap.set(m.id, m.agentId);
       }
     }

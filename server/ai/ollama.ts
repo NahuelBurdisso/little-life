@@ -6,6 +6,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { CONFIG } from '../lib/constants';
+
 export interface OllamaChatRequest {
   model: string;
   system: string;
@@ -32,7 +34,7 @@ export async function callOllamaChat(
   const url = `${baseUrl}/api/chat`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
 
   try {
     const body = {
@@ -68,7 +70,7 @@ export async function callOllamaChat(
     return { text: data.message.content };
   } catch (error: any) {
     if (error.name === "AbortError") {
-      throw new Error("Ollama request timed out after 120s");
+      throw new Error(`Ollama request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
     }
     throw error;
   } finally {
@@ -85,7 +87,7 @@ export async function callOllamaEmbedding(
   const url = `${url_base}/api/embeddings`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -114,7 +116,7 @@ export async function callOllamaEmbedding(
     return data.embedding;
   } catch (error: any) {
     if (error.name === "AbortError") {
-      throw new Error("Ollama request timed out after 120s");
+      throw new Error(`Ollama request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
     }
     throw error;
   } finally {

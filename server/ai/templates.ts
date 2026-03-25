@@ -48,17 +48,18 @@ function conditionsMatch(
   return true;
 }
 
-export async function selectTemplate(
+export function selectTemplate(
   category: string,
   agentA: number,
   agentB: number,
   currentState: CurrentState
-): Promise<{ text: string; sentiment: number } | null> {
+): { text: string; sentiment: number } | null {
   // 1. Query templates for this category
-  const categoryTemplates = await db
+  const categoryTemplates = db
     .select()
     .from(templates)
-    .where(eq(templates.category, category));
+    .where(eq(templates.category, category))
+    .all();
 
   if (categoryTemplates.length === 0) return null;
 
@@ -73,7 +74,7 @@ export async function selectTemplate(
   const [orderedA, orderedB] =
     agentA < agentB ? [agentA, agentB] : [agentB, agentA];
 
-  const recentUsage = await db
+  const recentUsageRows = db
     .select()
     .from(templateUsage)
     .where(
@@ -85,7 +86,8 @@ export async function selectTemplate(
     )
     .orderBy(desc(templateUsage.used_at))
     .limit(1)
-    .then((rows) => rows[0] ?? null);
+    .all();
+  const recentUsage = recentUsageRows[0] ?? null;
 
   const now = Date.now();
 
@@ -106,12 +108,12 @@ export async function selectTemplate(
   const variant = variants[Math.floor(Math.random() * variants.length)];
 
   // 5. Record usage
-  await db.insert(templateUsage).values({
+  db.insert(templateUsage).values({
     template_category: category,
     agent_a: orderedA,
     agent_b: orderedB,
     used_at: now,
-  });
+  }).run();
 
   return { text: variant.text, sentiment: variant.sentiment };
 }

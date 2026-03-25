@@ -1,4 +1,4 @@
-import { db, sqlite } from '../db';
+import { db } from '../db';
 import { worldState, activityLog } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { emitter } from './emitter';
@@ -137,7 +137,14 @@ async function gameTick(): Promise<void> {
     .run();
 
   // 6. Build updated world object for systems that need it (with new time)
-  const worldWithNewTime: WorldRow = { ...world, time: newTime };
+  const worldWithNewTime: WorldRow = {
+    ...world,
+    time: newTime,
+    day_phase: newDayPhase,
+    pending_transitions: transitions,
+    tick_id: tickId,
+    current_tick_phase: 1,
+  };
 
   // 7. Run 7 system phases sequentially
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
@@ -146,12 +153,16 @@ async function gameTick(): Promise<void> {
 
     try {
       // Run phase. conversationsTick is async (dispatches LLM tasks) so we
-      // await it to ensure synchronous DB work (queue processing) completes
-      // before moving to the next phase. The actual LLM dispatch happens
-      // asynchronously in the TaskRunner outside the tick timeline.
-      const result = phase.run(worldWithNewTime);
-      if (result instanceof Promise) {
-        await result;
+      // await it — its synchronous DB work runs inside a transaction, but
+      // the actual LLM dispatch happens asynchronously in the TaskRunner.
+      if (phase.name === 'conversations') {
+        // Async phase: conversationsTick queues LLM tasks outside the transaction
+        await phase.run(worldWithNewTime);
+      } else {
+        // Synchronous phases: wrap in a transaction for atomicity
+        db.transaction(() => {
+          phase.run(worldWithNewTime);
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -185,7 +196,7 @@ async function gameTick(): Promise<void> {
     .run();
 
   // 9. Mark emitter dirty and flush
-  emitter.markDirty('world');
+  emitter.markDirty('world.state');
   emitter.flush();
 }
 

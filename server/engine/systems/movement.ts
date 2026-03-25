@@ -140,23 +140,25 @@ export async function tick(world: WorldRow): Promise<void> {
         if (oldLocationId) {
           const oldLoc = allLocations.find((l) => l.id === oldLocationId);
           if (oldLoc) {
+            const updatedOccupants = oldLoc.current_occupants.filter((id) => id !== agent.id);
             db.update(locations)
-              .set({
-                current_occupants: oldLoc.current_occupants.filter((id) => id !== agent.id),
-              })
+              .set({ current_occupants: updatedOccupants })
               .where(eq(locations.id, oldLoc.id))
               .run();
+            // Mirror change in local array so subsequent agents see fresh data
+            oldLoc.current_occupants = updatedOccupants;
           }
         }
         if (newLocationId) {
           const newLoc = allLocations.find((l) => l.id === newLocationId);
           if (newLoc && !newLoc.current_occupants.includes(agent.id)) {
+            const updatedOccupants = [...newLoc.current_occupants, agent.id];
             db.update(locations)
-              .set({
-                current_occupants: [...newLoc.current_occupants, agent.id],
-              })
+              .set({ current_occupants: updatedOccupants })
               .where(eq(locations.id, newLoc.id))
               .run();
+            // Mirror change in local array so subsequent agents see fresh data
+            newLoc.current_occupants = updatedOccupants;
           }
         }
 
@@ -230,23 +232,25 @@ export async function tick(world: WorldRow): Promise<void> {
       if (oldLocationId) {
         const oldLoc = allLocations.find((l) => l.id === oldLocationId);
         if (oldLoc) {
+          const updatedOccupants = oldLoc.current_occupants.filter((id) => id !== agent.id);
           db.update(locations)
-            .set({
-              current_occupants: oldLoc.current_occupants.filter((id) => id !== agent.id),
-            })
+            .set({ current_occupants: updatedOccupants })
             .where(eq(locations.id, oldLoc.id))
             .run();
+          // Mirror change in local array so subsequent agents see fresh data
+          oldLoc.current_occupants = updatedOccupants;
         }
       }
       if (newLocationId) {
         const newLoc = allLocations.find((l) => l.id === newLocationId);
         if (newLoc && !newLoc.current_occupants.includes(agent.id)) {
+          const updatedOccupants = [...newLoc.current_occupants, agent.id];
           db.update(locations)
-            .set({
-              current_occupants: [...newLoc.current_occupants, agent.id],
-            })
+            .set({ current_occupants: updatedOccupants })
             .where(eq(locations.id, newLoc.id))
             .run();
+          // Mirror change in local array so subsequent agents see fresh data
+          newLoc.current_occupants = updatedOccupants;
         }
       }
     }

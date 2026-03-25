@@ -29,6 +29,9 @@ export class TickEmitter {
       if (resolve) { resolve(); resolve = null; }
     });
 
+    const onAbort = () => { if (resolve) { resolve(); resolve = null; } };
+    signal?.addEventListener('abort', onAbort);
+
     try {
       while (!signal?.aborted) {
         if (queue.length > 0) {
@@ -38,6 +41,7 @@ export class TickEmitter {
         }
       }
     } finally {
+      signal?.removeEventListener('abort', onAbort);
       unsub();
     }
   }

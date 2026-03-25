@@ -25,8 +25,12 @@ class TaskRunner {
   private async runConversationTurn(conversationId: number, speakerId: number): Promise<void> {
     try {
       const result = await generateResponse(conversationId, speakerId);
+      if (!result) {
+        this.conversationSlots--;
+        return;
+      }
       emitter.markDirty('conversations.active');
-      if (result && result.messageCount < result.maxTurns && result.otherParticipantId) {
+      if (result.messageCount < result.maxTurns && result.otherParticipantId) {
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.runConversationTurn(conversationId, result.otherParticipantId);
       } else {
