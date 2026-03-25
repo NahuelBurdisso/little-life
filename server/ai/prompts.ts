@@ -5,6 +5,8 @@
  * Pure functions — no I/O.
  */
 
+import { buildPersonalityDescription } from '../lib/personality';
+
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
 // ---------------------------------------------------------------------------
@@ -16,6 +18,18 @@ export interface AgentRow {
   traits: string[];
   age: number;
   gender: string;
+  personality: {
+    honesty: number;
+    aggression: number;
+    warmth: number;
+    impulsiveness: number;
+    vanity: number;
+    curiosity: number;
+    loyalty: number;
+    morality: number;
+    sensuality: number;
+    neuroticism: number;
+  } | null;
 }
 
 export interface NeedsRow {
@@ -97,7 +111,7 @@ function describeEnergy(energy: number): string {
   return "barely able to keep your eyes open";
 }
 
-function describeHunger(hunger: number): string {
+export function describeHunger(hunger: number): string {
   if (hunger > 80) return "well-fed";
   if (hunger > 60) return "not hungry";
   if (hunger > 40) return "getting hungry";
@@ -105,7 +119,7 @@ function describeHunger(hunger: number): string {
   return "starving";
 }
 
-function describeSocial(social: number): string {
+export function describeSocial(social: number): string {
   if (social > 80) return "socially fulfilled";
   if (social > 60) return "content with your social life";
   if (social > 40) return "could use some company";
@@ -122,29 +136,28 @@ export function buildAgentSystemPrompt(
   needs: NeedsRow,
   economy: EconomyRow,
 ): string {
-  return `You are ${agent.name}, a ${agent.age}-year-old ${economy.job_title} living in a small town called Little Life.
+  const personalityDesc = agent.personality
+    ? buildPersonalityDescription(agent.personality, agent.traits as string[])
+    : `Your personality traits: ${(agent.traits as string[]).join(', ')}.`;
 
-## Your personality
+  return `You are ${agent.name}, ${agent.age} years old, ${economy.job_title} in a small town.
+
 ${agent.bio}
 
-## Your traits
-${agent.traits.join(", ")}
+${personalityDesc}
 
-## Your current state
-- Mood: ${describeMood(needs.mood)} (${Math.round(needs.mood)}/100)
-- Energy: ${describeEnergy(needs.energy)}
-- Hunger: ${describeHunger(needs.hunger)}
-- Social fulfillment: ${describeSocial(needs.social)}
-- You have ${Math.round(economy.money)} coins
+You are currently feeling ${describeMood(needs.mood)} (mood: ${Math.round(needs.mood)}/100).
+Your energy is ${describeEnergy(needs.energy)} (${Math.round(needs.energy)}/100).
+You have $${Math.round(economy.money)} to your name.
 
-## Rules for your responses
-- Speak naturally as ${agent.name} would, given your personality and current state
-- Keep responses to 1-3 sentences. You're having a casual conversation, not writing an essay
-- Your mood and energy affect how you talk
-- Reference your memories and shared history when relevant
-- You can express opinions about other townspeople based on your relationships
-- Never break character or acknowledge being an AI
-- If you want to end the conversation, say goodbye naturally`;
+RULES:
+- Stay in character. You ARE this person.
+- Express genuine emotions — anger, jealousy, attraction, contempt, affection.
+- If you dislike someone, show it. If you're attracted, show it.
+- You can lie, manipulate, gossip, flirt, argue, or refuse to talk based on who you are.
+- Your responses reflect your current state — tired, hungry, stressed, happy.
+- 1-3 sentences. Natural speech, not formal.
+- Reference your memories and relationships when relevant.`;
 }
 
 // ---------------------------------------------------------------------------
