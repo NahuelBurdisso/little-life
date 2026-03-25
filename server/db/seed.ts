@@ -61,7 +61,7 @@ function isSeeded(): boolean {
 }
 
 function seed() {
-  const now = Date.now();
+  const now = Date.now(); // wall-clock only — used for last_tick_completed, real_timestamp
 
   // 1. Insert locations, build name -> ID map
   console.log('[seed] Inserting locations...');
@@ -127,7 +127,7 @@ function seed() {
         schedule: seed.schedule,
         home: homeId,
         workplace: workplaceId,
-        created_at: now,
+        created_at: 0,
         is_active: true,
       })
       .returning({ id: agents.id })
@@ -154,7 +154,7 @@ function seed() {
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
       thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
       mood_modifiers: [],
-      last_updated: now,
+      last_updated: 0,
     }).run();
 
     db.insert(economy).values({
@@ -171,7 +171,7 @@ function seed() {
             (CONFIG.ECONOMY.DAILY_EXPENSES.max - CONFIG.ECONOMY.DAILY_EXPENSES.min)
         ),
       inventory: [],
-      last_payday: now,
+      last_payday: 0,
       production_remainder: 0,
     }).run();
   }

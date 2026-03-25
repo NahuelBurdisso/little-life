@@ -1,4 +1,4 @@
-import { AGENT_SEEDS, type AgentSeed } from './agents';
+import { AGENT_SEEDS } from './agents';
 
 export interface RelationshipSeed {
   agent_a: number;
@@ -22,7 +22,7 @@ export interface RelationshipSeed {
 export function getRelationshipSeeds(
   agentMap: Map<string, number>
 ): RelationshipSeed[] {
-  const now = Date.now();
+  const now = 0; // game start tick, not wall-clock
   const createdPairs = new Set<string>();
   const results: RelationshipSeed[] = [];
 

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ffe43ad1-e0f5-4cc7-b18e-c40415a76cce",
+  "id": "e3b71cec-39ec-4cd6-9cd7-783bbd5c1049",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "activity_log": {
@@ -37,14 +37,14 @@
         },
         "timestamp": {
           "name": "timestamp",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "real_timestamp": {
           "name": "real_timestamp",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -105,7 +105,7 @@
         },
         "age": {
           "name": "age",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -156,19 +156,19 @@
           "name": "current_action",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "action_started": {
           "name": "action_started",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "action_duration": {
           "name": "action_duration",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -232,7 +232,47 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "agents_current_location_locations_id_fk": {
+          "name": "agents_current_location_locations_id_fk",
+          "tableFrom": "agents",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "current_location"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "agents_home_locations_id_fk": {
+          "name": "agents_home_locations_id_fk",
+          "tableFrom": "agents",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "home"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "agents_workplace_locations_id_fk": {
+          "name": "agents_workplace_locations_id_fk",
+          "tableFrom": "agents",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "workplace"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -263,7 +303,7 @@
         },
         "priority": {
           "name": "priority",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -284,14 +324,14 @@
         },
         "queued_at": {
           "name": "queued_at",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "max_wait": {
           "name": "max_wait",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -358,7 +398,7 @@
         },
         "template_fallback_after_ms": {
           "name": "template_fallback_after_ms",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -405,7 +445,7 @@
           "name": "location",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "trigger_reason": {
@@ -431,14 +471,14 @@
         },
         "started_at": {
           "name": "started_at",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "ended_at": {
           "name": "ended_at",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -467,7 +507,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "conversations_location_locations_id_fk": {
+          "name": "conversations_location_locations_id_fk",
+          "tableFrom": "conversations",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "location"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -540,7 +594,7 @@
         },
         "last_payday": {
           "name": "last_payday",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -559,10 +613,24 @@
           "columns": [
             "agent_id"
           ],
-          "isUnique": false
+          "isUnique": true
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "economy_agent_id_agents_id_fk": {
+          "name": "economy_agent_id_agents_id_fk",
+          "tableFrom": "economy",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -621,7 +689,7 @@
         },
         "timestamp": {
           "name": "timestamp",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -643,7 +711,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "economy_transactions_location_id_locations_id_fk": {
+          "name": "economy_transactions_location_id_locations_id_fk",
+          "tableFrom": "economy_transactions",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -810,7 +892,7 @@
         },
         "timestamp": {
           "name": "timestamp",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -824,7 +906,7 @@
         },
         "last_accessed": {
           "name": "last_accessed",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -847,7 +929,34 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "memories_agent_id_agents_id_fk": {
+          "name": "memories_agent_id_agents_id_fk",
+          "tableFrom": "memories",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "memories_related_location_locations_id_fk": {
+          "name": "memories_related_location_locations_id_fk",
+          "tableFrom": "memories",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "related_location"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -941,7 +1050,7 @@
         },
         "last_updated": {
           "name": "last_updated",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -953,10 +1062,24 @@
           "columns": [
             "agent_id"
           ],
-          "isUnique": false
+          "isUnique": true
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "needs_agent_id_agents_id_fk": {
+          "name": "needs_agent_id_agents_id_fk",
+          "tableFrom": "needs",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -1057,7 +1180,7 @@
         },
         "timestamp": {
           "name": "timestamp",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1072,7 +1195,34 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "relationship_events_agent_a_agents_id_fk": {
+          "name": "relationship_events_agent_a_agents_id_fk",
+          "tableFrom": "relationship_events",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_a"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "relationship_events_agent_b_agents_id_fk": {
+          "name": "relationship_events_agent_b_agents_id_fk",
+          "tableFrom": "relationship_events",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_b"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -1159,7 +1309,7 @@
         },
         "last_interaction": {
           "name": "last_interaction",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1194,7 +1344,7 @@
         },
         "last_updated": {
           "name": "last_updated",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1224,7 +1374,34 @@
           "isUnique": true
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "relationships_agent_a_agents_id_fk": {
+          "name": "relationships_agent_a_agents_id_fk",
+          "tableFrom": "relationships",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_a"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "relationships_agent_b_agents_id_fk": {
+          "name": "relationships_agent_b_agents_id_fk",
+          "tableFrom": "relationships",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_b"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -1262,7 +1439,7 @@
         },
         "used_at": {
           "name": "used_at",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1279,7 +1456,34 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "template_usage_agent_a_agents_id_fk": {
+          "name": "template_usage_agent_a_agents_id_fk",
+          "tableFrom": "template_usage",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_a"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "template_usage_agent_b_agents_id_fk": {
+          "name": "template_usage_agent_b_agents_id_fk",
+          "tableFrom": "template_usage",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_b"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -1317,7 +1521,7 @@
         },
         "cooldown_per_pair": {
           "name": "cooldown_per_pair",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1362,14 +1566,14 @@
         },
         "started_at": {
           "name": "started_at",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "duration": {
           "name": "duration",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -1412,7 +1616,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "world_events_location_id_locations_id_fk": {
+          "name": "world_events_location_id_locations_id_fk",
+          "tableFrom": "world_events",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -1450,7 +1668,7 @@
         },
         "weather_duration": {
           "name": "weather_duration",
-          "type": "real",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
