@@ -12,6 +12,15 @@ import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
+import {
+  PersonalityProfile,
+  warmthMultiplier,
+  neuroticismMoodFactor,
+  loyaltyBonus,
+  sensualityBonus,
+  curiosityNoveltyBonus,
+  selectPersonalityTopic,
+} from '../../lib/personality';
 
 // --- Types ---
 
@@ -191,6 +200,11 @@ function checkSchedule(
   world: WorldRow,
   allLocations: LocationRow[],
 ): ScoredAction | null {
+  const personality = agent.personality as PersonalityProfile | null;
+  if (personality && Math.random() < personality.impulsiveness / 200) {
+    return null; // impulsive agent skips schedule this tick
+  }
+
   const { hour, minute } = world.time;
   const sched = agent.schedule;
 
@@ -231,9 +245,14 @@ function scoreFreeTimeActions(
 ): ScoredAction[] {
   const scores: ScoredAction[] = [];
   const evening = isEvening(world.time.hour);
+  const personality = agent.personality as PersonalityProfile | null;
+  const mood = agentNeeds.mood;
 
   // Eat
-  const eatScore = (100 - agentNeeds.hunger) * 1.5 + (agentNeeds.mood < 40 ? 10 : 0);
+  let eatScore = (100 - agentNeeds.hunger) * 1.5 + (mood < 40 ? 10 : 0);
+  if (personality) {
+    eatScore *= 1 + (personality.impulsiveness / 200);
+  }
   const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern']);
   scores.push({
     action: 'eating',
@@ -249,18 +268,43 @@ function scoreFreeTimeActions(
     const romance = rel?.romance ?? 0;
     const trust = rel?.trust ?? 0;
 
+    // Look up the full rel row for interaction_count
+    const relRow = allRelationships.find(
+      r => (r.agent_a === agent.id && r.agent_b === other.id) ||
+           (r.agent_b === agent.id && r.agent_a === other.id),
+    );
+    const interactionCount = relRow?.interaction_count ?? 0;
+
     let socScore = (100 - agentNeeds.social) * 1.2;
     if (friendship > 50) socScore += 15;
     if (romance > 30) socScore += 20;
     if (friendship < -30) socScore -= 25;
-    if (agentNeeds.mood < 30 && trust > 50) socScore += 20;
+    if (mood < 30 && trust > 50) socScore += 20;
 
-    if (agent.traits.includes('introverted')) socScore *= 0.7;
-    if (agent.traits.includes('extroverted')) socScore *= 1.3;
+    if (personality) {
+      socScore *= warmthMultiplier(personality.warmth);
+      socScore *= neuroticismMoodFactor(personality.neuroticism, mood);
+      socScore += loyaltyBonus(personality.loyalty, friendship);
+      socScore += sensualityBonus(personality.sensuality, romance);
+      socScore += curiosityNoveltyBonus(personality.curiosity, interactionCount);
+    } else {
+      // Fallback: legacy trait checks
+      if (agent.traits.includes('introverted')) socScore *= 0.7;
+      if (agent.traits.includes('extroverted')) socScore *= 1.3;
+    }
+
+    // Personality-based warmth thresholds replace old string traits when personality is set
+    if (personality && personality.warmth < 35) socScore *= 0.7;
+    if (personality && personality.warmth > 65) socScore *= 1.3;
+
+    const noiseMultiplier = personality
+      ? 0.1 + (personality.impulsiveness / 500)
+      : CONFIG.DECISIONS.NOISE_FACTOR;
+    const noise = 1 + (Math.random() * 2 - 1) * noiseMultiplier;
 
     scores.push({
       action: 'socializing',
-      score: addNoise(socScore),
+      score: socScore * noise,
       targetAgentId: other.id,
       targetLocationId: other.current_location ?? undefined,
     });
@@ -286,15 +330,20 @@ function scoreFreeTimeActions(
     scores.push({ action: 'walking', score: addNoise(walkScore), targetLocationId: square.id });
   }
 
-  // Workaholic bonus
-  if (agent.traits.includes('workaholic') && agent.workplace) {
+  // Workaholic bonus (personality-based or legacy trait)
+  const isWorkaholic = personality ? personality.impulsiveness < 25 : agent.traits.includes('workaholic');
+  if (isWorkaholic && agent.workplace) {
     let workScore = 30;
     workScore *= 1.4;
+    if (personality) {
+      workScore *= (100 - personality.impulsiveness) / 100;
+    }
     scores.push({ action: 'working', score: addNoise(workScore), targetLocationId: agent.workplace });
   }
 
-  // Lazy bonus
-  if (agent.traits.includes('lazy')) {
+  // Lazy bonus (personality-based or legacy trait)
+  const isLazy = personality ? personality.impulsiveness > 70 : agent.traits.includes('lazy');
+  if (isLazy) {
     for (const s of scores) {
       if (s.action === 'idle') s.score *= 1.3;
     }
@@ -493,13 +542,27 @@ export async function tick(world: WorldRow): Promise<void> {
 
       const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
 
+      // Personality-driven topic selection
+      const agentPersonality = agent.personality as PersonalityProfile | null;
+      let topic: string | null = null;
+      if (agentPersonality) {
+        const otherActiveAgents = activeAgents.filter(a => a.id !== agent.id && a.id !== targetId);
+        topic = selectPersonalityTopic(
+          agentPersonality,
+          agentNeeds.mood,
+          friendship,
+          romance,
+          otherActiveAgents.map(a => ({ name: a.name })),
+        );
+      }
+
       db.insert(conversationQueue)
         .values({
           participants: [agentId, targetId],
           tier,
           priority,
           trigger_reason: 'needs_social',
-          topic: null,
+          topic,
           queued_at: Date.now(),
           max_wait: 10000,
         })
