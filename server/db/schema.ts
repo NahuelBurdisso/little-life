@@ -402,6 +402,23 @@ export const templateUsage = sqliteTable(
   ]
 );
 
+// ─── 17. agentStates ──────────────────────────────────────────────────────────
+
+export const agentStates = sqliteTable('agent_states', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  agent_id: integer('agent_id').notNull().references(() => agents.id),
+  type: text('type').notNull(),
+  severity: real('severity').notNull(),
+  started_at: integer('started_at').notNull(),
+  duration: integer('duration').notNull(),
+  target_agent_id: integer('target_agent_id').references(() => agents.id),
+  source: text('source').notNull(),
+  metadata: text('metadata', { mode: 'json' }).$type<Record<string, any> | null>(),
+}, (table) => [
+  index('idx_agent_states_agent_id').on(table.agent_id),
+  index('idx_agent_states_agent_type').on(table.agent_id, table.type),
+]);
+
 // ─── 16. activityLog ──────────────────────────────────────────────────────────
 
 export const activityLog = sqliteTable(

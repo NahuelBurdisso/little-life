@@ -9,6 +9,22 @@ CREATE TABLE `activity_log` (
 --> statement-breakpoint
 CREATE INDEX `idx_activity_log_timestamp` ON `activity_log` (`timestamp`);--> statement-breakpoint
 CREATE INDEX `idx_activity_log_type_timestamp` ON `activity_log` (`type`,`timestamp`);--> statement-breakpoint
+CREATE TABLE `agent_states` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`agent_id` integer NOT NULL,
+	`type` text NOT NULL,
+	`severity` real NOT NULL,
+	`started_at` integer NOT NULL,
+	`duration` integer NOT NULL,
+	`target_agent_id` integer,
+	`source` text NOT NULL,
+	`metadata` text,
+	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`target_agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `idx_agent_states_agent_id` ON `agent_states` (`agent_id`);--> statement-breakpoint
+CREATE INDEX `idx_agent_states_agent_type` ON `agent_states` (`agent_id`,`type`);--> statement-breakpoint
 CREATE TABLE `agents` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,

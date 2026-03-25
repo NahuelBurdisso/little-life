@@ -3,6 +3,7 @@ import { worldState, activityLog } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { emitter } from './emitter';
 import { needsTick } from './systems/needs';
+import { statesTick } from './systems/states';
 import { economyTick } from './systems/economy';
 import { tick as relationshipsTick } from './systems/relationships';
 import { conversationsTick } from './systems/conversations';
@@ -96,6 +97,7 @@ const SYSTEM_PHASES: Array<{
   run: (world: WorldRow) => void | Promise<void>;
 }> = [
   { name: 'needs',         run: () => needsTick() },
+  { name: 'states',        run: () => statesTick() },
   { name: 'economy',       run: () => economyTick() },
   { name: 'relationships', run: (w) => relationshipsTick(w) },
   { name: 'conversations', run: () => conversationsTick() },
