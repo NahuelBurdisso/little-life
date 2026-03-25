@@ -1,13 +1,12 @@
 import * as PIXI from "pixi.js";
 import { AgentSprite } from "./AgentSprite";
-import { SPRITE_CONFIG, getCharacterAssignment } from "../../lib/spriteConfig";
+import { getCharacterAssignment } from "../../lib/spriteConfig";
 
 export interface AgentData {
-  _id?: string;
-  id?: string;
+  id: number;
   name: string;
   position: { x: number; y: number };
-  currentAction?: { type?: string } | string;
+  current_action?: { type?: string } | string;
   needs?: {
     mood?: number;
     hunger?: number;
@@ -16,7 +15,7 @@ export interface AgentData {
     comfort?: number;
     fun?: number;
     thresholds?: { critical?: number };
-  };
+  } | null;
 }
 
 /** Manages all AgentSprite instances, creating/removing as needed. */
@@ -39,11 +38,10 @@ export class SpritePool {
     const activeIds = new Set<string>();
 
     for (const agent of agents) {
-      const id = agent._id ?? agent.id;
-      if (!id) continue;
+      const id = String(agent.id);
       activeIds.add(id);
 
-      // Agent positions are already in pixel coordinates
+      // Agent positions are pixel coordinates (top-left of the agent's tile)
       const px = agent.position?.x ?? 0;
       const py = agent.position?.y ?? 0;
 
@@ -67,15 +65,11 @@ export class SpritePool {
 
       // Update action
       const actionType =
-        typeof agent.currentAction === "string"
-          ? agent.currentAction
-          : agent.currentAction?.type ?? "idle";
+        typeof agent.current_action === "string"
+          ? agent.current_action
+          : agent.current_action?.type ?? "idle";
       sprite.setAction(actionType);
 
-      // Update visual cues
-      sprite.updateMood(agent.needs?.mood);
-      sprite.updateNeeds(agent.needs);
-      sprite.updateActionLabel(agent.currentAction);
     }
 
     // Remove sprites for agents no longer present

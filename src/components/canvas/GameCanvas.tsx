@@ -86,8 +86,10 @@ export function GameCanvas({
     const bubbleSystem = new BubbleSystem(worldContainer);
     bubbleSystemRef.current = bubbleSystem;
 
-    // Camera
+    // Camera — set actual map dimensions from tilemap
     const camera = new CameraController(app, worldContainer);
+    const mapSize = tilemap.getMapSize();
+    camera.setMapSize(mapSize.width, mapSize.height);
     cameraRef.current = camera;
 
     // Day/night overlay (on stage, above world)
@@ -107,13 +109,14 @@ export function GameCanvas({
     interaction.setup(app);
     interactionRef.current = interaction;
 
-    // Animation loop
-    app.ticker.add((ticker) => {
-      const delta = ticker.deltaTime;
-      camera.update(delta);
-    });
+    // Animation loop — store ref for cleanup
+    const cameraTickFn = (ticker: any) => {
+      camera.update(ticker.deltaTime);
+    };
+    app.ticker.add(cameraTickFn);
 
     return () => {
+      app.ticker.remove(cameraTickFn);
       interaction.destroy();
       camera.destroy();
       dayNight.destroy();
@@ -125,7 +128,7 @@ export function GameCanvas({
     };
   }, [app, assetsLoaded, stableOnSelect, stableOnHover, stableOnContext]);
 
-  // Update sprite targets when Convex data changes (sets targets, creates/removes sprites)
+  // Update sprite targets when server data changes (sets targets, creates/removes sprites)
   useEffect(() => {
     if (!app || !spritePoolRef.current) return;
 
@@ -136,9 +139,9 @@ export function GameCanvas({
     // Rebind interaction events for any new sprites
     interactionRef.current?.updateBindings(spritePool.getAllIds());
 
-    // Update bubbles with latest data
+    // Update bubbles — pass sprite pool so bubbles track interpolated positions
     if (bubbleSystemRef.current) {
-      bubbleSystemRef.current.update(conversations ?? [], agents, 1);
+      bubbleSystemRef.current.update(conversations ?? [], agents, 1, spritePool);
     }
 
     // Update occupancy dots
@@ -166,11 +169,11 @@ export function GameCanvas({
   // Update day/night cycle
   useEffect(() => {
     if (!app || !dayNightRef.current) return;
-    const dayPhase = world?.dayPhase ?? "morning";
+    const dayPhase = world?.day_phase ?? "morning";
     const w = app.renderer.width;
     const h = app.renderer.height;
     dayNightRef.current.update(dayPhase, w, h);
-  }, [world?.dayPhase, app]);
+  }, [world?.day_phase, app]);
 
   // Update weather effects
   useEffect(() => {
@@ -206,18 +209,18 @@ export function GameCanvas({
     const agentId = selectedAgentId;
     if (!agentId || !spritePoolRef.current || !relationships || relationships.length === 0) return;
 
-    const rels = relationships.filter((r: any) => r.agentA === agentId || r.agentB === agentId);
+    const rels = relationships.filter((r: any) => String(r.agent_a) === agentId || String(r.agent_b) === agentId);
     for (const rel of rels) {
-      const otherId = rel.agentA === agentId ? rel.agentB : rel.agentA;
+      const otherId = String(rel.agent_a) === agentId ? String(rel.agent_b) : String(rel.agent_a);
       const fromSprite = spritePoolRef.current.getSprite(agentId);
       const toSprite = spritePoolRef.current.getSprite(otherId);
       if (!fromSprite || !toSprite) continue;
-      const strength = Math.max(Math.abs(rel.friendshipAB ?? 0), Math.abs(rel.romanceAB ?? 0));
+      const strength = Math.max(Math.abs(rel.friendship_ab ?? 0), Math.abs(rel.romance_ab ?? 0));
       const alpha = Math.min((strength / 100) * 0.6, 0.6);
       const color =
-        (rel.romanceAB ?? 0) > (rel.friendshipAB ?? 0)
+        (rel.romance_ab ?? 0) > (rel.friendship_ab ?? 0)
           ? 0xf472b6
-          : (rel.friendshipAB ?? 0) < 0
+          : (rel.friendship_ab ?? 0) < 0
           ? 0xef4444
           : 0x60a5fa;
       g.moveTo(fromSprite.container.x + 16, fromSprite.container.y + 32)

@@ -24,7 +24,7 @@ export default function App() {
   const { data: locations } = trpc.locations.getAll.useQuery();
   const { data: allRelationships } = trpc.relationships.getGraph.useQuery();
 
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null); // string representation of numeric ID
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
   const [showNewAgent, setShowNewAgent] = useState(false);
@@ -77,9 +77,9 @@ export default function App() {
         setHoverPos(null);
         return;
       }
-      const agent = agents.find((a) => a._id === agentId);
+      const agent = agents.find((a) => String(a.id) === agentId);
       if (agent) {
-        setHoveredAgent({ name: agent.name, currentAction: agent.currentAction });
+        setHoveredAgent({ name: agent.name, currentAction: agent.current_action });
         setHoverPos(pos);
       }
     },

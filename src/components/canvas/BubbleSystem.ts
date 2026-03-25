@@ -1,5 +1,6 @@
 import * as PIXI from "pixi.js";
 import { SPRITE_CONFIG } from "../../lib/spriteConfig";
+import type { SpritePool } from "./SpritePool";
 
 const BUBBLE_MAX_CHARS = 60;
 const SPEECH_DURATION_MS = 4000;
@@ -193,21 +194,22 @@ export class BubbleSystem {
    * and sync positions with agent positions.
    */
   update(
-    conversations: Array<{ participants?: Array<string | { agentId?: string }>; messages?: Array<{ agentId?: string; text?: string }> }>,
-    agents: Array<{ _id?: string; id?: string; position: { x: number; y: number } }>,
+    conversations: Array<{ participants?: number[]; messages?: Array<{ speakerId?: number; text?: string }> }>,
+    agents: Array<{ id: number; position: { x: number; y: number } }>,
     deltaTime: number,
+    spritePool?: SpritePool,
   ) {
     const now = Date.now();
 
-    // Build a position lookup
+    // Build a position lookup — prefer interpolated sprite positions over raw DB positions
     const posMap = new Map<string, { x: number; y: number }>();
     for (const a of agents) {
-      const aid = a._id ?? a.id;
-      if (aid) {
-        posMap.set(aid, {
-          x: a.position?.x ?? 0,
-          y: a.position?.y ?? 0,
-        });
+      const aid = String(a.id);
+      const sprite = spritePool?.getSprite(aid);
+      if (sprite) {
+        posMap.set(aid, { x: sprite.container.x, y: sprite.container.y });
+      } else {
+        posMap.set(aid, { x: a.position?.x ?? 0, y: a.position?.y ?? 0 });
       }
     }
 
@@ -217,13 +219,12 @@ export class BubbleSystem {
     if (conversations) {
       for (const convo of conversations) {
         for (const p of convo.participants ?? []) {
-          const pid = typeof p === "string" ? p : p?.agentId;
-          if (pid) convoAgents.add(pid);
+          convoAgents.add(String(p));
         }
         // Last message per agent
         for (const msg of convo.messages ?? []) {
-          if (msg.agentId && msg.text) {
-            latestMessages.set(msg.agentId, msg.text);
+          if (msg.speakerId != null && msg.text) {
+            latestMessages.set(String(msg.speakerId), msg.text);
           }
         }
       }
@@ -239,17 +240,13 @@ export class BubbleSystem {
         // Only show a new speech bubble if we don't already have one (or it expired)
         if (!existing || existing.type === "thought") {
           // Find the conversation this agent is in
+          const numericAid = Number(aid);
           const convo = conversations.find(c => {
-            const participants = c.participants ?? [];
-            return participants.some(p => {
-              const pid = typeof p === "string" ? p : p?.agentId;
-              return pid === aid;
-            });
+            return (c.participants ?? []).includes(numericAid);
           });
           const sentiment = (convo as any)?.sentiment ?? 0;
           // Determine bubble offset for multi-agent conversations
-          const participants = convo?.participants ?? [];
-          const participantIds = participants.map((p: any) => typeof p === "string" ? p : p?.agentId).filter(Boolean);
+          const participantIds = (convo?.participants ?? []).map(String);
           const isMultiAgent = participantIds.length > 1;
           const participantIndex = participantIds.indexOf(aid);
           const offsetX = isMultiAgent ? (participantIndex === 0 ? -20 : 20) : 0;
@@ -273,8 +270,7 @@ export class BubbleSystem {
 
     // Auto-emote triggers based on mood changes
     for (const a of agents) {
-      const aid = a._id ?? a.id;
-      if (!aid) continue;
+      const aid = String(a.id);
       const pos = posMap.get(aid);
       if (!pos) continue;
       const curMood = (a as any).needs?.mood ?? 50;
