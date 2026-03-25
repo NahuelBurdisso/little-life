@@ -22,6 +22,7 @@ import {
   setEffectivePersonality,
 } from '../../lib/states';
 import { emitter } from '../emitter';
+import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../lib/gossip';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ export function statesTick() {
       weather,
       season,
       removedAgentIds,
+      allAgents,
     );
 
     // 1d. Compute effective personality from all current states
@@ -140,6 +142,9 @@ export function statesTick() {
       .all();
     processStateEffects(agent, states, allAgents, currentTick);
   }
+
+  spreadPublicKnowledge();
+  deactivateStaleFacts();
 
   emitter.markDirty('agents.all');
 }
@@ -178,6 +183,7 @@ function evaluateTriggers(
   weather: string,
   season: string,
   removedAgentIds: number[],
+  allAgents: Array<typeof agents.$inferSelect>,
 ) {
   const personality = agent.personality as PersonalityProfile | null;
   if (!personality) return;
@@ -230,6 +236,7 @@ function evaluateTriggers(
         })
         .run();
       activeTypes.add('sick');
+      createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
     }
   }
 
@@ -273,6 +280,7 @@ function evaluateTriggers(
           })
           .run();
         activeTypes.add('heartbroken');
+        createFact('heartbreak', agent.id, targetId, 2, [agent.id], 'witnessed');
         break; // one heartbreak at a time
       }
     }
@@ -445,6 +453,34 @@ function evaluateTriggers(
           })
           .run();
         activeTypes.add('infatuated');
+        createFact('crush', agent.id, targetId, 2, [agent.id], 'witnessed');
+
+        // Check for affair: does the target have romance > 40 with any third agent?
+        const targetRomanceRels = db
+          .select()
+          .from(relationships)
+          .where(or(eq(relationships.agent_a, targetId), eq(relationships.agent_b, targetId)))
+          .all();
+
+        for (const tRel of targetRomanceRels) {
+          const tIsA = tRel.agent_a === targetId;
+          const thirdAgentId = tIsA ? tRel.agent_b : tRel.agent_a;
+          if (thirdAgentId === agent.id) continue;
+          const targetRomanceWithThird = tIsA ? tRel.romance_ab : tRel.romance_ba;
+          if (targetRomanceWithThird > 40) {
+            const coLocated = allAgents
+              .filter(
+                (a) =>
+                  a.current_location === agent.current_location &&
+                  a.id !== agent.id &&
+                  a.id !== targetId,
+              )
+              .map((a) => a.id);
+            createFact('affair', agent.id, targetId, 3, coLocated, 'observed');
+            break;
+          }
+        }
+
         break;
       }
     }
@@ -964,6 +1000,7 @@ function processStateEffects(
                 .set({ tags: [...currentTags, 'grudge'] })
                 .where(eq(relationships.id, rel.id))
                 .run();
+              createFact('grudge', agent.id, state.target_agent_id!, 1, [agent.id], 'witnessed');
             }
           }
         }

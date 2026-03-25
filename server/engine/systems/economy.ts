@@ -5,6 +5,7 @@ import { CONFIG } from '../../lib/constants';
 import { getItemPrice } from '../../lib/prices';
 import type { Season } from '../../lib/types';
 import { emitter } from '../emitter';
+import { createFact } from '../../lib/gossip';
 
 // --- Helpers ---
 
@@ -318,6 +319,10 @@ export function economyTick(): void {
         daily_expenses: expense,
       }).where(eq(economy.id, econ.id)).run();
       econ.money = newMoney;
+
+      if (econ.money < 10) {
+        createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
+      }
     }
   }
 
