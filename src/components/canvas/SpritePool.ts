@@ -70,6 +70,8 @@ export class SpritePool {
           : agent.current_action?.type ?? "idle";
       sprite.setAction(actionType);
 
+      // Update status indicators
+      sprite.updateStatus(actionType, agent.needs ?? null, deltaTime);
     }
 
     // Remove sprites for agents no longer present

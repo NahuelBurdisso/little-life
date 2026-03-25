@@ -5,6 +5,28 @@ import { ANIMATIONS, actionToAnimation, type AnimationDef } from "../../lib/anim
 const LERP_SPEED = 0.3;
 const { SPRITE_SCALE, AGENT_WIDTH, AGENT_HEIGHT } = SPRITE_CONFIG;
 
+/** Map action types to display emojis. */
+const ACTION_EMOJIS: Record<string, string> = {
+  sleeping: "\u{1F4A4}",
+  eating: "\u{1F37D}\uFE0F",
+  working: "\u{1F528}",
+  talking: "\u{1F4AC}",
+  walking: "\u{1F6B6}",
+  shopping: "\u{1F6D2}",
+  socializing: "\u{1F44B}",
+  idle: "\u23F8\uFE0F",
+};
+
+interface AgentNeeds {
+  mood?: number;
+  hunger?: number;
+  energy?: number;
+  social?: number;
+  comfort?: number;
+  fun?: number;
+  thresholds?: { critical?: number };
+}
+
 /** Represents a single agent's visual on the canvas using LimeZu character sprite sheets. */
 export class AgentSprite {
   container: PIXI.Container;
@@ -13,12 +35,13 @@ export class AgentSprite {
   private spriteWrapper: PIXI.Container;
   private sprite: PIXI.Sprite;
   private nameLabel: PIXI.Text;
-  private actionLabel: PIXI.Text;
-  readonly statusContainer: PIXI.Container;
 
+  // Status indicator elements
+  private statusContainer: PIXI.Container;
+  private actionLabel: PIXI.Text;
   private moodDot: PIXI.Graphics;
-  private moodPulse: boolean = false;
-  private needIcons: PIXI.Container[] = [];
+  private needAlert: PIXI.Text;
+  private pulseTimer = 0;
 
   private animations: Map<string, PIXI.Texture[]> = new Map();
   private currentAnimation = "idleAnim";
@@ -33,7 +56,6 @@ export class AgentSprite {
   constructor(characterBase: string, hueShift: number, name: string) {
     this.container = new PIXI.Container();
 
-    // Hit area covers sprite + name label area
     this.container.hitArea = new PIXI.Rectangle(
       0, 0,
       AGENT_WIDTH * SPRITE_SCALE,
@@ -86,39 +108,47 @@ export class AgentSprite {
     this.nameLabel.y = AGENT_HEIGHT * SPRITE_SCALE + 2;
     this.container.addChild(this.nameLabel);
 
-    // --- Action label (below name) ---
-    this.actionLabel = new PIXI.Text({
-      text: "",
-      style: { fontFamily: "monospace", fontSize: 6, fill: 0x9ca3af, align: "center" },
-    });
-    this.actionLabel.anchor.set(0.5, 0);
-    this.actionLabel.x = AGENT_WIDTH * SPRITE_SCALE / 2;
-    this.actionLabel.y = this.nameLabel.y + 10;
-    this.container.addChild(this.actionLabel);
+    // --- Status indicators (above sprite) ---
+    const spriteVisualWidth = AGENT_WIDTH * SPRITE_SCALE;
 
-    // --- Status container (mood dot + need icons) ---
     this.statusContainer = new PIXI.Container();
-    this.statusContainer.y = -8; // above sprite
+    this.statusContainer.y = -14; // above the sprite top
     this.container.addChild(this.statusContainer);
 
-    // --- Mood dot ---
+    this.actionLabel = new PIXI.Text({
+      text: "\u23F8\uFE0F",
+      style: {
+        fontFamily: "monospace",
+        fontSize: 10,
+        fill: 0xffffff,
+        stroke: { color: 0x000000, width: 2 },
+        align: "center",
+      },
+    });
+    this.actionLabel.anchor.set(0.5, 0.5);
+    this.actionLabel.x = spriteVisualWidth / 2 - 10;
+    this.statusContainer.addChild(this.actionLabel);
+
     this.moodDot = new PIXI.Graphics();
-    this.moodDot.visible = false;
+    this.moodDot.circle(0, 0, 4).fill({ color: 0x44cc44 });
+    this.moodDot.x = spriteVisualWidth / 2 + 2;
+    this.moodDot.y = 0;
     this.statusContainer.addChild(this.moodDot);
 
-    // --- Need alert icons ---
-    for (let i = 0; i < 2; i++) {
-      const icon = new PIXI.Container();
-      const circle = new PIXI.Graphics();
-      circle.circle(0, 0, 4).fill(0x888888);
-      const text = new PIXI.Text({ text: "!", style: { fontSize: 6, fill: 0xffffff, fontFamily: "monospace" } });
-      text.anchor.set(0.5);
-      icon.addChild(circle, text);
-      icon.x = 8 + i * 10;
-      icon.visible = false;
-      this.statusContainer.addChild(icon);
-      this.needIcons.push(icon);
-    }
+    this.needAlert = new PIXI.Text({
+      text: "\u26A0\uFE0F",
+      style: {
+        fontFamily: "monospace",
+        fontSize: 10,
+        fill: 0xff3333,
+        stroke: { color: 0x000000, width: 2 },
+        align: "center",
+      },
+    });
+    this.needAlert.anchor.set(0.5, 0.5);
+    this.needAlert.x = spriteVisualWidth / 2 + 14;
+    this.needAlert.visible = false;
+    this.statusContainer.addChild(this.needAlert);
 
     // --- Load animation textures from pre-loaded assets ---
     this.loadAnimations(characterBase);
@@ -133,7 +163,6 @@ export class AgentSprite {
       const frames: PIXI.Texture[] = [];
 
       if (animName === "idle") {
-        // idle: 4 frames (1 per direction), single row
         for (let i = 0; i < def.totalFrames; i++) {
           frames.push(new PIXI.Texture({
             source: tex.source,
@@ -141,7 +170,6 @@ export class AgentSprite {
           }));
         }
       } else if (!def.directional) {
-        // Non-directional (phone): all frames in a single row
         for (let i = 0; i < def.totalFrames; i++) {
           frames.push(new PIXI.Texture({
             source: tex.source,
@@ -149,7 +177,6 @@ export class AgentSprite {
           }));
         }
       } else {
-        // Directional animations: framesPerDirection × 4 directions
         const rowOffset = (def.row ?? 0) * def.frameHeight;
         for (let dir = 0; dir < 4; dir++) {
           for (let f = 0; f < def.framesPerDirection; f++) {
@@ -165,7 +192,6 @@ export class AgentSprite {
       this.animations.set(animName, frames);
     }
 
-    // Set initial texture
     this.setAnimation("idleAnim");
   }
 
@@ -173,7 +199,6 @@ export class AgentSprite {
     if (name === this.currentAnimation && this.sprite.texture.label !== "EMPTY") return;
     const frames = this.animations.get(name);
     if (!frames || frames.length === 0) {
-      // Fallback: try idleAnim, then idle
       if (name !== "idleAnim") {
         const fallback = this.animations.get("idleAnim") ?? this.animations.get("idle");
         if (fallback && fallback.length > 0) {
@@ -204,16 +229,14 @@ export class AgentSprite {
     if (!frames || frames.length === 0) return;
 
     this.frameTimer += deltaTime;
-    const frameDuration = 1 / (def.speed * 60); // convert speed to ticks
+    const frameDuration = 1 / (def.speed * 60);
     if (this.frameTimer < frameDuration) return;
     this.frameTimer = 0;
 
     if (!def.directional) {
-      // Non-directional: cycle through all frames
       this.frameIndex = (this.frameIndex + 1) % def.totalFrames;
       this.sprite.texture = frames[this.frameIndex];
     } else {
-      // Directional: cycle within current direction's frames
       this.frameIndex = (this.frameIndex + 1) % def.framesPerDirection;
       const idx = this.currentDirection * def.framesPerDirection + this.frameIndex;
       if (idx < frames.length) {
@@ -237,15 +260,13 @@ export class AgentSprite {
   }
 
   private detectDirection(dx: number, dy: number) {
-    // LimeZu order: down=0, up=1, left=2, right=3
     if (Math.abs(dx) > Math.abs(dy)) {
-      this.currentDirection = dx > 0 ? 3 : 2; // right : left
+      this.currentDirection = dx > 0 ? 3 : 2;
     } else {
-      this.currentDirection = dy > 0 ? 0 : 1; // down : up
+      this.currentDirection = dy > 0 ? 0 : 1;
     }
   }
 
-  /** Smoothly move toward the given world-pixel position. */
   updatePosition(x: number, y: number, deltaTime: number) {
     this.targetPos.x = x;
     this.targetPos.y = y;
@@ -264,7 +285,6 @@ export class AgentSprite {
     this.container.x += dx * lerp;
     this.container.y += dy * lerp;
 
-    // Animate
     if (this.isMoving && this.action !== "sleeping") {
       this.advanceFrame(deltaTime);
     } else {
@@ -272,7 +292,6 @@ export class AgentSprite {
     }
   }
 
-  /** Per-frame lerp toward the current target — call from ticker without new data. */
   lerpToTarget(deltaTime: number) {
     const dx = this.targetPos.x - this.container.x;
     const dy = this.targetPos.y - this.container.y;
@@ -288,10 +307,6 @@ export class AgentSprite {
       this.advanceFrame(deltaTime);
     } else {
       this.showIdleFrame();
-    }
-
-    if (this.moodPulse && this.moodDot.visible) {
-      this.moodDot.alpha = 0.4 + 0.6 * ((Math.sin(Date.now() * 0.004) + 1) / 2);
     }
   }
 
@@ -314,7 +329,6 @@ export class AgentSprite {
     }
   }
 
-  /** Directly set position without lerp (for initial placement). */
   setPositionImmediate(x: number, y: number) {
     this.targetPos.x = x;
     this.targetPos.y = y;
@@ -335,7 +349,6 @@ export class AgentSprite {
     const animName = actionToAnimation(actionType);
     this.setAnimation(animName);
 
-    // Sleeping: face down, reduce alpha
     if (actionType === "sleeping") {
       this.currentDirection = 0;
       this.sprite.alpha = 0.5;
@@ -345,45 +358,39 @@ export class AgentSprite {
     }
   }
 
-  updateMood(mood: number | undefined) {
-    if (mood === undefined || mood > 60) {
-      this.moodDot.visible = false;
-      this.moodPulse = false;
-      return;
+  /** Update the status indicators above the sprite. */
+  updateStatus(actionType: string, needs: AgentNeeds | null | undefined, deltaTime: number) {
+    // Action emoji
+    const emoji = ACTION_EMOJIS[actionType] ?? ACTION_EMOJIS["idle"];
+    this.actionLabel.text = emoji;
+
+    // Mood dot color
+    const mood = needs?.mood ?? 100;
+    let moodColor: number;
+    if (mood > 70) {
+      moodColor = 0x44cc44; // green
+    } else if (mood >= 40) {
+      moodColor = 0xcccc44; // yellow
+    } else {
+      moodColor = 0xcc4444; // red
     }
-    this.moodDot.visible = true;
     this.moodDot.clear();
-    const color = mood > 40 ? 0xeab308 : mood > 20 ? 0xf97316 : 0xef4444;
-    this.moodDot.circle(0, 0, 3).fill(color);
-    this.moodPulse = mood <= 20;
-  }
+    this.moodDot.circle(0, 0, 4).fill({ color: moodColor });
 
-  updateNeeds(needs: any) {
-    this.needIcons.forEach(i => { i.visible = false; });
-    if (!needs) return;
-    const critical = needs.thresholds?.critical ?? 15;
-    const alerts: { color: number }[] = [];
-    if (needs.hunger < critical) alerts.push({ color: 0xf97316 });
-    if (needs.energy < critical) alerts.push({ color: 0x6366f1 });
-    if (needs.social < critical) alerts.push({ color: 0xf472b6 });
-    if (needs.comfort < critical) alerts.push({ color: 0x60a5fa });
-    if (needs.fun < critical) alerts.push({ color: 0xa78bfa });
-    alerts.sort((a, b) => a.color - b.color);
-    for (let i = 0; i < Math.min(2, alerts.length); i++) {
-      const icon = this.needIcons[i];
-      const circle = icon.children[0] as PIXI.Graphics;
-      circle.clear().circle(0, 0, 4).fill(alerts[i].color);
-      icon.visible = true;
+    // Critical need alert
+    const threshold = needs?.thresholds?.critical ?? 20;
+    let hasCritical = false;
+    if (needs) {
+      const needValues = [needs.hunger, needs.energy, needs.social, needs.comfort, needs.fun, needs.mood];
+      hasCritical = needValues.some((v) => v !== undefined && v < threshold);
     }
-  }
 
-  updateActionLabel(action: any, locationName?: string) {
-    if (!action) { this.actionLabel.text = ""; return; }
-    const type = typeof action === "string" ? action : action.type ?? "";
-    const label = type.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
-    let text = locationName ? `${label} at ${locationName}` : label;
-    if (text.length > 20) text = text.slice(0, 19) + "…";
-    this.actionLabel.text = text;
+    this.needAlert.visible = hasCritical;
+    if (hasCritical) {
+      // Pulse the alert alpha using a sine wave
+      this.pulseTimer += deltaTime * 4;
+      this.needAlert.alpha = 0.4 + 0.6 * Math.abs(Math.sin(this.pulseTimer));
+    }
   }
 
   destroy() {
