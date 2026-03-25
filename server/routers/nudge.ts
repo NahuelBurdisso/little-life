@@ -615,7 +615,7 @@ export const nudgeRouter = router({
 
         // ─── Unknown ───────────────────────────────────────────────────────
         default:
-          return { success: false, reason: `Unknown action type: ${action.type}` };
+          return { success: false, reason: `Unknown action type: ${(action as any).type}` };
       }
     }),
 });

@@ -36,7 +36,9 @@ export function getConversationContext(conversationId: number, speakerId: number
     .limit(CONFIG.AI.MEMORY_RETRIEVAL_LIMIT)
     .all();
 
-  const location = db.select().from(locations).where(eq(locations.id, conversation.location)).get();
+  const location = conversation.location
+    ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
+    : null;
   if (!location) return null;
 
   const world = db.select().from(worldState).get();
