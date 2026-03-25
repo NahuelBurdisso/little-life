@@ -23,6 +23,7 @@ import {
 } from '../../lib/personality';
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
+import { createFact, getShareableFacts, getAgentName } from '../../lib/gossip';
 
 // --- Types ---
 
@@ -42,6 +43,9 @@ interface ScoredAction {
   targetLocationId?: number;
   targetAgentId?: number;
 }
+
+// Tracks consecutive work skips per agent to detect work_issue pattern
+const workSkipCount = new Map<number, number>();
 
 // --- Helpers ---
 
@@ -203,8 +207,20 @@ function checkSchedule(
   allLocations: LocationRow[],
 ): ScoredAction | null {
   const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
+  const { hour, minute } = world.time;
+  const sched = agent.schedule;
+  const duringWorkHours = !!agent.workplace && hour >= sched.workStart && hour < sched.workEnd;
+
   if (personality && Math.random() < personality.impulsiveness / 200) {
-    return null; // impulsive agent skips schedule this tick
+    // Impulsive agent skips schedule this tick; track work skips
+    if (duringWorkHours) {
+      const count = (workSkipCount.get(agent.id) ?? 0) + 1;
+      workSkipCount.set(agent.id, count);
+      if (count === 3) {
+        createFact('work_issue', agent.id, null, 1, [agent.id], 'observed');
+      }
+    }
+    return null;
   }
 
   // Sick → go home immediately, override schedule
@@ -215,15 +231,15 @@ function checkSchedule(
 
   // Depressed → skip work
   if (agentStateTypes.includes('depressed') && agent.workplace) {
-    const { hour } = world.time;
-    const sched = agent.schedule;
     if (hour >= sched.workStart && hour < sched.workEnd) {
+      const count = (workSkipCount.get(agent.id) ?? 0) + 1;
+      workSkipCount.set(agent.id, count);
+      if (count === 3) {
+        createFact('work_issue', agent.id, null, 1, [agent.id], 'observed');
+      }
       return null; // skip scheduled work
     }
   }
-
-  const { hour, minute } = world.time;
-  const sched = agent.schedule;
 
   // Sleep time: handle wrap-around
   if (hour >= sched.sleepTime || hour < sched.wakeTime) {
@@ -232,6 +248,7 @@ function checkSchedule(
 
   // Work time
   if (agent.workplace && hour >= sched.workStart && hour < sched.workEnd) {
+    workSkipCount.set(agent.id, 0); // agent actually went to work — reset counter
     return { action: 'working', score: 4000, targetLocationId: agent.workplace };
   }
 
@@ -597,6 +614,15 @@ export async function tick(world: WorldRow): Promise<void> {
           romance,
           otherActiveAgents.map(a => ({ name: a.name })),
         );
+      }
+
+      // Gossip override: dishonest + curious agents prefer to share real facts
+      if (!topic && agentPersonality && agentPersonality.honesty < 40 && agentPersonality.curiosity > 60) {
+        const gossipFacts = getShareableFacts(agentId, targetId, agentPersonality);
+        if (gossipFacts.length > 0) {
+          const subjectName = getAgentName((gossipFacts[0] as any).subject_id);
+          topic = `gossip about ${subjectName}`;
+        }
       }
 
       db.insert(conversationQueue)

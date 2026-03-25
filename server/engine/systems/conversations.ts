@@ -33,6 +33,7 @@ import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { getAgentStates } from '../../lib/states';
+import { createFact } from '../../lib/gossip';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -382,6 +383,55 @@ async function processCompletedConversation(
           timestamp: now,
         })
         .run();
+    }
+  }
+
+  // --- Fact Creation ---
+
+  // Drunk incident: drunk participant in a negative conversation
+  for (const participantId of participantIds) {
+    const states = getAgentStates(participantId);
+    if (states.includes('drunk') && overallSentiment < -0.3) {
+      const otherId = participantIds.find(p => p !== participantId);
+      if (otherId) {
+        createFact('drunk_incident', participantId, otherId, 3, [...participantIds], 'witnessed');
+      }
+    }
+  }
+
+  // Secret told: heartbroken/lonely participant confides to a close friend
+  for (const participantId of participantIds) {
+    const states = getAgentStates(participantId);
+    if (states.includes('heartbroken') || states.includes('lonely')) {
+      const otherId = participantIds.find(p => p !== participantId);
+      if (otherId) {
+        const rel = db.select().from(relationships)
+          .where(and(
+            eq(relationships.agent_a, Math.min(participantId, otherId)),
+            eq(relationships.agent_b, Math.max(participantId, otherId))
+          )).get();
+        const friendship = rel ? (participantId < otherId ? rel.friendship_ab : rel.friendship_ba) : 0;
+        if (friendship > 60) {
+          createFact('secret_told', participantId, otherId, 3, [participantId, otherId], 'confided');
+        }
+      }
+    }
+  }
+
+  // Reputation: negative conversation + agent has 3+ recent negative conversations
+  if (overallSentiment < -0.2) {
+    for (const pid of participantIds) {
+      const recentConvos = db.select().from(conversations)
+        .where(eq(conversations.status, 'ended')).all()
+        .filter(c => {
+          const cParticipants = c.participants as number[];
+          return cParticipants.includes(pid) &&
+                 (c.sentiment ?? 0) < -0.2 &&
+                 c.ended_at != null && c.ended_at > Date.now() - 1440000;
+        });
+      if (recentConvos.length >= 3) {
+        createFact('reputation', pid, null, 1, [], 'observed');
+      }
     }
   }
 
