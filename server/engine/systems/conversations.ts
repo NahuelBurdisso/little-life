@@ -32,6 +32,7 @@ import { createConversationMemory } from '../../ai/memories';
 import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
+import { getAgentStates } from '../../lib/states';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,6 +137,13 @@ export async function conversationsTick(): Promise<void> {
 
   for (const entry of validEntries) {
     if (currentActive >= schedulerState.max_concurrent_llm) break;
+
+    // Depressed agents skip conversations — remove from queue
+    const firstParticipantStates = getAgentStates(entry.participants[0]);
+    if (firstParticipantStates.includes('depressed')) {
+      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+      continue;
+    }
 
     // Get first participant's position for location
     const firstParticipant = db
@@ -403,6 +411,12 @@ async function processCompletedConversation(
       time.totalTicks,
       conversation.location,
     );
+
+    // Drunk → fuzzy memories (halve importance)
+    const participantStates = getAgentStates(participant.id);
+    if (participantStates.includes('drunk')) {
+      memoryData.importance = Math.max(1, Math.round(memoryData.importance * 0.5));
+    }
 
     const memoryResult = db
       .insert(memories)

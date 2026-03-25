@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { clamp } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
+import { getAgentStates } from '../../lib/states';
 
 // Need names for iteration
 const NEED_KEYS = ['hunger', 'energy', 'social', 'comfort', 'fun'] as const;
@@ -81,11 +82,18 @@ export function needsTick(): void {
     // Steps 3-6: Calculate decay per need with action modifier and stress amplifier
     const stressMultiplier = 1 + (agentNeeds.stress / 200);
     const updatedNeeds: Record<NeedKey, number> = {} as Record<NeedKey, number>;
+    const agentStateTypes = getAgentStates(agent.id);
 
     for (const key of NEED_KEYS) {
       const decayRate = agentNeeds.decay_rates[key];
       const baseDecay = decayRate * gameHoursElapsed;
-      const modifiedDecay = applyModifier(baseDecay, modifiers[key]);
+      let modifiedDecay = applyModifier(baseDecay, modifiers[key]);
+
+      // Sick → double energy decay
+      if (key === 'energy' && agentStateTypes.includes('sick')) {
+        modifiedDecay *= 2;
+      }
+
       const finalDecay = modifiedDecay * stressMultiplier;
       updatedNeeds[key] = agentNeeds[key] - finalDecay;
     }
@@ -127,7 +135,7 @@ export function needsTick(): void {
       (sum, m) => sum + m.value,
       0
     );
-    const baseMood =
+    let baseMood =
       updatedNeeds.hunger * 0.2 +
       updatedNeeds.energy * 0.2 +
       updatedNeeds.social * 0.25 +
@@ -135,6 +143,16 @@ export function needsTick(): void {
       updatedNeeds.fun * 0.2 +
       moodModifierSum +
       weatherModifier;
+
+    // Depressed → halve positive mood gains (clamp positive delta)
+    if (agentStateTypes.includes('depressed')) {
+      const currentMood = agentNeeds.mood;
+      const moodDelta = baseMood - currentMood;
+      if (moodDelta > 0) {
+        baseMood = currentMood + moodDelta * 0.5;
+      }
+    }
+
     const mood = clamp(baseMood, 0, 100);
 
     // Step 12: Recalculate stress

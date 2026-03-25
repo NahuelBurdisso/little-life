@@ -5,6 +5,7 @@ import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
 import { computeAStarPath } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
+import { getAgentStates } from '../../lib/states';
 
 // --- Types ---
 
@@ -172,8 +173,13 @@ export async function tick(world: WorldRow): Promise<void> {
       continue;
     }
 
+    const agentStateTypes = getAgentStates(agent.id);
+    let speedMultiplier = 1.0;
+    if (agentStateTypes.includes('drunk')) speedMultiplier *= 0.7;
+    if (agentStateTypes.includes('sick')) speedMultiplier *= 0.6;
+
     const moveDistance =
-      CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE * world.tick_speed;
+      CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE * world.tick_speed * speedMultiplier;
 
     let position: { x: number; y: number };
     let remainingPath: number[][];

@@ -8,7 +8,7 @@ import {
   conversationQueue,
   conversations,
 } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
@@ -21,6 +21,8 @@ import {
   curiosityNoveltyBonus,
   selectPersonalityTopic,
 } from '../../lib/personality';
+import { getEffectivePersonality, getAgentStates } from '../../lib/states';
+import { agentStates } from '../../db/schema';
 
 // --- Types ---
 
@@ -200,9 +202,24 @@ function checkSchedule(
   world: WorldRow,
   allLocations: LocationRow[],
 ): ScoredAction | null {
-  const personality = agent.personality as PersonalityProfile | null;
+  const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
   if (personality && Math.random() < personality.impulsiveness / 200) {
     return null; // impulsive agent skips schedule this tick
+  }
+
+  // Sick → go home immediately, override schedule
+  const agentStateTypes = getAgentStates(agent.id);
+  if (agentStateTypes.includes('sick')) {
+    return { action: 'idle', score: 9999, targetLocationId: agent.home };
+  }
+
+  // Depressed → skip work
+  if (agentStateTypes.includes('depressed') && agent.workplace) {
+    const { hour } = world.time;
+    const sched = agent.schedule;
+    if (hour >= sched.workStart && hour < sched.workEnd) {
+      return null; // skip scheduled work
+    }
   }
 
   const { hour, minute } = world.time;
@@ -245,8 +262,9 @@ function scoreFreeTimeActions(
 ): ScoredAction[] {
   const scores: ScoredAction[] = [];
   const evening = isEvening(world.time.hour);
-  const personality = agent.personality as PersonalityProfile | null;
+  const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
   const mood = agentNeeds.mood;
+  const agentStateTypes = getAgentStates(agent.id);
 
   // Eat
   let eatScore = (100 - agentNeeds.hunger) * 1.5 + (mood < 40 ? 10 : 0);
@@ -278,7 +296,8 @@ function scoreFreeTimeActions(
     let socScore = (100 - agentNeeds.social) * 1.2;
     if (friendship > 50) socScore += 15;
     if (romance > 30) socScore += 20;
-    if (friendship < -30) socScore -= 25;
+    // Lonely → remove negative-friendship penalty
+    if (friendship < -30 && !agentStateTypes.includes('lonely')) socScore -= 25;
     if (mood < 30 && trust > 50) socScore += 20;
 
     if (personality) {
@@ -310,11 +329,35 @@ function scoreFreeTimeActions(
     });
   }
 
+  // Infatuated → 50% chance to force the infatuation target as the socializing target
+  if (agentStateTypes.includes('infatuated')) {
+    const infatuatedState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'infatuated')))
+      .get();
+    if (infatuatedState?.target_agent_id && Math.random() < 0.5) {
+      const targetAgent = otherAgents.find(a => a.id === infatuatedState.target_agent_id);
+      if (targetAgent && targetAgent.is_active) {
+        return [
+          {
+            action: 'socializing',
+            score: 9000,
+            targetAgentId: targetAgent.id,
+            targetLocationId: targetAgent.current_location ?? undefined,
+          },
+        ];
+      }
+    }
+  }
+
   // Tavern
   const tavern = nearestLocation(agent.position, allLocations, 'tavern');
   if (tavern) {
     let tavernScore = (100 - agentNeeds.fun) * 0.8 + (100 - agentNeeds.social) * 0.6;
     if (evening) tavernScore += 15;
+    // Hungover → avoid tavern
+    if (agentStateTypes.includes('hungover')) {
+      tavernScore = 0;
+    }
     scores.push({ action: 'socializing', score: addNoise(tavernScore), targetLocationId: tavern.id });
   }
 
