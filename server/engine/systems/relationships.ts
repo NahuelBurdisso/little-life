@@ -63,14 +63,14 @@ function updateTags(
 
   if (metrics.avgFriendship > 80) {
     tags.add('best_friend');
-  } else {
-    if (!STATIC_TAGS.has('best_friend')) tags.delete('best_friend');
+  } else if (!STATIC_TAGS.has('best_friend')) {
+    tags.delete('best_friend');
   }
 
   if (metrics.avgFriendship < -50) {
     tags.add('rival');
-  } else {
-    if (!STATIC_TAGS.has('rival')) tags.delete('rival');
+  } else if (!STATIC_TAGS.has('rival')) {
+    tags.delete('rival');
   }
 
   if (metrics.minRomance > 70) {
@@ -86,14 +86,14 @@ function updateTags(
 
   if (metrics.avgTrust > 60) {
     tags.add('trusted');
-  } else {
-    if (!STATIC_TAGS.has('trusted')) tags.delete('trusted');
+  } else if (!STATIC_TAGS.has('trusted')) {
+    tags.delete('trusted');
   }
 
   if (metrics.avgTrust < -40) {
     tags.add('distrusted');
-  } else {
-    if (!STATIC_TAGS.has('distrusted')) tags.delete('distrusted');
+  } else if (!STATIC_TAGS.has('distrusted')) {
+    tags.delete('distrusted');
   }
 
   return Array.from(tags);

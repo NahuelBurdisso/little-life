@@ -698,6 +698,7 @@ export function tick(world: WorldRow): void {
           action_started: totalTicks,
           action_duration: safeDuration,
           current_path: null,
+          action_queue: [],
           ...(zonePos ? { position: zonePos } : {}),
         })
         .where(eq(agents.id, agent.id))

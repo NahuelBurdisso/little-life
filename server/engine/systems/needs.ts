@@ -94,7 +94,8 @@ export function needsTick(): void {
         modifiedDecay *= 2;
       }
 
-      const finalDecay = modifiedDecay * stressMultiplier;
+      // Only amplify decay (positive values) with stress — never amplify restoration
+      const finalDecay = modifiedDecay > 0 ? modifiedDecay * stressMultiplier : modifiedDecay;
       updatedNeeds[key] = agentNeeds[key] - finalDecay;
     }
 

@@ -231,7 +231,9 @@ function evaluateTriggers(
         .from(locations)
         .where(eq(locations.id, agent.current_location))
         .get();
-      if (loc?.type === 'tavern' && Math.random() < personality.impulsiveness / 100) {
+      // Chance per visit session (~1% base scaled by impulsiveness), not per tick.
+      // Using /10000 so a 70-impulsiveness agent has ~0.7% chance per tick to start drinking.
+      if (loc?.type === 'tavern' && Math.random() < personality.impulsiveness / 10000) {
         const severity = clamp(0.3 + (personality.impulsiveness / 100) * 0.7, 0, 1);
         const duration = Math.floor(120 + Math.random() * 120); // 120-240 ticks
         db.insert(agentStates)
@@ -1276,7 +1278,7 @@ function processStateEffects(
             reason: 'drunk_gift',
             items_exchanged: null,
             location_id: agent.current_location,
-            timestamp: currentTick,
+            timestamp: Date.now(),
           })
           .run();
 
