@@ -81,6 +81,14 @@ const MAP_LOCATIONS: MapLocationRaw[] = [
     capacity: 2,
     description: "A bohemian loft filled with instruments and sheet music",
   },
+  {
+    name: "Home 9",
+    type: "home",
+    x: 640, y: 448, width: 96, height: 96,
+    entryX: 688, entryY: 544,
+    capacity: 2,
+    description: "A spartan house with heavy curtains and a police scanner on the kitchen table",
+  },
   // === Public Buildings ===
   {
     name: "Rosa's General Store",

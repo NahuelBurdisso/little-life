@@ -7,6 +7,8 @@ import {
   locations,
   conversationQueue,
   conversations,
+  activityLog,
+  relationshipEvents,
 } from '../../db/schema';
 import { INTERIOR_ZONES } from '../../data/interiors';
 import { eq, and } from 'drizzle-orm';
@@ -780,6 +782,72 @@ export function tick(world: WorldRow): void {
           max_wait: 10000,
         })
         .run();
+    }
+  }
+
+  // --- Constable Arrest Mechanic ---
+  // If the constable is at the same location as an agent with 8+ negative facts, arrest them
+  for (const agent of activeAgents) {
+    const agentEconRow = db.select().from(economy).where(eq(economy.agent_id, agent.id)).get();
+    if (!agentEconRow || agentEconRow.job !== 'constable') continue;
+    if (agent.current_location == null) continue;
+    if ((agent.current_action as any)?.type === 'sleeping') continue;
+
+    // Find co-located agents with high negative fact counts
+    for (const other of activeAgents) {
+      if (other.id === agent.id || other.current_location !== agent.current_location) continue;
+      if ((other.current_action as any)?.type === 'idle' && other.current_location != null) {
+        // Check if already at prison (don't re-arrest)
+        const loc = allLocations.find(l => l.id === other.current_location);
+        if (loc?.type === 'prison') continue;
+      }
+
+      const negFacts = getNegativeFactCount(other.id);
+      if (negFacts < 8) continue;
+
+      // 10% chance per tick to arrest (not every tick)
+      if (Math.random() > 0.1) continue;
+
+      // Find the prison
+      const prison = allLocations.find(l => l.type === 'prison');
+      if (!prison) continue;
+
+      // Arrest: force the criminal to idle at prison for 480 ticks (8 hours)
+      db.update(agents).set({
+        current_action: { type: 'idle' },
+        current_destination: { x: prison.entry_point.x, y: prison.entry_point.y, locationId: prison.id },
+        action_started: totalTicks,
+        action_duration: 480,
+        action_queue: [],
+        current_path: null,
+      }).where(eq(agents.id, other.id)).run();
+
+      // Log the arrest
+      const [ordA, ordB] = [Math.min(agent.id, other.id), Math.max(agent.id, other.id)];
+      db.insert(relationshipEvents).values({
+        agent_a: ordA,
+        agent_b: ordB,
+        event_type: 'arrested',
+        description: `${agent.name} arrested ${other.name}`,
+        friendship_delta_ab: agent.id === ordA ? -10 : 0,
+        friendship_delta_ba: agent.id === ordA ? 0 : -10,
+        romance_delta_ab: 0, romance_delta_ba: 0,
+        trust_delta_ab: agent.id === ordA ? -20 : 0,
+        trust_delta_ba: agent.id === ordA ? 0 : -20,
+        sentiment: -0.8,
+        processed: false,
+        timestamp: Date.now(),
+      }).run();
+
+      db.insert(activityLog).values({
+        type: 'drama',
+        message: `${agent.name} arrested ${other.name}!`,
+        agent_ids: [agent.id, other.id],
+        timestamp: totalTicks,
+        real_timestamp: Date.now(),
+      }).run();
+
+      break; // One arrest per tick
     }
   }
 
