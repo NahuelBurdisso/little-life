@@ -808,11 +808,13 @@ export function tick(world: WorldRow): void {
 
       let tier: string;
       if (hasDramaticState || hasDramaticTopic || isFirstMeeting) {
-        tier = 'llm_deep'; // 6 turns — these are the important conversations
+        tier = 'llm_deep'; // 6 turns — dramatic moments
       } else if (hasHighRomance || isEmotionalExtreme || hasGossip) {
-        tier = 'llm_standard'; // 4 turns — notable but not critical
+        tier = 'llm_standard'; // 4 turns — notable situations
+      } else if (friendship > 40 || romance > 10 || agentNeeds.mood < 40 || agentNeeds.social < 30) {
+        tier = 'llm_standard'; // 4 turns — friends talking, lonely/sad agents
       } else {
-        tier = 'template'; // no LLM — routine socializing
+        tier = 'template'; // no LLM — acquaintances with nothing to say
       }
 
       const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
@@ -904,6 +906,8 @@ export function tick(world: WorldRow): void {
     if (hasDrama || friendship < -20) {
       tier = 'llm_deep';
     } else if (romance > 30 || aMood < 25 || aMood > 85) {
+      tier = 'llm_standard';
+    } else if (friendship > 40 || romance > 10 || aMood < 40) {
       tier = 'llm_standard';
     } else {
       tier = 'template';
