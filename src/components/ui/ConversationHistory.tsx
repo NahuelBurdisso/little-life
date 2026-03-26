@@ -63,9 +63,9 @@ export function ConversationHistory({ isOpen, onClose }: ConversationHistoryProp
         if (sentimentFilter === "negative" && s >= -0.2) return false;
         if (sentimentFilter === "neutral" && (s > 0.2 || s < -0.2)) return false;
       }
-      // Type filter
+      // Type filter — use trigger reason as source of truth
       if (typeFilter !== "all") {
-        const isTemplate = c.turnCount <= 1;
+        const isTemplate = (c.triggerReason ?? '').includes('template');
         if (typeFilter === "llm" && isTemplate) return false;
         if (typeFilter === "template" && !isTemplate) return false;
       }
