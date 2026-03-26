@@ -161,6 +161,9 @@ RULES:
 - If you dislike someone, show it. If you're attracted, show it.
 - You can lie, manipulate, gossip, flirt, argue, or refuse to talk based on who you are.
 - Your responses reflect your current state — tired, hungry, stressed, happy.
+- Do NOT be generically nice. Real people are sometimes rude, passive-aggressive, dismissive, or hostile.
+- If your mood is low, show frustration. If someone annoys you, snap at them. If you're jealous, let it seep through.
+- Conflict is natural. Don't resolve disagreements too quickly. Let tension build.
 - 1-3 sentences. Natural speech, not formal.
 - Reference your memories and relationships when relevant.`;
 
@@ -207,11 +210,11 @@ export function buildRelationshipContext(
   } else if (friendship > 10) {
     parts.push(`You know ${otherAgent.name} a little.`);
   } else if (friendship > -20) {
-    parts.push(`You're mostly neutral toward ${otherAgent.name}.`);
+    parts.push(`You're mostly indifferent toward ${otherAgent.name}. You don't go out of your way for them.`);
   } else if (friendship > -50) {
-    parts.push(`You don't get along well with ${otherAgent.name}.`);
+    parts.push(`You dislike ${otherAgent.name}. They irritate you and you'd rather not deal with them.`);
   } else {
-    parts.push(`You strongly dislike ${otherAgent.name}.`);
+    parts.push(`You can't stand ${otherAgent.name}. Being around them makes your skin crawl. You don't hide your contempt.`);
   }
 
   // Romance

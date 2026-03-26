@@ -1013,7 +1013,12 @@ async function processTimedOutEntry(
   // Build a prioritized list of categories to try
   const categoriesToTry: string[] = [];
 
-  // Contextual categories first (more interesting)
+  // Negative/conflict categories (highest priority — drama first)
+  if (friendship < 0) categoriesToTry.push('tense_encounter');
+  if (friendship < 20 && mood < 40) categoriesToTry.push('passive_aggressive');
+  if (friendship < 10 && mood < 50) categoriesToTry.push('snide_remark');
+
+  // Contextual categories (interesting situations)
   if (mood < 30) categoriesToTry.push('complaint_mood');
   if (needs0Val.hunger < 35) categoriesToTry.push('hungry');
   if (needs0Val.energy < 35) categoriesToTry.push('tired');

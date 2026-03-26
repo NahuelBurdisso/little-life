@@ -111,6 +111,71 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
     cooldownPerPair: 4,
   },
 
+  // ===== tense_encounter =====
+  {
+    category: "tense_encounter",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: 0,
+      minMood: null,
+      maxMood: null,
+      timeOfDay: null,
+      location: null,
+      weather: null,
+    },
+    variants: [
+      { text: "{speaker.name}: *sees {other.name} and tenses up* ...what do you want?", sentiment: -0.6 },
+      { text: "{speaker.name}: Great. Just what I needed today. {other.name}.", sentiment: -0.5 },
+      { text: "{speaker.name}: *deliberately avoids eye contact with {other.name}*", sentiment: -0.4 },
+      { text: "{speaker.name}: Don't you have somewhere else to be, {other.name}?", sentiment: -0.7 },
+      { text: "{speaker.name}: *scoffs* Of course you're here.", sentiment: -0.5 },
+    ],
+    cooldownPerPair: 4,
+  },
+
+  // ===== passive_aggressive =====
+  {
+    category: "passive_aggressive",
+    conditions: {
+      minFriendship: -30,
+      maxFriendship: 20,
+      minMood: null,
+      maxMood: 40,
+      timeOfDay: null,
+      location: null,
+      weather: null,
+    },
+    variants: [
+      { text: "{speaker.name}: Oh, {other.name}. Having a good day? Must be nice.", sentiment: -0.4 },
+      { text: "{speaker.name}: Funny running into you. I was just thinking about... never mind.", sentiment: -0.3 },
+      { text: "{speaker.name}: {other.name}. *forced smile* How lovely.", sentiment: -0.3 },
+      { text: "{speaker.name}: I'm sure everything's just perfect in your world, {other.name}.", sentiment: -0.5 },
+      { text: "{speaker.name}: No no, don't mind me. I'm just fine. *clearly not fine*", sentiment: -0.4 },
+    ],
+    cooldownPerPair: 6,
+  },
+
+  // ===== snide_remark =====
+  {
+    category: "snide_remark",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: 10,
+      minMood: null,
+      maxMood: 50,
+      timeOfDay: null,
+      location: null,
+      weather: null,
+    },
+    variants: [
+      { text: "{speaker.name}: *mutters under breath as {other.name} walks by*", sentiment: -0.4 },
+      { text: "{speaker.name}: Some people just have no self-awareness. *glances at {other.name}*", sentiment: -0.6 },
+      { text: "{speaker.name}: I heard some interesting things about you, {other.name}. But I'll keep it to myself. For now.", sentiment: -0.5 },
+      { text: "{speaker.name}: {other.name}. Still here, I see.", sentiment: -0.3 },
+    ],
+    cooldownPerPair: 6,
+  },
+
   // ===== tavern_social =====
   {
     category: "tavern_social",
