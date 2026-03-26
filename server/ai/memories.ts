@@ -173,8 +173,9 @@ export async function retrieveMemories(
 export function createConversationMemory(
   agentId: number,
   conversation: {
-    messages: Array<{ text: string }>;
+    messages: Array<{ text: string; speakerId?: number }>;
     sentiment: number;
+    topic?: string | null;
   },
   otherAgentNames: string[],
   otherAgentIds: number[],
@@ -183,28 +184,62 @@ export function createConversationMemory(
 ): MemoryInsertData {
   const names = otherAgentNames.join(" and ");
   const sentiment = conversation.sentiment;
+  const topic = conversation.topic;
+  const messages = conversation.messages;
 
-  // Extract topics from messages
-  const topicKeywords = extractSimpleTopics(conversation.messages);
-  const topicsStr =
-    topicKeywords.length > 0 ? topicKeywords.join(", ") : "various things";
+  // Extract the most memorable quote from the other person (first non-self message)
+  let quote = '';
+  for (const msg of messages) {
+    if (msg.speakerId && msg.speakerId !== agentId && msg.text) {
+      // Take first ~80 chars of their most significant message
+      const candidates = messages
+        .filter(m => m.speakerId && m.speakerId !== agentId)
+        .sort((a, b) => b.text.length - a.text.length);
+      if (candidates.length > 0) {
+        const text = candidates[0].text;
+        quote = text.length > 80 ? text.substring(0, 77) + '...' : text;
+      }
+      break;
+    }
+  }
 
-  // Build summary based on sentiment
+  // Build memory content that captures what actually happened
   let content: string;
-  if (sentiment > 0.5) {
-    content = `Had a great conversation with ${names} about ${topicsStr}.`;
-  } else if (sentiment > 0) {
-    content = `Chatted with ${names} about ${topicsStr}. It was pleasant.`;
-  } else if (sentiment > -0.3) {
-    content = `Talked with ${names} about ${topicsStr}. Nothing special.`;
-  } else if (sentiment > -0.6) {
-    content = `Had an awkward conversation with ${names}. It was tense.`;
+  const topicStr = topic ? ` about ${topic}` : '';
+
+  if (messages.length <= 1) {
+    // Template conversation — brief exchange
+    if (messages.length === 1 && messages[0].text) {
+      content = `Ran into ${names}. They said: "${messages[0].text.substring(0, 100)}"`;
+    } else {
+      content = `Brief exchange with ${names}${topicStr}.`;
+    }
+  } else if (sentiment > 0.5) {
+    content = quote
+      ? `Had a wonderful conversation with ${names}${topicStr}. ${names} said: "${quote}"`
+      : `Had a really good talk with ${names}${topicStr}. Left feeling warm.`;
+  } else if (sentiment > 0.1) {
+    content = quote
+      ? `Talked with ${names}${topicStr}. They mentioned: "${quote}"`
+      : `Nice chat with ${names}${topicStr}.`;
+  } else if (sentiment > -0.2) {
+    content = quote
+      ? `Had a conversation with ${names}${topicStr}. "${quote}"`
+      : `Spoke with ${names}${topicStr}. Nothing remarkable.`;
+  } else if (sentiment > -0.5) {
+    content = quote
+      ? `Tense exchange with ${names}${topicStr}. They said: "${quote}"`
+      : `Things were awkward with ${names}${topicStr}. There's tension between us.`;
   } else {
-    content = `Got into an argument with ${names} about ${topicsStr}. It went badly.`;
+    content = quote
+      ? `Got into it with ${names}${topicStr}. "${quote}" — that really got to me.`
+      : `Argued with ${names}${topicStr}. It went badly. I'm still upset.`;
   }
 
   // importance = ceil(|sentiment| * 5) + 2, clamped to 2-7
-  const importance = Math.min(7, Math.ceil(Math.abs(sentiment) * 5) + 2);
+  // Boost importance for conversations with quotes (they're more memorable)
+  let importance = Math.min(7, Math.ceil(Math.abs(sentiment) * 5) + 2);
+  if (quote) importance = Math.min(8, importance + 1);
 
   return {
     agent_id: agentId,
@@ -215,7 +250,7 @@ export function createConversationMemory(
     embedding: null, // Caller should compute via Ollama if needed
     related_agents: otherAgentIds,
     related_location: locationId,
-    tags: topicKeywords,
+    tags: topic ? [topic] : [],
     timestamp: worldTick,
     access_count: 0,
     last_accessed: worldTick,
@@ -263,35 +298,4 @@ export function createObservationMemory(
  * Lightweight topic extraction from message texts.
  * Mirrors the approach in topics.ts but returns a short list for memory content.
  */
-const TOPIC_KEYWORDS: Record<string, string[]> = {
-  work: ["work", "job", "farm", "shop", "harvest", "busy", "salary"],
-  food: ["eat", "hungry", "cook", "bread", "meal", "dinner", "lunch"],
-  weather: ["rain", "sun", "storm", "cold", "warm", "weather"],
-  relationships: ["friend", "love", "like", "together"],
-  health: ["sick", "tired", "doctor", "medicine", "rest"],
-  money: ["coin", "money", "buy", "sell", "price", "expensive"],
-  town: ["town", "festival", "event", "mayor"],
-  feelings: ["happy", "sad", "angry", "worried", "excited"],
-};
-
-function extractSimpleTopics(messages: Array<{ text: string }>): string[] {
-  if (messages.length === 0) return [];
-
-  const combined = messages
-    .map((m) => m.text)
-    .join(" ")
-    .toLowerCase();
-
-  const matched: string[] = [];
-  for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
-    for (const keyword of keywords) {
-      if (combined.includes(keyword)) {
-        matched.push(topic);
-        break;
-      }
-    }
-  }
-
-  // Return at most 3 topics
-  return matched.slice(0, 3);
-}
+// Topic keywords kept for reference but no longer used for memory summaries

@@ -574,8 +574,9 @@ async function processCompletedConversation(
     const memoryData = createConversationMemory(
       participant.id,
       {
-        messages: messages as Array<{ text: string }>,
+        messages: messages as Array<{ text: string; speakerId?: number }>,
         sentiment: overallSentiment,
+        topic: fresh.topic,
       },
       otherNames,
       otherIds,
@@ -1231,8 +1232,9 @@ async function processTimedOutEntry(
     const memoryData = createConversationMemory(
       agent.id,
       {
-        messages: conversationDoc.messages as Array<{ text: string }>,
+        messages: conversationDoc.messages as Array<{ text: string; speakerId?: number }>,
         sentiment: messageSentiment,
+        topic: conversationDoc.topic,
       },
       [otherAgent.name],
       [otherAgent.id],
