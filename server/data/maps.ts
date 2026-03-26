@@ -310,20 +310,25 @@ function generateCollisionGrid(): string {
     const tileH = Math.ceil(loc.height / TILE_SIZE);
 
     if (BUILDING_TYPES.has(loc.type)) {
+      // Mark ALL building tiles as blocked (walls + interior)
+      // Agents enter via the door → interior transition system, not A* through interiors
       for (let x = tileX; x < tileX + tileW; x++) {
         for (let y = tileY; y < tileY + tileH; y++) {
           if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
-          const isPerimeter =
-            x === tileX || x === tileX + tileW - 1 ||
-            y === tileY || y === tileY + tileH - 1;
-          grid[y][x] = isPerimeter ? 1 : 0;
+          grid[y][x] = 1;
         }
       }
 
+      // Door tile stays walkable — this is the only entry point for pathfinding
       const doorTileX = Math.floor(loc.entryX / TILE_SIZE);
       const doorTileY = Math.floor(loc.entryY / TILE_SIZE);
       if (doorTileX >= 0 && doorTileX < MAP_WIDTH && doorTileY >= 0 && doorTileY < MAP_HEIGHT) {
         grid[doorTileY][doorTileX] = 0;
+      }
+      // Also ensure the tile just outside the door is walkable (approach path)
+      const outsideDoorY = doorTileY + 1;
+      if (outsideDoorY >= 0 && outsideDoorY < MAP_HEIGHT) {
+        grid[outsideDoorY][doorTileX] = 0;
       }
     }
   }

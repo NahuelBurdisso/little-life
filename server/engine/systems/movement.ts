@@ -278,14 +278,38 @@ export function tick(world: WorldRow): void {
       // Get or compute A* path
       let path = agent.current_path;
       if (!path || path.length === 0) {
-        path = computeAStarPath(
-          agent.position,
-          destPoint,
-          world.collision_grid,
-          world.map_width,
-          world.map_height,
-          CONFIG.MOVEMENT.TILE_SIZE,
-        );
+        // If agent is inside a building, first move to the door exit
+        let pathStart = agent.position;
+        const insideBuilding = agent.current_location != null
+          ? allLocations.find(l => l.id === agent.current_location)
+          : null;
+
+        if (insideBuilding && insideBuilding.type !== 'farm' && insideBuilding.type !== 'town_square' && insideBuilding.type !== 'park') {
+          // Agent is inside a closed building — route from door, not current position
+          // First move directly to the door (interior movement, no collision)
+          const doorX = insideBuilding.entry_point.x;
+          const doorY = insideBuilding.entry_point.y;
+          const outerPath = computeAStarPath(
+            { x: doorX, y: doorY },
+            destPoint,
+            world.collision_grid,
+            world.map_width,
+            world.map_height,
+            CONFIG.MOVEMENT.TILE_SIZE,
+          );
+          // Prepend the door as first waypoint so agent exits building first
+          path = [[doorX, doorY], ...(outerPath ?? [[destPoint.x, destPoint.y]])];
+        } else {
+          path = computeAStarPath(
+            pathStart,
+            destPoint,
+            world.collision_grid,
+            world.map_width,
+            world.map_height,
+            CONFIG.MOVEMENT.TILE_SIZE,
+          );
+        }
+
         if (!path || path.length === 0) {
           path = [[destPoint.x, destPoint.y]];
         }
