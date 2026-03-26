@@ -274,7 +274,7 @@ export function economyTick(): void {
           locationCache.set(agent.current_location, loc);
         }
       }
-      if (eatLocation && (eatLocation.type === 'shop' || eatLocation.type === 'tavern') && eatLocation.owner) {
+      if (eatLocation && (eatLocation.type === 'shop' || eatLocation.type === 'tavern' || eatLocation.type === 'bakery') && eatLocation.owner) {
         const buyerEcon = econByAgent.get(agent.id);
         if (!buyerEcon) continue;
 

@@ -408,7 +408,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     jobTitle: "Town Doctor",
     salary: 30,
     homeName: "Home 4",
-    workplaceName: "Dr. Chen's Clinic",
+    workplaceName: "Dr. Petrov's Clinic",
     schedule: {
       wakeTime: 6,
       sleepTime: 23,
@@ -475,7 +475,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     jobTitle: "Medical Assistant",
     salary: 20,
     homeName: "Home 4",
-    workplaceName: "Dr. Chen's Clinic",
+    workplaceName: "Dr. Petrov's Clinic",
     schedule: {
       wakeTime: 6,
       sleepTime: 22,
@@ -609,7 +609,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     jobTitle: "Baker",
     salary: 22,
     homeName: "Home 5",
-    workplaceName: "Rosa's General Store",
+    workplaceName: "Priya's Bakery",
     schedule: {
       wakeTime: 4,
       sleepTime: 21,
@@ -676,7 +676,7 @@ export const AGENT_SEEDS: AgentSeed[] = [
     jobTitle: "Handyperson",
     salary: 18,
     homeName: "Home 6",
-    workplaceName: null,
+    workplaceName: "Carlos' Workshop",
     schedule: {
       wakeTime: 7,
       sleepTime: 23,

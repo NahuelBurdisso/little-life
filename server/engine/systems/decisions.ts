@@ -271,7 +271,7 @@ function checkSchedule(
   const lunchMinutes = sched.lunchTime * 60;
   const currentMinutes = hour * 60 + minute;
   if (Math.abs(currentMinutes - lunchMinutes) <= 30) {
-    const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern']);
+    const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern', 'bakery']);
     if (foodLoc) {
       return { action: 'eating', score: 3000, targetLocationId: foodLoc.id };
     }
@@ -303,7 +303,7 @@ function scoreFreeTimeActions(
   if (personality) {
     eatScore *= 1 + (personality.impulsiveness / 200);
   }
-  const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern']);
+  const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern', 'bakery']);
   scores.push({
     action: 'eating',
     score: addNoise(eatScore),
