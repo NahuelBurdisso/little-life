@@ -18,8 +18,6 @@ import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
 import {
   PersonalityProfile,
-  warmthMultiplier,
-  neuroticismMoodFactor,
   loyaltyBonus,
   sensualityBonus,
   curiosityNoveltyBonus,
@@ -28,6 +26,7 @@ import {
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
 import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
+import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
 import { createObservationMemory } from '../../ai/memories';
 import { taskRunner } from '../../ai/taskRunner';
 
@@ -303,10 +302,21 @@ function scoreFreeTimeActions(
   const mood = agentNeeds.mood;
   const agentStateTypes = getAgentStates(agent.id);
 
+  // Compute all personality-driven modifiers in one place
+  const behaviorCtx: BehaviorContext = {
+    mood,
+    social: agentNeeds.social,
+    energy: agentNeeds.energy,
+    hunger: agentNeeds.hunger,
+    isEvening: evening,
+    activeStates: agentStateTypes as string[],
+  };
+  const mods = personality ? computeBehaviorModifiers(personality, behaviorCtx) : null;
+
   // Eat
   let eatScore = (100 - agentNeeds.hunger) * 1.5 + (mood < 40 ? 10 : 0);
-  if (personality) {
-    eatScore *= 1 + (personality.impulsiveness / 200);
+  if (mods) {
+    eatScore *= mods.eatImpulsiveness;
   }
   const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern', 'bakery']);
   scores.push({
@@ -374,21 +384,24 @@ function scoreFreeTimeActions(
     if (friendship < -30 && !agentStateTypes.includes('lonely')) socScore -= 25;
     if (mood < 30 && trust > 50) socScore += 20;
 
-    if (personality) {
-      socScore *= warmthMultiplier(personality.warmth);
-      socScore *= neuroticismMoodFactor(personality.neuroticism, mood);
-      socScore += loyaltyBonus(personality.loyalty, friendship);
-      socScore += sensualityBonus(personality.sensuality, romance);
-      socScore += curiosityNoveltyBonus(personality.curiosity, interactionCount);
+    if (mods) {
+      // Engine-driven social modifiers (replaces scattered personality checks)
+      socScore *= mods.socialBaseMultiplier;
+      // Keep individual axis bonuses that need per-target context
+      socScore += loyaltyBonus(personality!.loyalty, friendship);
+      socScore += sensualityBonus(personality!.sensuality, romance);
+      socScore += curiosityNoveltyBonus(personality!.curiosity, interactionCount);
+      // Vanity: prefer high-status targets
+      if (mods.socialTargetStatusBonus > 0) {
+        const otherEcon = db.select().from(economy).where(eq(economy.agent_id, other.id)).get();
+        if (otherEcon && ['mayor', 'shopkeeper', 'doctor', 'constable'].includes(otherEcon.job)) {
+          socScore += mods.socialTargetStatusBonus;
+        }
+      }
     } else {
-      // Fallback: legacy trait checks
       if (agent.traits.includes('introverted')) socScore *= 0.7;
       if (agent.traits.includes('extroverted')) socScore *= 1.3;
     }
-
-    // Personality-based warmth thresholds replace old string traits when personality is set
-    if (personality && personality.warmth < 35) socScore *= 0.7;
-    if (personality && personality.warmth > 65) socScore *= 1.3;
 
     // Escalation: reduce social score toward agents with many negative facts
     const targetNegFacts = getNegativeFactCount(other.id);
@@ -462,51 +475,77 @@ function scoreFreeTimeActions(
     }
   }
 
-  // Tavern
+  // Tavern — attraction driven by personality engine
   const tavern = nearestLocation(agent.position, allLocations, 'tavern');
   if (tavern) {
     let tavernScore = (100 - agentNeeds.fun) * 0.8 + (100 - agentNeeds.social) * 0.6;
-    if (evening) tavernScore += 30;
-    // Hungover → avoid tavern
-    if (agentStateTypes.includes('hungover')) {
-      tavernScore = 0;
-    }
-    // Alcoholic: strong tavern pull
-    if (agentStateTypes.includes('alcoholic')) {
-      tavernScore += 40;
-    }
+    tavernScore += mods?.tavernAttraction ?? (evening ? 15 : 0);
     scores.push({ action: 'socializing', score: addNoise(tavernScore), targetLocationId: tavern.id });
   }
 
-  // Go home
+  // Go home — preference driven by personality engine
   let homeScore = (100 - agentNeeds.energy) * 1.0;
   if (agentNeeds.comfort < 40) homeScore += 15;
+  homeScore *= mods?.homePreference ?? 1.0;
   scores.push({ action: 'idle', score: addNoise(homeScore), targetLocationId: agent.home });
 
-  // Stroll in the town square — scored as 'socializing' so arrival handling works
-  // correctly and avoids the walking-with-no-destination deadlock.
+  // Stroll in the town square
   const square = nearestLocation(agent.position, allLocations, 'town_square');
   if (square) {
     const walkScore = 20 + (agentNeeds.fun < 60 ? 10 : 0);
     scores.push({ action: 'socializing', score: addNoise(walkScore), targetLocationId: square.id });
   }
 
-  // Workaholic bonus (personality-based or legacy trait)
-  const isWorkaholic = personality ? personality.impulsiveness < 25 : agent.traits.includes('workaholic');
-  if (isWorkaholic && agent.workplace) {
-    let workScore = 30;
-    workScore *= 1.4;
-    if (personality) {
-      workScore *= (100 - personality.impulsiveness) / 100;
-    }
-    scores.push({ action: 'working', score: addNoise(workScore), targetLocationId: agent.workplace });
+  // Work ethic — driven by personality engine
+  if (mods && mods.workEthic > 0 && agent.workplace) {
+    scores.push({ action: 'working', score: addNoise(mods.workEthic), targetLocationId: agent.workplace });
+  } else if (!personality && agent.traits.includes('workaholic') && agent.workplace) {
+    scores.push({ action: 'working', score: addNoise(30), targetLocationId: agent.workplace });
   }
 
-  // Lazy bonus (personality-based or legacy trait)
-  const isLazy = personality ? personality.impulsiveness > 70 : agent.traits.includes('lazy');
-  if (isLazy) {
+  // Impulsiveness-driven idle preference (lazy agents)
+  if (personality && personality.impulsiveness > 70) {
     for (const s of scores) {
       if (s.action === 'idle') s.score *= 1.3;
+    }
+  }
+
+  // --- Personality-driven behavioral modifiers ---
+  if (personality) {
+    // Vanity: vain agents seek social validation — boost socializing in busy locations
+    if (personality.vanity > 60) {
+      for (const s of scores) {
+        if (s.action === 'socializing') s.score *= 1.3; // crave attention
+      }
+      // Avoid being alone — penalize idle at home
+      for (const s of scores) {
+        if (s.action === 'idle') s.score *= 0.7;
+      }
+    }
+
+    // Neuroticism: anxious agents avoid unfamiliar situations, prefer safe spaces
+    if (personality.neuroticism > 65) {
+      for (const s of scores) {
+        if (s.action === 'idle' && s.targetLocationId === agent.home) s.score *= 1.3; // prefer home
+      }
+    }
+
+    // Honesty: honest agents are less likely to seek tavern (where secrets flow)
+    if (personality.honesty > 70) {
+      if (tavern) {
+        for (const s of scores) {
+          if (s.targetLocationId === tavern.id && s.action === 'socializing') s.score *= 0.7;
+        }
+      }
+    }
+
+    // Low morality: drawn to places where they can exploit (shop for theft, tavern for scheming)
+    if (personality.morality < 30) {
+      if (tavern) {
+        for (const s of scores) {
+          if (s.targetLocationId === tavern.id) s.score *= 1.2;
+        }
+      }
     }
   }
 
