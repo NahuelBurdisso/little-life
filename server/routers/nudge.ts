@@ -13,6 +13,7 @@ import {
   activityLog,
 } from '../db/schema';
 import { eq, and, ne } from 'drizzle-orm';
+import { emitter } from '../engine/emitter';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
 
@@ -369,6 +370,8 @@ export const nudgeRouter = router({
             .where(eq(worldState.id, world.id))
             .run();
 
+          emitter.markDirty('world.state');
+          emitter.flush();
           return { success: true };
         }
 
@@ -384,6 +387,8 @@ export const nudgeRouter = router({
             .where(eq(worldState.id, world.id))
             .run();
 
+          emitter.markDirty('world.state');
+          emitter.flush();
           return { success: true };
         }
 
