@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { getAgentColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 
-const LERP_SPEED = 0.3;
+const LERP_SPEED = 0.12;
 
 /** Map action types to display emojis. */
 const ACTION_EMOJIS: Record<string, string> = {
@@ -185,16 +185,20 @@ export class AgentSprite {
     this.statusContainer.addChild(this.needAlert);
   }
 
-  /** Lerp container position toward target. */
+  /** Set target and lerp toward it. */
   update(targetX: number, targetY: number, deltaTime: number) {
     this.targetPos.x = targetX;
     this.targetPos.y = targetY;
+    this.lerp(deltaTime);
+  }
 
+  /** Lerp container position toward stored target without changing it. */
+  lerp(deltaTime: number) {
     const dx = this.targetPos.x - this.container.x;
     const dy = this.targetPos.y - this.container.y;
-    const lerp = Math.min(1, deltaTime * LERP_SPEED);
-    this.container.x += dx * lerp;
-    this.container.y += dy * lerp;
+    const t = Math.min(1, deltaTime * LERP_SPEED);
+    this.container.x += dx * t;
+    this.container.y += dy * t;
   }
 
   /** Snap position without lerp (e.g. on first placement). */

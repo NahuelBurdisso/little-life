@@ -70,10 +70,10 @@ export class SpritePool {
     }
   }
 
-  /** Per-frame lerp — call from ticker without needing fresh agent data. */
+  /** Per-frame lerp — smoothly moves sprites toward their targets. */
   lerpAll(deltaTime: number) {
     for (const sprite of this.sprites.values()) {
-      sprite.update(sprite.x, sprite.y, deltaTime);
+      sprite.lerp(deltaTime);
     }
   }
 
