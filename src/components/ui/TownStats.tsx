@@ -98,7 +98,7 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
               .map((agent: any) => {
                 const mood = agent.mood ?? 50;
                 return (
-                  <div key={agent._id} className="flex items-center gap-2">
+                  <div key={agent.id} className="flex items-center gap-2">
                     <div className="text-xs text-white w-20 truncate">{agent.name}</div>
                     <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
                       <div

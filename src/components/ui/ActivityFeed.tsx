@@ -12,11 +12,11 @@ export function ActivityFeed() {
         <p className="text-gray-500 text-sm">No activity yet...</p>
       ) : (
         <div className="space-y-1">
-          {activities.map((entry: { _id?: string; timestamp: number; message: string }, i: number) => (
-            <div key={entry._id ?? i} className="text-sm flex gap-2">
+          {activities.map((entry: { id?: number; timestamp: number; message: string }, i: number) => (
+            <div key={entry.id ?? i} className="text-sm flex gap-2">
               <span className="text-gray-500 shrink-0 w-16 text-right">
                 {world
-                  ? timeAgo(entry.timestamp, world.time.totalTicks, world.tickSpeed)
+                  ? timeAgo(entry.timestamp, world.time.totalTicks, world.tick_speed)
                   : ""}
               </span>
               <span className="text-gray-300">{entry.message}</span>

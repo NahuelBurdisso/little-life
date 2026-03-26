@@ -42,13 +42,13 @@ export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
 
     // Only reinitialize positions if agents changed
     const existingIds = new Set(nodesRef.current.map((n) => n.id));
-    const agentIds = new Set(agents.map((a: any) => a._id));
+    const agentIds = new Set(agents.map((a: any) => String(a.id)));
 
     if (!initializedRef.current || existingIds.size !== agentIds.size) {
       nodesRef.current = agents.map((a: any, i: number) => {
         const angle = (2 * Math.PI * i) / agents.length;
         return {
-          id: a._id,
+          id: String(a.id),
           label: a.name,
           x: CX + R * Math.cos(angle),
           y: CY + R * Math.sin(angle),
@@ -60,10 +60,10 @@ export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
     }
 
     edgesRef.current = (relationships ?? []).map((r: any) => ({
-      source: r.agentA,
-      target: r.agentB,
-      friendship: Math.max(r.friendshipAB ?? 0, r.friendshipBA ?? 0),
-      romance: Math.max(r.romanceAB ?? 0, r.romanceBA ?? 0),
+      source: String(r.agent_a),
+      target: String(r.agent_b),
+      friendship: Math.max(r.friendship_ab ?? 0, r.friendship_ba ?? 0),
+      romance: Math.max(r.romance_ab ?? 0, r.romance_ba ?? 0),
     }));
   }, [agents, relationships]);
 

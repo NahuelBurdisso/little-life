@@ -10,8 +10,6 @@ import type { RelationshipStatus } from '../../lib/types';
 
 type AgentRow = typeof agents.$inferSelect;
 type RelRow = typeof relationships.$inferSelect;
-type RelEventRow = typeof relationshipEvents.$inferSelect;
-
 const STATIC_TAGS = new Set(['coworker', 'neighbor', 'family', 'roommate']);
 
 // --- Helpers ---

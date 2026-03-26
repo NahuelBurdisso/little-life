@@ -3,7 +3,7 @@ import { getCharacterSheet } from "../../lib/spriteConfig";
 
 interface AgentPortraitProps {
   agent: { name: string; age: number; portraitSprite?: string };
-  economy: { jobTitle: string } | null;
+  economy: { job_title: string } | null;
   mood: number | undefined;
 }
 
@@ -35,7 +35,7 @@ export function AgentPortrait({ agent, economy, mood }: AgentPortraitProps) {
       <div>
         <div className="font-bold text-white">{agent.name}</div>
         <div className="text-sm text-gray-400">
-          {economy?.jobTitle ?? "Unknown"}, age {agent.age}
+          {economy?.job_title ?? "Unknown"}, age {agent.age}
         </div>
         {mood !== undefined && (
           <div className="text-xs text-gray-500">

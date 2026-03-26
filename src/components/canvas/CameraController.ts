@@ -11,6 +11,8 @@ export class CameraController {
   private targetX: number | null = null;
   private targetY: number | null = null;
   private animating = false;
+  private mapWidth = 1280;
+  private mapHeight = 960;
 
   private onMouseDown: (e: MouseEvent) => void;
   private onMouseMove: (e: MouseEvent) => void;
@@ -140,9 +142,14 @@ export class CameraController {
     this.clampBounds();
   }
 
+  setMapSize(width: number, height: number) {
+    this.mapWidth = width;
+    this.mapHeight = height;
+  }
+
   private clampBounds() {
-    const mapW = 1280 * this.scale;
-    const mapH = 960 * this.scale;
+    const mapW = this.mapWidth * this.scale;
+    const mapH = this.mapHeight * this.scale;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
 

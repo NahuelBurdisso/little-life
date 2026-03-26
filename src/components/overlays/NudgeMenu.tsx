@@ -28,8 +28,8 @@ export function NudgeMenu({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const currentAgent = agents.find((a: any) => a._id === agentId);
-  const otherAgents = agents.filter((a: any) => a._id !== agentId);
+  const currentAgent = agents.find((a: any) => String(a.id) === agentId);
+  const otherAgents = agents.filter((a: any) => String(a.id) !== agentId);
   const isPairMode = selectedAgentId !== null && selectedAgentId !== agentId;
 
   // Close on click outside
@@ -70,7 +70,7 @@ export function NudgeMenu({
         style={{ left, top }}
       >
         <div className="px-3 py-1 text-[10px] text-gray-500 uppercase tracking-wider">
-          {currentAgent?.name ?? "Agent"} + {agents.find((a: any) => a._id === selectedAgentId)?.name ?? "Agent"}
+          {currentAgent?.name ?? "Agent"} + {agents.find((a: any) => String(a.id) === selectedAgentId)?.name ?? "Agent"}
         </div>
         {subMenu === "topic" ? (
           <div className="px-3 py-1.5">
@@ -146,10 +146,10 @@ export function NudgeMenu({
           </button>
           {otherAgents.map((a: any) => (
             <button
-              key={a._id}
+              key={String(a.id)}
               className={menuItemClass}
               onClick={() => {
-                suggestTalk(agentId, a._id);
+                suggestTalk(agentId, String(a.id));
                 onClose();
               }}
             >
@@ -166,10 +166,10 @@ export function NudgeMenu({
           </button>
           {locations.map((loc: any) => (
             <button
-              key={loc._id}
+              key={String(loc.id)}
               className={menuItemClass}
               onClick={() => {
-                suggestGoTo(agentId, loc._id);
+                suggestGoTo(agentId, String(loc.id));
                 onClose();
               }}
             >

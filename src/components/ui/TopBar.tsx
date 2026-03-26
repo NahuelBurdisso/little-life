@@ -5,8 +5,8 @@ interface TopBarProps {
   world: {
     time: { day: number; hour: number; minute: number; season: string; totalTicks: number };
     weather: string;
-    isPaused: boolean;
-    tickSpeed: number;
+    is_paused: boolean;
+    tick_speed: number;
   };
   events: unknown[];
   onShowEvents: () => void;
@@ -29,7 +29,7 @@ export function TopBar({ world, events, onShowEvents, onShowStats }: TopBarProps
 
       {/* Center: Speed controls */}
       <div className="flex-1 flex justify-center">
-        <SpeedControls isPaused={world.isPaused} currentSpeed={world.tickSpeed} />
+        <SpeedControls isPaused={world.is_paused} currentSpeed={world.tick_speed} />
       </div>
 
       {/* Right: Menu buttons */}

@@ -1,0 +1,99 @@
+<h2>Visual Overhaul — Implementation Approach</h2>
+<p class="subtitle">How should we structure the work? Click the approach that makes sense.</p>
+
+<div class="options">
+
+  <!-- Approach A -->
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Bottom-Up: Tiles → Buildings → Characters → Cues</h3>
+      <p>Replace the visual layers from the ground up. Each layer builds on the previous one.</p>
+
+      <div style="margin: 12px 0; font-size: 13px; line-height: 1.8;">
+        <div><strong>Step 1:</strong> Replace terrain rendering — swap colored tiles for Anokolisa tileset (grass, dirt, water, paths)</div>
+        <div><strong>Step 2:</strong> Replace buildings — swap colored rectangles for Anokolisa house/farm/shop sprites</div>
+        <div><strong>Step 3:</strong> Replace characters — swap colored circles for animated sprites (Anokolisa heroes + Superdark NPCs)</div>
+        <div><strong>Step 4:</strong> Add visual cues on top — bubbles, mood icons, relationship lines, action indicators</div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Each step is independently testable</li>
+          <li>Visual cues designed after art is final — no rework</li>
+          <li>Natural dependency order</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Visual cues come last — longest wait for the feature you originally asked for</li>
+          <li>Can't see how cues interact with art until the end</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approach B -->
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Parallel Tracks: Art Overhaul + Cue System Together</h3>
+      <p>Design the cue system alongside the art. Both reference the same sprite sizes and palette.</p>
+
+      <div style="margin: 12px 0; font-size: 13px; line-height: 1.8;">
+        <div><strong>Track A (Art):</strong> Tilemap → Buildings → Character sprites → Props/decoration</div>
+        <div><strong>Track B (Cues):</strong> Conversation bubbles → Mood/need indicators → Action icons → Relationship visuals</div>
+        <div><strong>Integration:</strong> Both tracks share sprite config (TILE_SIZE=16, scale factor, palette). Merge at the end.</div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Cues and art co-designed — guaranteed visual harmony</li>
+          <li>Can test cues early even with placeholder art</li>
+          <li>Faster overall delivery</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>If art decisions change, cues may need adjustment</li>
+          <li>Slightly more complex plan</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approach C -->
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Characters-First: Agents → Cues → World</h3>
+      <p>Start with what the user sees most — the agents and their visual feedback. World art comes last.</p>
+
+      <div style="margin: 12px 0; font-size: 13px; line-height: 1.8;">
+        <div><strong>Step 1:</strong> Replace agent sprites (Anokolisa + Superdark) with proper walk cycles</div>
+        <div><strong>Step 2:</strong> Add all visual cues — bubbles, mood, relationships, actions</div>
+        <div><strong>Step 3:</strong> Replace terrain tiles</div>
+        <div><strong>Step 4:</strong> Replace building sprites</div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Biggest visual impact first — agents are what you watch</li>
+          <li>Visual cues come early</li>
+          <li>Can demo interesting agent behavior quickly</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Pixel art agents on colored rectangles looks jarring temporarily</li>
+          <li>May need to adjust agent positioning when tiles change</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top: 24px; padding: 16px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+  <h3 style="margin-top: 0;">My Recommendation: Approach A (Bottom-Up)</h3>
+  <p style="font-size: 14px; line-height: 1.6;">
+    The visual cues (bubbles, indicators, icons) all need to be positioned relative to sprites and tiles. If we design them first and then change the art, we'll be adjusting offsets, sizes, and colors twice. Bottom-up means every layer is final when the next starts. The cues come last but they'll be right the first time.
+  </p>
+  <p style="font-size: 14px; line-height: 1.6;">
+    The plan will be structured so each step is a shippable increment — you'll see progress at every stage, not just at the end.
+  </p>
+</div>

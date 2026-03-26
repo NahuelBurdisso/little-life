@@ -2,12 +2,12 @@ import React from "react";
 import { timeAgo } from "../../lib/formatters";
 
 interface Memory {
-  _id: string;
+  id: number;
   content: string;
   type: string;
   importance: number;
   emotional_valence: number;
-  relatedAgents: string[];
+  related_agents: number[];
   tags: string[];
   timestamp: number;
 }
@@ -69,7 +69,7 @@ export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
       <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
         {displayMemories.map((memory) => (
           <div
-            key={memory._id}
+            key={memory.id}
             className={`border-l-2 ${valenceColor(memory.emotional_valence)} pl-2 py-0.5`}
           >
             <div className="flex items-center gap-1.5 mb-0.5">

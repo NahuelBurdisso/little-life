@@ -74,8 +74,9 @@ export class InteractionLayer {
     }
 
     // Clean up bindings for agents that no longer exist
+    const activeSet = new Set(agentIds);
     for (const id of this.boundIds) {
-      if (!agentIds.includes(id)) {
+      if (!activeSet.has(id)) {
         this.boundIds.delete(id);
       }
     }

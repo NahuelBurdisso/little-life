@@ -1,7 +1,7 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
 import { relationships, agents } from '../db/schema';
-import { eq, or, and, lt } from 'drizzle-orm';
+import { eq, or, and } from 'drizzle-orm';
 import { z } from 'zod';
 
 export const relationshipsRouter = router({

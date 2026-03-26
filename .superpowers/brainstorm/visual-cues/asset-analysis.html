@@ -1,0 +1,196 @@
+<h2>Asset Analysis — What We Actually Have</h2>
+<p class="subtitle">I've inspected every file in both packs. Here's the reality.</p>
+
+<div style="padding: 16px; background: rgba(255,100,100,0.1); border: 1px solid rgba(255,100,100,0.4); border-radius: 8px; margin-bottom: 24px;">
+  <h3 style="margin-top: 0; color: #f88;">License Warning: Modern Interiors Free</h3>
+  <p style="font-size: 14px; line-height: 1.6; margin: 0;">
+    The LICENSE.txt says: <strong>"YOU CAN'T USE THE ASSET IN COMMERCIAL PROJECTS"</strong>. The free version is non-commercial only. The README says this is "around 1% of material of the full asset." If you ever want to monetize Little Life, you'd need the $1.50 paid version. For now (personal/hobby project), it's fine.
+  </p>
+</div>
+
+<div class="section">
+  <h3>Characters — Modern Interiors Free (4 characters)</h3>
+  <p>4 unique characters: <strong>Adam, Alex, Amelia, Bob</strong>. Each character has the same animation set.</p>
+
+  <div style="overflow-x: auto;">
+    <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+      <thead>
+        <tr style="border-bottom: 2px solid rgba(255,255,255,0.2);">
+          <th style="text-align: left; padding: 8px;">File</th>
+          <th style="text-align: left; padding: 8px;">Size (px)</th>
+          <th style="text-align: left; padding: 8px;">Frame Size</th>
+          <th style="text-align: left; padding: 8px;">Layout</th>
+          <th style="text-align: left; padding: 8px;">Use in Little Life</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_16x16.png</td>
+          <td style="padding: 8px;">384 x 224</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">24 cols x 7 rows = main walk sheet (6 frames x 4 dirs per row)</td>
+          <td style="padding: 8px; color: #4a9;"><strong>Primary walk cycle</strong></td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_run_16x16.png</td>
+          <td style="padding: 8px;">384 x 32</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">24 frames = 6 frames x 4 directions</td>
+          <td style="padding: 8px; color: #4a9;">Run animation (speed > 1)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_idle_16x16.png</td>
+          <td style="padding: 8px;">64 x 32</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">4 frames = 1 static pose per direction</td>
+          <td style="padding: 8px; color: #4a9;">Standing still</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_idle_anim_16x16.png</td>
+          <td style="padding: 8px;">384 x 32</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">24 frames = animated idle (breathing, shifting)</td>
+          <td style="padding: 8px; color: #4a9;">Idle animation when standing</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_phone_16x16.png</td>
+          <td style="padding: 8px;">144 x 32</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">9 frames = phone talking animation</td>
+          <td style="padding: 8px; color: #fa4;">Socializing visual cue</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_sit_16x16.png</td>
+          <td style="padding: 8px;">384 x 32</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">24 frames = sitting (4 dirs x 6 frames)</td>
+          <td style="padding: 8px; color: #fa4;">Resting, eating at restaurant</td>
+        </tr>
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+          <td style="padding: 8px; font-family: monospace;">{Name}_sit2/sit3_16x16.png</td>
+          <td style="padding: 8px;">384/192 x 32</td>
+          <td style="padding: 8px;">16 x 32</td>
+          <td style="padding: 8px;">Sitting variants</td>
+          <td style="padding: 8px; color: #888;">Alt sitting poses</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top: 12px; font-size: 13px;">
+    <strong>Key detail:</strong> Characters are <strong>16px wide x 32px tall</strong> (2 tiles high). This means AGENT_SIZE changes from 32x32 to 16x32. Walk cycles have <strong>6 frames per direction</strong> in 4 directions (down, up, left, right). Your current code assumes 4 frames x 4 dirs — needs update.
+  </p>
+  <p style="font-size: 13px;">
+    <strong>12 agents from 4 bases:</strong> Each base gets 3 palette-swapped variants via PixiJS ColorMatrixFilter (hue shift). Adam×3 + Alex×3 + Amelia×3 + Bob×3 = 12 distinct-looking agents.
+  </p>
+</div>
+
+<div class="section">
+  <h3>Terrain & Buildings — Serene Village (CC-BY 4.0)</h3>
+  <p>One main tileset: <strong>304 x 720 px = 19 cols x 45 rows = 855 tiles</strong></p>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0;">
+    <div>
+      <div style="font-size: 11px; color: #aaa; text-transform: uppercase; margin-bottom: 4px;">Terrain (visible in tileset)</div>
+      <ul style="font-size: 13px; padding-left: 16px;">
+        <li>Grass (3+ variants)</li>
+        <li>Dirt paths</li>
+        <li>Water with animated waves (14 frames)</li>
+        <li>Stone/cliff edges</li>
+        <li>Flowers, bushes</li>
+        <li>Auto-tile transition pieces</li>
+      </ul>
+    </div>
+    <div>
+      <div style="font-size: 11px; color: #aaa; text-transform: uppercase; margin-bottom: 4px;">Buildings & Props</div>
+      <ul style="font-size: 13px; padding-left: 16px;">
+        <li>24 house designs (various colors/sizes)</li>
+        <li>Trees (multiple types)</li>
+        <li>Rocks, mushrooms, stumps</li>
+        <li>Fences, signs</li>
+        <li>Animated campfire (4 frames)</li>
+        <li>Animated doors (4 frames)</li>
+      </ul>
+    </div>
+  </div>
+
+  <p style="font-size: 13px;">
+    <strong>Buildings are multi-tile:</strong> Houses in the tileset are assembled from roof + wall + door tiles. Typical house is ~3-5 tiles wide × 3-4 tiles tall (48-80px × 48-64px at 16px scale).
+  </p>
+</div>
+
+<div class="section">
+  <h3>Interiors — Modern Interiors Free</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0;">
+    <div>
+      <div style="font-size: 11px; color: #aaa; text-transform: uppercase; margin-bottom: 4px;">Interiors_free_16x16.png (256 x 1424)</div>
+      <p style="font-size: 13px;">1,424 furniture/object tiles — sofas, tables, beds, TVs, kitchen appliances, bookshelves, toilets, sinks, hospital equipment, gym equipment, art supplies.</p>
+    </div>
+    <div>
+      <div style="font-size: 11px; color: #aaa; text-transform: uppercase; margin-bottom: 4px;">Room_Builder_free_16x16.png (272 x 368)</div>
+      <p style="font-size: 13px;">Wall types, floor types (wood, tile, carpet, stone), ceiling edges. Used to construct room interiors.</p>
+    </div>
+  </div>
+  <p style="font-size: 13px; color: #888;"><em>Interior tiles could be used for the AgentPanel sidebar to show what's inside a building, but aren't needed for the main canvas view.</em></p>
+</div>
+
+<div style="margin-top: 24px; padding: 16px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+  <h3 style="margin-top: 0;">Summary of What Changes in the Code</h3>
+  <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+    <thead>
+      <tr style="border-bottom: 2px solid rgba(255,255,255,0.2);">
+        <th style="text-align: left; padding: 8px;">Item</th>
+        <th style="text-align: left; padding: 8px;">Current</th>
+        <th style="text-align: left; padding: 8px;">New</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">TILE_SIZE</td>
+        <td style="padding: 8px;">32px</td>
+        <td style="padding: 8px;">16px (rendered at 2x = 32px visual)</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">AGENT_SIZE</td>
+        <td style="padding: 8px;">32 x 32</td>
+        <td style="padding: 8px;">16 x 32 (1 tile wide, 2 tiles tall)</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">Walk frames</td>
+        <td style="padding: 8px;">4 per direction</td>
+        <td style="padding: 8px;">6 per direction</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">Terrain rendering</td>
+        <td style="padding: 8px;">Graphics colored rects</td>
+        <td style="padding: 8px;">Sprite-based tileset from Serene Village</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">Buildings</td>
+        <td style="padding: 8px;">Colored rects + roof accent</td>
+        <td style="padding: 8px;">Multi-tile house sprites from tileset</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">Characters</td>
+        <td style="padding: 8px;">4 base characters (colored circles fallback)</td>
+        <td style="padding: 8px;">4 base characters × 3 palette swaps = 12</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">Animations</td>
+        <td style="padding: 8px;">Walk only</td>
+        <td style="padding: 8px;">Walk, run, idle, phone, sit</td>
+      </tr>
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <td style="padding: 8px;">Water</td>
+        <td style="padding: 8px;">Static blue tile</td>
+        <td style="padding: 8px;">14-frame animated waves</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div style="margin-top: 16px; padding: 12px; background: rgba(100,200,100,0.1); border: 1px solid rgba(100,200,100,0.3); border-radius: 8px;">
+  <p style="font-size: 14px; margin: 0;">
+    <strong>Does this look good to proceed with the full design?</strong> The license is non-commercial for the free Modern Interiors characters, but fine for a personal project. Serene Village is CC-BY 4.0 (commercial OK with credit).
+  </p>
+</div>

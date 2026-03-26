@@ -48,7 +48,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
   const { agent, needs, economy } = data;
   const worldTick = world?.time?.totalTicks ?? 0;
-  const tickSpeed = world?.tickSpeed ?? 1;
+  const tickSpeed = world?.tick_speed ?? 1;
 
   return (
     <div className="w-[300px] flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-y-auto">
@@ -75,7 +75,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
         <div className="px-3 py-2 border-b border-gray-700 text-sm">
           <span className="text-yellow-400">{formatMoney(economy.money)}</span>
           <span className="text-gray-400 ml-2">
-            \u2022 {economy.jobTitle}
+            \u2022 {economy.job_title}
           </span>
         </div>
       )}
@@ -83,14 +83,14 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
       {/* Current action */}
       <div className="px-3 py-2 border-b border-gray-700 text-sm text-gray-300">
         <span className="text-gray-500">Currently: </span>
-        {describeAction(agent.currentAction)}
+        {describeAction(agent.current_action)}
       </div>
 
       {/* Active conversation */}
       {(() => {
-        const agentNameMap = new Map(allAgents.map((a: any) => [a._id, a.name]));
+        const agentNameMap = new Map(allAgents.map((a: any) => [String(a.id), a.name]));
         const activeConvo = activeConversations.find((c: any) =>
-          c.participants?.includes(agentId)
+          c.participants?.includes(Number(agentId))
         );
         const recentConvos = (conversationHistory ?? []).slice(0, 3);
 
@@ -112,7 +112,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                   {recentConvos.map((convo: any) => (
                     <ConversationViewer
-                      key={convo._id}
+                      key={convo.id}
                       conversation={convo}
                       agentNames={agentNameMap}
                     />

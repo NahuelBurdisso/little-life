@@ -3,20 +3,20 @@ import { COLORS } from "../../lib/constants";
 
 interface RelationshipEntry {
   relationship: {
-    agentA: string;
-    agentB: string;
-    friendshipAB: number;
-    friendshipBA: number;
-    romanceAB: number;
-    romanceBA: number;
-    trustAB: number;
-    trustBA: number;
+    agent_a: number;
+    agent_b: number;
+    friendship_ab: number;
+    friendship_ba: number;
+    romance_ab: number;
+    romance_ba: number;
+    trust_ab: number;
+    trust_ba: number;
     familiarity: number;
-    interactionCount: number;
+    interaction_count: number;
     status: string;
     tags: string[];
   };
-  otherAgent: { _id: string; name: string } | null;
+  otherAgent: { id: number; name: string } | null;
 }
 
 interface RelationshipListProps {
@@ -96,12 +96,12 @@ export function RelationshipList({
     .filter((r) => r.otherAgent !== null)
     .sort((a, b) => {
       const aFriend = Math.max(
-        Math.abs(a.relationship.friendshipAB),
-        Math.abs(a.relationship.friendshipBA)
+        Math.abs(a.relationship.friendship_ab),
+        Math.abs(a.relationship.friendship_ba)
       );
       const bFriend = Math.max(
-        Math.abs(b.relationship.friendshipAB),
-        Math.abs(b.relationship.friendshipBA)
+        Math.abs(b.relationship.friendship_ab),
+        Math.abs(b.relationship.friendship_ba)
       );
       return bFriend - aFriend;
     });
@@ -117,13 +117,13 @@ export function RelationshipList({
           if (!otherAgent) return null;
 
           // Determine which direction's values to show (perspective of selected agent)
-          const isA = selectedAgentId === rel.agentA;
-          const friendship = isA ? rel.friendshipAB : rel.friendshipBA;
-          const romance = isA ? rel.romanceAB : rel.romanceBA;
+          const isA = Number(selectedAgentId) === rel.agent_a;
+          const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
+          const romance = isA ? rel.romance_ab : rel.romance_ba;
 
           return (
             <div
-              key={otherAgent._id}
+              key={otherAgent.id}
               className="flex items-center justify-between gap-2"
             >
               <div className="flex-1 min-w-0">
