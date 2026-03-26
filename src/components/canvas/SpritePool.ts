@@ -1,6 +1,5 @@
 import * as PIXI from "pixi.js";
 import { AgentSprite } from "./AgentSprite";
-import { getCharacterAssignment } from "../../lib/spriteConfig";
 
 export interface AgentData {
   id: number;
@@ -21,8 +20,6 @@ export interface AgentData {
 /** Manages all AgentSprite instances, creating/removing as needed. */
 export class SpritePool {
   private sprites: Map<string, AgentSprite> = new Map();
-  private agentIndexMap: Map<string, number> = new Map();
-  private nextIndex = 0;
   readonly container: PIXI.Container;
 
   constructor(parentContainer: PIXI.Container) {
@@ -41,36 +38,24 @@ export class SpritePool {
       const id = String(agent.id);
       activeIds.add(id);
 
-      // Agent positions are pixel coordinates (top-left of the agent's tile)
       const px = agent.position?.x ?? 0;
       const py = agent.position?.y ?? 0;
 
       let sprite = this.sprites.get(id);
       if (!sprite) {
-        // Assign a stable sprite-sheet index
-        if (!this.agentIndexMap.has(id)) {
-          this.agentIndexMap.set(id, this.nextIndex++);
-        }
-        const idx = this.agentIndexMap.get(id)!;
-        const { base, hueShift } = getCharacterAssignment(idx % 12);
-
-        sprite = new AgentSprite(base, hueShift, agent.name ?? "Agent");
+        sprite = new AgentSprite(agent.name ?? "Agent");
         sprite.setPositionImmediate(px, py);
         this.sprites.set(id, sprite);
         this.container.addChild(sprite.container);
       }
 
-      sprite.updatePosition(px, py, deltaTime);
-      sprite.setSelected(id === selectedAgentId);
-
-      // Update action
       const actionType =
         typeof agent.current_action === "string"
           ? agent.current_action
           : agent.current_action?.type ?? "idle";
-      sprite.setAction(actionType);
 
-      // Update status indicators
+      sprite.update(px, py, deltaTime);
+      sprite.setSelected(id === selectedAgentId);
       sprite.updateStatus(actionType, agent.needs ?? null, deltaTime);
     }
 
@@ -86,7 +71,7 @@ export class SpritePool {
   /** Per-frame lerp — call from ticker without needing fresh agent data. */
   lerpAll(deltaTime: number) {
     for (const sprite of this.sprites.values()) {
-      sprite.lerpToTarget(deltaTime);
+      sprite.update(sprite.x, sprite.y, deltaTime);
     }
   }
 
@@ -106,4 +91,3 @@ export class SpritePool {
     this.container.destroy({ children: true });
   }
 }
-
