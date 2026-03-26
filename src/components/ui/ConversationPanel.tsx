@@ -3,6 +3,7 @@ import { trpc } from "../../lib/trpc";
 import { useConversations } from "../../hooks/useConversations";
 import { useAgents } from "../../hooks/useAgents";
 import { ConversationViewer } from "./ConversationViewer";
+import { ConversationDetail } from "./ConversationDetail";
 
 function realTimeAgo(timestamp: number | null | undefined): string {
   if (!timestamp) return '';
@@ -70,11 +71,13 @@ const RecentConvoItem = memo(function RecentConvoItem({
   agentNames,
   isExpanded,
   onToggle,
+  onDetail,
 }: {
   convo: any;
   agentNames: Map<string, string>;
   isExpanded: boolean;
   onToggle: () => void;
+  onDetail: () => void;
 }) {
   const names = (convo.participants as number[])
     .map((id) => agentNames.get(String(id)) ?? `Agent ${id}`)
@@ -84,18 +87,27 @@ const RecentConvoItem = memo(function RecentConvoItem({
     <div
       className={`rounded-md overflow-hidden border-l-2 ${sentimentBorderColor(convo.sentiment)} border border-gray-700 bg-gray-750`}
     >
-      <button
-        onClick={onToggle}
-        className="w-full text-left px-2 py-1.5 hover:bg-gray-700/50 transition-colors"
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-gray-300 truncate">{names}</span>
-          <span className="text-[9px] text-gray-600 shrink-0">{realTimeAgo(convo.ended_at ?? convo.started_at)}</span>
-        </div>
-        {convo.topic && (
-          <div className="text-[10px] text-gray-500 truncate italic">{convo.topic}</div>
-        )}
-      </button>
+      <div className="flex items-center">
+        <button
+          onClick={onToggle}
+          className="flex-1 text-left px-2 py-1.5 hover:bg-gray-700/50 transition-colors min-w-0"
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-300 truncate">{names}</span>
+            <span className="text-[9px] text-gray-600 shrink-0">{realTimeAgo(convo.ended_at ?? convo.started_at)}</span>
+          </div>
+          {convo.topic && (
+            <div className="text-[10px] text-gray-500 truncate italic">{convo.topic}</div>
+          )}
+        </button>
+        <button
+          onClick={onDetail}
+          className="px-1.5 text-gray-600 hover:text-gray-300 text-[10px] shrink-0 transition-colors"
+          title="View impact"
+        >
+          📊
+        </button>
+      </div>
       {isExpanded && (
         <div className="border-t border-gray-700">
           <ConversationViewer conversation={convo} agentNames={agentNames} />
@@ -107,6 +119,7 @@ const RecentConvoItem = memo(function RecentConvoItem({
 
 export function ConversationPanel() {
   const [expandedActiveId, setExpandedActiveId] = useState<number | null>(null);
+  const [detailConvoId, setDetailConvoId] = useState<number | null>(null);
   const [expandedRecentId, setExpandedRecentId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollPosRef = useRef(0);
@@ -201,12 +214,18 @@ export function ConversationPanel() {
                   onToggle={() =>
                     setExpandedRecentId(expandedRecentId === convo.id ? null : convo.id)
                   }
+                  onDetail={() => setDetailConvoId(convo.id)}
                 />
               ))}
             </div>
           )}
         </div>
       </div>
+
+      <ConversationDetail
+        conversationId={detailConvoId}
+        onClose={() => setDetailConvoId(null)}
+      />
     </div>
   );
 }

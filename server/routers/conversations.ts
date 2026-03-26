@@ -1,6 +1,6 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
-import { conversations } from '../db/schema';
+import { conversations, relationshipEvents, agents, facts } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
@@ -57,6 +57,74 @@ export const conversationsRouter = router({
         .orderBy(desc(conversations.ended_at))
         .limit(input.limit)
         .all();
+    }),
+
+  getImpact: publicProcedure
+    .input(z.object({ conversationId: z.number() }))
+    .query(({ input }) => {
+      const convo = db.select().from(conversations)
+        .where(eq(conversations.id, input.conversationId)).get();
+      if (!convo) return null;
+
+      const participantIds = convo.participants as number[];
+      const startedAt = convo.started_at;
+      const endedAt = convo.ended_at ?? Date.now();
+
+      // Find relationship events between these participants around this time window
+      const relEvents = db.select().from(relationshipEvents).all()
+        .filter(e => {
+          if (!participantIds.includes(e.agent_a) || !participantIds.includes(e.agent_b)) return false;
+          return e.timestamp >= startedAt - 2000 && e.timestamp <= endedAt + 2000;
+        });
+
+      // Get participant names
+      const names: Record<number, string> = {};
+      for (const pid of participantIds) {
+        const agent = db.select({ name: agents.name }).from(agents).where(eq(agents.id, pid)).get();
+        if (agent) names[pid] = agent.name;
+      }
+
+      // Find facts created during this conversation
+      const createdFacts = db.select().from(facts).all()
+        .filter(f => {
+          return f.created_at >= startedAt - 2000 && f.created_at <= endedAt + 2000 &&
+            (participantIds.includes(f.subject_id) || (f.target_id != null && participantIds.includes(f.target_id)));
+        });
+
+      // Compute total relationship deltas
+      let totalFriendshipDelta = 0;
+      let totalRomanceDelta = 0;
+      let totalTrustDelta = 0;
+      for (const e of relEvents) {
+        totalFriendshipDelta += (e.friendship_delta_ab + e.friendship_delta_ba) / 2;
+        totalRomanceDelta += (e.romance_delta_ab + e.romance_delta_ba) / 2;
+        totalTrustDelta += (e.trust_delta_ab + e.trust_delta_ba) / 2;
+      }
+
+      return {
+        conversation: convo,
+        names,
+        relationshipEvents: relEvents.map(e => ({
+          event_type: e.event_type,
+          description: e.description,
+          friendshipDelta: (e.friendship_delta_ab + e.friendship_delta_ba) / 2,
+          romanceDelta: (e.romance_delta_ab + e.romance_delta_ba) / 2,
+          trustDelta: (e.trust_delta_ab + e.trust_delta_ba) / 2,
+          sentiment: e.sentiment,
+        })),
+        createdFacts: createdFacts.map(f => ({
+          type: f.type,
+          content: f.content,
+          sensitivity: f.sensitivity,
+        })),
+        totals: {
+          friendship: Math.round(totalFriendshipDelta * 10) / 10,
+          romance: Math.round(totalRomanceDelta * 10) / 10,
+          trust: Math.round(totalTrustDelta * 10) / 10,
+          sentiment: convo.sentiment ?? 0,
+          turns: (convo.messages as any[])?.length ?? 0,
+        },
+      };
     }),
 
   onUpdate: publicProcedure.subscription(async function* (opts) {
