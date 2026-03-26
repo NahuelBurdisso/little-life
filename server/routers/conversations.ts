@@ -43,6 +43,22 @@ export const conversationsRouter = router({
         .all();
     }),
 
+  getRecent: publicProcedure
+    .input(
+      z.object({
+        limit: z.number().optional().default(10),
+      })
+    )
+    .query(({ input }) => {
+      return db
+        .select()
+        .from(conversations)
+        .where(eq(conversations.status, 'ended'))
+        .orderBy(desc(conversations.ended_at))
+        .limit(input.limit)
+        .all();
+    }),
+
   onUpdate: publicProcedure.subscription(async function* (opts) {
     for await (const data of emitter.iterate('conversations', opts.signal)) {
       yield data;

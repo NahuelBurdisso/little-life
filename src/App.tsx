@@ -3,6 +3,7 @@ import { trpc } from "./lib/trpc";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
 import { AgentPanel } from "./components/ui/AgentPanel";
+import { ConversationPanel } from "./components/ui/ConversationPanel";
 import { GameCanvas } from "./components/canvas/GameCanvas";
 import { AgentTooltip } from "./components/overlays/AgentTooltip";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
@@ -122,6 +123,8 @@ export default function App() {
         onShowStats={() => setShowTownStats(true)}
       />
       <div className="flex-1 flex overflow-hidden">
+        {/* Left: Conversations sidebar */}
+        <ConversationPanel />
         {/* PixiJS game canvas */}
         <GameCanvas
           agents={agents}

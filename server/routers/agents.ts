@@ -1,6 +1,6 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
-import { agents, needs, economy } from '../db/schema';
+import { agents, needs, economy, agentStates } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
@@ -60,6 +60,16 @@ export const agentsRouter = router({
         needs: agentNeeds ?? null,
         economy: agentEconomy ?? null,
       };
+    }),
+
+  getStates: publicProcedure
+    .input(z.object({ agentId: z.number() }))
+    .query(({ input }) => {
+      return db
+        .select()
+        .from(agentStates)
+        .where(eq(agentStates.agent_id, input.agentId))
+        .all();
     }),
 
   onUpdate: publicProcedure.subscription(async function* (opts) {
