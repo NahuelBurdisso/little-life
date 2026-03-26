@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { SPRITE_CONFIG } from "../../lib/spriteConfig";
+import { AGENT_RADIUS } from "../../lib/spriteConfig";
 import type { SpritePool } from "./SpritePool";
 
 const BUBBLE_MAX_CHARS = 60;
@@ -29,30 +29,26 @@ const SPEECH_STYLE = new PIXI.TextStyle({
   wordWrapWidth: 100,
 });
 
-const EMOTE_TYPES = ["heart", "anger", "laugh", "wave", "question", "exclaim", "zzz", "cry"] as const;
+const EMOTE_EMOJIS: Record<string, string> = {
+  heart: "❤️",
+  anger: "😡",
+  laugh: "😂",
+  wave: "👋",
+  question: "❓",
+  exclaim: "❗",
+  zzz: "💤",
+  cry: "😢",
+};
 
 /** Renders speech, thought, and emote bubbles above agents. */
 export class BubbleSystem {
   private bubbles: Map<string, BubbleEntry> = new Map();
   readonly container: PIXI.Container;
-  private emoteTextures: Map<string, PIXI.Texture> = new Map();
   private prevMoodMap: Map<string, number> = new Map();
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
     parentContainer.addChild(this.container);
-    this.preloadEmotes();
-  }
-
-  private async preloadEmotes() {
-    for (const emote of EMOTE_TYPES) {
-      try {
-        const tex = await PIXI.Assets.load(`/sprites/emotes/${emote}.png`);
-        if (tex) this.emoteTextures.set(emote, tex);
-      } catch {
-        // Will fall back to text emotes
-      }
-    }
   }
 
   /** Show a speech bubble with text above the agent. Auto-dismisses. */
@@ -70,7 +66,7 @@ export class BubbleSystem {
     const bgH = textObj.height + padY * 2;
 
     // Sentiment-based colors
-    const bgColor = sentiment > 0.2 ? 0xdcfce7 : sentiment < -0.2 ? 0xfde2e2 : 0xffffff;
+    const bgColor = sentiment > 0.2 ? 0x44cc44 : sentiment < -0.2 ? 0xcc4444 : 0xffffff;
     const borderColor = sentiment > 0.2 ? 0x22c55e : sentiment < -0.2 ? 0xef4444 : 0xd1d5db;
     const bgAlpha = 0.92;
 
@@ -87,10 +83,9 @@ export class BubbleSystem {
 
     bubbleContainer.addChild(bg, textObj);
 
-    // Position above agent
-    const half = SPRITE_CONFIG.AGENT_SIZE / 2;
-    bubbleContainer.x = position.x + half - bgW / 2 + offsetX;
-    bubbleContainer.y = position.y - bgH - 8;
+    // Position above agent circle
+    bubbleContainer.x = position.x - bgW / 2 + offsetX;
+    bubbleContainer.y = position.y - AGENT_RADIUS - bgH - 4;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -122,9 +117,8 @@ export class BubbleSystem {
 
     bubbleContainer.addChild(bg, dots);
 
-    const half = SPRITE_CONFIG.AGENT_SIZE / 2;
-    bubbleContainer.x = position.x + half - 14;
-    bubbleContainer.y = position.y - 24;
+    bubbleContainer.x = position.x - 14;
+    bubbleContainer.y = position.y - AGENT_RADIUS - 22;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -144,28 +138,15 @@ export class BubbleSystem {
 
     const bubbleContainer = new PIXI.Container();
 
-    const tex = this.emoteTextures.get(emoteType);
-    if (tex) {
-      const emoteSprite = new PIXI.Sprite(tex);
-      emoteSprite.width = 16;
-      emoteSprite.height = 16;
-      bubbleContainer.addChild(emoteSprite);
-    } else {
-      // Fallback: text symbol
-      const symbols: Record<string, string> = {
-        heart: "\u2764", anger: "\u2757", laugh: "\ud83d\ude04", wave: "\ud83d\udc4b",
-        question: "?", exclaim: "!", zzz: "zzz", cry: "\ud83d\ude22",
-      };
-      const label = new PIXI.Text({
-        text: symbols[emoteType] ?? "?",
-        style: { fontSize: 14, fill: 0xff4444 },
-      });
-      bubbleContainer.addChild(label);
-    }
+    const emoji = EMOTE_EMOJIS[emoteType] ?? "?";
+    const label = new PIXI.Text({
+      text: emoji,
+      style: { fontSize: 16 },
+    });
+    bubbleContainer.addChild(label);
 
-    const half = SPRITE_CONFIG.AGENT_SIZE / 2;
-    bubbleContainer.x = position.x + half - 8;
-    bubbleContainer.y = position.y - 16;
+    bubbleContainer.x = position.x - 8;
+    bubbleContainer.y = position.y - AGENT_RADIUS - 16;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(emoteKey, {
@@ -302,10 +283,9 @@ export class BubbleSystem {
       if (entry.type !== "emote") {
         const pos = posMap.get(entry.agentId);
         if (pos) {
-          const half = SPRITE_CONFIG.AGENT_SIZE / 2;
           const w = entry.container.width;
-          entry.container.x = pos.x + half - w / 2;
-          entry.container.y = pos.y - entry.container.height - 8;
+          entry.container.x = pos.x - w / 2;
+          entry.container.y = pos.y - AGENT_RADIUS - entry.container.height - 4;
         }
       }
     }
