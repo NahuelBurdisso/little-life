@@ -5,24 +5,69 @@ import { PersonalityProfile } from './personality';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
-const FACT_TEMPLATES: Record<string, (subjectName: string, targetName?: string) => string> = {
-  crush: (s, t) => `${s} has a crush on ${t ?? 'someone'}`,
-  heartbreak: (s, t) => `${s} is heartbroken over ${t ?? 'someone'}`,
-  drunk_incident: (s, t) => `${s} got drunk and said terrible things to ${t ?? 'someone'}`,
-  grudge: (s, t) => `${s} holds a grudge against ${t ?? 'someone'}`,
-  affair: (s, t) => `${s} and ${t ?? 'someone'} are getting suspiciously close`,
-  financial: (s) => `${s} is struggling with money`,
-  secret_told: (s, t) => `${s} confided something personal to ${t ?? 'someone'}`,
-  work_issue: (s) => `${s} keeps skipping work`,
-  sickness: (s) => `${s} is sick`,
-  reputation: (s) => `People have been having bad interactions with ${s} lately`,
-  theft: (s, t) => `${s} was caught stealing from ${t ?? 'someone'}`,
-  blackmail: (s, t) => `${s} is blackmailing ${t ?? 'someone'}`,
-  gambling_loss: (s) => `${s} lost big gambling at the tavern`,
-  rumor: (s) => `There are rumors going around about ${s}`,
-  seduction: (s, t) => `${s} is using ${t ?? 'someone'} for personal gain`,
-  confession: (s, t) => `${s} confessed something to ${t ?? 'someone'}`,
-  alcoholic: (s) => `${s} has a serious drinking problem`,
+// --- Fact Context: optional details passed when creating a fact ---
+
+export interface FactContext {
+  detail?: string;       // specific detail (e.g. "stole food_raw", "about their past")
+  location?: string;     // where it happened
+  witness?: string;      // who saw it
+  quote?: string;        // actual words said
+  relatedFact?: string;  // content of a related fact (for confessions referencing a sin)
+  item?: string;         // item involved (theft, purchase)
+}
+
+// --- Fact Content Generator ---
+// Rich context-aware templates. To add a new fact type: add one entry here.
+
+const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: FactContext) => string> = {
+  crush: (s, t) =>
+    `${s} has a crush on ${t ?? 'someone'}`,
+  heartbreak: (s, t) =>
+    `${s} is heartbroken over ${t ?? 'someone'}`,
+  drunk_incident: (s, t, ctx) =>
+    ctx?.quote ? `${s} got drunk and told ${t ?? 'someone'}: "${ctx.quote}"` :
+    `${s} got drunk and said terrible things to ${t ?? 'someone'}`,
+  grudge: (s, t, ctx) =>
+    ctx?.detail ? `${s} holds a grudge against ${t ?? 'someone'} — ${ctx.detail}` :
+    `${s} holds a grudge against ${t ?? 'someone'}`,
+  affair: (s, t) =>
+    `${s} and ${t ?? 'someone'} are getting suspiciously close`,
+  financial: (s, _t, ctx) =>
+    ctx?.detail ? `${s} is struggling with money — ${ctx.detail}` :
+    `${s} is struggling with money`,
+  secret_told: (s, t, ctx) =>
+    ctx?.quote ? `${s} confided to ${t ?? 'someone'}: "${ctx.quote}"` :
+    ctx?.detail ? `${s} shared a secret with ${t ?? 'someone'} — ${ctx.detail}` :
+    `${s} confided something personal to ${t ?? 'someone'}`,
+  work_issue: (s, _t, ctx) =>
+    ctx?.detail ? `${s} keeps skipping work — ${ctx.detail}` :
+    `${s} keeps skipping work`,
+  sickness: (s) =>
+    `${s} is sick`,
+  reputation: (s, _t, ctx) =>
+    ctx?.detail ? `${s} has a bad reputation — ${ctx.detail}` :
+    `People have been having bad interactions with ${s} lately`,
+  theft: (s, t, ctx) =>
+    ctx?.item ? `${s} was caught stealing ${ctx.item} from ${t ?? 'someone'}${ctx?.location ? ' at ' + ctx.location : ''}` :
+    `${s} was caught stealing from ${t ?? 'someone'}`,
+  blackmail: (s, t, ctx) =>
+    ctx?.relatedFact ? `${s} is blackmailing ${t ?? 'someone'} over: ${ctx.relatedFact}` :
+    `${s} is blackmailing ${t ?? 'someone'}`,
+  gambling_loss: (s, _t, ctx) =>
+    ctx?.detail ? `${s} lost ${ctx.detail} gambling at the tavern` :
+    `${s} lost big gambling at the tavern`,
+  rumor: (s, _t, ctx) =>
+    ctx?.detail ? `Rumor about ${s}: ${ctx.detail}` :
+    `There are rumors going around about ${s}`,
+  seduction: (s, t, ctx) =>
+    ctx?.detail ? `${s} is manipulating ${t ?? 'someone'} — ${ctx.detail}` :
+    `${s} is using ${t ?? 'someone'} for personal gain`,
+  confession: (s, t, ctx) =>
+    ctx?.relatedFact ? `${s} confessed to ${t ?? 'someone'}: "${ctx.relatedFact}"` :
+    ctx?.quote ? `${s} confessed to ${t ?? 'someone'}: "${ctx.quote}"` :
+    `${s} confessed something to ${t ?? 'someone'}`,
+  alcoholic: (s) =>
+    `${s} has a serious drinking problem`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────
@@ -64,13 +109,14 @@ export function createFact(
   sensitivity: number,
   knownBy: number[],
   source: string,
-  customContent?: string,
+  context?: FactContext,
 ): number | null {
   const subjectName = getAgentName(subjectId);
   const targetName = targetId != null ? getAgentName(targetId) : undefined;
 
-  const template = FACT_TEMPLATES[type];
-  const content = customContent ?? (template ? template(subjectName, targetName) : `${subjectName}: ${type}`);
+  const generator = FACT_GENERATORS[type];
+  const ctx = context ?? {};
+  const content = generator ? generator(subjectName, targetName, ctx) : `${subjectName}: ${type}`;
 
   // Check for existing duplicate (same type + subject + target)
   // For low-churn types (sickness, financial, work_issue), also check inactive facts

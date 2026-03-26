@@ -1457,7 +1457,9 @@ function processStateEffects(
                 .set({ tags: [...currentTags, 'grudge'] })
                 .where(eq(relationships.id, rel.id))
                 .run();
-              createFact('grudge', agent.id, state.target_agent_id!, 1, [agent.id], 'witnessed');
+              createFact('grudge', agent.id, state.target_agent_id!, 1, [agent.id], 'witnessed', {
+                detail: 'from sustained anger',
+              });
             }
           }
         }
@@ -1789,7 +1791,9 @@ function processStateEffects(
 
         if (caught) {
           const witnessIds = witnesses.map((w) => w.id);
-          createFact('theft', agent.id, loc.owner, 2, [agent.id, loc.owner, ...witnessIds], 'witnessed');
+          createFact('theft', agent.id, loc.owner, 2, [agent.id, loc.owner, ...witnessIds], 'witnessed', {
+            item: targetItem.itemId, location: loc.name,
+          });
 
           // Check theft escalation: 3+ theft facts = reputation + banned
           const totalThefts = db.select().from(facts)
@@ -1879,7 +1883,10 @@ function processStateEffects(
               const tags = rel.tags as string[];
               if (!tags.includes('grudge')) {
                 db.update(relationships).set({ tags: [...tags, 'grudge'] }).where(eq(relationships.id, rel.id)).run();
-                createFact('grudge', agent.id, rivalId, 1, [agent.id], 'witnessed');
+                const loveInterestId2 = meta.loveInterestId as number | undefined;
+                createFact('grudge', agent.id, rivalId, 1, [agent.id], 'witnessed', {
+                  detail: loveInterestId2 ? `jealousy over ${db.select({ name: agents.name }).from(agents).where(eq(agents.id, loveInterestId2)).get()?.name ?? 'someone'}` : 'jealousy',
+                });
               }
             }
           }
@@ -2022,7 +2029,9 @@ function processStateEffects(
               db.update(economyTable).set({ money: opponentEcon.money + betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
 
               if (agentEcon.money - betAmount < 5) {
-                createFact('gambling_loss', agent.id, null, 1, [agent.id, opponent.id], 'witnessed');
+                createFact('gambling_loss', agent.id, null, 1, [agent.id, opponent.id], 'witnessed', {
+                  detail: `$${betAmount} to ${opponent.name}`,
+                });
               }
             }
 
