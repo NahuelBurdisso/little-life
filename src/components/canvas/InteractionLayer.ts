@@ -33,6 +33,11 @@ export class InteractionLayer {
         this.callbacks.onAgentSelect("");
       }
     });
+
+    // Keep hitArea in sync with renderer size
+    app.renderer.on("resize", () => {
+      app.stage.hitArea = app.screen;
+    });
   }
 
   /**
@@ -46,16 +51,14 @@ export class InteractionLayer {
 
       const c = sprite.container;
 
-      // Always ensure interaction is set up — sprites may have been
-      // recreated by the pool, invalidating previous bindings
-      if (c.eventMode !== "static" || !this.boundIds.has(id)) {
-        // Remove old listeners if re-binding
-        c.removeAllListeners();
+      // Always force interaction state — PixiJS v8 can lose eventMode
+      // after container children are modified (clear/redraw cycles)
+      c.eventMode = "static";
+      c.cursor = "pointer";
+      c.interactiveChildren = false;
+      c.hitArea = new PIXI.Circle(0, 0, 16);
 
-        c.eventMode = "static";
-        c.cursor = "pointer";
-        c.hitArea = new PIXI.Circle(0, 0, 16);
-
+      if (!this.boundIds.has(id)) {
         c.on("pointertap", (e: PIXI.FederatedPointerEvent) => {
           e.stopPropagation();
           this.callbacks.onAgentSelect(id);
