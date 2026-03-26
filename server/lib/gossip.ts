@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
+import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents, activityLog } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { PersonalityProfile } from './personality';
 
@@ -243,6 +243,17 @@ export function spreadGossip(
       .set({ known_by: updated })
       .where(eq(facts.id, fact.id))
       .run();
+
+    if (fact.sensitivity >= 2) {
+      const listenerName = getAgentName(listenerId);
+      db.insert(activityLog).values({
+        type: 'drama',
+        message: `${listenerName} learned that ${fact.content}.`,
+        agent_ids: [listenerId, fact.subject_id],
+        timestamp: Date.now(),
+        real_timestamp: Date.now(),
+      }).run();
+    }
   }
 
   // Rumor discovery: if both agents know a rumor, they may compare notes and discover the fabricator
