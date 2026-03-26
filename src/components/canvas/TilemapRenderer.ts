@@ -2,8 +2,8 @@ import * as PIXI from "pixi.js";
 import { TILE_SIZE } from "../../lib/spriteConfig";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 
-const MAP_WIDTH_TILES = 40;
-const MAP_HEIGHT_TILES = 30;
+const MAP_WIDTH_TILES = 60;
+const MAP_HEIGHT_TILES = 45;
 
 export class TilemapRenderer {
   container: PIXI.Container;

@@ -1,5 +1,5 @@
-export const MAP_WIDTH = 40;
-export const MAP_HEIGHT = 30;
+export const MAP_WIDTH = 60;
+export const MAP_HEIGHT = 45;
 export const TILE_SIZE = 32;
 
 interface MapLocationRaw {
@@ -16,159 +16,174 @@ interface MapLocationRaw {
 }
 
 const MAP_LOCATIONS: MapLocationRaw[] = [
-  // === 8 Homes ===
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NORTH RESIDENTIAL — Row 1 (y=64)
+  // ═══════════════════════════════════════════════════════════════════════════
   {
     name: "Home 1",
     type: "home",
-    x: 64, y: 64, width: 96, height: 96,
-    entryX: 112, entryY: 160,
+    x: 96, y: 64, width: 96, height: 96,
+    entryX: 144, entryY: 160,
     capacity: 2,
     description: "A cozy farmhouse near the fields with a well-worn porch",
   },
   {
     name: "Home 2",
     type: "home",
-    x: 224, y: 64, width: 96, height: 96,
-    entryX: 272, entryY: 160,
+    x: 288, y: 64, width: 96, height: 96,
+    entryX: 336, entryY: 160,
     capacity: 2,
     description: "A warm house with flower boxes in every window",
   },
   {
     name: "Home 3",
     type: "home",
-    x: 960, y: 64, width: 96, height: 96,
-    entryX: 1008, entryY: 160,
+    x: 544, y: 64, width: 96, height: 96,
+    entryX: 592, entryY: 160,
     capacity: 2,
     description: "A tidy house with an herb garden out back",
   },
   {
     name: "Home 4",
     type: "home",
-    x: 1120, y: 64, width: 96, height: 96,
-    entryX: 1168, entryY: 160,
+    x: 1152, y: 64, width: 96, height: 96,
+    entryX: 1200, entryY: 160,
     capacity: 2,
     description: "A quiet residence near the clinic, always well-lit",
   },
   {
     name: "Home 5",
     type: "home",
-    x: 960, y: 224, width: 96, height: 96,
-    entryX: 1008, entryY: 320,
+    x: 1408, y: 64, width: 96, height: 96,
+    entryX: 1456, entryY: 160,
     capacity: 2,
     description: "A stately house befitting the town's leadership",
   },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // COMMERCIAL STRIP — North of town square (y=288)
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    name: "Priya's Bakery",
+    type: "bakery",
+    x: 96, y: 288, width: 160, height: 128,
+    entryX: 176, entryY: 416,
+    capacity: 4,
+    description: "A warm bakery that fills the street with the smell of fresh bread every morning. Priya is here before dawn.",
+  },
+  {
+    name: "Rosa's General Store",
+    type: "shop",
+    x: 352, y: 288, width: 160, height: 128,
+    entryX: 432, entryY: 416,
+    capacity: 6,
+    description: "The town's main shop, well-stocked and tidy. Rosa runs a tight operation with Lucia's help.",
+  },
+  {
+    name: "The Rusty Lantern",
+    type: "tavern",
+    x: 1088, y: 288, width: 192, height: 128,
+    entryX: 1184, entryY: 416,
+    capacity: 10,
+    description: "A cozy tavern where locals gather every evening. Marco serves drinks behind a weathered oak bar while Diego plays in the corner.",
+  },
+  {
+    name: "Dr. Petrov's Clinic",
+    type: "clinic",
+    x: 1376, y: 288, width: 160, height: 128,
+    entryX: 1456, entryY: 416,
+    capacity: 4,
+    description: "A small but well-equipped medical clinic. Sofia and Omar keep the town healthy, one patient at a time.",
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TOWN CENTER — Square + civic buildings (y=480)
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    name: "Carlos' Workshop",
+    type: "workshop",
+    x: 96, y: 480, width: 160, height: 128,
+    entryX: 176, entryY: 608,
+    capacity: 3,
+    description: "A chaotic but functional workshop filled with tools, half-finished repairs, and sawdust. Carlos fixes everything here.",
+  },
+  {
+    name: "Town Hall",
+    type: "town_hall",
+    x: 352, y: 480, width: 192, height: 160,
+    entryX: 448, entryY: 640,
+    capacity: 8,
+    description: "The center of town governance, with a bell tower visible from anywhere. Mayor Park holds meetings here every morning.",
+  },
+  {
+    name: "Town Square",
+    type: "town_square",
+    x: 640, y: 448, width: 288, height: 256,
+    entryX: 784, entryY: 576,
+    capacity: 20,
+    description: "The heart of Little Life, where everyone meets under the old oak tree. A fountain sits in the center.",
+  },
+  {
+    name: "Town Jail",
+    type: "prison",
+    x: 1088, y: 480, width: 160, height: 128,
+    entryX: 1168, entryY: 608,
+    capacity: 4,
+    description: "A small stone jail behind the tavern. Rarely used, but the cells are always ready. The constable has the key.",
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SOUTH RESIDENTIAL — Row 2 (y=768)
+  // ═══════════════════════════════════════════════════════════════════════════
   {
     name: "Home 6",
     type: "home",
-    x: 64, y: 448, width: 96, height: 96,
-    entryX: 112, entryY: 544,
+    x: 96, y: 768, width: 96, height: 96,
+    entryX: 144, entryY: 864,
     capacity: 2,
     description: "A cluttered but charming cottage with tools on the porch",
   },
   {
     name: "Home 7",
     type: "home",
-    x: 1120, y: 448, width: 96, height: 96,
-    entryX: 1168, entryY: 544,
+    x: 288, y: 768, width: 96, height: 96,
+    entryX: 336, entryY: 864,
     capacity: 2,
     description: "A small apartment above a workshop, decorated with paintings",
   },
   {
     name: "Home 8",
     type: "home",
-    x: 1120, y: 608, width: 96, height: 96,
-    entryX: 1168, entryY: 704,
+    x: 1152, y: 768, width: 96, height: 96,
+    entryX: 1200, entryY: 864,
     capacity: 2,
     description: "A bohemian loft filled with instruments and sheet music",
   },
   {
     name: "Home 9",
     type: "home",
-    x: 640, y: 448, width: 96, height: 96,
-    entryX: 688, entryY: 544,
+    x: 1408, y: 768, width: 96, height: 96,
+    entryX: 1456, entryY: 864,
     capacity: 2,
     description: "A spartan house with heavy curtains and a police scanner on the kitchen table",
   },
-  // === Public Buildings ===
-  {
-    name: "Rosa's General Store",
-    type: "shop",
-    x: 448, y: 64, width: 128, height: 128,
-    entryX: 512, entryY: 192,
-    capacity: 6,
-    description: "The town's main shop, well-stocked and tidy. Rosa runs a tight operation with Lucia and Priya's baked goods on display.",
-  },
-  {
-    name: "The Rusty Lantern",
-    type: "tavern",
-    x: 640, y: 64, width: 160, height: 128,
-    entryX: 720, entryY: 192,
-    capacity: 10,
-    description: "A cozy tavern where locals gather every evening. Marco serves drinks behind a weathered oak bar while Diego plays in the corner.",
-  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SOUTH — Farm and Park (y=960)
+  // ═══════════════════════════════════════════════════════════════════════════
   {
     name: "Green Acres Farm",
     type: "farm",
-    x: 32, y: 672, width: 256, height: 192,
-    entryX: 160, entryY: 672,
+    x: 96, y: 960, width: 320, height: 224,
+    entryX: 256, entryY: 960,
     capacity: 4,
     description: "The town's main source of food, with fields stretching to the river. Elena and James work the land from dawn to dusk.",
   },
   {
-    name: "Dr. Petrov's Clinic",
-    type: "clinic",
-    x: 1120, y: 224, width: 128, height: 128,
-    entryX: 1184, entryY: 352,
-    capacity: 4,
-    description: "A small but well-equipped medical clinic. Sofia and Omar keep the town healthy, one patient at a time.",
-  },
-  {
-    name: "Town Hall",
-    type: "town_hall",
-    x: 448, y: 256, width: 160, height: 128,
-    entryX: 528, entryY: 384,
-    capacity: 8,
-    description: "The center of town governance, with a bell tower visible from anywhere. Mayor Park holds meetings here every morning.",
-  },
-  // === New Buildings ===
-  {
-    name: "Priya's Bakery",
-    type: "bakery",
-    x: 224, y: 224, width: 128, height: 128,
-    entryX: 288, entryY: 352,
-    capacity: 4,
-    description: "A warm bakery that fills the street with the smell of fresh bread every morning. Priya is here before dawn.",
-  },
-  {
-    name: "Carlos' Workshop",
-    type: "workshop",
-    x: 64, y: 224, width: 128, height: 128,
-    entryX: 128, entryY: 352,
-    capacity: 3,
-    description: "A chaotic but functional workshop filled with tools, half-finished repairs, and sawdust. Carlos fixes everything here.",
-  },
-  {
-    name: "Town Jail",
-    type: "prison",
-    x: 640, y: 256, width: 128, height: 128,
-    entryX: 704, entryY: 384,
-    capacity: 4,
-    description: "A small stone jail behind Town Hall. Rarely used, but the cells are always ready. The mayor has the key.",
-  },
-  // === Open Areas ===
-  {
-    name: "Town Square",
-    type: "town_square",
-    x: 448, y: 448, width: 192, height: 192,
-    entryX: 544, entryY: 544,
-    capacity: 20,
-    description: "The heart of Little Life, where everyone meets under the old oak tree",
-  },
-  {
     name: "Riverside Park",
     type: "park",
-    x: 704, y: 608, width: 192, height: 160,
-    entryX: 800, entryY: 688,
+    x: 640, y: 992, width: 256, height: 192,
+    entryX: 768, entryY: 1088,
     capacity: 12,
     description: "A peaceful park by the river with old willow trees and a stone bridge",
   },
@@ -236,7 +251,7 @@ function getOperatingHours(type: string): { open: number; close: number } | null
     case "workshop":
       return { open: 7, close: 18 };
     case "prison":
-      return null; // always accessible
+      return null;
     default:
       return null;
   }
@@ -295,7 +310,6 @@ function generateCollisionGrid(): string {
     const tileH = Math.ceil(loc.height / TILE_SIZE);
 
     if (BUILDING_TYPES.has(loc.type)) {
-      // Buildings: perimeter tiles = 1 (walls), interior tiles = 0 (walkable)
       for (let x = tileX; x < tileX + tileW; x++) {
         for (let y = tileY; y < tileY + tileH; y++) {
           if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
@@ -306,14 +320,12 @@ function generateCollisionGrid(): string {
         }
       }
 
-      // Door tile at entry point — ensure walkable
       const doorTileX = Math.floor(loc.entryX / TILE_SIZE);
       const doorTileY = Math.floor(loc.entryY / TILE_SIZE);
       if (doorTileX >= 0 && doorTileX < MAP_WIDTH && doorTileY >= 0 && doorTileY < MAP_HEIGHT) {
         grid[doorTileY][doorTileX] = 0;
       }
     }
-    // Open areas (farm, town_square, park) remain fully walkable (all 0s)
   }
 
   let result = "";

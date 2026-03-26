@@ -11,8 +11,8 @@ export class CameraController {
   private targetX: number | null = null;
   private targetY: number | null = null;
   private animating = false;
-  private mapWidth = 1280;
-  private mapHeight = 960;
+  private mapWidth = 1920;
+  private mapHeight = 1440;
 
   private onMouseDown: (e: MouseEvent) => void;
   private onMouseMove: (e: MouseEvent) => void;
@@ -30,8 +30,8 @@ export class CameraController {
     this.canvas = app.canvas;
 
     // Center the world initially
-    this.worldContainer.x = this.canvas.width / 2 - 640;
-    this.worldContainer.y = this.canvas.height / 2 - 480;
+    this.worldContainer.x = this.canvas.width / 2 - this.mapWidth / 2;
+    this.worldContainer.y = this.canvas.height / 2 - this.mapHeight / 2;
 
     // Mouse pan
     this.onMouseDown = (e: MouseEvent) => {
