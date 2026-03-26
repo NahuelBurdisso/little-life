@@ -685,6 +685,12 @@ export function tick(world: WorldRow): void {
           ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
           : actionDuration;
 
+      // If action has zone coordinates and agent is already at the building,
+      // move them to the interior zone position directly
+      const zonePos = (safeAction as any).zoneX !== undefined && (safeAction as any).zoneY !== undefined
+        ? { x: (safeAction as any).zoneX, y: (safeAction as any).zoneY }
+        : undefined;
+
       db.update(agents)
         .set({
           current_action: safeAction,
@@ -692,6 +698,7 @@ export function tick(world: WorldRow): void {
           action_started: totalTicks,
           action_duration: safeDuration,
           current_path: null,
+          ...(zonePos ? { position: zonePos } : {}),
         })
         .where(eq(agents.id, agent.id))
         .run();
