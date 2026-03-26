@@ -8,6 +8,7 @@ import {
   conversationQueue,
   conversations,
 } from '../../db/schema';
+import { INTERIOR_ZONES } from '../../data/interiors';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
@@ -512,9 +513,22 @@ export async function tick(world: WorldRow): Promise<void> {
     if (decision.targetLocationId) {
       const loc = allLocations.find((l) => l.id === decision!.targetLocationId);
       if (loc) {
+        // Try to target the zone center for the action type
+        let destX = loc.entry_point.x;
+        let destY = loc.entry_point.y;
+
+        const locType = loc.type as string;
+        const zones = INTERIOR_ZONES[locType] ?? [];
+        const zone = zones.find((z) => z.action === decision!.action);
+        if (zone) {
+          const locPos = loc.position as { x: number; y: number; width: number; height: number };
+          destX = locPos.x + zone.relativePosition.x + zone.relativePosition.width / 2;
+          destY = locPos.y + zone.relativePosition.y + zone.relativePosition.height / 2;
+        }
+
         destination = {
-          x: loc.entry_point.x,
-          y: loc.entry_point.y,
+          x: destX,
+          y: destY,
           locationId: loc.id,
         };
       }

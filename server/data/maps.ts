@@ -240,32 +240,34 @@ function generateCollisionGrid(): string {
     }
   }
 
+  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall']);
+
   for (const loc of MAP_LOCATIONS) {
     const tileX = Math.floor(loc.x / TILE_SIZE);
     const tileY = Math.floor(loc.y / TILE_SIZE);
-    const tileW = Math.floor(loc.width / TILE_SIZE);
-    const tileH = Math.floor(loc.height / TILE_SIZE);
+    const tileW = Math.ceil(loc.width / TILE_SIZE);
+    const tileH = Math.ceil(loc.height / TILE_SIZE);
 
-    for (let dy = 0; dy < tileH; dy++) {
-      for (let dx = 0; dx < tileW; dx++) {
-        const gx = tileX + dx;
-        const gy = tileY + dy;
-        if (gx >= 0 && gx < MAP_WIDTH && gy >= 0 && gy < MAP_HEIGHT) {
-          grid[gy][gx] = 1;
+    if (BUILDING_TYPES.has(loc.type)) {
+      // Buildings: perimeter tiles = 1 (walls), interior tiles = 0 (walkable)
+      for (let x = tileX; x < tileX + tileW; x++) {
+        for (let y = tileY; y < tileY + tileH; y++) {
+          if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
+          const isPerimeter =
+            x === tileX || x === tileX + tileW - 1 ||
+            y === tileY || y === tileY + tileH - 1;
+          grid[y][x] = isPerimeter ? 1 : 0;
         }
       }
-    }
 
-    const entryTileX = Math.floor(loc.entryX / TILE_SIZE);
-    const entryTileY = Math.floor(loc.entryY / TILE_SIZE);
-    if (
-      entryTileX >= 0 &&
-      entryTileX < MAP_WIDTH &&
-      entryTileY >= 0 &&
-      entryTileY < MAP_HEIGHT
-    ) {
-      grid[entryTileY][entryTileX] = 0;
+      // Door tile at entry point — ensure walkable
+      const doorTileX = Math.floor(loc.entryX / TILE_SIZE);
+      const doorTileY = Math.floor(loc.entryY / TILE_SIZE);
+      if (doorTileX >= 0 && doorTileX < MAP_WIDTH && doorTileY >= 0 && doorTileY < MAP_HEIGHT) {
+        grid[doorTileY][doorTileX] = 0;
+      }
     }
+    // Open areas (farm, town_square, park) remain fully walkable (all 0s)
   }
 
   let result = "";
