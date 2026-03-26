@@ -12,6 +12,7 @@ import { EventMenu } from "./components/ui/EventMenu";
 import { TownStats } from "./components/ui/TownStats";
 import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
+import { ConversationHistory } from "./components/ui/ConversationHistory";
 import { useWorldState } from "./hooks/useWorldState";
 import { useAgents } from "./hooks/useAgents";
 import { useConversations } from "./hooks/useConversations";
@@ -31,6 +32,7 @@ export default function App() {
   const [showTownStats, setShowTownStats] = useState(false);
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
+  const [showConvoHistory, setShowConvoHistory] = useState(false);
 
   // Resizable panel sizes
   const [leftWidth, setLeftWidth] = useState(280);
@@ -190,6 +192,13 @@ export default function App() {
         >
           🔗 Relationships
         </button>
+        <button
+          onClick={() => setShowConvoHistory(true)}
+          className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow transition-colors"
+          title="Conversation history"
+        >
+          📜 History
+        </button>
       </div>
 
       {/* Tooltip overlay */}
@@ -232,6 +241,10 @@ export default function App() {
           setSelectedAgentId(id);
           setShowRelGraph(false);
         }}
+      />
+      <ConversationHistory
+        isOpen={showConvoHistory}
+        onClose={() => setShowConvoHistory(false)}
       />
 
       {/* Attribution */}
