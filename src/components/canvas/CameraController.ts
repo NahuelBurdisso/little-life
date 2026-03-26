@@ -150,8 +150,10 @@ export class CameraController {
   private clampBounds() {
     const mapW = this.mapWidth * this.scale;
     const mapH = this.mapHeight * this.scale;
-    const canvasW = this.canvas.width;
-    const canvasH = this.canvas.height;
+    // Use displayed size (CSS pixels), not canvas buffer size
+    const rect = this.canvas.getBoundingClientRect();
+    const canvasW = rect.width;
+    const canvasH = rect.height;
 
     // Allow some padding so you can see the edges
     const pad = 100;
