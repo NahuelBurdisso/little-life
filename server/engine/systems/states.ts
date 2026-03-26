@@ -1344,25 +1344,57 @@ function processStateEffects(
           }
         }
 
-        // Doctor/medical_assistant at same location heals faster (reduce remaining duration)
+        // Doctor/medical_assistant at same location heals — consumes medicine for faster cure
         const healerNearby = allAgents.find((a) => {
           if (a.id === agent.id || a.current_location !== agent.current_location) return false;
           const econ = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, a.id)).get();
           return econ && (econ.job === 'doctor' || econ.job === 'medical_assistant');
         });
         if (healerNearby) {
-          // Healer reduces severity and remaining duration each tick
-          const newSeverity = Math.max(0.1, state.severity - 0.01);
-          const remainingDuration = (state.started_at + state.duration) - currentTick;
-          const reducedDuration = Math.max(1, state.duration - Math.floor(remainingDuration * 0.02));
-          db.update(agentStates)
-            .set({ severity: newSeverity, duration: reducedDuration })
-            .where(eq(agentStates.id, state.id))
-            .run();
+          const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, healerNearby.id)).get();
+          const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
+            (i: any) => i.itemId === 'medicine' && i.quantity > 0
+          );
+
+          if (hasMedicine) {
+            // Use medicine: much faster healing (severity -0.05/tick, duration halved)
+            const newSeverity = Math.max(0, state.severity - 0.05);
+            const reducedDuration = Math.max(1, Math.floor(state.duration * 0.5));
+            db.update(agentStates)
+              .set({ severity: newSeverity, duration: reducedDuration })
+              .where(eq(agentStates.id, state.id))
+              .run();
+
+            // Consume 1 medicine every 120 ticks (~2 minutes)
+            const lastMedUsed = (meta.lastMedicineUsed as number | undefined) ?? 0;
+            if (currentTick - lastMedUsed > 120) {
+              const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
+                i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
+              ).filter((i: any) => i.quantity > 0);
+              db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, healerNearby.id)).run();
+              meta.lastMedicineUsed = currentTick;
+
+              db.insert(activityLog).values({
+                type: 'economy',
+                message: `${healerNearby.name} used medicine to treat ${agent.name}.`,
+                agent_ids: [healerNearby.id, agent.id],
+                timestamp: currentTick,
+                real_timestamp: Date.now(),
+              }).run();
+            }
+          } else {
+            // No medicine: slower healing (original rate)
+            const newSeverity = Math.max(0.1, state.severity - 0.01);
+            const remainingDuration = (state.started_at + state.duration) - currentTick;
+            const reducedDuration = Math.max(1, state.duration - Math.floor(remainingDuration * 0.02));
+            db.update(agentStates)
+              .set({ severity: newSeverity, duration: reducedDuration })
+              .where(eq(agentStates.id, state.id))
+              .run();
+          }
 
           // Periodically create a "helped" relationship event (every ~60 ticks)
-          const healMeta = (state.metadata as Record<string, any> | null) ?? {};
-          const lastHealEvent = (healMeta.lastHealEvent as number | undefined) ?? 0;
+          const lastHealEvent = (meta.lastHealEvent as number | undefined) ?? 0;
           if (currentTick - lastHealEvent > 60) {
             const [orderedA, orderedB] = agent.id < healerNearby.id
               ? [agent.id, healerNearby.id] : [healerNearby.id, agent.id];
@@ -1371,7 +1403,7 @@ function processStateEffects(
               agent_a: orderedA,
               agent_b: orderedB,
               event_type: 'helped',
-              description: `${healerNearby.name} treated ${agent.name}'s illness`,
+              description: `${healerNearby.name} treated ${agent.name}'s ${hasMedicine ? 'illness with medicine' : 'illness'}`,
               friendship_delta_ab: isPatientA ? 3 : 1,
               friendship_delta_ba: isPatientA ? 1 : 3,
               romance_delta_ab: 0,
@@ -1845,6 +1877,99 @@ function processStateEffects(
 
       default:
         break;
+    }
+  }
+
+  // ── Doctor: treat alcoholism and depression at clinic ──────────────────
+  if (agent.current_location != null) {
+    const agentEconJob = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+    if (agentEconJob && (agentEconJob.job === 'doctor' || agentEconJob.job === 'medical_assistant')) {
+      const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+      const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
+        (i: any) => i.itemId === 'medicine' && i.quantity > 0
+      );
+
+      if (hasMedicine) {
+        const nearbyPatients = allAgents.filter(
+          (a) => a.id !== agent.id && a.current_location === agent.current_location,
+        );
+
+        for (const patient of nearbyPatients) {
+          const patientStates = db.select().from(agentStates)
+            .where(eq(agentStates.agent_id, patient.id)).all();
+
+          // Treat alcoholism: consume medicine, trigger recovery
+          const alcoholicState = patientStates.find(s => s.type === 'alcoholic');
+          if (alcoholicState && Math.random() < 0.02) { // 2% per tick
+            const alcMeta = { ...((alcoholicState.metadata as any) ?? {}), recoveryTriggered: true };
+            db.update(agentStates).set({ metadata: alcMeta }).where(eq(agentStates.id, alcoholicState.id)).run();
+
+            // Consume medicine
+            const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
+              i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
+            ).filter((i: any) => i.quantity > 0);
+            db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, agent.id)).run();
+
+            db.insert(activityLog).values({
+              type: 'state_change',
+              message: `${agent.name} is treating ${patient.name}'s alcoholism.`,
+              agent_ids: [agent.id, patient.id],
+              timestamp: currentTick,
+              real_timestamp: Date.now(),
+            }).run();
+
+            const [ordA, ordB] = [Math.min(agent.id, patient.id), Math.max(agent.id, patient.id)];
+            db.insert(relationshipEvents).values({
+              agent_a: ordA, agent_b: ordB,
+              event_type: 'helped',
+              description: `${agent.name} treated ${patient.name}'s alcoholism with medicine`,
+              friendship_delta_ab: 5, friendship_delta_ba: 5,
+              romance_delta_ab: 0, romance_delta_ba: 0,
+              trust_delta_ab: 6, trust_delta_ba: 6,
+              sentiment: 0.6, processed: false, timestamp: Date.now(),
+            }).run();
+            break; // One treatment per tick
+          }
+
+          // Treat depression: consume medicine, remove depressed state
+          const depressedState = patientStates.find(s => s.type === 'depressed');
+          if (depressedState && Math.random() < 0.03) { // 3% per tick
+            db.delete(agentStates).where(eq(agentStates.id, depressedState.id)).run();
+
+            // Consume medicine
+            const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
+              i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
+            ).filter((i: any) => i.quantity > 0);
+            db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, agent.id)).run();
+
+            // Mood boost
+            const patientNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, patient.id)).get();
+            if (patientNeeds) {
+              db.update(needsTable).set({ mood: Math.min(100, patientNeeds.mood + 20) }).where(eq(needsTable.agent_id, patient.id)).run();
+            }
+
+            db.insert(activityLog).values({
+              type: 'state_change',
+              message: `${agent.name} treated ${patient.name}'s depression with medicine.`,
+              agent_ids: [agent.id, patient.id],
+              timestamp: currentTick,
+              real_timestamp: Date.now(),
+            }).run();
+
+            const [ordA, ordB] = [Math.min(agent.id, patient.id), Math.max(agent.id, patient.id)];
+            db.insert(relationshipEvents).values({
+              agent_a: ordA, agent_b: ordB,
+              event_type: 'helped',
+              description: `${agent.name} treated ${patient.name}'s depression`,
+              friendship_delta_ab: 4, friendship_delta_ba: 4,
+              romance_delta_ab: 0, romance_delta_ba: 0,
+              trust_delta_ab: 5, trust_delta_ba: 5,
+              sentiment: 0.7, processed: false, timestamp: Date.now(),
+            }).run();
+            break; // One treatment per tick
+          }
+        }
+      }
     }
   }
 
