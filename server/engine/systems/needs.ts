@@ -155,12 +155,27 @@ export function needsTick(): void {
 
     const mood = clamp(baseMood, 0, 100);
 
-    // Step 12: Recalculate stress
+    // Step 12: Recalculate stress — base from needs + modifiers from states and overwork
     const needValues = NEED_KEYS.map((k) => updatedNeeds[k]);
     const lowestNeed = Math.min(...needValues);
     const averageNeed =
       needValues.reduce((sum, v) => sum + v, 0) / needValues.length;
-    const stress = clamp(100 - (lowestNeed * 0.6 + averageNeed * 0.4), 0, 100);
+    let stress = clamp(100 - (lowestNeed * 0.6 + averageNeed * 0.4), 0, 100);
+
+    // Overwork: working action adds stress proportional to consecutive work time
+    if (actionType === 'working') {
+      const workDuration = currentTime - (agent.action_started ?? currentTime);
+      if (workDuration > 360) { // More than 6 hours straight
+        stress = clamp(stress + (workDuration - 360) * 0.02, 0, 100);
+      }
+    }
+
+    // State-driven stress modifiers
+    if (agentStateTypes.includes('in_debt')) stress = clamp(stress + 10, 0, 100);
+    if (agentStateTypes.includes('jealous')) stress = clamp(stress + 8, 0, 100);
+    if (agentStateTypes.includes('alcoholic')) stress = clamp(stress + 5, 0, 100);
+    if (agentStateTypes.includes('heartbroken')) stress = clamp(stress + 12, 0, 100);
+    if (agentStateTypes.includes('angry')) stress = clamp(stress + 6, 0, 100);
 
     // Detect sleep transition: schedule daily reflection when agent starts sleeping.
     if (actionType === 'sleeping' && agentNeeds.last_updated < agent.action_started) {
