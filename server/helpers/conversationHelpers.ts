@@ -36,7 +36,8 @@ export async function getConversationContext(conversationId: number, speakerId: 
   const otherAgentName = otherAgent.name ?? '';
   const topic = (conversation.topic as string) ?? '';
   const queryText = `talking with ${otherAgentName}${topic ? ' about ' + topic : ''}`;
-  const currentTick = (conversation as any).started_at ?? Date.now();
+  const world = db.select().from(worldState).get();
+  const currentTick = world?.time?.totalTicks ?? 0;
 
   const vectorSearchFn = async (
     agentId: number,
@@ -44,13 +45,13 @@ export async function getConversationContext(conversationId: number, speakerId: 
     limit: number,
   ): Promise<Array<MemoryRow & { _score?: number }>> => {
     const queryVec = Float32Array.from(embedding);
-    const topIds = vectorStore.search(queryVec, agentId, limit);
-    if (topIds.length === 0) return [];
+    const results = vectorStore.searchWithScores(queryVec, agentId, limit);
+    if (results.length === 0) return [];
+    const scoreMap = new Map(results.map(r => [r.id, r.score]));
     const rows = db.select().from(memories).where(eq(memories.agent_id, agentId)).all();
-    const idSet = new Set(topIds);
     return rows
-      .filter((r) => idSet.has(r.id))
-      .map((r) => ({ ...(r as unknown as MemoryRow) }));
+      .filter((r) => scoreMap.has(r.id))
+      .map((r) => ({ ...(r as unknown as MemoryRow), _score: scoreMap.get(r.id) }));
   };
 
   const fallbackFn = async (agentId: number, limit: number): Promise<MemoryRow[]> => {
@@ -80,7 +81,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     : null;
   if (!location) return null;
 
-  const world = db.select().from(worldState).get();
+  // world already queried above for currentTick
   if (!world) return null;
 
   const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);

@@ -23,13 +23,17 @@ export class VectorStore {
   }
 
   search(query: Float32Array, agentId: number, topK: number): number[] {
+    return this.searchWithScores(query, agentId, topK).map(s => s.id);
+  }
+
+  searchWithScores(query: Float32Array, agentId: number, topK: number): Array<{ id: number; score: number }> {
     const scores: Array<{ id: number; score: number }> = [];
     for (const [id, vec] of this.vectors) {
       if (this.memoryAgentMap.get(id) !== agentId) continue;
       scores.push({ id, score: cosineSimilarity(query, vec) });
     }
     scores.sort((a, b) => b.score - a.score);
-    return scores.slice(0, topK).map(s => s.id);
+    return scores.slice(0, topK);
   }
 
   get size() { return this.vectors.size; }
