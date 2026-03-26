@@ -142,7 +142,22 @@ export async function retrieveMemories(
 
   scored.sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, query.limit).map((s) => s.memory);
+  const result = scored.slice(0, query.limit).map((s) => s.memory);
+
+  // Update access tracking for retrieved memories
+  if (result.length > 0) {
+    const { db: dbInstance } = await import("../db");
+    const { memories: memoriesTable } = await import("../db/schema");
+    const { eq: eqOp } = await import("drizzle-orm");
+    for (const mem of result) {
+      dbInstance.update(memoriesTable).set({
+        access_count: mem.access_count + 1,
+        last_accessed: currentTick,
+      }).where(eqOp(memoriesTable.id, mem.id)).run();
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

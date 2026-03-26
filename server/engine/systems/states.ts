@@ -27,6 +27,7 @@ import {
 import { emitter } from '../emitter';
 import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
+import { createObservationMemory } from '../../ai/memories';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1831,6 +1832,23 @@ function processStateEffects(
             timestamp: currentTick,
             real_timestamp: Date.now(),
           }).run();
+
+          // Observation memories for witnesses
+          for (const w of witnesses) {
+            const memData = createObservationMemory(
+              w.id, `I saw ${agent.name} steal from ${loc.name}. It was shocking.`,
+              [agent.id, loc.owner], agent.current_location, 7, -0.6, currentTick,
+            );
+            const memResult = db.insert(memories).values(memData).returning({ id: memories.id }).get();
+            taskRunner.generateEmbedding(memResult.id, memData.content);
+          }
+          // Thief's own memory
+          const thiefMem = createObservationMemory(
+            agent.id, `I stole ${targetItem.itemId} from ${loc.name}. ${caught ? 'I got caught.' : ''}`,
+            [loc.owner], agent.current_location, 6, -0.5, currentTick,
+          );
+          const thiefMemResult = db.insert(memories).values(thiefMem).returning({ id: memories.id }).get();
+          taskRunner.generateEmbedding(thiefMemResult.id, thiefMem.content);
         } else {
           const updatedMeta = { ...meta, theftCount: ((meta.theftCount as number) ?? 0) + 1 };
           db.update(agentStates).set({ metadata: updatedMeta }).where(eq(agentStates.id, state.id)).run();

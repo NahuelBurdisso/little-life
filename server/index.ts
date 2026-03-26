@@ -12,7 +12,7 @@ import { memories } from './db/schema';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
-// Load vector store on startup
+// Load vector store on startup + embed any unembedded memories
 try {
   const allMemories = db.select({
     id: memories.id,
@@ -21,6 +21,17 @@ try {
   }).from(memories).all();
   vectorStore.load(allMemories);
   console.log(`Loaded ${vectorStore.size} embeddings into vector store`);
+
+  // Queue embedding generation for memories that don't have embeddings yet (e.g. seed/backstory)
+  const unembedded = db.select({ id: memories.id, content: memories.content })
+    .from(memories).all()
+    .filter(m => !allMemories.find(am => am.id === m.id && am.embedding));
+  if (unembedded.length > 0) {
+    console.log(`Queueing ${unembedded.length} unembedded memories for embedding generation...`);
+    for (const mem of unembedded) {
+      taskRunner.generateEmbedding(mem.id, mem.content);
+    }
+  }
 } catch (err) {
   console.error('Failed to load vector store, continuing with empty store:', err);
 }

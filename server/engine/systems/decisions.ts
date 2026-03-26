@@ -9,6 +9,7 @@ import {
   conversations,
   activityLog,
   relationshipEvents,
+  memories,
 } from '../../db/schema';
 import { INTERIOR_ZONES } from '../../data/interiors';
 import { eq, and } from 'drizzle-orm';
@@ -27,6 +28,8 @@ import {
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
 import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
+import { createObservationMemory } from '../../ai/memories';
+import { taskRunner } from '../../ai/taskRunner';
 
 // --- Types ---
 
@@ -992,6 +995,20 @@ export function tick(world: WorldRow): void {
         timestamp: totalTicks,
         real_timestamp: Date.now(),
       }).run();
+
+      // Arrest memories
+      const arrestMem1 = createObservationMemory(
+        agent.id, `I arrested ${other.name} today. They had it coming.`,
+        [other.id], agent.current_location, 7, -0.3, totalTicks,
+      );
+      const arrestMem2 = createObservationMemory(
+        other.id, `${agent.name} arrested me. This is humiliating.`,
+        [agent.id], agent.current_location, 8, -0.8, totalTicks,
+      );
+      const amr1 = db.insert(memories).values(arrestMem1).returning({ id: memories.id }).get();
+      const amr2 = db.insert(memories).values(arrestMem2).returning({ id: memories.id }).get();
+      taskRunner.generateEmbedding(amr1.id, arrestMem1.content);
+      taskRunner.generateEmbedding(amr2.id, arrestMem2.content);
 
       break; // One arrest per tick
     }
