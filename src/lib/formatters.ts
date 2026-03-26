@@ -22,7 +22,17 @@ export function timeAgo(
   ticksNow: number,
   tickSpeed: number
 ): string {
-  const minutesAgo = (ticksNow - ticksThen) * tickSpeed;
+  // Detect if timestamp is a Date.now() value (>1 billion) vs game ticks (<1 million)
+  // and convert to game-time minutes accordingly
+  let minutesAgo: number;
+  if (ticksThen > 1_000_000_000) {
+    // Real-time timestamp (Date.now milliseconds) — convert to game minutes
+    const realMsAgo = Date.now() - ticksThen;
+    minutesAgo = (realMsAgo / 1000) * tickSpeed;
+  } else {
+    minutesAgo = (ticksNow - ticksThen) * tickSpeed;
+  }
+  if (minutesAgo < 0) minutesAgo = 0;
   if (minutesAgo < 60) return `${Math.round(minutesAgo)}m ago`;
   const hoursAgo = minutesAgo / 60;
   if (hoursAgo < 24) return `${Math.round(hoursAgo)}h ago`;

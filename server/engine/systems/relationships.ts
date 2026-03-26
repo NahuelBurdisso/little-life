@@ -353,7 +353,7 @@ export function tick(
         type: 'relationship',
         message: `${nameA} and ${nameB} are now ${newStatus}.`,
         agent_ids: [a, b],
-        timestamp: now,
+        timestamp: world.time?.totalTicks ?? 0,
         real_timestamp: now,
       }).run();
     }
