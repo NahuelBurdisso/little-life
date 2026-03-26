@@ -16,7 +16,7 @@ export const activityRouter = router({
       return db
         .select()
         .from(activityLog)
-        .orderBy(desc(activityLog.timestamp))
+        .orderBy(desc(activityLog.real_timestamp))
         .limit(input.limit)
         .all();
     }),
@@ -33,7 +33,7 @@ export const activityRouter = router({
         .select()
         .from(activityLog)
         .where(eq(activityLog.type, input.type))
-        .orderBy(desc(activityLog.timestamp))
+        .orderBy(desc(activityLog.real_timestamp))
         .limit(input.limit)
         .all();
     }),
