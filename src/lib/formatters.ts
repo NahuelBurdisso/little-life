@@ -14,7 +14,7 @@ export function formatMood(mood: number): string {
 }
 
 export function formatMoney(amount: number): string {
-  return `${amount} coins`;
+  return `${Math.floor(amount)} coins`;
 }
 
 export function timeAgo(
