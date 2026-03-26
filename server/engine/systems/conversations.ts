@@ -25,6 +25,7 @@ import {
   agentStates,
   economy,
   facts,
+  locations,
 } from '../../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -1027,10 +1028,15 @@ async function processTimedOutEntry(
     },
   );
 
+  // Get location name for template interpolation
+  const templateLocation = db.select({ name: locations.name }).from(locations).where(eq(locations.id, locationId)).get();
+
   const messageText = templateResult
     ? interpolateTemplate(templateResult.text, {
-        speaker: agentList[0].name,
-        listener: agentList[1].name,
+        'speaker.name': agentList[0].name,
+        'other.name': agentList[1].name,
+        'listener.name': agentList[1].name,
+        'location.name': templateLocation?.name ?? 'town',
       })
     : `${agentList[0].name} nodded at ${agentList[1].name}.`;
   const messageSentiment = templateResult ? templateResult.sentiment : 0;
