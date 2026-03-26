@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, facts, relationships, agentStates, economy, conversations } from '../db/schema';
+import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { PersonalityProfile } from './personality';
 
@@ -16,6 +16,13 @@ const FACT_TEMPLATES: Record<string, (subjectName: string, targetName?: string) 
   work_issue: (s) => `${s} keeps skipping work`,
   sickness: (s) => `${s} is sick`,
   reputation: (s) => `People have been having bad interactions with ${s} lately`,
+  theft: (s, t) => `${s} was caught stealing from ${t ?? 'someone'}`,
+  blackmail: (s, t) => `${s} is blackmailing ${t ?? 'someone'}`,
+  gambling_loss: (s) => `${s} lost big gambling at the tavern`,
+  rumor: (s) => `There are rumors going around about ${s}`,
+  seduction: (s, t) => `${s} is using ${t ?? 'someone'} for personal gain`,
+  confession: (s, t) => `${s} confessed something to ${t ?? 'someone'}`,
+  alcoholic: (s) => `${s} has a serious drinking problem`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────
@@ -127,6 +134,35 @@ export function createFact(
   return Number(result.lastInsertRowid);
 }
 
+// ─── getNegativeFactCount / getHiddenSinCount ─────────────────────────────────
+
+const NEGATIVE_FACT_TYPES = [
+  'theft', 'blackmail', 'gambling_loss', 'rumor',
+  'reputation', 'work_issue', 'drunk_incident', 'grudge',
+];
+
+export function getNegativeFactCount(agentId: number): number {
+  const activeFacts = db
+    .select({ type: facts.type })
+    .from(facts)
+    .where(and(eq(facts.subject_id, agentId), eq(facts.is_active, true)))
+    .all();
+  return activeFacts.filter((f) => NEGATIVE_FACT_TYPES.includes(f.type)).length;
+}
+
+export function getHiddenSinCount(agentId: number): number {
+  const hiddenFacts = db
+    .select({ type: facts.type, known_by: facts.known_by })
+    .from(facts)
+    .where(and(eq(facts.subject_id, agentId), eq(facts.is_active, true)))
+    .all()
+    .filter((f) =>
+      ['theft', 'affair', 'blackmail'].includes(f.type) &&
+      (f.known_by as number[]).length <= 2
+    );
+  return hiddenFacts.length;
+}
+
 // ─── getShareableFacts ────────────────────────────────────────────────────────
 
 export function getShareableFacts(
@@ -207,6 +243,48 @@ export function spreadGossip(
       .set({ known_by: updated })
       .where(eq(facts.id, fact.id))
       .run();
+  }
+
+  // Rumor discovery: if both agents know a rumor, they may compare notes and discover the fabricator
+  const speakerPersonality = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, _speakerId)).get();
+  const listenerPersonality = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, listenerId)).get();
+  if (speakerPersonality && listenerPersonality) {
+    const sp = speakerPersonality.personality as PersonalityProfile | null;
+    const lp = listenerPersonality.personality as PersonalityProfile | null;
+    if (sp && lp) {
+      const avgHonesty = (sp.honesty + lp.honesty) / 2;
+      const discoveryChance = 0.1 * avgHonesty / 100;
+
+      const rumorFacts = db.select().from(facts)
+        .where(and(eq(facts.type, 'rumor'), eq(facts.is_active, true))).all();
+      for (const rumor of rumorFacts) {
+        const knownBy = rumor.known_by as number[];
+        if (!knownBy.includes(listenerId) || !knownBy.includes(_speakerId)) continue;
+        if (rumor.source !== 'fabricated') continue;
+        const fabricatorId = knownBy[0]; // fabricator is first in known_by
+        if (fabricatorId === listenerId || fabricatorId === _speakerId) continue;
+
+        if (Math.random() < discoveryChance) {
+          // Both discover the manipulator
+          for (const discoverer of [listenerId, _speakerId]) {
+            const [ordA, ordB] = [Math.min(discoverer, fabricatorId), Math.max(discoverer, fabricatorId)];
+            db.insert(relationshipEvents).values({
+              agent_a: ordA, agent_b: ordB,
+              event_type: 'confrontation',
+              description: `Discovered that ${getAgentName(fabricatorId)} spread rumors`,
+              friendship_delta_ab: discoverer === ordA ? -20 : 0,
+              friendship_delta_ba: discoverer === ordA ? 0 : -20,
+              romance_delta_ab: 0, romance_delta_ba: 0,
+              trust_delta_ab: discoverer === ordA ? -40 : 0,
+              trust_delta_ba: discoverer === ordA ? 0 : -40,
+              sentiment: -0.7, processed: false, timestamp: Date.now(),
+            }).run();
+          }
+          createFact('reputation', fabricatorId, null, 1, [listenerId, _speakerId], 'discovered');
+          db.update(facts).set({ is_active: false }).where(eq(facts.id, rumor.id)).run();
+        }
+      }
+    }
   }
 }
 
@@ -357,6 +435,51 @@ export function deactivateStaleFacts(): void {
           });
 
         if (negConvs.length === 0) stale = true;
+        break;
+      }
+
+      case 'alcoholic': {
+        const state = db.select({ id: agentStates.id }).from(agentStates)
+          .where(and(eq(agentStates.agent_id, fact.subject_id), eq(agentStates.type, 'alcoholic'))).get();
+        if (!state) stale = true;
+        break;
+      }
+
+      case 'theft': {
+        // Theft facts expire after ~2 hours real time
+        if (Date.now() - fact.created_at > 7_200_000) stale = true;
+        break;
+      }
+
+      case 'blackmail': {
+        // Deactivate if victim has no money
+        if (fact.target_id) {
+          const victimEco = db.select({ money: economy.money }).from(economy)
+            .where(eq(economy.agent_id, fact.target_id)).get();
+          if (victimEco && victimEco.money < 10) stale = true;
+        }
+        break;
+      }
+
+      case 'gambling_loss': {
+        // Gambling losses fade after ~1.2 hours real time
+        if (Date.now() - fact.created_at > 4_320_000) stale = true;
+        break;
+      }
+
+      case 'rumor': {
+        // Rumors expire after ~2.8 hours real time
+        if (Date.now() - fact.created_at > 10_080_000) stale = true;
+        break;
+      }
+
+      case 'seduction': {
+        if (Date.now() - fact.created_at > 7_200_000) stale = true;
+        break;
+      }
+
+      case 'confession': {
+        if (Date.now() - fact.created_at > 4_320_000) stale = true;
         break;
       }
     }
