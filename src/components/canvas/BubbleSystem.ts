@@ -45,6 +45,7 @@ export class BubbleSystem {
   private bubbles: Map<string, BubbleEntry> = new Map();
   readonly container: PIXI.Container;
   private prevMoodMap: Map<string, number> = new Map();
+  private shownMessageCounts = new Map<string, number>(); // agentId → message count when last bubble shown
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
@@ -215,28 +216,28 @@ export class BubbleSystem {
     for (const aid of convoAgents) {
       const pos = posMap.get(aid);
       if (!pos) continue;
+
+      // Find the conversation this agent is in
+      const numericAid = Number(aid);
+      const convo = conversations.find(c => (c.participants ?? []).includes(numericAid));
+      const messages = (convo?.messages ?? []) as any[];
+      const messageCount = messages.length;
+      const lastShown = this.shownMessageCounts.get(aid) ?? 0;
       const lastMsg = latestMessages.get(aid);
-      if (lastMsg) {
-        const existing = this.bubbles.get(aid);
-        // Only show a new speech bubble if we don't already have one (or it expired)
-        if (!existing || existing.type === "thought") {
-          // Find the conversation this agent is in
-          const numericAid = Number(aid);
-          const convo = conversations.find(c => {
-            return (c.participants ?? []).includes(numericAid);
-          });
-          const sentiment = (convo as any)?.sentiment ?? 0;
-          // Determine bubble offset for multi-agent conversations
-          const participantIds = (convo?.participants ?? []).map(String);
-          const isMultiAgent = participantIds.length > 1;
-          const participantIndex = participantIds.indexOf(aid);
-          const offsetX = isMultiAgent ? (participantIndex === 0 ? -20 : 20) : 0;
-          this.showSpeechBubble(aid, lastMsg, pos, sentiment, offsetX);
-        }
-      } else {
-        if (!this.bubbles.has(aid)) {
-          this.showThoughtBubble(aid, pos);
-        }
+
+      if (lastMsg && messageCount > lastShown) {
+        // New message arrived — show a fresh speech bubble
+        this.shownMessageCounts.set(aid, messageCount);
+        const sentiment = (convo as any)?.sentiment ?? 0;
+        // Determine bubble offset for multi-agent conversations
+        const participantIds = (convo?.participants ?? []).map(String);
+        const isMultiAgent = participantIds.length > 1;
+        const participantIndex = participantIds.indexOf(aid);
+        const offsetX = isMultiAgent ? (participantIndex === 0 ? -20 : 20) : 0;
+        this.showSpeechBubble(aid, lastMsg, pos, sentiment, offsetX);
+      } else if (!lastMsg && !this.bubbles.has(aid)) {
+        // No messages yet — show thought bubble while waiting
+        this.showThoughtBubble(aid, pos);
       }
     }
 
@@ -246,6 +247,7 @@ export class BubbleSystem {
       if ((entry.type === "speech" || entry.type === "thought") && !convoAgents.has(entry.agentId)) {
         entry.container.destroy({ children: true });
         this.bubbles.delete(key);
+        this.shownMessageCounts.delete(entry.agentId);
       }
     }
 
@@ -297,6 +299,7 @@ export class BubbleSystem {
     }
     this.bubbles.clear();
     this.prevMoodMap.clear();
+    this.shownMessageCounts.clear();
     this.container.destroy({ children: true });
   }
 }

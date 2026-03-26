@@ -55,6 +55,16 @@ export function GameCanvas({
   const locationsRef = useRef(locations);
   locationsRef.current = locations;
 
+  // Stable data refs so the per-frame ticker can access latest conversations/agents
+  const conversationsRef = useRef(conversations);
+  const agentsRef = useRef(agents);
+
+  // Update refs when data changes
+  useEffect(() => {
+    conversationsRef.current = conversations;
+    agentsRef.current = agents;
+  }, [conversations, agents]);
+
   // Stable callback refs so the interaction layer doesn't go stale
   const callbacksRef = useRef({ onAgentSelect, onAgentContextMenu, onAgentHover });
   callbacksRef.current = { onAgentSelect, onAgentContextMenu, onAgentHover };
@@ -162,11 +172,6 @@ export function GameCanvas({
     // Rebind interaction events for any new sprites
     interactionRef.current?.updateBindings(spritePool.getAllIds());
 
-    // Update bubbles — pass sprite pool so bubbles track interpolated positions
-    if (bubbleSystemRef.current) {
-      bubbleSystemRef.current.update(conversations ?? [], agents, 1, spritePool);
-    }
-
     // Update occupancy dots on tilemap
     if (tilemapRef.current && locations) {
       tilemapRef.current.updateOccupancy(agents, locations);
@@ -190,6 +195,15 @@ export function GameCanvas({
       const delta = ticker.deltaTime;
       // Lerp all sprites toward their targets each frame
       spritePoolRef.current?.lerpAll(delta);
+      // Update bubbles per-frame so expiry and emote float animation run smoothly
+      if (bubbleSystemRef.current && spritePoolRef.current) {
+        bubbleSystemRef.current.update(
+          conversationsRef.current ?? [],
+          agentsRef.current ?? [],
+          delta / 60, // convert PIXI ticker delta to seconds
+          spritePoolRef.current
+        );
+      }
     };
 
     app.ticker.add(tickFn);
