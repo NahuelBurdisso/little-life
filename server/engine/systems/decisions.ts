@@ -608,6 +608,28 @@ export function tick(world: WorldRow): void {
       decision = { action: 'idle', score: 0, targetLocationId: agent.home };
     }
 
+    // --- Validate action makes sense at target location ---
+    if (decision != null && decision.targetLocationId != null) {
+      const targetLoc = allLocations.find((l) => l.id === decision!.targetLocationId);
+      if (targetLoc) {
+        // Can't work at a location that isn't your workplace
+        if (decision.action === 'working' && decision.targetLocationId !== agent.workplace) {
+          decision = { action: 'idle', score: 0, targetLocationId: agent.home };
+        }
+        // Can't sleep anywhere except home
+        if (decision!.action === 'sleeping' && decision!.targetLocationId !== agent.home) {
+          decision = { action: 'sleeping', score: decision!.score, targetLocationId: agent.home };
+        }
+        // Check operating hours for commercial locations
+        if (['eating', 'shopping'].includes(decision!.action) && targetLoc.operating_hours) {
+          const hours = targetLoc.operating_hours as { open: number; close: number };
+          if (world.time.hour < hours.open || world.time.hour >= hours.close) {
+            decision = { action: 'idle', score: 0, targetLocationId: agent.home };
+          }
+        }
+      }
+    }
+
     // Build destination from the target location
     let destination: { x: number; y: number; locationId?: number } | null = null;
     let zoneTarget: { x: number; y: number } | null = null;
