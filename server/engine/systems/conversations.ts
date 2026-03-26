@@ -394,13 +394,24 @@ async function processCompletedConversation(
         ? [agentA.id, agentB.id]
         : [agentB.id, agentA.id];
 
-      let friendshipDeltaAB =
-        overallSentiment > 0
-          ? overallSentiment * 5
-          : overallSentiment * 8;
-      let friendshipDeltaBA = friendshipDeltaAB;
-      let trustDeltaAB =
-        overallSentiment > 0.3 ? 2 : overallSentiment < -0.3 ? -3 : 0;
+      // --- Conversation impact scales with turns, sentiment, and topic ---
+      const turnCount = messages.length;
+      const turnMultiplier = Math.min(2.0, 1 + turnCount * 0.15); // more turns = bigger impact
+      const baseFriendship = overallSentiment > 0
+        ? overallSentiment * 8 * turnMultiplier
+        : overallSentiment * 12 * turnMultiplier; // negative conversations hit harder
+
+      let friendshipDeltaAB = baseFriendship;
+      let friendshipDeltaBA = baseFriendship;
+
+      // Topic-driven trust impact
+      const isDeepTopic = ['sharing secrets', 'deep conversation', 'confession', 'venting worries', 'seeking comfort']
+        .some(t => fresh.topic?.includes(t) ?? false);
+      const isConflictTopic = ['confrontation', 'tension', 'argument']
+        .some(t => fresh.topic?.includes(t) ?? false);
+
+      let trustDeltaAB = isDeepTopic && overallSentiment > 0 ? 4 : isConflictTopic ? -5 :
+        overallSentiment > 0.3 ? 3 : overallSentiment < -0.3 ? -4 : 0;
       let trustDeltaBA = trustDeltaAB;
 
       // Get both agents' personalities
@@ -1160,7 +1171,7 @@ async function processTimedOutEntry(
   const agentB = agentList[1];
 
   let friendshipDeltaAB =
-    messageSentiment > 0 ? messageSentiment * 2 : messageSentiment * 3;
+    messageSentiment > 0 ? messageSentiment * 5 : messageSentiment * 8;
   let friendshipDeltaBA = friendshipDeltaAB;
 
   // Get both agents' personalities

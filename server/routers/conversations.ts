@@ -74,7 +74,7 @@ export const conversationsRouter = router({
       const relEvents = db.select().from(relationshipEvents).all()
         .filter(e => {
           if (!participantIds.includes(e.agent_a) || !participantIds.includes(e.agent_b)) return false;
-          return e.timestamp >= startedAt - 2000 && e.timestamp <= endedAt + 2000;
+          return e.timestamp >= startedAt - 5000 && e.timestamp <= endedAt + 5000;
         });
 
       // Get participant names
@@ -87,7 +87,7 @@ export const conversationsRouter = router({
       // Find facts created during this conversation
       const createdFacts = db.select().from(facts).all()
         .filter(f => {
-          return f.created_at >= startedAt - 2000 && f.created_at <= endedAt + 2000 &&
+          return f.created_at >= startedAt - 5000 && f.created_at <= endedAt + 5000 &&
             (participantIds.includes(f.subject_id) || (f.target_id != null && participantIds.includes(f.target_id)));
         });
 
