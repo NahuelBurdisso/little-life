@@ -2,48 +2,17 @@ import { db } from '../../db';
 import { agents, economy, economyTransactions, worldState, worldEvents, activityLog, locations, agentStates, facts } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
-import { getItemPrice } from '../../lib/prices';
 import type { Season } from '../../lib/types';
 import { emitter } from '../emitter';
 import { createFact } from '../../lib/gossip';
+import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation } from '../../lib/economyEngine';
+import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 
 // --- Helpers ---
 
 type EconRecord = typeof economy.$inferSelect;
-type InventoryItem = { itemId: string; quantity: number; acquiredAt: number };
 
-function getInventoryCount(econ: EconRecord, itemId: string): number {
-  return econ.inventory.find((i) => i.itemId === itemId)?.quantity ?? 0;
-}
-
-function addInventoryItem(
-  inventory: InventoryItem[],
-  itemId: string,
-  quantity: number,
-  timestamp: number,
-): InventoryItem[] {
-  const existing = inventory.find((i) => i.itemId === itemId);
-  if (existing) {
-    return inventory.map((i) =>
-      i.itemId === itemId ? { ...i, quantity: i.quantity + quantity } : i,
-    );
-  }
-  return [...inventory, { itemId, quantity, acquiredAt: timestamp }];
-}
-
-function removeInventoryItem(
-  inventory: InventoryItem[],
-  itemId: string,
-  quantity: number,
-): InventoryItem[] {
-  return inventory
-    .map((i) =>
-      i.itemId === itemId ? { ...i, quantity: i.quantity - quantity } : i,
-    )
-    .filter((i) => i.quantity > 0);
-}
-
-function mergeEventEffects(
+export function mergeEventEffects(
   events: (typeof worldEvents.$inferSelect)[],
 ): Record<string, number> {
   const effects: Record<string, number> = {};
@@ -60,13 +29,6 @@ function mergeEventEffects(
   return effects;
 }
 
-const SEASON_PRODUCTION_MULTIPLIERS: Record<string, number> = {
-  spring: 1.2,
-  summer: 1.0,
-  autumn: 0.8,
-  winter: 0.4,
-};
-
 // --- Main tick ---
 
 export function economyTick(): void {
@@ -76,8 +38,9 @@ export function economyTick(): void {
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const allEcon = db.select().from(economy).all();
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
+  const allLocations = db.select().from(locations).all();
 
-  const eventEffects = mergeEventEffects(activeEvents);
+  mergeEventEffects(activeEvents); // reserved for future event price modifiers
   const season = world.time!.season as Season;
   const currentHour = world.time!.hour;
   const now = Date.now();
@@ -100,82 +63,105 @@ export function economyTick(): void {
   // Location cache for shop lookups
   const locationCache = new Map<number, typeof locations.$inferSelect>();
 
-  // ========== 1. PRODUCTION ==========
+  // ========== 1. PRODUCTION (data-driven) ==========
   for (const agent of activeAgents) {
     const action = agent.current_action as any;
     if (!action || action.type !== 'working') continue;
 
     const econ = econByAgent.get(agent.id);
     if (!econ) continue;
-
-    // Agent must be at their workplace
     if (!agent.workplace || agent.current_location !== agent.workplace) continue;
 
-    const job = econ.job;
+    const recipe = getRecipeForJob(econ.job);
+    if (!recipe) continue;
 
-    if (job === 'farmer' || job === 'farmhand') {
-      // Produce food_raw based on season
-      const seasonMult = SEASON_PRODUCTION_MULTIPLIERS[season] ?? 1.0;
-      const rawProduction =
-        1 * gameHoursElapsed * seasonMult + econ.production_remainder;
+    if (recipe.inputs) {
+      // Processing job: convert inputs to outputs
+      let canProduce = true;
+      for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
+        if (getInventoryCount(econ.inventory as any[], inputItem) < inputQty) {
+          canProduce = false;
+          break;
+        }
+      }
+      if (!canProduce) continue;
+
+      let inv = econ.inventory as any[];
+      for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
+        inv = removeFromInventory(inv, inputItem, inputQty);
+      }
+      inv = addToInventory(inv, recipe.output, recipe.outputQuantity, now);
+      db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
+      econ.inventory = inv;
+    } else {
+      // Raw production: rate-based with seasonal modifier and remainder
+      const seasonMult = recipe.seasonal ? (SEASON_PRODUCTION_MODIFIERS[season] ?? 1.0) : 1.0;
+      const rawProduction = recipe.rate * gameHoursElapsed * seasonMult + econ.production_remainder;
       const wholeUnits = Math.floor(rawProduction);
       const remainder = rawProduction - wholeUnits;
 
       db.update(economy).set({ production_remainder: remainder }).where(eq(economy.id, econ.id)).run();
+      econ.production_remainder = remainder;
 
       if (wholeUnits > 0) {
-        const newInventory = addInventoryItem(
-          econ.inventory,
-          'food_raw',
-          wholeUnits,
-          now,
-        );
-        db.update(economy).set({ inventory: newInventory }).where(eq(economy.id, econ.id)).run();
-        // Update local reference
-        econ.inventory = newInventory;
-        econ.production_remainder = remainder;
-      }
-    } else if (job === 'bartender') {
-      // Convert food_raw to drinks: 2 food_raw -> 4 drinks
-      const available = getInventoryCount(econ, 'food_raw');
-      const batches = Math.floor(available / 2);
-      if (batches > 0) {
-        let inv = removeInventoryItem(econ.inventory, 'food_raw', batches * 2);
-        inv = addInventoryItem(inv, 'drink', batches * 4, now);
-        db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
-        econ.inventory = inv;
-      }
-    } else if (job === 'doctor' || job === 'medical_assistant') {
-      // Produce medicine slowly
-      const rawProduction =
-        0.5 * gameHoursElapsed + econ.production_remainder;
-      const wholeUnits = Math.floor(rawProduction);
-      const remainder = rawProduction - wholeUnits;
-
-      db.update(economy).set({ production_remainder: remainder }).where(eq(economy.id, econ.id)).run();
-
-      if (wholeUnits > 0) {
-        const newInventory = addInventoryItem(
-          econ.inventory,
-          'medicine',
-          wholeUnits,
-          now,
-        );
-        db.update(economy).set({ inventory: newInventory }).where(eq(economy.id, econ.id)).run();
-        econ.inventory = newInventory;
-        econ.production_remainder = remainder;
-      }
-    } else if (job === 'baker') {
-      // Convert food_raw to food_prepared: 1 food_raw -> 2 food_prepared
-      const available = getInventoryCount(econ, 'food_raw');
-      if (available > 0) {
-        let inv = removeInventoryItem(econ.inventory, 'food_raw', available);
-        inv = addInventoryItem(inv, 'food_prepared', available * 2, now);
-        db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
-        econ.inventory = inv;
+        const newInv = addToInventory(econ.inventory as any[], recipe.output, wholeUnits * recipe.outputQuantity, now);
+        db.update(economy).set({ inventory: newInv }).where(eq(economy.id, econ.id)).run();
+        econ.inventory = newInv;
       }
     }
-    // Other jobs: no production
+  }
+
+  // ========== 1.5. SUPPLY CHAIN — producers sell surplus to shops ==========
+  for (const [locType, rules] of Object.entries(TRADE_RULES)) {
+    if (rules.buys.length === 0) continue;
+
+    for (const loc of allLocations) {
+      if ((loc as any).type !== locType || !loc.owner) continue;
+      const ownerEcon = econByAgent.get(loc.owner);
+      if (!ownerEcon) continue;
+
+      for (const buyItem of rules.buys) {
+        for (const agent of activeAgents) {
+          if (agent.id === loc.owner) continue;
+          const agentEcon = econByAgent.get(agent.id);
+          if (!agentEcon) continue;
+
+          const recipe = getRecipeForJob(agentEcon.job);
+          if (!recipe || recipe.output !== buyItem) continue;
+
+          const agentStock = getInventoryCount(agentEcon.inventory as any[], buyItem);
+          const surplus = agentStock - 3;
+          if (surplus <= 0) continue;
+
+          const shopStock = getInventoryCount(ownerEcon.inventory as any[], buyItem);
+          const price = getMarketPrice(buyItem, season, shopStock);
+          const buyAmount = Math.min(surplus, Math.floor(ownerEcon.money / price));
+          if (buyAmount <= 0 || price <= 0) continue;
+
+          const totalCost = price * buyAmount;
+
+          const newProducerInv = removeFromInventory(agentEcon.inventory as any[], buyItem, buyAmount);
+          const newShopInv = addToInventory(ownerEcon.inventory as any[], buyItem, buyAmount, now);
+
+          db.update(economy).set({ inventory: newProducerInv, money: agentEcon.money + totalCost }).where(eq(economy.id, agentEcon.id)).run();
+          db.update(economy).set({ inventory: newShopInv, money: ownerEcon.money - totalCost }).where(eq(economy.id, ownerEcon.id)).run();
+          agentEcon.inventory = newProducerInv;
+          agentEcon.money += totalCost;
+          ownerEcon.inventory = newShopInv;
+          ownerEcon.money -= totalCost;
+
+          db.insert(economyTransactions).values({
+            from_agent: loc.owner,
+            to_agent: agent.id,
+            amount: totalCost,
+            reason: `wholesale:${buyItem}`,
+            items_exchanged: [{ itemId: buyItem, quantity: buyAmount }],
+            location_id: loc.id,
+            timestamp: now,
+          }).run();
+        }
+      }
+    }
   }
 
   // ========== 2. PAYDAY ==========
@@ -274,70 +260,83 @@ export function economyTick(): void {
           locationCache.set(agent.current_location, loc);
         }
       }
-      if (eatLocation && (eatLocation.type === 'shop' || eatLocation.type === 'tavern' || eatLocation.type === 'bakery') && eatLocation.owner) {
-        const buyerEcon = econByAgent.get(agent.id);
-        if (!buyerEcon) continue;
+      if (eatLocation) {
+        const tradeRule = getTradeRuleForLocation(eatLocation.type);
+        if (tradeRule && eatLocation.owner) {
+          const buyerEcon = econByAgent.get(agent.id);
+          if (!buyerEcon) { continue; }
 
-        // Determine what to buy based on location type
-        const itemToBuy = eatLocation.type === 'tavern' ? 'drink' : 'food_prepared';
-        const fallbackItem = 'food_raw';
-        const ownerEcon = econByAgent.get(eatLocation.owner);
-        if (!ownerEcon) continue;
+          const ownerEcon = econByAgent.get(eatLocation.owner);
+          if (!ownerEcon) { continue; }
 
-        // Try preferred item first, then fallback
-        let item = itemToBuy;
-        let shopStock = getInventoryCount(ownerEcon, item);
-        if (shopStock <= 0) {
-          item = fallbackItem;
-          shopStock = getInventoryCount(ownerEcon, item);
+          // Find best food item the shop sells and has in stock
+          let itemToBuy: string | null = null;
+          for (const sellItem of tradeRule.sells) {
+            const def = ITEM_REGISTRY[sellItem];
+            if (!def?.satisfies || def.satisfies.need !== 'hunger') continue;
+            if (getInventoryCount(ownerEcon.inventory as any[], sellItem) > 0) {
+              itemToBuy = sellItem;
+              break;
+            }
+          }
+          // Fallback: try any item the shop sells
+          if (!itemToBuy) {
+            for (const sellItem of tradeRule.sells) {
+              if (getInventoryCount(ownerEcon.inventory as any[], sellItem) > 0) {
+                itemToBuy = sellItem;
+                break;
+              }
+            }
+          }
+          if (!itemToBuy) { continue; }
+
+          const shopStock = getInventoryCount(ownerEcon.inventory as any[], itemToBuy);
+          const price = getMarketPrice(itemToBuy, season, shopStock);
+          if (buyerEcon.money < price) { continue; }
+
+          // Transfer item
+          const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], itemToBuy, 1);
+          const newBuyerInv = addToInventory(buyerEcon.inventory as any[], itemToBuy, 1, now);
+          const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE);
+          const sellerReceives = price - tax;
+
+          db.update(economy).set({
+            inventory: newOwnerInv,
+            money: ownerEcon.money + sellerReceives,
+          }).where(eq(economy.id, ownerEcon.id)).run();
+          ownerEcon.inventory = newOwnerInv;
+          ownerEcon.money += sellerReceives;
+
+          db.update(economy).set({
+            inventory: newBuyerInv,
+            money: buyerEcon.money - price,
+          }).where(eq(economy.id, buyerEcon.id)).run();
+          buyerEcon.inventory = newBuyerInv;
+          buyerEcon.money -= price;
+
+          db.update(worldState).set({
+            tax_pool: world.tax_pool + tax,
+          }).where(eq(worldState.id, world.id)).run();
+          world.tax_pool += tax;
+
+          db.insert(economyTransactions).values({
+            from_agent: agent.id,
+            to_agent: eatLocation.owner,
+            amount: price,
+            reason: `purchase:${itemToBuy}`,
+            items_exchanged: [{ itemId: itemToBuy, quantity: 1 }],
+            location_id: agent.current_location,
+            timestamp: now,
+          }).run();
+
+          db.insert(activityLog).values({
+            type: 'economy',
+            message: `${agent.name} bought ${itemToBuy} for ${price} coins`,
+            agent_ids: [agent.id, eatLocation.owner],
+            timestamp: world.time!.totalTicks,
+            real_timestamp: now,
+          }).run();
         }
-        if (shopStock <= 0) continue;
-
-        const price = getItemPrice(item, season, eventEffects);
-        if (buyerEcon.money < price) continue;
-
-        // Transfer item
-        const newOwnerInv = removeInventoryItem(ownerEcon.inventory, item, 1);
-        const newBuyerInv = addInventoryItem(buyerEcon.inventory, item, 1, now);
-        const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE);
-        const sellerReceives = price - tax;
-
-        db.update(economy).set({
-          inventory: newOwnerInv,
-          money: ownerEcon.money + sellerReceives,
-        }).where(eq(economy.id, ownerEcon.id)).run();
-        ownerEcon.inventory = newOwnerInv;
-        ownerEcon.money += sellerReceives;
-
-        db.update(economy).set({
-          inventory: newBuyerInv,
-          money: buyerEcon.money - price,
-        }).where(eq(economy.id, buyerEcon.id)).run();
-        buyerEcon.inventory = newBuyerInv;
-        buyerEcon.money -= price;
-
-        db.update(worldState).set({
-          tax_pool: world.tax_pool + tax,
-        }).where(eq(worldState.id, world.id)).run();
-        world.tax_pool += tax;
-
-        db.insert(economyTransactions).values({
-          from_agent: agent.id,
-          to_agent: eatLocation.owner,
-          amount: price,
-          reason: `purchase:${item}`,
-          items_exchanged: [{ itemId: item, quantity: 1 }],
-          location_id: agent.current_location,
-          timestamp: now,
-        }).run();
-
-        db.insert(activityLog).values({
-          type: 'economy',
-          message: `${agent.name} bought ${item} for ${price} coins`,
-          agent_ids: [agent.id, eatLocation.owner],
-          timestamp: world.time!.totalTicks,
-          real_timestamp: now,
-        }).run();
       }
       continue;
     }
@@ -368,16 +367,16 @@ export function economyTick(): void {
 
     for (const item of items) {
       // Check shop has stock
-      const shopStock = getInventoryCount(ownerEcon, item);
+      const shopStock = getInventoryCount(ownerEcon.inventory as any[], item);
       if (shopStock <= 0) continue;
 
       // Get price
-      const price = getItemPrice(item, season, eventEffects);
+      const price = getMarketPrice(item, season, shopStock);
       if (buyerEcon.money < price) continue;
 
       // Transfer item: remove from shop, add to buyer
-      const newOwnerInv = removeInventoryItem(ownerEcon.inventory, item, 1);
-      const newBuyerInv = addInventoryItem(buyerEcon.inventory, item, 1, now);
+      const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], item, 1);
+      const newBuyerInv = addToInventory(buyerEcon.inventory as any[], item, 1, now);
 
       // Calculate tax
       const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE);
@@ -427,21 +426,19 @@ export function economyTick(): void {
     }
   }
 
-  // ========== 4. DAILY EXPENSES (on day change) ==========
+  // ========== 4. LIVING COSTS (data-driven) ==========
   if (dayChanged) {
-    const { min, max } = CONFIG.ECONOMY.DAILY_EXPENSES;
+    for (const cost of LIVING_COSTS) {
+      if (cost.frequency !== 'per_day') continue;
+      for (const econ of allEcon) {
+        const newMoney = Math.max(0, econ.money - cost.amount);
+        db.update(economy).set({ money: newMoney, daily_expenses: cost.amount })
+          .where(eq(economy.id, econ.id)).run();
+        econ.money = newMoney;
 
-    for (const econ of allEcon) {
-      const expense = Math.floor(Math.random() * (max - min + 1)) + min;
-      const newMoney = Math.max(0, econ.money - expense);
-      db.update(economy).set({
-        money: newMoney,
-        daily_expenses: expense,
-      }).where(eq(economy.id, econ.id)).run();
-      econ.money = newMoney;
-
-      if (newMoney < 10) {
-        createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
+        if (newMoney < 10) {
+          createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
+        }
       }
     }
   }
