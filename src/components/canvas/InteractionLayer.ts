@@ -41,36 +41,42 @@ export class InteractionLayer {
    */
   updateBindings(agentIds: string[]) {
     for (const id of agentIds) {
-      if (this.boundIds.has(id)) continue;
-
       const sprite = this.spritePool.getSprite(id);
       if (!sprite) continue;
 
       const c = sprite.container;
-      c.eventMode = "static";
-      c.cursor = "pointer";
-      c.hitArea = new PIXI.Circle(0, 0, 16);
 
-      c.on("pointertap", (e: PIXI.FederatedPointerEvent) => {
-        e.stopPropagation();
-        this.callbacks.onAgentSelect(id);
-      });
+      // Always ensure interaction is set up — sprites may have been
+      // recreated by the pool, invalidating previous bindings
+      if (c.eventMode !== "static" || !this.boundIds.has(id)) {
+        // Remove old listeners if re-binding
+        c.removeAllListeners();
 
-      c.on("pointerover", (e: PIXI.FederatedPointerEvent) => {
-        this.callbacks.onAgentHover(id, { x: e.global.x, y: e.global.y });
-      });
+        c.eventMode = "static";
+        c.cursor = "pointer";
+        c.hitArea = new PIXI.Circle(0, 0, 16);
 
-      c.on("pointerout", () => {
-        this.callbacks.onAgentHover(null);
-      });
+        c.on("pointertap", (e: PIXI.FederatedPointerEvent) => {
+          e.stopPropagation();
+          this.callbacks.onAgentSelect(id);
+        });
 
-      c.on("rightclick", (e: PIXI.FederatedPointerEvent) => {
-        e.stopPropagation();
-        (e as any).preventDefault?.();
-        this.callbacks.onAgentContextMenu(id, { x: e.global.x, y: e.global.y });
-      });
+        c.on("pointerover", (e: PIXI.FederatedPointerEvent) => {
+          this.callbacks.onAgentHover(id, { x: e.global.x, y: e.global.y });
+        });
 
-      this.boundIds.add(id);
+        c.on("pointerout", () => {
+          this.callbacks.onAgentHover(null);
+        });
+
+        c.on("rightclick", (e: PIXI.FederatedPointerEvent) => {
+          e.stopPropagation();
+          (e as any).preventDefault?.();
+          this.callbacks.onAgentContextMenu(id, { x: e.global.x, y: e.global.y });
+        });
+
+        this.boundIds.add(id);
+      }
     }
 
     // Clean up bindings for agents that no longer exist
