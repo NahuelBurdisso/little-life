@@ -1,10 +1,11 @@
+import { getAgentColor } from "../../lib/spriteConfig";
 import { formatMood } from "../../lib/formatters";
-import { getCharacterSheet } from "../../lib/spriteConfig";
 
 interface AgentPortraitProps {
   agent: { name: string; age: number; portraitSprite?: string };
   economy: { job_title: string } | null;
-  mood: number | undefined;
+  mood?: number;
+  size?: number;
 }
 
 function moodEmoji(mood: number): string {
@@ -15,22 +16,30 @@ function moodEmoji(mood: number): string {
   return "\u{1F62D}";
 }
 
-export function AgentPortrait({ agent, economy, mood }: AgentPortraitProps) {
-  // Deterministic character base from agent name
-  const nameHash = agent.name.split("").reduce((h, c) => c.charCodeAt(0) + ((h << 5) - h), 0);
-  const idx = Math.abs(nameHash) % 4;
-  const base = ["adam", "alex", "amelia", "bob"][idx];
-  const idleSrc = getCharacterSheet(base, "idle");
+export function AgentPortrait({ agent, economy, mood, size = 48 }: AgentPortraitProps) {
+  const color = getAgentColor(agent.name);
+  const hexColor = "#" + color.toString(16).padStart(6, "0");
+  const letter = agent.name.charAt(0).toUpperCase();
 
   return (
     <div className="flex items-center gap-3">
-      <div className="w-12 h-16 rounded bg-gray-700 overflow-hidden" style={{ imageRendering: "pixelated" }}>
-        <img
-          src={idleSrc}
-          alt={agent.name}
-          className="w-[128px] h-[64px]"
-          style={{ objectFit: "none", objectPosition: "0 0" }}
-        />
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          backgroundColor: hexColor,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: size * 0.45,
+          fontWeight: "bold",
+          color: "white",
+          fontFamily: "monospace",
+          flexShrink: 0,
+        }}
+      >
+        {letter}
       </div>
       <div>
         <div className="font-bold text-white">{agent.name}</div>

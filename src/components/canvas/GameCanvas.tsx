@@ -3,6 +3,7 @@ import { Container, Graphics } from "pixi.js";
 import { useGameCanvas } from "../../hooks/useGameCanvas";
 import { useAssetLoader } from "../../hooks/useAssetLoader";
 import { TilemapRenderer } from "./TilemapRenderer";
+import { BuildingRenderer } from "./BuildingRenderer";
 import { CameraController } from "./CameraController";
 import { DayNightCycle } from "./DayNightCycle";
 import { WeatherEffects } from "./WeatherEffects";
@@ -34,10 +35,11 @@ export function GameCanvas({
   selectedAgentId,
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
-  const assetsLoaded = useAssetLoader(app);
+  const assetsLoaded = useAssetLoader();
 
   // Refs for subsystems
   const tilemapRef = useRef<TilemapRenderer | null>(null);
+  const buildingRendererRef = useRef<BuildingRenderer | null>(null);
   const cameraRef = useRef<CameraController | null>(null);
   const dayNightRef = useRef<DayNightCycle | null>(null);
   const weatherRef = useRef<WeatherEffects | null>(null);
@@ -59,7 +61,7 @@ export function GameCanvas({
 
   // Initialize subsystems when app is ready
   useEffect(() => {
-    if (!app || !assetsLoaded) return;
+    if (!app || !assetsLoaded.loaded) return;
 
     // Create layer hierarchy
     const worldContainer = new Container();
@@ -68,12 +70,16 @@ export function GameCanvas({
     worldContainerRef.current = worldContainer;
     app.stage.addChild(worldContainer);
 
-    // Tilemap
+    // Tilemap (grass background)
     const tilemap = new TilemapRenderer(app);
     worldContainer.addChild(tilemap.container);
     tilemapRef.current = tilemap;
 
-    // Sprite pool (agent sprites) — inside world so it moves with camera
+    // Building renderer (buildings with interiors) — sits above tilemap
+    const buildingRenderer = new BuildingRenderer(worldContainer);
+    buildingRendererRef.current = buildingRenderer;
+
+    // Sprite pool (agent circles) — inside world so it moves with camera
     const spritePool = new SpritePool(worldContainer);
     spritePoolRef.current = spritePool;
 
@@ -122,11 +128,18 @@ export function GameCanvas({
       dayNight.destroy();
       weather.destroy();
       tilemap.destroy();
+      buildingRenderer.destroy();
       spritePool.destroy();
       bubbleSystem.destroy();
       worldContainer.destroy({ children: true });
     };
-  }, [app, assetsLoaded, stableOnSelect, stableOnHover, stableOnContext]);
+  }, [app, assetsLoaded.loaded, stableOnSelect, stableOnHover, stableOnContext]);
+
+  // Initialize BuildingRenderer with location data when locations are available
+  useEffect(() => {
+    if (!buildingRendererRef.current || !locations || locations.length === 0) return;
+    buildingRendererRef.current.init(locations);
+  }, [locations]);
 
   // Update sprite targets when server data changes (sets targets, creates/removes sprites)
   useEffect(() => {
@@ -144,9 +157,18 @@ export function GameCanvas({
       bubbleSystemRef.current.update(conversations ?? [], agents, 1, spritePool);
     }
 
-    // Update occupancy dots
+    // Update occupancy dots on tilemap
     if (tilemapRef.current && locations) {
       tilemapRef.current.updateOccupancy(agents, locations);
+    }
+
+    // Update BuildingRenderer with current agent locations
+    if (buildingRendererRef.current) {
+      const agentLocations = new Map<number, number | null>();
+      for (const agent of agents) {
+        agentLocations.set(agent.id, agent.current_location ?? null);
+      }
+      buildingRendererRef.current.update(agentLocations);
     }
   }, [agents, selectedAgentId, conversations, locations, app]);
 
