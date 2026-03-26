@@ -113,7 +113,8 @@ export function eventsTick(): void {
   }
 
   // --- 3. Random Events (once per game hour) ---
-  const isNewHour = world.time!.minute < world.tick_speed;
+  // Only fire on exact minute 0 to prevent multi-fire at high tick speeds
+  const isNewHour = world.time!.minute === 0;
   if (!isNewHour) {
     if (eventsChanged) emitter.markDirty('world.state');
     return;

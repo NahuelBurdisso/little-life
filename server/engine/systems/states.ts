@@ -268,12 +268,12 @@ function evaluateTriggers(
   if (!activeTypes.has('sick')) {
     // Check immunity cooldown — recently recovered agents can't get sick again immediately
     const lastRecovery = sickRecoveredAtTick.get(agent.id) ?? -9999;
-    const immunityPeriod = 720; // ~12 hours of immunity after recovery
+    const immunityPeriod = 2880; // ~2 days of immunity after recovery
     if (currentTick - lastRecovery > immunityPeriod) {
       const weatherMult = weather === 'rainy' || weather === 'stormy' ? 2 : 1;
       const seasonMult = season === 'winter' ? 1.5 : 1;
       const energyMult = agentNeeds && agentNeeds.energy < 25 ? 1.5 : 1;
-      const sickChance = 0.0005 * weatherMult * seasonMult * energyMult;
+      const sickChance = 0.0001 * weatherMult * seasonMult * energyMult;
       if (Math.random() < sickChance) {
         const severity = 0.3 + Math.random() * 0.4;
         const duration = Math.floor(480 + Math.random() * 960); // 8-24 hours (shorter)
@@ -1311,14 +1311,14 @@ function processStateEffects(
         for (const other of nearbyAgents) {
           // Skip agents with immunity (recently recovered)
           const otherRecovery = sickRecoveredAtTick.get(other.id) ?? -9999;
-          if (currentTick - otherRecovery <= 720) continue;
+          if (currentTick - otherRecovery <= 2880) continue;
 
           const coLocKey = `coloc_${other.id}`;
           meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + 1;
           const coLocTicks = meta[coLocKey] as number;
 
-          // Reduced contagion: 5% chance after 20 co-location ticks (was 30% after 10)
-          if (coLocTicks > 20 && Math.random() < 0.05) {
+          // Contagion: 1% chance after 30 co-location ticks — low enough to prevent epidemics
+          if (coLocTicks > 30 && Math.random() < 0.01) {
             // Spread sick only if other doesn't already have it
             const alreadySick = db
               .select()

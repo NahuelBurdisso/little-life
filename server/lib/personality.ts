@@ -287,21 +287,39 @@ export function selectPersonalityTopic(
   targetRomance: number,
   agents: Array<{ name: string }>,
 ): string | null {
+  // Priority 1: Dramatic personality-driven topics (these trigger LLM)
+  if (personality.sensuality > 60 && targetRomance > 30) return 'flirting';
+  if (personality.aggression > 60 && targetFriendship < -20) return 'confrontation';
+  if (personality.neuroticism > 60 && mood < 30) return 'venting worries';
   if (personality.honesty < 30 && personality.curiosity > 60 && agents.length > 0) {
     const randomAgent = agents[Math.floor(Math.random() * agents.length)];
     return `gossip about ${randomAgent.name}`;
   }
-  if (personality.sensuality > 60 && targetRomance > 30) return 'flirting';
-  if (personality.aggression > 60 && targetFriendship < -20) return 'confrontation';
-  if (personality.neuroticism > 60 && mood < 30) return 'venting worries';
 
-  // Fallback topics based on personality and relationship
-  if (targetFriendship > 60) return 'catching up';
-  if (personality.curiosity > 50) return 'town news';
-  if (mood > 70) return 'sharing good mood';
-  if (mood < 40) return 'seeking comfort';
+  // Priority 2: Emotional state topics
+  if (mood < 25) return 'seeking comfort';
+  if (mood > 85) return 'celebrating';
 
-  // General fallback pool
-  const fallbacks = ['weather', 'daily life', 'food', 'work', 'town happenings'];
+  // Priority 3: Relationship-based topics
+  if (targetFriendship > 70) {
+    const closeFriendTopics = ['reminiscing', 'sharing secrets', 'making plans', 'deep conversation'];
+    return closeFriendTopics[Math.floor(Math.random() * closeFriendTopics.length)];
+  }
+  if (targetRomance > 15) return 'flirting';
+  if (targetFriendship < 0) return 'tension';
+
+  // Priority 4: Personality-flavored general topics (randomized)
+  const pool: string[] = [];
+  if (personality.curiosity > 50) pool.push('town news', 'asking questions', 'local rumors');
+  if (personality.warmth > 50) pool.push('checking in', 'offering help', 'complimenting');
+  if (personality.vanity > 50) pool.push('bragging', 'seeking validation', 'comparing lives');
+  if (personality.morality > 60) pool.push('community values', 'right and wrong');
+  if (personality.impulsiveness > 50) pool.push('spontaneous idea', 'wild story', 'dare');
+  if (personality.loyalty > 60 && targetFriendship > 30) pool.push('catching up', 'inside joke');
+
+  if (pool.length > 0) return pool[Math.floor(Math.random() * pool.length)];
+
+  // Final fallback
+  const fallbacks = ['weather', 'daily life', 'food', 'work', 'weekend plans', 'memories', 'the farm'];
   return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 }
