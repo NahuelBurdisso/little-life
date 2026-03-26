@@ -49,6 +49,7 @@ export class BuildingRenderer {
 
   constructor(parent: PIXI.Container) {
     this.container = new PIXI.Container();
+    this.container.eventMode = 'none'; // transparent to clicks
     this.buildingLayer = new PIXI.Container();
     this.labelLayer = new PIXI.Container();
 

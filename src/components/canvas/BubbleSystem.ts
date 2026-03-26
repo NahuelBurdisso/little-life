@@ -49,6 +49,7 @@ export class BubbleSystem {
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
+    this.container.eventMode = 'none'; // transparent to clicks — let agents below receive events
     parentContainer.addChild(this.container);
   }
 

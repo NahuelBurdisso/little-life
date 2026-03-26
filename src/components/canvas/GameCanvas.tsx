@@ -105,6 +105,7 @@ export function GameCanvas({
 
     // Relationship lines graphics — between sprites and bubbles
     const relLines = new Graphics();
+    relLines.eventMode = 'none'; // transparent to clicks
     worldContainer.addChild(relLines);
     relationshipLinesRef.current = relLines;
 
