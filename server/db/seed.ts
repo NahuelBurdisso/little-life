@@ -16,6 +16,8 @@ import {
   templates,
   templateUsage,
   activityLog,
+  facts,
+  agentStates,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
 import { LOCATIONS, MAP_WIDTH, MAP_HEIGHT, COLLISION_GRID } from '../data/maps';
@@ -39,6 +41,8 @@ const ALL_TABLES = [
   relationships,
   economyTransactions,
   economy,
+  facts,
+  agentStates,
   needs,
   agents,
   locations,
@@ -106,6 +110,14 @@ function seed() {
     const startX = homeLoc.entry_point.x;
     const startY = homeLoc.entry_point.y;
 
+    // Start agents at their workplace if 9AM is during work hours, else at home
+    const isAtWork = workplaceId && 9 >= seed.schedule.workStart && 9 < seed.schedule.workEnd;
+    const startLocationId = isAtWork ? workplaceId : homeId;
+    const startLoc = isAtWork
+      ? LOCATIONS.find((l) => l.name === seed.workplaceName)
+      : homeLoc;
+    const startAction = isAtWork ? { type: "working", taskDescription: "daily work" } : { type: "idle" };
+
     const inserted = db
       .insert(agents)
       .values({
@@ -117,10 +129,10 @@ function seed() {
         gender: seed.gender,
         sprite_sheet: seed.spriteSheet,
         portrait_sprite: seed.portraitSprite,
-        position: { x: startX, y: startY },
+        position: { x: startLoc?.entry_point.x ?? startX, y: startLoc?.entry_point.y ?? startY },
         current_destination: null,
-        current_location: homeId,
-        current_action: { type: "sleeping" },
+        current_location: startLocationId,
+        current_action: startAction,
         action_started: 0,
         action_duration: null,
         action_queue: [],
@@ -138,20 +150,44 @@ function seed() {
   }
   console.log(`[seed] Inserted ${agentMap.size} agents.`);
 
-  // 3. Insert needs + economy for each agent
+  // 3. Insert needs + economy for each agent — varied starting conditions
   console.log('[seed] Inserting needs and economy...');
+
+  // Starting money varies by job type (some are richer, some struggling)
+  const startingMoney: Record<string, number> = {
+    farmer: 80, farmhand: 40, bartender: 60, shopkeeper: 120,
+    retired: 90, doctor: 100, medical_assistant: 55, mayor: 150,
+    baker: 65, handyperson: 25, shop_assistant: 35, musician: 20,
+    constable: 70,
+  };
+
+  // Starting inventory by job
+  const startingInventory: Record<string, Array<{ itemId: string; quantity: number; acquiredAt: number }>> = {
+    farmer: [{ itemId: 'food_raw', quantity: 10, acquiredAt: 0 }],
+    farmhand: [{ itemId: 'food_raw', quantity: 3, acquiredAt: 0 }],
+    shopkeeper: [{ itemId: 'food_prepared', quantity: 5, acquiredAt: 0 }, { itemId: 'food_raw', quantity: 8, acquiredAt: 0 }],
+    doctor: [{ itemId: 'medicine', quantity: 4, acquiredAt: 0 }],
+    medical_assistant: [{ itemId: 'medicine', quantity: 2, acquiredAt: 0 }],
+    baker: [{ itemId: 'food_raw', quantity: 6, acquiredAt: 0 }, { itemId: 'food_prepared', quantity: 4, acquiredAt: 0 }],
+    bartender: [{ itemId: 'drink', quantity: 8, acquiredAt: 0 }, { itemId: 'food_raw', quantity: 3, acquiredAt: 0 }],
+  };
+
   for (const seed of AGENT_SEEDS) {
     const agentId = agentMap.get(seed.name)!;
 
+    // Needs vary more — some agents start in worse shape for early drama
+    const isLowMood = ['Carlos Mendez', 'Thomas Park', 'Lucia Fernandez'].includes(seed.name);
+    const isHighEnergy = ['Elena Voss', 'Priya Sharma', 'Omar Hassan'].includes(seed.name);
+
     db.insert(needs).values({
       agent_id: agentId,
-      hunger: 70 + Math.floor(Math.random() * 20),
-      energy: 80 + Math.floor(Math.random() * 15),
-      social: 50 + Math.floor(Math.random() * 30),
-      comfort: 60 + Math.floor(Math.random() * 25),
-      fun: 50 + Math.floor(Math.random() * 30),
-      mood: 60 + Math.floor(Math.random() * 20),
-      stress: 10 + Math.floor(Math.random() * 15),
+      hunger: 50 + Math.floor(Math.random() * 40),
+      energy: isHighEnergy ? 85 + Math.floor(Math.random() * 10) : 55 + Math.floor(Math.random() * 30),
+      social: 30 + Math.floor(Math.random() * 40),
+      comfort: 50 + Math.floor(Math.random() * 30),
+      fun: 30 + Math.floor(Math.random() * 40),
+      mood: isLowMood ? 30 + Math.floor(Math.random() * 20) : 55 + Math.floor(Math.random() * 25),
+      stress: isLowMood ? 40 + Math.floor(Math.random() * 20) : 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
       thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
       mood_modifiers: [],
@@ -164,14 +200,14 @@ function seed() {
       job_title: seed.jobTitle,
       salary: seed.salary,
       work_performance: 70 + Math.floor(Math.random() * 20),
-      money: CONFIG.ECONOMY.STARTING_MONEY + Math.floor(Math.random() * 20),
+      money: startingMoney[seed.job] ?? CONFIG.ECONOMY.STARTING_MONEY,
       daily_expenses:
         CONFIG.ECONOMY.DAILY_EXPENSES.min +
         Math.floor(
           Math.random() *
             (CONFIG.ECONOMY.DAILY_EXPENSES.max - CONFIG.ECONOMY.DAILY_EXPENSES.min)
         ),
-      inventory: [],
+      inventory: startingInventory[seed.job] ?? [],
       last_payday: 0,
       production_remainder: 0,
     }).run();
@@ -182,9 +218,12 @@ function seed() {
   const ownershipMap: [string, string][] = [
     ["Rosa's General Store", "Rosa Chen"],
     ["The Rusty Lantern", "Marco Rivera"],
-    ["Dr. Chen's Clinic", "Dr. Sofia Petrov"],
+    ["Dr. Petrov's Clinic", "Dr. Sofia Petrov"],
     ["Town Hall", "Thomas Park"],
     ["Green Acres Farm", "Elena Voss"],
+    ["Priya's Bakery", "Priya Sharma"],
+    ["Carlos' Workshop", "Carlos Mendez"],
+    ["Town Jail", "Ray Kowalski"],
   ];
 
   for (const [locName, agentName] of ownershipMap) {
@@ -226,12 +265,12 @@ function seed() {
   }
   console.log(`[seed] Inserted ${CONVERSATION_TEMPLATES.length} templates.`);
 
-  // 8. Create worldState singleton
+  // 8. Create worldState singleton — start mid-morning for immediate activity
   console.log('[seed] Creating worldState...');
   db.insert(worldState).values({
     time: {
       day: 1,
-      hour: 7,
+      hour: 9,
       minute: 0,
       totalTicks: 0,
       seasonDay: 1,
@@ -239,7 +278,7 @@ function seed() {
     },
     day_phase: "morning",
     weather: "sunny",
-    weather_duration: 4,
+    weather_duration: 6,
     tick_speed: CONFIG.DEFAULT_TICK_SPEED,
     is_paused: true,
     last_tick_completed: now,
@@ -274,11 +313,55 @@ function seed() {
   db.insert(activityLog).values({
     type: "system",
     message:
-      "Little Life has been initialized. Day 1 begins in Spring with sunny weather. 12 residents are waking up.",
+      `Little Life begins. Day 1, Spring morning. ${agentMap.size} residents start their day.`,
     agent_ids: [],
     timestamp: 0,
     real_timestamp: now,
   }).run();
+
+  // 11. Seed initial drama — pre-existing conditions for early story hooks
+  console.log('[seed] Seeding initial drama...');
+  // facts is already imported from schema at the top
+
+  // Diego has a crush on Lucia (already in relationships, but make it a known fact)
+  const diegoId = agentMap.get('Diego Santos');
+  const luciaId = agentMap.get('Lucia Fernandez');
+  if (diegoId && luciaId) {
+    db.insert(facts).values({
+      type: 'crush', subject_id: diegoId, target_id: luciaId,
+      content: 'Diego Santos has a crush on Lucia Fernandez',
+      sensitivity: 2, known_by: [diegoId, agentMap.get('Marco Rivera')!],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+    db.insert(facts).values({
+      type: 'crush', subject_id: luciaId, target_id: diegoId,
+      content: 'Lucia Fernandez has a crush on Diego Santos',
+      sensitivity: 2, known_by: [luciaId, agentMap.get('Rosa Chen')!],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // Carlos is struggling financially (he starts with $25)
+  const carlosId = agentMap.get('Carlos Mendez');
+  if (carlosId) {
+    db.insert(facts).values({
+      type: 'financial', subject_id: carlosId, target_id: null,
+      content: 'Carlos Mendez is struggling with money',
+      sensitivity: 1, known_by: [carlosId, agentMap.get('Marco Rivera')!],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // Ray has a mysterious past — people are curious
+  const rayId = agentMap.get('Ray Kowalski');
+  if (rayId) {
+    db.insert(facts).values({
+      type: 'secret_told', subject_id: rayId, target_id: agentMap.get('Marco Rivera') ?? null,
+      content: 'Ray Kowalski confided something personal to Marco Rivera',
+      sensitivity: 3, known_by: [rayId, agentMap.get('Marco Rivera')!],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
 
   console.log('[seed] Seeding complete!');
 }
