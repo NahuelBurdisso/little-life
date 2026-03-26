@@ -210,5 +210,14 @@ export function selectPersonalityTopic(
   if (personality.sensuality > 60 && targetRomance > 30) return 'flirting';
   if (personality.aggression > 60 && targetFriendship < -20) return 'confrontation';
   if (personality.neuroticism > 60 && mood < 30) return 'venting worries';
-  return null; // use default topic selection
+
+  // Fallback topics based on personality and relationship
+  if (targetFriendship > 60) return 'catching up';
+  if (personality.curiosity > 50) return 'town news';
+  if (mood > 70) return 'sharing good mood';
+  if (mood < 40) return 'seeking comfort';
+
+  // General fallback pool
+  const fallbacks = ['weather', 'daily life', 'food', 'work', 'town happenings'];
+  return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 }

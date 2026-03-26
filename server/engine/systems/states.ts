@@ -11,6 +11,7 @@ import {
   economyTransactions,
   relationshipEvents,
   memories,
+  activityLog,
 } from '../../db/schema';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -49,6 +50,9 @@ const lowMoodSince = new Map<number, number>(); // agentId → tick when mood fi
 // Track tick when social first dropped below 20 (for lonely trigger duration check)
 const lowSocialSince = new Map<number, number>(); // agentId → tick when social dropped below 20
 
+// Track when an agent recovered from sickness (for immunity cooldown)
+const sickRecoveredAtTick = new Map<number, number>(); // agentId → tick when sickness expired
+
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 export function statesTick() {
@@ -81,6 +85,17 @@ export function statesTick() {
       const def = STATE_DEFINITIONS[state.type as StateType];
       if (def?.conditionalExit) continue; // handled in 1b
       if (state.started_at + state.duration <= currentTick) {
+        // Track sickness recovery for immunity cooldown
+        if (state.type === 'sick') {
+          sickRecoveredAtTick.set(agent.id, currentTick);
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} recovered from sickness.`,
+            agent_ids: [agent.id],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
+          }).run();
+        }
         collectExpiryCascades(state, agent, pendingCascades);
         db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
       }
@@ -219,26 +234,31 @@ function evaluateTriggers(
 
   // ── Sick ──────────────────────────────────────────────────────────────────
   if (!activeTypes.has('sick')) {
-    const weatherMult = weather === 'rainy' || weather === 'stormy' ? 3 : 1;
-    const seasonMult = season === 'winter' ? 2 : 1;
-    const energyMult = agentNeeds && agentNeeds.energy < 25 ? 2 : 1;
-    const sickChance = 0.001 * weatherMult * seasonMult * energyMult;
-    if (Math.random() < sickChance) {
-      const severity = 0.3 + Math.random() * 0.5;
-      const duration = Math.floor(1440 + Math.random() * 2880); // 1-3 days
-      db.insert(agentStates)
-        .values({
-          agent_id: agent.id,
-          type: 'sick',
-          severity,
-          started_at: currentTick,
-          duration,
-          source: 'random:environment',
-          metadata: null,
-        })
-        .run();
-      activeTypes.add('sick');
-      createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
+    // Check immunity cooldown — recently recovered agents can't get sick again immediately
+    const lastRecovery = sickRecoveredAtTick.get(agent.id) ?? -9999;
+    const immunityPeriod = 720; // ~12 hours of immunity after recovery
+    if (currentTick - lastRecovery > immunityPeriod) {
+      const weatherMult = weather === 'rainy' || weather === 'stormy' ? 2 : 1;
+      const seasonMult = season === 'winter' ? 1.5 : 1;
+      const energyMult = agentNeeds && agentNeeds.energy < 25 ? 1.5 : 1;
+      const sickChance = 0.0005 * weatherMult * seasonMult * energyMult;
+      if (Math.random() < sickChance) {
+        const severity = 0.3 + Math.random() * 0.4;
+        const duration = Math.floor(480 + Math.random() * 960); // 8-24 hours (shorter)
+        db.insert(agentStates)
+          .values({
+            agent_id: agent.id,
+            type: 'sick',
+            severity,
+            started_at: currentTick,
+            duration,
+            source: 'random:environment',
+            metadata: null,
+          })
+          .run();
+        activeTypes.add('sick');
+        createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
+      }
     }
   }
 
@@ -849,7 +869,7 @@ function applyCascades(
         duration = 999999;
         break;
       case 'sick':
-        duration = Math.floor(1440 + Math.random() * 2880);
+        duration = Math.floor(360 + Math.random() * 720); // 6-18 hours
         break;
       default:
         duration = 240;
@@ -957,11 +977,16 @@ function processStateEffects(
         let meta = { ...((state.metadata as Record<string, any> | null) ?? {}) };
 
         for (const other of nearbyAgents) {
+          // Skip agents with immunity (recently recovered)
+          const otherRecovery = sickRecoveredAtTick.get(other.id) ?? -9999;
+          if (currentTick - otherRecovery <= 720) continue;
+
           const coLocKey = `coloc_${other.id}`;
           meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + 1;
           const coLocTicks = meta[coLocKey] as number;
 
-          if (coLocTicks > 10 && Math.random() < 0.30) {
+          // Reduced contagion: 5% chance after 20 co-location ticks (was 30% after 10)
+          if (coLocTicks > 20 && Math.random() < 0.05) {
             // Spread sick only if other doesn't already have it
             const alreadySick = db
               .select()
@@ -971,8 +996,8 @@ function processStateEffects(
               )
               .get();
             if (!alreadySick) {
-              const severity = 0.3 + Math.random() * 0.5;
-              const duration = Math.floor(1440 + Math.random() * 2880);
+              const severity = 0.2 + Math.random() * 0.4;
+              const duration = Math.floor(360 + Math.random() * 720); // 6-18 hours
               db.insert(agentStates)
                 .values({
                   agent_id: other.id,
@@ -984,7 +1009,50 @@ function processStateEffects(
                   metadata: null,
                 })
                 .run();
+              createFact('sickness', other.id, null, 1, [other.id, agent.id], 'observed');
             }
+          }
+        }
+
+        // Doctor/medical_assistant at same location heals faster (reduce remaining duration)
+        const healerNearby = allAgents.find((a) => {
+          if (a.id === agent.id || a.current_location !== agent.current_location) return false;
+          const econ = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, a.id)).get();
+          return econ && (econ.job === 'doctor' || econ.job === 'medical_assistant');
+        });
+        if (healerNearby) {
+          // Healer reduces severity and remaining duration each tick
+          const newSeverity = Math.max(0.1, state.severity - 0.01);
+          const remainingDuration = (state.started_at + state.duration) - currentTick;
+          const reducedDuration = Math.max(1, state.duration - Math.floor(remainingDuration * 0.02));
+          db.update(agentStates)
+            .set({ severity: newSeverity, duration: reducedDuration })
+            .where(eq(agentStates.id, state.id))
+            .run();
+
+          // Periodically create a "helped" relationship event (every ~60 ticks)
+          const healMeta = (state.metadata as Record<string, any> | null) ?? {};
+          const lastHealEvent = (healMeta.lastHealEvent as number | undefined) ?? 0;
+          if (currentTick - lastHealEvent > 60) {
+            const [orderedA, orderedB] = agent.id < healerNearby.id
+              ? [agent.id, healerNearby.id] : [healerNearby.id, agent.id];
+            const isPatientA = orderedA === agent.id;
+            db.insert(relationshipEvents).values({
+              agent_a: orderedA,
+              agent_b: orderedB,
+              event_type: 'helped',
+              description: `${healerNearby.name} treated ${agent.name}'s illness`,
+              friendship_delta_ab: isPatientA ? 3 : 1,
+              friendship_delta_ba: isPatientA ? 1 : 3,
+              romance_delta_ab: 0,
+              romance_delta_ba: 0,
+              trust_delta_ab: isPatientA ? 4 : 1,
+              trust_delta_ba: isPatientA ? 1 : 4,
+              sentiment: 0.5,
+              processed: false,
+              timestamp: Date.now(),
+            }).run();
+            meta.lastHealEvent = currentTick;
           }
         }
 

@@ -64,7 +64,10 @@ export function createFact(
   const template = FACT_TEMPLATES[type];
   const content = template ? template(subjectName, targetName) : `${subjectName}: ${type}`;
 
-  // Check for existing active duplicate (same type + subject + target)
+  // Check for existing duplicate (same type + subject + target)
+  // For low-churn types (sickness, financial, work_issue), also check inactive facts
+  // created recently to prevent duplicate spam
+  const checkInactiveToo = ['sickness', 'financial', 'work_issue'].includes(type);
   const existing = db
     .select({ id: facts.id })
     .from(facts)
@@ -72,7 +75,7 @@ export function createFact(
       and(
         eq(facts.type, type),
         eq(facts.subject_id, subjectId),
-        eq(facts.is_active, true),
+        ...(checkInactiveToo ? [] : [eq(facts.is_active, true)]),
         ...(targetId != null
           ? [eq(facts.target_id, targetId)]
           : [])
@@ -80,7 +83,31 @@ export function createFact(
     )
     .get();
 
-  if (existing) return null;
+  if (existing) {
+    // If there's an inactive duplicate, reactivate it instead of creating new
+    if (checkInactiveToo) {
+      const inactive = db
+        .select({ id: facts.id, is_active: facts.is_active })
+        .from(facts)
+        .where(
+          and(
+            eq(facts.type, type),
+            eq(facts.subject_id, subjectId),
+            eq(facts.is_active, false),
+            ...(targetId != null ? [eq(facts.target_id, targetId)] : [])
+          )
+        )
+        .get();
+      if (inactive) {
+        db.update(facts)
+          .set({ is_active: true, known_by: knownBy, created_at: Date.now() })
+          .where(eq(facts.id, inactive.id))
+          .run();
+        return inactive.id;
+      }
+    }
+    return null;
+  }
 
   const result = db
     .insert(facts)
@@ -302,7 +329,16 @@ export function deactivateStaleFacts(): void {
       }
 
       case 'work_issue': {
-        // Deactivated externally when agent works consistently; skip here
+        // Deactivate if the agent is currently working (they showed up)
+        const agentRow = db
+          .select({ current_action: agents.current_action })
+          .from(agents)
+          .where(eq(agents.id, fact.subject_id))
+          .get();
+        const actionType = (agentRow?.current_action as any)?.type;
+        if (actionType === 'working') {
+          stale = true;
+        }
         break;
       }
 

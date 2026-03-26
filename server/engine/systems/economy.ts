@@ -220,9 +220,90 @@ export function economyTick(): void {
   }
 
   // ========== 3. SHOP TRANSACTIONS ==========
+  // Process both explicit 'shopping' actions and 'eating' at shop/tavern locations
   for (const agent of activeAgents) {
     const action = agent.current_action as any;
-    if (!action || action.type !== 'shopping') continue;
+    if (!action) continue;
+
+    // Auto-purchase food when eating at a shop or tavern
+    if (action.type === 'eating' && agent.current_location != null) {
+      let eatLocation = locationCache.get(agent.current_location);
+      if (!eatLocation) {
+        const loc = db.select().from(locations).where(eq(locations.id, agent.current_location)).get();
+        if (loc) {
+          eatLocation = loc;
+          locationCache.set(agent.current_location, loc);
+        }
+      }
+      if (eatLocation && (eatLocation.type === 'shop' || eatLocation.type === 'tavern') && eatLocation.owner) {
+        const buyerEcon = econByAgent.get(agent.id);
+        if (!buyerEcon) continue;
+
+        // Determine what to buy based on location type
+        const itemToBuy = eatLocation.type === 'tavern' ? 'drink' : 'food_prepared';
+        const fallbackItem = 'food_raw';
+        const ownerEcon = econByAgent.get(eatLocation.owner);
+        if (!ownerEcon) continue;
+
+        // Try preferred item first, then fallback
+        let item = itemToBuy;
+        let shopStock = getInventoryCount(ownerEcon, item);
+        if (shopStock <= 0) {
+          item = fallbackItem;
+          shopStock = getInventoryCount(ownerEcon, item);
+        }
+        if (shopStock <= 0) continue;
+
+        const price = getItemPrice(item, season, eventEffects);
+        if (buyerEcon.money < price) continue;
+
+        // Transfer item
+        const newOwnerInv = removeInventoryItem(ownerEcon.inventory, item, 1);
+        const newBuyerInv = addInventoryItem(buyerEcon.inventory, item, 1, now);
+        const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE);
+        const sellerReceives = price - tax;
+
+        db.update(economy).set({
+          inventory: newOwnerInv,
+          money: ownerEcon.money + sellerReceives,
+        }).where(eq(economy.id, ownerEcon.id)).run();
+        ownerEcon.inventory = newOwnerInv;
+        ownerEcon.money += sellerReceives;
+
+        db.update(economy).set({
+          inventory: newBuyerInv,
+          money: buyerEcon.money - price,
+        }).where(eq(economy.id, buyerEcon.id)).run();
+        buyerEcon.inventory = newBuyerInv;
+        buyerEcon.money -= price;
+
+        db.update(worldState).set({
+          tax_pool: world.tax_pool + tax,
+        }).where(eq(worldState.id, world.id)).run();
+        world.tax_pool += tax;
+
+        db.insert(economyTransactions).values({
+          from_agent: agent.id,
+          to_agent: eatLocation.owner,
+          amount: price,
+          reason: `purchase:${item}`,
+          items_exchanged: [{ itemId: item, quantity: 1 }],
+          location_id: agent.current_location,
+          timestamp: now,
+        }).run();
+
+        db.insert(activityLog).values({
+          type: 'economy',
+          message: `${agent.name} bought ${item} for ${price} coins`,
+          agent_ids: [agent.id, eatLocation.owner],
+          timestamp: world.time!.totalTicks,
+          real_timestamp: now,
+        }).run();
+      }
+      continue;
+    }
+
+    if (action.type !== 'shopping') continue;
 
     const buyerEcon = econByAgent.get(agent.id);
     if (!buyerEcon) continue;

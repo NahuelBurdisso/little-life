@@ -436,12 +436,29 @@ async function processCompletedConversation(
         trustDeltaBA *= 1.3;
       }
 
+      // Derive event type from conversation dynamics
+      let eventType = 'conversation';
+      let eventDescription = `Conversation about ${fresh.topic ?? 'various things'}`;
+      if (romanceDeltaAB > 2 || romanceDeltaBA > 2) {
+        eventType = 'flirting';
+        eventDescription = `Flirtatious conversation between them`;
+      } else if (overallSentiment < -0.3) {
+        eventType = 'conflict';
+        eventDescription = `Heated argument about ${fresh.topic ?? 'something'}`;
+      } else if (overallSentiment > 0.5 && (trustDeltaAB > 2 || trustDeltaBA > 2)) {
+        eventType = 'bonding';
+        eventDescription = `Deep bonding conversation about ${fresh.topic ?? 'personal matters'}`;
+      } else if (fresh.topic?.includes('gossip')) {
+        eventType = 'gossip';
+        eventDescription = `Shared gossip about ${fresh.topic.replace('gossip about ', '')}`;
+      }
+
       db.insert(relationshipEvents)
         .values({
           agent_a: orderedA,
           agent_b: orderedB,
-          event_type: 'conversation',
-          description: `Conversation about ${fresh.topic ?? 'various things'}`,
+          event_type: eventType,
+          description: eventDescription,
           friendship_delta_ab: friendshipDeltaAB,
           friendship_delta_ba: friendshipDeltaBA,
           romance_delta_ab: romanceDeltaAB,

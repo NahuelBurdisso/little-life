@@ -56,8 +56,12 @@ function isActionComplete(agent: AgentRow, totalTicks: number): boolean {
   const actionType =
     typeof agent.current_action === 'object' ? (agent.current_action as any).type : agent.current_action;
 
-  // Walking agents are never "complete" here — movement system handles arrival
-  if (actionType === 'walking') return false;
+  // Walking agents are handled by the movement system — BUT if destination is null
+  // (e.g. a stale or malformed walking action), treat as complete so the decision
+  // system can assign a new action and unblock the agent.
+  if (actionType === 'walking') {
+    return agent.current_destination === null;
+  }
 
   // Talking agents wait for conversation system to end the conversation
   if (actionType === 'talking') return false;
@@ -224,9 +228,19 @@ function checkSchedule(
     return null;
   }
 
-  // Sick → go home immediately, override schedule
+  // Sick → seek medical attention or rest at home
   const agentStateTypes = getAgentStates(agent.id);
   if (agentStateTypes.includes('sick')) {
+    // Try to go to the clinic if severity is high enough
+    const sickState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'sick')))
+      .get();
+    if (sickState && sickState.severity > 0.4) {
+      const clinic = nearestLocation(agent.position, allLocations, 'clinic');
+      if (clinic) {
+        return { action: 'idle', score: 9999, targetLocationId: clinic.id };
+      }
+    }
     return { action: 'idle', score: 9999, targetLocationId: agent.home };
   }
 
@@ -421,11 +435,12 @@ function scoreFreeTimeActions(
   if (agentNeeds.comfort < 40) homeScore += 15;
   scores.push({ action: 'idle', score: addNoise(homeScore), targetLocationId: agent.home });
 
-  // Walk in square
+  // Stroll in the town square — scored as 'socializing' so arrival handling works
+  // correctly and avoids the walking-with-no-destination deadlock.
   const square = nearestLocation(agent.position, allLocations, 'town_square');
   if (square) {
     const walkScore = 20 + (agentNeeds.fun < 60 ? 10 : 0);
-    scores.push({ action: 'walking', score: addNoise(walkScore), targetLocationId: square.id });
+    scores.push({ action: 'socializing', score: addNoise(walkScore), targetLocationId: square.id });
   }
 
   // Workaholic bonus (personality-based or legacy trait)
@@ -613,12 +628,24 @@ export function tick(world: WorldRow): void {
         .where(eq(agents.id, agent.id))
         .run();
     } else {
+      // Guard: never write a walking action without a destination — that creates an
+      // unresolvable deadlock (movement skips it, decisions never re-assigns it).
+      // If for any reason a 'walking' action reaches this branch, downgrade to idle.
+      const safeAction =
+        (finalAction as any).type === 'walking'
+          ? { type: 'idle' }
+          : finalAction;
+      const safeDuration =
+        (finalAction as any).type === 'walking'
+          ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
+          : actionDuration;
+
       db.update(agents)
         .set({
-          current_action: finalAction,
+          current_action: safeAction,
           current_destination: null,
           action_started: totalTicks,
-          action_duration: actionDuration,
+          action_duration: safeDuration,
           current_path: null,
         })
         .where(eq(agents.id, agent.id))
@@ -646,6 +673,19 @@ export function tick(world: WorldRow): void {
           return p.includes(agentId) && p.includes(targetId);
         });
       if (existingActive.length > 0) continue; // Already talking
+
+      // Cooldown: skip if this pair talked recently (prevents pair domination)
+      const cooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
+      const lastConvoForPair = db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
+        .from(conversations)
+        .where(eq(conversations.status, 'ended'))
+        .all()
+        .filter(c => {
+          const p = c.participants as number[];
+          return p.includes(agentId) && p.includes(targetId);
+        })
+        .sort((a, b) => (b.ended_at ?? 0) - (a.ended_at ?? 0))[0];
+      if (lastConvoForPair?.ended_at && Date.now() - lastConvoForPair.ended_at < cooldownMs) continue;
 
       const rel = getRelationshipValues(
         allRelationships,
