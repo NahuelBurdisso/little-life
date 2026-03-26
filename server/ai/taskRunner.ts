@@ -1,11 +1,7 @@
 import { generateResponse } from './generateResponse';
 import { generateReflection } from './generateReflection';
 import { generateEmbeddingForMemory } from './generateEmbedding';
-import { markConversationEnded } from '../helpers/conversationHelpers';
 import { emitter } from '../engine/emitter';
-import { db } from '../db';
-import { conversations as conversationsTable, agents } from '../db/schema';
-import { eq } from 'drizzle-orm';
 
 class TaskRunner {
   private conversationSlots = 0;
@@ -30,16 +26,7 @@ class TaskRunner {
       const result = await generateResponse(conversationId, speakerId);
       if (!result) {
         this.conversationSlots--;
-        markConversationEnded(conversationId);
-        // Reset agents to idle
-        const convo = db.select().from(conversationsTable).where(eq(conversationsTable.id, conversationId)).get();
-        if (convo?.participants) {
-          for (const pid of convo.participants as number[]) {
-            db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null }).where(eq(agents.id, pid)).run();
-          }
-        }
         emitter.markDirty('conversations');
-        emitter.markDirty('agents.all');
         emitter.flush();
         return;
       }
@@ -48,32 +35,15 @@ class TaskRunner {
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.runConversationTurn(conversationId, result.otherParticipantId);
       } else {
+        // Conversation complete — let conversationsTick handle cleanup
         this.conversationSlots--;
-        // Conversation reached max turns — mark ended + reset agents
-        markConversationEnded(conversationId);
-        const convo = db.select().from(conversationsTable).where(eq(conversationsTable.id, conversationId)).get();
-        if (convo?.participants) {
-          for (const pid of convo.participants as number[]) {
-            db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null }).where(eq(agents.id, pid)).run();
-          }
-        }
         emitter.markDirty('conversations');
-        emitter.markDirty('agents.all');
         emitter.flush();
       }
     } catch (err) {
       console.error(`Conversation ${conversationId} error:`, err);
       this.conversationSlots--;
-      markConversationEnded(conversationId);
-      // Reset agents back to idle after error
-      const convo = db.select().from(conversationsTable).where(eq(conversationsTable.id, conversationId)).get();
-      if (convo?.participants) {
-        for (const pid of convo.participants as number[]) {
-          db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null }).where(eq(agents.id, pid)).run();
-        }
-      }
       emitter.markDirty('conversations');
-      emitter.markDirty('agents.all');
       emitter.flush();
     }
   }

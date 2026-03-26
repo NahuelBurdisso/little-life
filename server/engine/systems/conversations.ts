@@ -75,11 +75,35 @@ export async function conversationsTick(): Promise<void> {
   let llmTotal = schedulerState.stats.llmConversationsTotal;
   let templateTotal = schedulerState.stats.templateConversationsTotal;
   let queueTimeouts = schedulerState.stats.queueTimeoutsTotal;
+  let changed = false;
 
   // --- Step A: Check active LLM conversations ---
   const toRemove = new Set<number>();
+  const LLM_CONVERSATION_TIMEOUT_MS = 60000; // 60 seconds
+  const now = Date.now();
 
   for (const entry of activeLLM) {
+    // Timeout check — force-end hung conversations
+    if (now - entry.startedAt > LLM_CONVERSATION_TIMEOUT_MS) {
+      const convo = db.select().from(conversations).where(eq(conversations.id, entry.conversationId)).get();
+      if (convo && convo.status !== 'ended') {
+        db.update(conversations).set({ status: 'ended', ended_at: now, sentiment: 0 })
+          .where(eq(conversations.id, entry.conversationId)).run();
+        // Reset agents
+        const participants = convo.participants as number[];
+        for (const pid of participants) {
+          const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
+          if (agent && (agent.current_action as any)?.type === 'talking') {
+            db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
+              .where(eq(agents.id, pid)).run();
+          }
+        }
+        changed = true;
+      }
+      toRemove.add(entry.conversationId);
+      continue;
+    }
+
     const conversation = db
       .select()
       .from(conversations)
@@ -99,6 +123,7 @@ export async function conversationsTick(): Promise<void> {
       await processCompletedConversation(conversation, world);
       toRemove.add(entry.conversationId);
       llmTotal++;
+      changed = true;
     }
   }
 
@@ -113,7 +138,6 @@ export async function conversationsTick(): Promise<void> {
     .orderBy(desc(conversationQueue.priority))
     .all();
 
-  const now = Date.now();
   const timedOutEntries: QueueRow[] = [];
   const validEntries: QueueRow[] = [];
 
@@ -130,6 +154,7 @@ export async function conversationsTick(): Promise<void> {
     db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
     templateTotal++;
     queueTimeouts++;
+    changed = true;
   }
 
   // --- Step D: Fill open LLM slots ---
@@ -218,6 +243,7 @@ export async function conversationsTick(): Promise<void> {
       startedAt: now,
     });
     currentActive++;
+    changed = true;
 
     // Remove from queue
     db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
@@ -237,7 +263,9 @@ export async function conversationsTick(): Promise<void> {
     .where(eq(conversationSchedulerState.id, schedulerState.id))
     .run();
 
-  emitter.markDirty('conversations');
+  if (changed) {
+    emitter.markDirty('conversations');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +276,10 @@ async function processCompletedConversation(
   conversation: ConversationRow,
   world: WorldRow,
 ): Promise<void> {
+  // Re-read to check if already processed (avoid double processing from TaskRunner + tick race)
+  const fresh = db.select().from(conversations).where(eq(conversations.id, conversation.id)).get();
+  if (!fresh || fresh.status === 'ended') return;
+
   const messages = conversation.messages as ConversationMessage[];
   const now = Date.now();
 
@@ -540,16 +572,22 @@ async function processCompletedConversation(
     .where(eq(conversations.id, conversation.id))
     .run();
 
-  // Reset participants back to idle
+  // Reset participants back to idle — only if still talking THIS conversation
   for (const participantId of participantIds) {
-    db.update(agents)
-      .set({
-        current_action: { type: 'idle' },
-        action_duration: null,
-      })
-      .where(eq(agents.id, participantId))
-      .run();
+    const agent = db.select().from(agents).where(eq(agents.id, participantId)).get();
+    if (agent) {
+      const action = agent.current_action as any;
+      // Only reset if agent is still talking in THIS conversation
+      if (action?.type === 'talking' && String(action?.conversationId) === String(conversation.id)) {
+        db.update(agents)
+          .set({ current_action: { type: 'idle' }, action_duration: null })
+          .where(eq(agents.id, participantId))
+          .run();
+      }
+    }
   }
+
+  emitter.markDirty('agents.all');
 
   // Log activity
   db.insert(activityLog)
