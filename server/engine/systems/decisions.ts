@@ -746,14 +746,6 @@ export function tick(world: WorldRow): void {
       );
       const friendship = rel?.friendship ?? 0;
       const romance = rel?.romance ?? 0;
-      let tier = 'llm_standard';
-      if (friendship > 70 || romance > 50) {
-        tier = 'llm_deep';
-      } else if (friendship < 10) {
-        tier = 'template';
-      }
-
-      const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
 
       // Personality-driven topic selection
       const agentPersonality = agent.personality as PersonalityProfile | null;
@@ -777,6 +769,41 @@ export function tick(world: WorldRow): void {
           topic = `gossip about ${subjectName}`;
         }
       }
+
+      // --- Determine conversation tier: LLM only for meaningful interactions ---
+      const agentStatesArr = getAgentStates(agentId);
+      const targetStatesArr = getAgentStates(targetId);
+      const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'depressed', 'drunk', 'infatuated'] as const;
+      const hasDramaticState = dramaticStates.some(s => (agentStatesArr as string[]).includes(s) || (targetStatesArr as string[]).includes(s));
+
+      const dramaticTopics = ['gossip', 'flirting', 'confrontation', 'venting', 'seeking comfort'];
+      const hasDramaticTopic = topic ? dramaticTopics.some(t => topic!.includes(t)) : false;
+
+      const hasHighRomance = romance > 30;
+      const isEmotionalExtreme = agentNeeds.mood < 25 || agentNeeds.mood > 85;
+
+      // Check familiarity for first meetings
+      const relRow = allRelationships.find(
+        r => (r.agent_a === agentId && r.agent_b === targetId) ||
+             (r.agent_b === agentId && r.agent_a === targetId),
+      );
+      const isFirstMeeting = !relRow || relRow.familiarity < 5;
+
+      // Check for gossip to share
+      const hasGossip = agentPersonality
+        ? getShareableFacts(agentId, targetId, agentPersonality).length > 0
+        : false;
+
+      let tier: string;
+      if (hasDramaticState || hasDramaticTopic || isFirstMeeting) {
+        tier = 'llm_deep'; // 6 turns — these are the important conversations
+      } else if (hasHighRomance || isEmotionalExtreme || hasGossip) {
+        tier = 'llm_standard'; // 4 turns — notable but not critical
+      } else {
+        tier = 'template'; // no LLM — routine socializing
+      }
+
+      const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
 
       db.insert(conversationQueue)
         .values({

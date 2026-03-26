@@ -172,13 +172,27 @@ export async function conversationsTick(): Promise<void> {
       changed = true;
     }
 
-    // --- Step D: Fill open LLM slots ---
+    // --- Step D: Process template-tier entries immediately (no LLM) ---
+    const time = world.time as { totalTicks: number };
+    const llmEntries: QueueRow[] = [];
+
+    for (const entry of validEntries) {
+      if (entry.tier === 'template') {
+        // Process as template — no LLM needed for trivial conversations
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        timedOutQueue.push({ entry, world });
+        templateTotal++;
+        changed = true;
+      } else {
+        llmEntries.push(entry);
+      }
+    }
+
+    // --- Step E: Fill open LLM slots with remaining entries ---
     let currentActive = updatedActiveLLM.length;
     const fillEntries = [...updatedActiveLLM];
 
-    const time = world.time as { totalTicks: number };
-
-    for (const entry of validEntries) {
+    for (const entry of llmEntries) {
       if (currentActive >= schedulerState.max_concurrent_llm) break;
 
       // Depressed agents skip conversations — remove from queue
