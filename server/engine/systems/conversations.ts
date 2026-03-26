@@ -203,16 +203,32 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
-      // Get first participant's position for location
+      // Verify both participants exist and are co-located
       const firstParticipant = db
         .select()
         .from(agents)
         .where(eq(agents.id, entry.participants[0]))
         .get();
+      const secondParticipant = entry.participants[1]
+        ? db.select().from(agents).where(eq(agents.id, entry.participants[1])).get()
+        : null;
 
-      if (!firstParticipant) {
+      if (!firstParticipant || !secondParticipant) {
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
         continue;
+      }
+
+      // Skip if agents are not at the same location or too far apart
+      const sameLocation = firstParticipant.current_location != null &&
+        firstParticipant.current_location === secondParticipant.current_location;
+      if (!sameLocation) {
+        const dx = firstParticipant.position.x - secondParticipant.position.x;
+        const dy = firstParticipant.position.y - secondParticipant.position.y;
+        if (dx * dx + dy * dy > 64 * 64) {
+          // Too far apart — remove from queue, they'll re-queue when close
+          db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+          continue;
+        }
       }
 
       const locationId = firstParticipant.current_location;

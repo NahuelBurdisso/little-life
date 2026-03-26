@@ -705,10 +705,19 @@ export function tick(world: WorldRow): void {
         .run();
     }
 
-    // Social decisions -> conversation queue
+    // Social decisions -> conversation queue (only if agents are at same location)
     if (decision.action === 'socializing' && decision.targetAgentId) {
       const agentId = agent.id;
       const targetId = decision.targetAgentId;
+
+      // Both agents must be at the same location to start a conversation
+      const targetAgent = activeAgents.find(a => a.id === targetId);
+      if (!targetAgent) continue;
+      const sameLocation = agent.current_location != null &&
+        agent.current_location === targetAgent.current_location;
+      const closeEnough = !sameLocation && targetAgent.position &&
+        distance(agent.position, targetAgent.position) < 64; // within 2 tiles
+      if (!sameLocation && !closeEnough) continue;
 
       // Check if this pair already has a queued conversation
       const existingQueue = db.select().from(conversationQueue).all()
