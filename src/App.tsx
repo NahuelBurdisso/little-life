@@ -201,6 +201,10 @@ export default function App() {
       <RelationshipGraph
         isOpen={showRelGraph}
         onClose={() => setShowRelGraph(false)}
+        onSelectAgent={(id) => {
+          setSelectedAgentId(id);
+          setShowRelGraph(false);
+        }}
       />
 
       {/* Attribution */}

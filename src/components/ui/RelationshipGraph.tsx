@@ -1,29 +1,100 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { trpc } from "../../lib/trpc";
 import { useAgents } from "../../hooks/useAgents";
 
 interface RelationshipGraphProps {
   isOpen: boolean;
   onClose: () => void;
+  onSelectAgent?: (agentId: string) => void;
 }
 
 interface GraphNode {
   id: string;
   label: string;
+  job: string;
+  mood: number;
+  states: string[];
+  color: string;
   x: number;
   y: number;
   vx: number;
   vy: number;
+  pinned: boolean;
 }
 
 interface GraphEdge {
   source: string;
   target: string;
-  friendship: number;
-  romance: number;
+  friendshipAB: number;
+  friendshipBA: number;
+  romanceAB: number;
+  romanceBA: number;
+  trustAB: number;
+  trustBA: number;
+  status: string;
+  tags: string[];
+  interactionCount: number;
 }
 
-export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
+type FilterMode = "all" | "friends" | "romance" | "rivals" | "drama";
+
+// --- Color helpers ---
+
+function agentColorHex(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  const s = 60, l = 50;
+  return `hsl(${hue}, ${s}%, ${l}%)`;
+}
+
+const STATE_RING_COLORS: Record<string, string> = {
+  angry: '#ef4444', jealous: '#f43f5e', heartbroken: '#fb7185', infatuated: '#ec4899',
+  drunk: '#f59e0b', alcoholic: '#d97706', stressed: '#f97316', in_debt: '#ea580c',
+  depressed: '#6366f1', lonely: '#8b5cf6', sick: '#a3e635', hungover: '#84cc16',
+  euphoric: '#10b981', confident: '#14b8a6', grieving: '#6b7280',
+};
+
+const STATE_PRIORITY = [
+  'angry', 'jealous', 'heartbroken', 'infatuated', 'drunk', 'alcoholic',
+  'stressed', 'in_debt', 'depressed', 'lonely', 'sick', 'hungover',
+  'euphoric', 'confident', 'grieving',
+];
+
+function getEdgeColor(edge: GraphEdge): string {
+  if (edge.tags.includes('grudge')) return '#991b1b';
+  if (edge.status === 'rivals' || edge.status === 'enemies') return '#ef4444';
+  if (edge.status === 'partners' || edge.romanceAB > 30 || edge.romanceBA > 30) return '#f472b6';
+  const avgFriendship = (edge.friendshipAB + edge.friendshipBA) / 2;
+  if (avgFriendship > 30) return '#22c55e';
+  if (avgFriendship < -30) return '#ef4444';
+  return '#4b5563';
+}
+
+function getEdgeWidth(edge: GraphEdge): number {
+  const strength = Math.max(
+    Math.abs(edge.friendshipAB), Math.abs(edge.friendshipBA),
+    Math.abs(edge.romanceAB), Math.abs(edge.romanceBA),
+  );
+  return Math.max(0.5, strength / 25);
+}
+
+function passesFilter(edge: GraphEdge, filter: FilterMode): boolean {
+  if (filter === 'all') return true;
+  const avgF = (edge.friendshipAB + edge.friendshipBA) / 2;
+  const maxR = Math.max(edge.romanceAB, edge.romanceBA);
+  if (filter === 'friends') return avgF > 20;
+  if (filter === 'romance') return maxR > 15;
+  if (filter === 'rivals') return avgF < -20 || edge.tags.includes('grudge') || edge.status === 'rivals' || edge.status === 'enemies';
+  if (filter === 'drama') return edge.tags.includes('grudge') || edge.status === 'partners' || edge.status === 'rivals' || edge.status === 'enemies' || maxR > 40 || avgF < -40;
+  return true;
+}
+
+// --- Component ---
+
+export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: RelationshipGraphProps) {
   const { agents } = useAgents();
   const { data: relationships } = trpc.relationships.getGraph.useQuery();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -31,42 +102,222 @@ export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
   const nodesRef = useRef<GraphNode[]>([]);
   const edgesRef = useRef<GraphEdge[]>([]);
   const initializedRef = useRef(false);
+  const stabilizedRef = useRef(false);
+  const tickCountRef = useRef(0);
+  const [filter, setFilter] = useState<FilterMode>("all");
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<GraphEdge | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
-  // Build graph data when agents/relationships change
+  // Camera state
+  const cameraRef = useRef({ offsetX: 0, offsetY: 0, zoom: 1 });
+  const dragRef = useRef<{ type: 'pan' | 'node'; startX: number; startY: number; nodeId?: string } | null>(null);
+
   const buildGraph = useCallback(() => {
     if (!agents.length) return;
 
-    const CX = 300;
-    const CY = 250;
-    const R = 150;
+    const CX = 400;
+    const CY = 300;
+    const R = 200;
 
-    // Only reinitialize positions if agents changed
     const existingIds = new Set(nodesRef.current.map((n) => n.id));
     const agentIds = new Set(agents.map((a: any) => String(a.id)));
 
     if (!initializedRef.current || existingIds.size !== agentIds.size) {
       nodesRef.current = agents.map((a: any, i: number) => {
         const angle = (2 * Math.PI * i) / agents.length;
+        const states = (a.activeStates ?? []).map((s: any) => s.type);
         return {
           id: String(a.id),
           label: a.name,
+          job: a.schedule?.job ?? '',
+          mood: a.needs?.mood ?? 50,
+          states,
+          color: agentColorHex(a.name),
           x: CX + R * Math.cos(angle),
           y: CY + R * Math.sin(angle),
-          vx: 0,
-          vy: 0,
+          vx: 0, vy: 0,
+          pinned: false,
         };
       });
       initializedRef.current = true;
+      stabilizedRef.current = false;
+      tickCountRef.current = 0;
+    } else {
+      // Update dynamic data without resetting positions
+      for (const node of nodesRef.current) {
+        const agent = agents.find((a: any) => String(a.id) === node.id) as any;
+        if (agent) {
+          node.mood = agent.needs?.mood ?? 50;
+          node.states = (agent.activeStates ?? []).map((s: any) => s.type);
+        }
+      }
     }
 
     edgesRef.current = (relationships ?? []).map((r: any) => ({
       source: String(r.agent_a),
       target: String(r.agent_b),
-      friendship: Math.max(r.friendship_ab ?? 0, r.friendship_ba ?? 0),
-      romance: Math.max(r.romance_ab ?? 0, r.romance_ba ?? 0),
+      friendshipAB: r.friendship_ab ?? 0,
+      friendshipBA: r.friendship_ba ?? 0,
+      romanceAB: r.romance_ab ?? 0,
+      romanceBA: r.romance_ba ?? 0,
+      trustAB: r.trust_ab ?? 0,
+      trustBA: r.trust_ba ?? 0,
+      status: r.status ?? 'strangers',
+      tags: r.tags ?? [],
+      interactionCount: r.interaction_count ?? 0,
     }));
   }, [agents, relationships]);
 
+  // Mouse handlers
+  const screenToWorld = useCallback((sx: number, sy: number) => {
+    const cam = cameraRef.current;
+    return {
+      x: (sx - cam.offsetX) / cam.zoom,
+      y: (sy - cam.offsetY) / cam.zoom,
+    };
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const { x, y } = screenToWorld(sx, sy);
+
+    // Check if clicking a node
+    for (const node of nodesRef.current) {
+      const dx = x - node.x;
+      const dy = y - node.y;
+      if (dx * dx + dy * dy < 18 * 18) {
+        dragRef.current = { type: 'node', startX: sx, startY: sy, nodeId: node.id };
+        node.pinned = true;
+        return;
+      }
+    }
+
+    // Pan
+    dragRef.current = { type: 'pan', startX: sx, startY: sy };
+  }, [screenToWorld]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const { x, y } = screenToWorld(sx, sy);
+
+    if (dragRef.current) {
+      if (dragRef.current.type === 'pan') {
+        const dx = sx - dragRef.current.startX;
+        const dy = sy - dragRef.current.startY;
+        cameraRef.current.offsetX += dx;
+        cameraRef.current.offsetY += dy;
+        dragRef.current.startX = sx;
+        dragRef.current.startY = sy;
+      } else if (dragRef.current.type === 'node' && dragRef.current.nodeId) {
+        const node = nodesRef.current.find(n => n.id === dragRef.current!.nodeId);
+        if (node) {
+          node.x = x;
+          node.y = y;
+          node.vx = 0;
+          node.vy = 0;
+        }
+      }
+      return;
+    }
+
+    // Hover detection — nodes
+    let foundNode = false;
+    for (const node of nodesRef.current) {
+      const dx = x - node.x;
+      const dy = y - node.y;
+      if (dx * dx + dy * dy < 18 * 18) {
+        setHoveredNode(node);
+        setHoveredEdge(null);
+        setTooltipPos({ x: sx, y: sy });
+        foundNode = true;
+        break;
+      }
+    }
+
+    if (!foundNode) {
+      setHoveredNode(null);
+
+      // Hover detection — edges
+      let foundEdge = false;
+      const filteredEdges = edgesRef.current.filter(e => passesFilter(e, filter));
+      for (const edge of filteredEdges) {
+        const a = nodesRef.current.find(n => n.id === edge.source);
+        const b = nodesRef.current.find(n => n.id === edge.target);
+        if (!a || !b) continue;
+        // Point-to-line distance
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        if (len2 === 0) continue;
+        const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2));
+        const projX = a.x + t * dx;
+        const projY = a.y + t * dy;
+        const dist = Math.sqrt((x - projX) ** 2 + (y - projY) ** 2);
+        if (dist < 8) {
+          setHoveredEdge(edge);
+          setTooltipPos({ x: sx, y: sy });
+          foundEdge = true;
+          break;
+        }
+      }
+      if (!foundEdge) setHoveredEdge(null);
+    }
+  }, [filter, screenToWorld]);
+
+  const handleMouseUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const cam = cameraRef.current;
+
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.3, Math.min(3, cam.zoom * factor));
+
+    // Zoom toward cursor
+    cam.offsetX = sx - (sx - cam.offsetX) * (newZoom / cam.zoom);
+    cam.offsetY = sy - (sy - cam.offsetY) * (newZoom / cam.zoom);
+    cam.zoom = newZoom;
+  }, []);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const { x, y } = screenToWorld(sx, sy);
+
+    for (const node of nodesRef.current) {
+      const dx = x - node.x;
+      const dy = y - node.y;
+      if (dx * dx + dy * dy < 18 * 18) {
+        onSelectAgent?.(node.id);
+        onClose();
+        return;
+      }
+    }
+
+    // Double-click empty space: reset layout
+    initializedRef.current = false;
+    stabilizedRef.current = false;
+    tickCountRef.current = 0;
+    cameraRef.current = { offsetX: 0, offsetY: 0, zoom: 1 };
+    buildGraph();
+  }, [screenToWorld, onSelectAgent, onClose, buildGraph]);
+
+  // Animation loop
   useEffect(() => {
     if (!isOpen) {
       initializedRef.current = false;
@@ -86,113 +337,187 @@ export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
     const tick = () => {
       const nodes = nodesRef.current;
       const edges = edgesRef.current;
+      const cam = cameraRef.current;
+      const filteredEdges = edges.filter(e => passesFilter(e, filter));
 
-      // Force simulation step
-      const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+      // Force simulation (only if not stabilized)
+      if (!stabilizedRef.current) {
+        tickCountRef.current++;
+        const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-      // Repulsion between all nodes
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i];
-          const b = nodes[j];
+        // Repulsion
+        for (let i = 0; i < nodes.length; i++) {
+          if (nodes[i].pinned) continue;
+          for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i];
+            const b = nodes[j];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+            const force = 3000 / (dist * dist);
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            if (!a.pinned) { a.vx -= fx; a.vy -= fy; }
+            if (!b.pinned) { b.vx += fx; b.vy += fy; }
+          }
+        }
+
+        // Attraction along visible edges
+        for (const edge of filteredEdges) {
+          const a = nodeMap.get(edge.source);
+          const b = nodeMap.get(edge.target);
+          if (!a || !b) continue;
           const dx = b.x - a.x;
           const dy = b.y - a.y;
           const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-          const force = 2000 / (dist * dist);
+          const strength = Math.max(
+            Math.abs(edge.friendshipAB), Math.abs(edge.friendshipBA),
+            Math.abs(edge.romanceAB), Math.abs(edge.romanceBA),
+          ) / 100;
+          const force = (dist - 150) * 0.008 * (0.3 + strength);
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
-          a.vx -= fx;
-          a.vy -= fy;
-          b.vx += fx;
-          b.vy += fy;
+          if (!a.pinned) { a.vx += fx; a.vy += fy; }
+          if (!b.pinned) { b.vx -= fx; b.vy -= fy; }
+        }
+
+        // Center gravity
+        for (const node of nodes) {
+          if (node.pinned) continue;
+          node.vx += (W / 2 - node.x) * 0.001;
+          node.vy += (H / 2 - node.y) * 0.001;
+        }
+
+        // Apply velocity
+        for (const node of nodes) {
+          if (node.pinned) continue;
+          node.vx *= 0.82;
+          node.vy *= 0.82;
+          node.x += node.vx;
+          node.y += node.vy;
+        }
+
+        // Stabilize after 120 frames (~2 seconds)
+        if (tickCountRef.current > 120) {
+          stabilizedRef.current = true;
         }
       }
 
-      // Attraction along edges
-      for (const edge of edges) {
-        const a = nodeMap.get(edge.source);
-        const b = nodeMap.get(edge.target);
-        if (!a || !b) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-        const strength = Math.abs(edge.friendship) / 100;
-        const force = (dist - 120) * 0.01 * (0.5 + strength);
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        a.vx += fx;
-        a.vy += fy;
-        b.vx -= fx;
-        b.vy -= fy;
-      }
-
-      // Center gravity
-      for (const node of nodes) {
-        node.vx += (W / 2 - node.x) * 0.002;
-        node.vy += (H / 2 - node.y) * 0.002;
-      }
-
-      // Apply velocity with damping
-      for (const node of nodes) {
-        node.vx *= 0.85;
-        node.vy *= 0.85;
-        node.x += node.vx;
-        node.y += node.vy;
-        // Clamp
-        node.x = Math.max(40, Math.min(W - 40, node.x));
-        node.y = Math.max(40, Math.min(H - 40, node.y));
-      }
-
-      // Draw
+      // --- Draw ---
       ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(cam.offsetX, cam.offsetY);
+      ctx.scale(cam.zoom, cam.zoom);
+
+      const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+      // Connected nodes for dimming
+      const connectedIds = new Set<string>();
+      for (const edge of filteredEdges) {
+        connectedIds.add(edge.source);
+        connectedIds.add(edge.target);
+      }
 
       // Edges
-      for (const edge of edges) {
+      for (const edge of filteredEdges) {
         const a = nodeMap.get(edge.source);
         const b = nodeMap.get(edge.target);
         if (!a || !b) continue;
 
-        let color: string;
-        let width: number;
-
-        if (edge.romance > 30) {
-          color = "#f472b6"; // pink
-          width = Math.max(1, edge.romance / 25);
-        } else if (edge.friendship > 30) {
-          color = "#22c55e"; // green
-          width = Math.max(1, edge.friendship / 25);
-        } else if (edge.friendship < -30) {
-          color = "#ef4444"; // red
-          width = Math.max(1, Math.abs(edge.friendship) / 25);
-        } else {
-          color = "#4b5563"; // gray
-          width = 0.5;
-        }
+        const color = getEdgeColor(edge);
+        const width = getEdgeWidth(edge);
+        const isHovered = hoveredEdge === edge;
 
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
         ctx.strokeStyle = color;
-        ctx.lineWidth = width;
+        ctx.lineWidth = isHovered ? width + 2 : width;
+        ctx.globalAlpha = isHovered ? 1 : 0.7;
+
+        // Dashed line for grudges
+        if (edge.tags.includes('grudge')) {
+          ctx.setLineDash([6, 4]);
+        } else {
+          ctx.setLineDash([]);
+        }
         ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+
+        // Status label at midpoint
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        if (edge.status !== 'strangers' && edge.status !== 'acquaintances') {
+          ctx.fillStyle = color;
+          ctx.font = "bold 8px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+
+          // Background pill
+          const label = edge.status.replace(/_/g, ' ');
+          const tw = ctx.measureText(label).width + 6;
+          ctx.fillStyle = '#111827';
+          ctx.globalAlpha = 0.8;
+          ctx.beginPath();
+          ctx.roundRect(mx - tw / 2, my - 6, tw, 12, 3);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+
+          ctx.fillStyle = color;
+          ctx.fillText(label, mx, my);
+        }
       }
 
       // Nodes
       for (const node of nodes) {
+        const isDimmed = filter !== 'all' && !connectedIds.has(node.id);
+        const isHovered = hoveredNode?.id === node.id;
+
+        ctx.globalAlpha = isDimmed ? 0.3 : 1;
+
+        // State ring
+        const topState = STATE_PRIORITY.find(s => node.states.includes(s));
+        if (topState) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, 19, 0, 2 * Math.PI);
+          ctx.strokeStyle = STATE_RING_COLORS[topState] ?? '#6b7280';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+
+        // Main circle
         ctx.beginPath();
-        ctx.arc(node.x, node.y, 14, 0, 2 * Math.PI);
-        ctx.fillStyle = "#1f2937";
+        ctx.arc(node.x, node.y, 16, 0, 2 * Math.PI);
+        ctx.fillStyle = isHovered ? '#374151' : '#1f2937';
         ctx.fill();
-        ctx.strokeStyle = "#60a5fa";
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = node.color;
+        ctx.lineWidth = 2.5;
         ctx.stroke();
 
+        // Initial
         ctx.fillStyle = "#ffffff";
-        ctx.font = "10px sans-serif";
+        ctx.font = "bold 14px monospace";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(node.label, node.x, node.y);
+        ctx.fillText(node.label.charAt(0).toUpperCase(), node.x, node.y);
+
+        // Name below
+        ctx.font = "9px sans-serif";
+        ctx.fillStyle = isDimmed ? '#6b7280' : '#d1d5db';
+        ctx.fillText(node.label, node.x, node.y + 26);
+
+        // Mood indicator (small dot below name)
+        const moodColor = node.mood > 70 ? '#22c55e' : node.mood >= 40 ? '#eab308' : '#ef4444';
+        ctx.beginPath();
+        ctx.arc(node.x, node.y + 34, 3, 0, 2 * Math.PI);
+        ctx.fillStyle = moodColor;
+        ctx.fill();
+
+        ctx.globalAlpha = 1;
       }
+
+      ctx.restore();
 
       animRef.current = requestAnimationFrame(tick);
     };
@@ -202,30 +527,109 @@ export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
     return () => {
       cancelAnimationFrame(animRef.current);
     };
-  }, [isOpen, buildGraph]);
+  }, [isOpen, buildGraph, filter, hoveredNode, hoveredEdge]);
 
   if (!isOpen) return null;
 
+  const filterButtons: { mode: FilterMode; label: string; icon: string }[] = [
+    { mode: 'all', label: 'All', icon: '🔗' },
+    { mode: 'friends', label: 'Friends', icon: '🤝' },
+    { mode: 'romance', label: 'Romance', icon: '💕' },
+    { mode: 'rivals', label: 'Rivals', icon: '⚔️' },
+    { mode: 'drama', label: 'Drama', icon: '💔' },
+  ];
+
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl w-[640px]"
+        className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl w-[840px]"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
           <h2 className="text-sm font-bold text-white">Relationship Graph</h2>
+          <div className="flex items-center gap-2">
+            {filterButtons.map(({ mode, label, icon }) => (
+              <button
+                key={mode}
+                onClick={() => setFilter(mode)}
+                className={`text-xs px-2 py-1 rounded-md transition-colors ${
+                  filter === mode
+                    ? 'bg-gray-600 text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                {icon} {label}
+              </button>
+            ))}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">
             &times;
           </button>
         </div>
-        <div className="p-2">
+
+        {/* Canvas */}
+        <div className="p-2 relative">
           <canvas
             ref={canvasRef}
-            width={600}
-            height={500}
-            className="w-full rounded bg-gray-900"
+            width={800}
+            height={600}
+            className="w-full rounded bg-gray-900 cursor-grab active:cursor-grabbing"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+            onDoubleClick={handleDoubleClick}
           />
+
+          {/* Node Tooltip */}
+          {hoveredNode && (
+            <div
+              className="absolute z-50 pointer-events-none bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs shadow-lg"
+              style={{ left: tooltipPos.x + 12, top: tooltipPos.y - 10 }}
+            >
+              <div className="font-bold text-white">{hoveredNode.label}</div>
+              {hoveredNode.job && <div className="text-gray-400">{hoveredNode.job}</div>}
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-gray-400">Mood:</span>
+                <span className={hoveredNode.mood > 70 ? 'text-green-400' : hoveredNode.mood >= 40 ? 'text-yellow-400' : 'text-red-400'}>
+                  {Math.round(hoveredNode.mood)}
+                </span>
+              </div>
+              {hoveredNode.states.length > 0 && (
+                <div className="text-gray-400 mt-0.5">
+                  States: {hoveredNode.states.join(', ')}
+                </div>
+              )}
+              <div className="text-gray-500 mt-1 italic">Double-click to select</div>
+            </div>
+          )}
+
+          {/* Edge Tooltip */}
+          {hoveredEdge && !hoveredNode && (
+            <div
+              className="absolute z-50 pointer-events-none bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs shadow-lg"
+              style={{ left: tooltipPos.x + 12, top: tooltipPos.y - 10 }}
+            >
+              <div className="font-bold text-white capitalize">{hoveredEdge.status.replace(/_/g, ' ')}</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-1 text-gray-300">
+                <span>Friendship:</span>
+                <span>{hoveredEdge.friendshipAB.toFixed(0)} / {hoveredEdge.friendshipBA.toFixed(0)}</span>
+                <span>Romance:</span>
+                <span>{hoveredEdge.romanceAB.toFixed(0)} / {hoveredEdge.romanceBA.toFixed(0)}</span>
+                <span>Trust:</span>
+                <span>{hoveredEdge.trustAB.toFixed(0)} / {hoveredEdge.trustBA.toFixed(0)}</span>
+                <span className="text-gray-400">Interactions:</span>
+                <span className="text-gray-400">{hoveredEdge.interactionCount}</span>
+              </div>
+              {hoveredEdge.tags.length > 0 && (
+                <div className="text-gray-400 mt-1">Tags: {hoveredEdge.tags.join(', ')}</div>
+              )}
+            </div>
+          )}
         </div>
+
         {/* Legend */}
         <div className="flex items-center justify-center gap-4 px-5 py-2 border-t border-gray-700 text-[10px] text-gray-400">
           <span className="flex items-center gap-1">
@@ -237,6 +641,11 @@ export function RelationshipGraph({ isOpen, onClose }: RelationshipGraphProps) {
           <span className="flex items-center gap-1">
             <span className="inline-block w-3 h-0.5 bg-red-500" /> Rivalry
           </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 h-0.5 bg-red-900 border-dashed border-b" /> Grudge
+          </span>
+          <span className="text-gray-500">|</span>
+          <span>Drag nodes • Scroll to zoom • Double-click node to select • Double-click empty to reset</span>
         </div>
       </div>
     </div>
