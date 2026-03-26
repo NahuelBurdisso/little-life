@@ -27,6 +27,7 @@ import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
 import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
+import { getCheapestFoodPrice } from '../../lib/economyEngine';
 import { createObservationMemory } from '../../ai/memories';
 import { taskRunner } from '../../ai/taskRunner';
 
@@ -128,11 +129,9 @@ function isEvening(hour: number): boolean {
   return hour >= 17 && hour < 22;
 }
 
+// Reads from item registry — no hardcoded prices
 function cheapestFoodPrice(): number {
-  return Math.min(
-    CONFIG.ECONOMY.BASE_PRICES['food_raw'] ?? 3,
-    CONFIG.ECONOMY.BASE_PRICES['food_prepared'] ?? 6,
-  );
+  return getCheapestFoodPrice();
 }
 
 // --- Emergency Check ---

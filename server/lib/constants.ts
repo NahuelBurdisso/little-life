@@ -24,25 +24,13 @@ export const CONFIG = {
   // Economy
   ECONOMY: {
     STARTING_MONEY: 50,
-    DAILY_EXPENSES: { min: 2, max: 5 },
+    DAILY_EXPENSES: { min: 2, max: 5 }, // legacy fallback
     TAX_RATE: 0.05,
     TARGET_PER_CAPITA_MONEY: 50,
     INFLATION_THRESHOLD: 1.5,
     DEFLATION_THRESHOLD: 0.5,
-    BASE_PRICES: {
-      food_raw: 3,
-      food_prepared: 6,
-      drink: 4,
-      medicine: 12,
-      seeds: 2,
-    } as Record<string, number>,
-    SEASON_PRICE_MODIFIERS: {
-      spring: 0.9,
-      summer: 0.8,
-      autumn: 1.0,
-      winter: 1.5,
-    } as Record<string, number>,
     MIN_PAYDAY_INTERVAL_HOURS: 6,
+    // BASE_PRICES and SEASON_PRICE_MODIFIERS moved to server/data/economyData.ts
   },
 
   // Relationships
