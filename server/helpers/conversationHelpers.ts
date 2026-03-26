@@ -4,8 +4,10 @@ import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
 import { getEffectivePersonality, getActiveStatePrompts } from '../lib/states';
 import { getShareableFacts } from '../lib/gossip';
+import { retrieveMemories, MemoryRow } from '../ai/memories';
+import { vectorStore } from '../lib/vectors';
 
-export function getConversationContext(conversationId: number, speakerId: number) {
+export async function getConversationContext(conversationId: number, speakerId: number) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
   if (!conversation) return null;
 
@@ -30,13 +32,47 @@ export function getConversationContext(conversationId: number, speakerId: number
     .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
     .get();
 
-  const recentMemories = db
-    .select()
-    .from(memories)
-    .where(eq(memories.agent_id, speakerId))
-    .orderBy(desc(memories.timestamp))
-    .limit(CONFIG.AI.MEMORY_RETRIEVAL_LIMIT)
-    .all();
+  const otherAgentName = otherAgent.name ?? '';
+  const topic = (conversation.topic as string) ?? '';
+  const queryText = `talking with ${otherAgentName}${topic ? ' about ' + topic : ''}`;
+  const currentTick = (conversation as any).started_at ?? Date.now();
+
+  const vectorSearchFn = async (
+    agentId: number,
+    embedding: number[],
+    limit: number,
+  ): Promise<Array<MemoryRow & { _score?: number }>> => {
+    const queryVec = Float32Array.from(embedding);
+    const topIds = vectorStore.search(queryVec, agentId, limit);
+    if (topIds.length === 0) return [];
+    const rows = db.select().from(memories).where(eq(memories.agent_id, agentId)).all();
+    const idSet = new Set(topIds);
+    return rows
+      .filter((r) => idSet.has(r.id))
+      .map((r) => ({ ...(r as unknown as MemoryRow) }));
+  };
+
+  const fallbackFn = async (agentId: number, limit: number): Promise<MemoryRow[]> => {
+    return db
+      .select()
+      .from(memories)
+      .where(eq(memories.agent_id, agentId))
+      .orderBy(desc(memories.timestamp))
+      .limit(limit)
+      .all() as unknown as MemoryRow[];
+  };
+
+  const relevantMemories = await retrieveMemories(
+    vectorSearchFn,
+    fallbackFn,
+    speakerId,
+    {
+      queryText,
+      relatedAgents: [otherId],
+      limit: CONFIG.AI.MEMORY_RETRIEVAL_LIMIT,
+    },
+    currentTick,
+  );
 
   const location = conversation.location
     ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
@@ -60,7 +96,7 @@ export function getConversationContext(conversationId: number, speakerId: number
     speakerEcon,
     otherAgent,
     relationship,
-    memories: recentMemories,
+    memories: relevantMemories,
     location,
     world,
     effectivePersonality,

@@ -4,7 +4,8 @@
  * Functions for scoring/retrieving relevant memories and creating new ones
  * from conversations and observations.
  *
- * retrieveMemories requires an action context (uses Ollama embeddings).
+ * retrieveMemories uses Ollama embeddings + vectorStore for similarity search,
+ * falling back to recency if embeddings are unavailable.
  * Creation functions are pure — they return insert data for the caller.
  */
 
@@ -58,80 +59,6 @@ export interface MemoryQuery {
 // ---------------------------------------------------------------------------
 // Retrieval
 // ---------------------------------------------------------------------------
-
-/**
- * Retrieve and rank memories for an agent.
- *
- * Currently uses importance + recency + agent/location bonuses for ranking.
- * Vector search (via Ollama embeddings) will be enabled when query functions
- * are added in Task 16. For now, candidates must be pre-fetched by the caller
- * or we fall back to recent memories.
- *
- * @param candidates - Pre-fetched memory rows for the agent (newest first).
- * @param query - Query parameters for scoring.
- * @param currentTick - The current world tick for recency calculation.
- * @returns Scored and sorted memories, limited to query.limit.
- */
-export function rankMemories(
-  candidates: MemoryRow[],
-  query: MemoryQuery,
-  currentTick: number,
-): MemoryRow[] {
-  if (candidates.length === 0) return [];
-
-  const limit = query.limit;
-  const relatedAgentSet = new Set(query.relatedAgents ?? []);
-  const relatedLocation = query.relatedLocation ?? null;
-
-  const scored = candidates.map((memory) => {
-    // Recency: exponential decay with ~5 day half-life
-    // Each tick = 1 game minute, so 24*60 = 1440 ticks per day
-    const ticksAgo = Math.max(0, currentTick - memory.timestamp);
-    const hoursAgo = ticksAgo / 60;
-    const recency = Math.exp(-hoursAgo / (24 * 7));
-
-    // Importance: normalized 0-1
-    const importance = memory.importance / 10;
-
-    // Agent bonus: +0.15 per matching related agent
-    let agentBonus = 0;
-    for (const agentId of memory.related_agents) {
-      if (relatedAgentSet.has(agentId)) {
-        agentBonus += 0.15;
-      }
-    }
-
-    // Location bonus
-    const locationBonus =
-      relatedLocation != null && memory.related_location === relatedLocation
-        ? 0.1
-        : 0;
-
-    // Access penalty: discourages over-retrieval of same memories
-    const accessPenalty = Math.min(
-      memory.access_count * CONFIG.AI.MEMORY_ACCESS_PENALTY,
-      CONFIG.AI.MEMORY_ACCESS_PENALTY_MAX,
-    );
-
-    // Without vector search, relevance defaults to 0.
-    // Score formula: relevance * 0.35 + recency * 0.3 + importance * 0.2 + bonuses
-    // Since relevance=0 for now, recency and importance dominate.
-    const relevance = 0;
-    const score =
-      relevance * 0.35 +
-      recency * 0.3 +
-      importance * 0.2 +
-      agentBonus +
-      locationBonus -
-      accessPenalty;
-
-    return { memory, score };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-
-  return scored.slice(0, limit).map((s) => s.memory);
-}
 
 /**
  * Full retrieval with vector search.

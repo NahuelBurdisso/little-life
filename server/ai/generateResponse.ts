@@ -20,7 +20,7 @@ export async function generateResponse(
   speakerId: number,
 ): Promise<GenerateResponseResult | null> {
   // 1. Read all context
-  const context = getConversationContext(conversationId, speakerId);
+  const context = await getConversationContext(conversationId, speakerId);
 
   if (!context) {
     markConversationEnded(conversationId);

@@ -24,6 +24,7 @@ import {
 } from '../../lib/states';
 import { emitter } from '../emitter';
 import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../lib/gossip';
+import { taskRunner } from '../../ai/taskRunner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1216,10 +1217,11 @@ function processStateEffects(
                   .where(eq(agents.id, otherId))
                   .get()?.name ?? 'them';
 
-              db.insert(memories)
+              const regretContent = `I feel terrible about what I said to ${otherName} while drunk.`;
+              const regretResult = db.insert(memories)
                 .values({
                   agent_id: agent.id,
-                  content: `I feel terrible about what I said to ${otherName} while drunk.`,
+                  content: regretContent,
                   type: 'emotional',
                   importance: 4,
                   emotional_valence: -0.6,
@@ -1231,7 +1233,9 @@ function processStateEffects(
                   access_count: 0,
                   last_accessed: currentTick,
                 })
-                .run();
+                .returning({ id: memories.id })
+                .get();
+              taskRunner.generateEmbedding(regretResult.id, regretContent);
 
               // Friendship penalty
               if (agent.id < otherId) {
