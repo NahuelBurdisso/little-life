@@ -49,7 +49,7 @@ export class InteractionLayer {
       const c = sprite.container;
       c.eventMode = "static";
       c.cursor = "pointer";
-      c.hitArea = new PIXI.Rectangle(0, 0, 32, 72);
+      c.hitArea = new PIXI.Circle(0, 0, 16);
 
       c.on("pointertap", (e: PIXI.FederatedPointerEvent) => {
         e.stopPropagation();
