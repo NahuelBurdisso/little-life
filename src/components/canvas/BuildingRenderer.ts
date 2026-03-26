@@ -28,6 +28,14 @@ const LABEL_STYLE = new PIXI.TextStyle({
   align: "center",
 });
 
+const ZONE_LABEL_STYLE = new PIXI.TextStyle({
+  fontFamily: "monospace",
+  fontSize: 6,
+  fill: 0xffffff,
+  stroke: { color: 0x000000, width: 1.5 },
+  align: "center",
+});
+
 interface BuildingEntry {
   id: number;
   type: string;
@@ -141,8 +149,18 @@ export class BuildingRenderer {
       const zx = x + zone.relativePosition.x;
       const zy = y + zone.relativePosition.y;
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
-      zg.fill({ color: zone.color, alpha: 0.8 });
+      zg.fill({ color: zone.color, alpha: 0.85 });
+      // Subtle border to separate zones
+      zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
+      zg.stroke({ color: 0x000000, width: 0.5, alpha: 0.3 });
       interiorContainer.addChild(zg);
+
+      // Zone label
+      const zoneLabel = new PIXI.Text({ text: zone.name, style: ZONE_LABEL_STYLE });
+      zoneLabel.anchor.set(0.5, 0.5);
+      zoneLabel.x = zx + zone.relativePosition.width / 2;
+      zoneLabel.y = zy + zone.relativePosition.height / 2;
+      interiorContainer.addChild(zoneLabel);
     }
     this.buildingLayer.addChild(interiorContainer);
 
