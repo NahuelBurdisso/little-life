@@ -274,19 +274,7 @@ export function tick(world: WorldRow): void {
     let position: { x: number; y: number };
     let remainingPath: number[][];
 
-    if (distToDest < 48) {
-      // Direct movement — no pathfinding needed
-      if (distToDest <= moveDistance) {
-        position = destPoint;
-      } else {
-        const ratio = moveDistance / distToDest;
-        position = {
-          x: agent.position.x + (destPoint.x - agent.position.x) * ratio,
-          y: agent.position.y + (destPoint.y - agent.position.y) * ratio,
-        };
-      }
-      remainingPath = [];
-    } else {
+    {
       // Get or compute A* path
       let path = agent.current_path;
       if (!path || path.length === 0) {
