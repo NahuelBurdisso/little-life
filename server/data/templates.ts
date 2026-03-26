@@ -111,6 +111,64 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
     cooldownPerPair: 4,
   },
 
+  // ===== tavern_social =====
+  {
+    category: "tavern_social",
+    conditions: {
+      minFriendship: 20,
+      maxFriendship: null,
+      minMood: 40,
+      maxMood: null,
+      timeOfDay: ["evening", "night"],
+      location: ["tavern"],
+      weather: null,
+    },
+    variants: [
+      { text: "{speaker.name}: {other.name}! Pull up a chair, drinks are on me tonight.", sentiment: 0.7 },
+      { text: "{speaker.name}: Nothing like a cold one after a long day. Cheers, {other.name}!", sentiment: 0.6 },
+      { text: "{speaker.name}: This place really comes alive at night. Glad to see you here, {other.name}.", sentiment: 0.5 },
+      { text: "{speaker.name}: Marco makes the best drinks in town. What are you having, {other.name}?", sentiment: 0.5 },
+      { text: "{speaker.name}: *raises glass* To another day survived in Little Life!", sentiment: 0.6 },
+    ],
+    cooldownPerPair: 4,
+  },
+  {
+    category: "tavern_social",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: 19,
+      minMood: null,
+      maxMood: null,
+      timeOfDay: ["evening", "night"],
+      location: ["tavern"],
+      weather: null,
+    },
+    variants: [
+      { text: "{speaker.name}: *sits at the bar alone, nursing a drink* ...evening.", sentiment: -0.1 },
+      { text: "{speaker.name}: Didn't expect to see you here, {other.name}.", sentiment: 0.0 },
+      { text: "{speaker.name}: *glances over* Rough day?", sentiment: -0.1 },
+    ],
+    cooldownPerPair: 4,
+  },
+  {
+    category: "tavern_social",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: null,
+      minMood: null,
+      maxMood: 30,
+      timeOfDay: ["evening", "night"],
+      location: ["tavern"],
+      weather: null,
+    },
+    variants: [
+      { text: "{speaker.name}: *stares into drink* I just needed to get out of the house tonight.", sentiment: -0.3 },
+      { text: "{speaker.name}: Some days this town feels too small. Know what I mean, {other.name}?", sentiment: -0.4 },
+      { text: "{speaker.name}: I'm not great company tonight. But I didn't want to be alone either.", sentiment: -0.3 },
+    ],
+    cooldownPerPair: 6,
+  },
+
   // ===== farewell =====
   {
     category: "farewell",

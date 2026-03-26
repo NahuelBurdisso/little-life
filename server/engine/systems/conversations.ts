@@ -1007,26 +1007,67 @@ async function processTimedOutEntry(
   const mood = needs0 ? needs0.mood : 50;
   const dayPhase = world.day_phase;
 
-  // Select category based on friendship
-  const category =
-    friendship > 30
-      ? 'greeting_friendly'
-      : friendship < -20
-        ? 'greeting_cold'
-        : 'greeting_neutral';
+  // Select category based on context — use the richest matching template
+  const needs0Val = needs0 ? { hunger: needs0.hunger, energy: needs0.energy } : { hunger: 50, energy: 50 };
 
-  const templateResult = await selectTemplate(
-    category,
-    entry.participants[0],
-    entry.participants[1],
-    {
-      friendship,
-      mood,
-      timeOfDay: dayPhase,
-      locationType: null,
-      weather: world.weather,
-    },
-  );
+  // Build a prioritized list of categories to try
+  const categoriesToTry: string[] = [];
+
+  // Contextual categories first (more interesting)
+  if (mood < 30) categoriesToTry.push('complaint_mood');
+  if (needs0Val.hunger < 35) categoriesToTry.push('hungry');
+  if (needs0Val.energy < 35) categoriesToTry.push('tired');
+  if (mood > 70 && friendship > 30) categoriesToTry.push('excited_event');
+
+  // Location-specific
+  const loc0 = db.select({ type: locations.type }).from(locations).where(eq(locations.id, locationId)).get();
+  if (loc0?.type === 'tavern') categoriesToTry.push('tavern_social');
+  if (loc0?.type === 'shop') categoriesToTry.push('purchase');
+  if (['farm', 'shop', 'clinic', 'bakery', 'workshop'].includes(loc0?.type ?? '')) categoriesToTry.push('work_handoff');
+
+  // Weather small talk
+  categoriesToTry.push('small_talk_weather');
+  categoriesToTry.push('small_talk_work');
+
+  // Greeting as fallback
+  if (friendship > 30) categoriesToTry.push('greeting_friendly');
+  else if (friendship < -20) categoriesToTry.push('greeting_cold');
+  else categoriesToTry.push('greeting_neutral');
+
+  // Try categories in order, use first one that returns a template
+  let templateResult: { text: string; sentiment: number } | null = null;
+  for (const category of categoriesToTry) {
+    templateResult = await selectTemplate(
+      category,
+      entry.participants[0],
+      entry.participants[1],
+      {
+        friendship,
+        mood,
+        timeOfDay: dayPhase,
+        locationType: loc0?.type ?? null,
+        weather: world.weather,
+      },
+    );
+    if (templateResult) break;
+  }
+
+  // If nothing matched, try one more time with greeting
+  if (!templateResult) {
+    const fallbackCategory = friendship > 30 ? 'greeting_friendly' : friendship < -20 ? 'greeting_cold' : 'greeting_neutral';
+    templateResult = await selectTemplate(
+      fallbackCategory,
+      entry.participants[0],
+      entry.participants[1],
+      {
+        friendship,
+        mood,
+        timeOfDay: dayPhase,
+        locationType: null,
+        weather: world.weather as string,
+      },
+    );
+  }
 
   // Get location name for template interpolation
   const templateLocation = db.select({ name: locations.name }).from(locations).where(eq(locations.id, locationId)).get();
@@ -1037,6 +1078,7 @@ async function processTimedOutEntry(
         'other.name': agentList[1].name,
         'listener.name': agentList[1].name,
         'location.name': templateLocation?.name ?? 'town',
+        'weather': (world.weather as string) ?? 'weather',
       })
     : `${agentList[0].name} nodded at ${agentList[1].name}.`;
   const messageSentiment = templateResult ? templateResult.sentiment : 0;

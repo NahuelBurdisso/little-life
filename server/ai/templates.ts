@@ -17,6 +17,13 @@ interface CurrentState {
   weather: string;
 }
 
+function matchesField(conditionValue: any, stateValue: string | null): boolean {
+  if (conditionValue == null) return true; // no condition = pass
+  if (stateValue == null) return true; // no state = don't filter
+  if (Array.isArray(conditionValue)) return conditionValue.includes(stateValue);
+  return conditionValue === stateValue;
+}
+
 function conditionsMatch(
   conditions: any,
   state: CurrentState
@@ -35,13 +42,13 @@ function conditionsMatch(
   if (conditions.maxMood != null && state.mood > conditions.maxMood) {
     return false;
   }
-  if (conditions.timeOfDay && conditions.timeOfDay !== state.timeOfDay) {
+  if (!matchesField(conditions.timeOfDay, state.timeOfDay)) {
     return false;
   }
-  if (conditions.locationType && state.locationType && conditions.locationType !== state.locationType) {
+  if (!matchesField(conditions.locationType ?? conditions.location, state.locationType)) {
     return false;
   }
-  if (conditions.weather && conditions.weather !== state.weather) {
+  if (!matchesField(conditions.weather, state.weather)) {
     return false;
   }
 
