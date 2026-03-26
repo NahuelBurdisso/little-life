@@ -16,6 +16,13 @@ const FACT_TEMPLATES: Record<string, (subjectName: string, targetName?: string) 
   work_issue: (s) => `${s} keeps skipping work`,
   sickness: (s) => `${s} is sick`,
   reputation: (s) => `People have been having bad interactions with ${s} lately`,
+  theft: (s, t) => `${s} was caught stealing from ${t ?? 'someone'}`,
+  blackmail: (s, t) => `${s} is blackmailing ${t ?? 'someone'}`,
+  gambling_loss: (s) => `${s} lost big gambling at the tavern`,
+  rumor: (s) => `There are rumors going around about ${s}`,
+  seduction: (s, t) => `${s} is using ${t ?? 'someone'} for personal gain`,
+  confession: (s, t) => `${s} confessed something to ${t ?? 'someone'}`,
+  alcoholic: (s) => `${s} has a serious drinking problem`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────
@@ -125,6 +132,35 @@ export function createFact(
     .run();
 
   return Number(result.lastInsertRowid);
+}
+
+// ─── getNegativeFactCount / getHiddenSinCount ─────────────────────────────────
+
+const NEGATIVE_FACT_TYPES = [
+  'theft', 'blackmail', 'gambling_loss', 'rumor',
+  'reputation', 'work_issue', 'drunk_incident', 'grudge',
+];
+
+export function getNegativeFactCount(agentId: number): number {
+  const activeFacts = db
+    .select({ type: facts.type })
+    .from(facts)
+    .where(and(eq(facts.subject_id, agentId), eq(facts.is_active, true)))
+    .all();
+  return activeFacts.filter((f) => NEGATIVE_FACT_TYPES.includes(f.type)).length;
+}
+
+export function getHiddenSinCount(agentId: number): number {
+  const hiddenFacts = db
+    .select({ type: facts.type, known_by: facts.known_by })
+    .from(facts)
+    .where(and(eq(facts.subject_id, agentId), eq(facts.is_active, true)))
+    .all()
+    .filter((f) =>
+      ['theft', 'affair', 'blackmail'].includes(f.type) &&
+      (f.known_by as number[]).length <= 2
+    );
+  return hiddenFacts.length;
 }
 
 // ─── getShareableFacts ────────────────────────────────────────────────────────
@@ -357,6 +393,51 @@ export function deactivateStaleFacts(): void {
           });
 
         if (negConvs.length === 0) stale = true;
+        break;
+      }
+
+      case 'alcoholic': {
+        const state = db.select({ id: agentStates.id }).from(agentStates)
+          .where(and(eq(agentStates.agent_id, fact.subject_id), eq(agentStates.type, 'alcoholic'))).get();
+        if (!state) stale = true;
+        break;
+      }
+
+      case 'theft': {
+        // Theft facts expire after ~2 hours real time
+        if (Date.now() - fact.created_at > 7_200_000) stale = true;
+        break;
+      }
+
+      case 'blackmail': {
+        // Deactivate if victim has no money
+        if (fact.target_id) {
+          const victimEco = db.select({ money: economy.money }).from(economy)
+            .where(eq(economy.agent_id, fact.target_id)).get();
+          if (victimEco && victimEco.money < 10) stale = true;
+        }
+        break;
+      }
+
+      case 'gambling_loss': {
+        // Gambling losses fade after ~1.2 hours real time
+        if (Date.now() - fact.created_at > 4_320_000) stale = true;
+        break;
+      }
+
+      case 'rumor': {
+        // Rumors expire after ~2.8 hours real time
+        if (Date.now() - fact.created_at > 10_080_000) stale = true;
+        break;
+      }
+
+      case 'seduction': {
+        if (Date.now() - fact.created_at > 7_200_000) stale = true;
+        break;
+      }
+
+      case 'confession': {
+        if (Date.now() - fact.created_at > 4_320_000) stale = true;
         break;
       }
     }
