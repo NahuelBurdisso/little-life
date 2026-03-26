@@ -975,6 +975,28 @@ async function processCompletedConversation(
 // Process a timed-out queue entry with template fallback
 // ---------------------------------------------------------------------------
 
+function categoryToTopic(category: string): string | null {
+  const map: Record<string, string> = {
+    greeting_friendly: 'friendly greeting',
+    greeting_neutral: 'casual greeting',
+    greeting_cold: 'cold exchange',
+    tense_encounter: 'tense encounter',
+    passive_aggressive: 'passive-aggressive exchange',
+    snide_remark: 'snide remark',
+    tavern_social: 'tavern socializing',
+    complaint_mood: 'venting frustration',
+    hungry: 'food',
+    tired: 'being tired',
+    excited_event: 'exciting news',
+    purchase: 'shopping',
+    work_handoff: 'work handoff',
+    small_talk_weather: 'weather',
+    small_talk_work: 'work',
+    farewell: 'farewell',
+  };
+  return map[category] ?? null;
+}
+
 async function processTimedOutEntry(
   entry: QueueRow,
   world: WorldRow,
@@ -1057,6 +1079,7 @@ async function processTimedOutEntry(
 
   // Try categories in order, use first one that returns a template
   let templateResult: { text: string; sentiment: number } | null = null;
+  let matchedCategory = '';
   for (const category of categoriesToTry) {
     templateResult = await selectTemplate(
       category,
@@ -1070,7 +1093,7 @@ async function processTimedOutEntry(
         weather: world.weather,
       },
     );
-    if (templateResult) break;
+    if (templateResult) { matchedCategory = category; break; }
   }
 
   // If nothing matched, try one more time with greeting
@@ -1117,8 +1140,8 @@ async function processTimedOutEntry(
       },
     ],
     location: locationId,
-    trigger_reason: entry.trigger_reason + ' (template fallback)',
-    topic: entry.topic,
+    trigger_reason: entry.trigger_reason + ' (template)',
+    topic: categoryToTopic(matchedCategory) ?? entry.topic,
     status: 'ended' as const,
     started_at: now,
     ended_at: now,
