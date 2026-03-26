@@ -15,6 +15,48 @@ const ACTION_EMOJIS: Record<string, string> = {
   idle: "\u23F8\uFE0F",
 };
 
+/** Priority-ordered state ring colors. First match wins. */
+const STATE_RING_COLORS: Record<string, number> = {
+  angry: 0xef4444,
+  jealous: 0xf43f5e,
+  heartbroken: 0xfb7185,
+  infatuated: 0xec4899,
+  drunk: 0xf59e0b,
+  alcoholic: 0xd97706,
+  stressed: 0xf97316,
+  in_debt: 0xea580c,
+  depressed: 0x6366f1,
+  lonely: 0x8b5cf6,
+  sick: 0xa3e635,
+  hungover: 0x84cc16,
+  euphoric: 0x10b981,
+  confident: 0x14b8a6,
+  grieving: 0x6b7280,
+};
+
+const STATE_PRIORITY: string[] = [
+  'angry', 'jealous', 'heartbroken', 'infatuated',
+  'drunk', 'alcoholic', 'stressed', 'in_debt',
+  'depressed', 'lonely', 'sick', 'hungover',
+  'euphoric', 'confident', 'grieving',
+];
+
+/** Dramatic state emojis override action emojis when active. */
+const STATE_EMOJIS: Record<string, string> = {
+  in_debt: '\u{1F4B0}',       // 💰
+  alcoholic: '\u{1F37A}',     // 🍺
+  heartbroken: '\u{1F494}',   // 💔
+  jealous: '\u{1F612}',       // 😒
+  angry: '\u{1F621}',         // 😡
+  infatuated: '\u{1F60D}',    // 😍
+  depressed: '\u{1F61E}',     // 😞
+  lonely: '\u{1F614}',        // 😔
+  sick: '\u{1F912}',          // 🤒
+  drunk: '\u{1F974}',         // 🥴
+  euphoric: '\u{1F604}',      // 😄
+  confident: '\u{1F60E}',     // 😎
+};
+
 interface AgentNeeds {
   mood?: number;
   hunger?: number;
@@ -40,6 +82,8 @@ export class AgentSprite {
   private moodDot: PIXI.Graphics;
   private needAlert: PIXI.Text;
   private pulseTimer = 0;
+  private stateRing: PIXI.Graphics;
+  private hasDramaticState = false;
 
   private targetPos = { x: 0, y: 0 };
 
@@ -66,6 +110,11 @@ export class AgentSprite {
     this.circle.circle(0, 0, AGENT_RADIUS);
     this.circle.fill({ color: getAgentColor(name) });
     this.container.addChild(this.circle);
+
+    // --- State ring (colored ring showing active state) ---
+    this.stateRing = new PIXI.Graphics();
+    this.stateRing.visible = false;
+    this.container.addChild(this.stateRing);
 
     // --- First letter of name ---
     this.letter = new PIXI.Text({
@@ -163,9 +212,11 @@ export class AgentSprite {
 
   /** Update emoji, mood dot color, and critical need alert. */
   updateStatus(actionType: string, needs: AgentNeeds | null | undefined, deltaTime: number) {
-    // Action emoji
-    const emoji = ACTION_EMOJIS[actionType] ?? ACTION_EMOJIS["idle"];
-    this.actionLabel.text = emoji;
+    // Don't overwrite if a dramatic state emoji is shown
+    if (!this.hasDramaticState) {
+      const emoji = ACTION_EMOJIS[actionType] ?? ACTION_EMOJIS["idle"];
+      this.actionLabel.text = emoji;
+    }
 
     // Mood dot color
     const mood = needs?.mood ?? 100;
@@ -192,6 +243,30 @@ export class AgentSprite {
     if (hasCritical) {
       this.pulseTimer += deltaTime * 4;
       this.needAlert.alpha = 0.4 + 0.6 * Math.abs(Math.sin(this.pulseTimer));
+    }
+  }
+
+  /** Update state ring color and override action emoji for dramatic states. */
+  updateStates(activeStates: Array<{ type: string; metadata?: any }>) {
+    const topState = STATE_PRIORITY.find(s => activeStates.some(as => as.type === s));
+
+    if (topState) {
+      const color = STATE_RING_COLORS[topState] ?? 0x6b7280;
+      this.stateRing.clear();
+      this.stateRing.circle(0, 0, AGENT_RADIUS + 3);
+      this.stateRing.stroke({ width: 2, color, alpha: 0.8 });
+      this.stateRing.visible = true;
+
+      // Override action emoji with state emoji
+      if (STATE_EMOJIS[topState]) {
+        this.actionLabel.text = STATE_EMOJIS[topState];
+        this.hasDramaticState = true;
+      } else {
+        this.hasDramaticState = false;
+      }
+    } else {
+      this.stateRing.visible = false;
+      this.hasDramaticState = false;
     }
   }
 

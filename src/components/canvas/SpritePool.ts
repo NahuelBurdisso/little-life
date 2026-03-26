@@ -15,6 +15,7 @@ export interface AgentData {
     fun?: number;
     thresholds?: { critical?: number };
   } | null;
+  activeStates?: Array<{ type: string; severity?: number; target_agent_id?: number | null; metadata?: any }>;
 }
 
 /** Manages all AgentSprite instances, creating/removing as needed. */
@@ -57,6 +58,7 @@ export class SpritePool {
       sprite.update(px, py, deltaTime);
       sprite.setSelected(id === selectedAgentId);
       sprite.updateStatus(actionType, agent.needs ?? null, deltaTime);
+      sprite.updateStates(agent.activeStates ?? []);
     }
 
     // Remove sprites for agents no longer present
