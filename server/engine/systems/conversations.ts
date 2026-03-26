@@ -22,6 +22,9 @@ import {
   memories,
   activityLog,
   worldState,
+  agentStates,
+  economy,
+  facts,
 } from '../../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -33,7 +36,7 @@ import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { getAgentStates } from '../../lib/states';
-import { createFact, spreadGossip, getShareableFacts } from '../../lib/gossip';
+import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -615,6 +618,219 @@ async function processCompletedConversation(
     const personalityData = agent.personality as any;
     const sharable = getShareableFacts(pid, otherId, personalityData);
     spreadGossip(pid, otherId, messageTexts, sharable);
+  }
+
+  // --- Dark Social Dynamics: Post-Conversation Effects ---
+
+  // Begging outcome: in_debt agent asking friends for help
+  for (const pid of participantIds) {
+    const pidStates = getAgentStates(pid);
+    if (!pidStates.includes('in_debt')) continue;
+
+    const otherId = participantIds.find(p => p !== pid);
+    if (!otherId) continue;
+    const otherAgent = participants.find(p => p.id === otherId);
+    const otherPersonality = otherAgent?.personality as PersonalityProfile | null;
+    if (!otherPersonality) continue;
+
+    // Check friendship
+    const rel = db.select().from(relationships).where(
+      and(
+        eq(relationships.agent_a, Math.min(pid, otherId)),
+        eq(relationships.agent_b, Math.max(pid, otherId)),
+      )
+    ).get();
+    const friendship = rel ? (pid < otherId ? rel.friendship_ab : rel.friendship_ba) : 0;
+    if (friendship <= 30) continue;
+
+    if (otherPersonality.warmth > 60 && overallSentiment > 0) {
+      // Warm friend helps
+      const amount = 10 + Math.floor(Math.random() * 11);
+      const giverEcon = db.select().from(economy).where(eq(economy.agent_id, otherId)).get();
+      const receiverEcon = db.select().from(economy).where(eq(economy.agent_id, pid)).get();
+      if (giverEcon && receiverEcon && giverEcon.money >= amount) {
+        db.update(economy).set({ money: giverEcon.money - amount }).where(eq(economy.agent_id, otherId)).run();
+        db.update(economy).set({ money: receiverEcon.money + amount }).where(eq(economy.agent_id, pid)).run();
+
+        const [ordA, ordB] = [Math.min(pid, otherId), Math.max(pid, otherId)];
+        db.insert(relationshipEvents).values({
+          agent_a: ordA, agent_b: ordB,
+          event_type: 'begging',
+          description: `${otherAgent?.name} helped ${participants.find(p => p.id === pid)?.name} with money`,
+          friendship_delta_ab: pid === ordA ? 5 : 3,
+          friendship_delta_ba: pid === ordA ? 3 : 5,
+          romance_delta_ab: 0, romance_delta_ba: 0,
+          trust_delta_ab: 3, trust_delta_ba: 3,
+          sentiment: 0.5, processed: false, timestamp: now,
+        }).run();
+      }
+    } else if (otherPersonality.warmth < 40) {
+      // Refused — update begging fail count in state metadata
+      const debtState = db.select().from(agentStates)
+        .where(and(eq(agentStates.agent_id, pid), eq(agentStates.type, 'in_debt'))).get();
+      if (debtState) {
+        const meta = { ...((debtState.metadata as any) ?? {}) };
+        meta.beggingFailCount = ((meta.beggingFailCount as number) ?? 0) + 1;
+        if (meta.beggingFailCount >= 3) meta.desperationUnlocked = true;
+        db.update(agentStates).set({ metadata: meta }).where(eq(agentStates.id, debtState.id)).run();
+      }
+    }
+  }
+
+  // Confession outcome: honest agent with hidden sins confides in trusted friend
+  for (const pid of participantIds) {
+    const pidAgent = participants.find(p => p.id === pid);
+    const pidPersonality = pidAgent?.personality as PersonalityProfile | null;
+    if (!pidPersonality || pidPersonality.honesty <= 50) continue;
+    if (getHiddenSinCount(pid) < 2) continue;
+
+    const otherId = participantIds.find(p => p !== pid);
+    if (!otherId) continue;
+
+    // Check trust
+    const rel = db.select().from(relationships).where(
+      and(
+        eq(relationships.agent_a, Math.min(pid, otherId)),
+        eq(relationships.agent_b, Math.max(pid, otherId)),
+      )
+    ).get();
+    if (!rel) continue;
+    const trust = pid < otherId ? rel.trust_ab : rel.trust_ba;
+    if (trust <= 50) continue;
+
+    // Find a hidden sin to reveal
+    const hiddenSin = db.select().from(facts)
+      .where(and(eq(facts.subject_id, pid), eq(facts.is_active, true))).all()
+      .find(f => ['theft', 'affair', 'blackmail'].includes(f.type) && (f.known_by as number[]).length <= 2);
+    if (!hiddenSin) continue;
+
+    // Share the sin with the friend
+    const knownBy = [...new Set([...(hiddenSin.known_by as number[]), otherId])];
+    db.update(facts).set({ known_by: knownBy }).where(eq(facts.id, hiddenSin.id)).run();
+    createFact('confession', pid, otherId, 2, [pid, otherId], 'confided');
+
+    // Friend reaction based on personality
+    const otherPersonality = participants.find(p => p.id === otherId)?.personality as PersonalityProfile | null;
+    let friendshipDelta = 0;
+    let trustDelta = 5;
+    if (otherPersonality) {
+      if (otherPersonality.morality > 60) {
+        friendshipDelta = -5;
+        trustDelta = 8;
+      } else if (otherPersonality.warmth > 60) {
+        friendshipDelta = 2;
+      }
+    }
+
+    const [ordA, ordB] = [Math.min(pid, otherId), Math.max(pid, otherId)];
+    db.insert(relationshipEvents).values({
+      agent_a: ordA, agent_b: ordB,
+      event_type: 'confession',
+      description: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}`,
+      friendship_delta_ab: friendshipDelta,
+      friendship_delta_ba: friendshipDelta,
+      romance_delta_ab: 0, romance_delta_ba: 0,
+      trust_delta_ab: pid === ordA ? trustDelta : 0,
+      trust_delta_ba: pid === ordA ? 0 : trustDelta,
+      sentiment: 0.3, processed: false, timestamp: now,
+    }).run();
+
+    // Confessor mood boost + stress reduction
+    const confessorNeeds = db.select().from(needs).where(eq(needs.agent_id, pid)).get();
+    if (confessorNeeds) {
+      db.update(needs).set({
+        mood: Math.min(100, confessorNeeds.mood + 15),
+        stress: Math.max(0, confessorNeeds.stress - 10),
+      }).where(eq(needs.agent_id, pid)).run();
+    }
+
+    db.insert(activityLog).values({
+      type: 'state_change',
+      message: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}.`,
+      agent_ids: [pid, otherId],
+      timestamp: time.totalTicks,
+      real_timestamp: now,
+    }).run();
+  }
+
+  // Reconciliation outcome: loyal agent forgives transgressor who has cleaned up
+  if (overallSentiment > 0.2) {
+    for (const pid of participantIds) {
+      const pidPersonality = participants.find(p => p.id === pid)?.personality as PersonalityProfile | null;
+      if (!pidPersonality || pidPersonality.loyalty <= 60) continue;
+
+      const otherId = participantIds.find(p => p !== pid);
+      if (!otherId) continue;
+
+      const rel = db.select().from(relationships).where(
+        and(
+          eq(relationships.agent_a, Math.min(pid, otherId)),
+          eq(relationships.agent_b, Math.max(pid, otherId)),
+        )
+      ).get();
+      if (!rel) continue;
+
+      const tags = rel.tags as string[];
+      if (!tags.includes('grudge')) continue;
+
+      const friendship = pid < otherId ? rel.friendship_ab : rel.friendship_ba;
+      if (friendship < 30 || friendship > 50) continue;
+
+      if (getNegativeFactCount(otherId) >= 3) continue;
+
+      // Remove grudge, boost friendship
+      const newTags = tags.filter(t => t !== 'grudge');
+      db.update(relationships).set({ tags: newTags }).where(eq(relationships.id, rel.id)).run();
+
+      db.insert(relationshipEvents).values({
+        agent_a: rel.agent_a, agent_b: rel.agent_b,
+        event_type: 'reconciliation',
+        description: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} reconciled`,
+        friendship_delta_ab: 15, friendship_delta_ba: 15,
+        romance_delta_ab: 0, romance_delta_ba: 0,
+        trust_delta_ab: 5, trust_delta_ba: 5,
+        sentiment: 0.7, processed: false, timestamp: now,
+      }).run();
+
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} have reconciled.`,
+        agent_ids: [pid, otherId],
+        timestamp: time.totalTicks,
+        real_timestamp: now,
+      }).run();
+    }
+  }
+
+  // Alcoholism recovery: positive convo with warm friend while sober
+  for (const pid of participantIds) {
+    const pidStates = getAgentStates(pid);
+    if (!pidStates.includes('alcoholic')) continue;
+    if (pidStates.includes('drunk') || pidStates.includes('hungover')) continue;
+    if (overallSentiment <= 0.3) continue;
+
+    const otherId = participantIds.find(p => p !== pid);
+    if (!otherId) continue;
+
+    const otherPersonality2 = participants.find(p => p.id === otherId)?.personality as PersonalityProfile | null;
+    if (!otherPersonality2 || otherPersonality2.warmth <= 60) continue;
+
+    const rel = db.select().from(relationships).where(
+      and(
+        eq(relationships.agent_a, Math.min(pid, otherId)),
+        eq(relationships.agent_b, Math.max(pid, otherId)),
+      )
+    ).get();
+    if (!rel) continue;
+    const friendship = pid < otherId ? rel.friendship_ab : rel.friendship_ba;
+    if (friendship <= 40) continue;
+
+    const alcState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, pid), eq(agentStates.type, 'alcoholic'))).get();
+    if (alcState) {
+      const meta = { ...((alcState.metadata as any) ?? {}), recoveryTriggered: true };
+      db.update(agentStates).set({ metadata: meta }).where(eq(agentStates.id, alcState.id)).run();
+    }
   }
 
   // Mark conversation as ended
