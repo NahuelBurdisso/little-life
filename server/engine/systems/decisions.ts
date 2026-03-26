@@ -463,7 +463,7 @@ function scoreFreeTimeActions(
   const tavern = nearestLocation(agent.position, allLocations, 'tavern');
   if (tavern) {
     let tavernScore = (100 - agentNeeds.fun) * 0.8 + (100 - agentNeeds.social) * 0.6;
-    if (evening) tavernScore += 15;
+    if (evening) tavernScore += 30;
     // Hungover → avoid tavern
     if (agentStateTypes.includes('hungover')) {
       tavernScore = 0;
@@ -818,6 +818,100 @@ export function tick(world: WorldRow): void {
         })
         .run();
     }
+  }
+
+  // --- Tavern/Location Encounter: queue conversations between co-located agents ---
+  // Groups agents by location, then queues conversations for pairs that aren't already talking
+  const locationGroups = new Map<number, typeof activeAgents>();
+  const socialLocTypes = new Set(['tavern', 'town_square', 'park']);
+  for (const agent of activeAgents) {
+    if (agent.current_location == null) continue;
+    const action = agent.current_action as any;
+    if (action?.type === 'talking' || action?.type === 'sleeping' || action?.type === 'working') continue;
+
+    const group = locationGroups.get(agent.current_location) ?? [];
+    group.push(agent);
+    locationGroups.set(agent.current_location, group);
+  }
+
+  for (const [locId, group] of locationGroups) {
+    if (group.length < 2) continue;
+    const loc = allLocations.find(l => l.id === locId);
+    if (!loc || !socialLocTypes.has(loc.type)) continue;
+
+    // Pick a random pair from the group (max 1 new conversation per location per tick)
+    if (Math.random() > 0.15) continue; // 15% chance per tick per social location
+    const shuffled = group.sort(() => Math.random() - 0.5);
+    const a = shuffled[0];
+    const b = shuffled[1];
+
+    // Check if this pair already has a queued or active conversation
+    const existingQueue = db.select().from(conversationQueue).all()
+      .filter(q => {
+        const p = q.participants as number[];
+        return p.includes(a.id) && p.includes(b.id);
+      });
+    if (existingQueue.length > 0) continue;
+
+    const existingActive = db.select().from(conversations)
+      .where(eq(conversations.status, 'active')).all()
+      .filter(c => {
+        const p = c.participants as number[];
+        return p.includes(a.id) && p.includes(b.id);
+      });
+    if (existingActive.length > 0) continue;
+
+    // Cooldown check
+    const cooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
+    const lastConvo = db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
+      .from(conversations)
+      .where(eq(conversations.status, 'ended'))
+      .all()
+      .filter(c => {
+        const p = c.participants as number[];
+        return p.includes(a.id) && p.includes(b.id);
+      })
+      .sort((x, y) => (y.ended_at ?? 0) - (x.ended_at ?? 0))[0];
+    if (lastConvo?.ended_at && Date.now() - lastConvo.ended_at < cooldownMs) continue;
+
+    const rel = getRelationshipValues(allRelationships, a.id, b.id);
+    const friendship = rel?.friendship ?? 0;
+    const romance = rel?.romance ?? 0;
+
+    // Use the same tier logic as regular socializing
+    const aStates = getAgentStates(a.id);
+    const bStates = getAgentStates(b.id);
+    const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'depressed', 'drunk', 'infatuated'] as const;
+    const hasDrama = dramaticStates.some(s => (aStates as string[]).includes(s) || (bStates as string[]).includes(s));
+
+    const aNeeds = db.select().from(needs).where(eq(needs.agent_id, a.id)).get();
+    const aMood = aNeeds?.mood ?? 50;
+
+    let tier: string;
+    if (hasDrama || friendship < -20) {
+      tier = 'llm_deep';
+    } else if (romance > 30 || aMood < 25 || aMood > 85) {
+      tier = 'llm_standard';
+    } else {
+      tier = 'template';
+    }
+
+    const aPersonality = a.personality as PersonalityProfile | null;
+    let topic: string | null = null;
+    if (aPersonality) {
+      const others = activeAgents.filter(x => x.id !== a.id && x.id !== b.id);
+      topic = selectPersonalityTopic(aPersonality, aMood, friendship, romance, others.map(x => ({ name: x.name })));
+    }
+
+    db.insert(conversationQueue).values({
+      participants: [a.id, b.id],
+      tier,
+      priority: 50,
+      trigger_reason: `location_encounter:${loc.type}`,
+      topic,
+      queued_at: Date.now(),
+      max_wait: 10000,
+    }).run();
   }
 
   // --- Constable Arrest Mechanic ---
