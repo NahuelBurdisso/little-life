@@ -10,6 +10,7 @@ import { conversationsTick } from './systems/conversations';
 import { tick as decisionsTick } from './systems/decisions';
 import { tick as movementTick } from './systems/movement';
 import { eventsTick } from './systems/events';
+import { gossipTick } from './systems/gossipEngine';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
 import crypto from 'crypto';
@@ -105,6 +106,7 @@ const SYSTEM_PHASES: Array<{
   { name: 'decisions',     run: (w) => decisionsTick(w) },
   { name: 'movement',      run: (w) => movementTick(w) },
   { name: 'events',        run: () => eventsTick() },
+  { name: 'gossip',        run: (w) => gossipTick(w.time.totalTicks) },
 ];
 
 // ─── Main gameTick ────────────────────────────────────────────────────────────
