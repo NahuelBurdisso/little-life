@@ -14,6 +14,51 @@ import type { PersonalityProfile } from "../../../server/lib/personality";
 
 type TabId = "profile" | "social" | "mind";
 
+const FACT_COLORS: Record<string, string> = {
+  crush: 'text-pink-400', heartbreak: 'text-rose-400', affair: 'text-red-400',
+  theft: 'text-orange-400', blackmail: 'text-red-500', grudge: 'text-red-600',
+  sickness: 'text-yellow-300', financial: 'text-yellow-400', alcoholic: 'text-amber-400',
+  work_issue: 'text-orange-300', drunk_incident: 'text-amber-300', rumor: 'text-purple-400',
+  confession: 'text-blue-400', seduction: 'text-pink-300', reputation: 'text-red-300',
+  secret_told: 'text-indigo-400', gambling_loss: 'text-yellow-500',
+};
+
+function KnownFacts({ agentId }: { agentId: number }) {
+  const { data: knownFacts } = trpc.facts.getKnownBy.useQuery({ agentId });
+
+  if (!knownFacts || knownFacts.length === 0) {
+    return (
+      <div className="px-3 py-2 border-b border-gray-700">
+        <div className="text-xs text-gray-500 font-medium mb-1">Known Facts</div>
+        <p className="text-[11px] text-gray-600 italic">Doesn't know any gossip yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-3 py-2 border-b border-gray-700">
+      <div className="text-xs text-gray-500 font-medium mb-1.5">
+        Known Facts ({knownFacts.length})
+      </div>
+      <div className="space-y-1">
+        {knownFacts.slice(0, 15).map((fact: any) => (
+          <div key={fact.id} className="text-[11px] flex items-start gap-1.5">
+            <span className={`capitalize font-medium shrink-0 ${FACT_COLORS[fact.type] ?? 'text-gray-400'}`}>
+              {fact.type.replace(/_/g, ' ')}:
+            </span>
+            <span className="text-gray-400">{fact.content}</span>
+          </div>
+        ))}
+        {knownFacts.length > 15 && (
+          <div className="text-[10px] text-gray-600 italic">
+            ...and {knownFacts.length - 15} more
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface AgentPanelProps {
   agentId: string;
   onClose: () => void;
@@ -196,6 +241,14 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
               {describeAction(agent.current_action)}
             </div>
 
+            {/* Active states */}
+            <div className="px-3 py-2 border-b border-gray-700">
+              <div className="text-xs text-gray-500 font-medium mb-1.5">
+                Active States
+              </div>
+              <ActiveStates states={agentStates ?? []} />
+            </div>
+
             {/* Traits */}
             {agent.traits && agent.traits.length > 0 && (
               <div className="px-3 py-2 border-b border-gray-700">
@@ -212,6 +265,14 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
                 </div>
               </div>
             )}
+
+            {/* Personality axes */}
+            <div className="px-3 py-2 border-b border-gray-700">
+              <div className="text-xs text-gray-500 font-medium mb-2">
+                Personality
+              </div>
+              <PersonalityAxes personality={agent.personality} />
+            </div>
           </div>
         )}
 
@@ -265,28 +326,42 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
         {/* ── Mind Tab ── */}
         {activeTab === "mind" && (
           <div>
+            {/* Bio */}
+            {agent.bio && (
+              <div className="px-3 py-2 border-b border-gray-700">
+                <div className="text-xs text-gray-500 font-medium mb-1">Bio</div>
+                <p className="text-[11px] text-gray-300 leading-relaxed">{agent.bio}</p>
+              </div>
+            )}
+
+            {/* Schedule */}
+            {agent.schedule && (
+              <div className="px-3 py-2 border-b border-gray-700">
+                <div className="text-xs text-gray-500 font-medium mb-1.5">Daily Schedule</div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                  <span className="text-gray-400">Wake</span>
+                  <span className="text-gray-300">{(agent.schedule as any).wakeTime}:00</span>
+                  <span className="text-gray-400">Work</span>
+                  <span className="text-gray-300">
+                    {agent.workplace ? `${(agent.schedule as any).workStart}:00 - ${(agent.schedule as any).workEnd}:00` : 'No job'}
+                  </span>
+                  <span className="text-gray-400">Lunch</span>
+                  <span className="text-gray-300">{(agent.schedule as any).lunchTime}:00</span>
+                  <span className="text-gray-400">Sleep</span>
+                  <span className="text-gray-300">{(agent.schedule as any).sleepTime}:00</span>
+                </div>
+              </div>
+            )}
+
+            {/* Known facts / gossip */}
+            <KnownFacts agentId={Number(agentId)} />
+
             {/* Memories */}
             <MemoryLog
               memories={memories ?? []}
               worldTick={worldTick}
               tickSpeed={tickSpeed}
             />
-
-            {/* Active states */}
-            <div className="px-3 py-2 border-b border-gray-700">
-              <div className="text-xs text-gray-500 font-medium mb-1.5">
-                Active States
-              </div>
-              <ActiveStates states={agentStates ?? []} />
-            </div>
-
-            {/* Personality axes */}
-            <div className="px-3 py-2 border-b border-gray-700">
-              <div className="text-xs text-gray-500 font-medium mb-2">
-                Personality
-              </div>
-              <PersonalityAxes personality={agent.personality} />
-            </div>
           </div>
         )}
       </div>
