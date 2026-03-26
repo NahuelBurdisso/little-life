@@ -112,7 +112,7 @@ function normalizePair(
 // --- Main Tick ---
 
 export function tick(
-  world: { tick_speed: number },
+  world: { tick_speed: number; time?: { totalTicks?: number } },
 ): void {
   const gameHoursElapsed = world.tick_speed / 60;
   const now = Date.now();
@@ -354,6 +354,13 @@ export function tick(
   }
 
   // --- 3. Relationship Decay ---
+  // Only run decay once per game hour (every 60 ticks) to avoid O(n²) work every tick.
+  const totalTicks = (world.time?.totalTicks ?? 0);
+  if (totalTicks % 60 !== 0) {
+    if (dirty) emitter.markDirty('agents.all');
+    return;
+  }
+
   const gracePeriodMs =
     CONFIG.RELATIONSHIPS.DECAY_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
 

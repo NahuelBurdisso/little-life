@@ -295,7 +295,13 @@ function evaluateTriggers(
     const badConvos = db
       .select()
       .from(conversations)
-      .where(and(lt(conversations.sentiment, -0.5), gt(conversations.started_at, sinceWindow)))
+      .where(
+        and(
+          eq(conversations.status, 'ended'),
+          lt(conversations.sentiment, -0.5),
+          gt(conversations.started_at, sinceWindow),
+        ),
+      )
       .all();
 
     for (const conv of badConvos) {
@@ -361,12 +367,20 @@ function evaluateTriggers(
   if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 80) {
     const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 60 * msPerTick;
-    const positiveConvo = db
+    const positiveConvoRows = db
       .select()
       .from(conversations)
-      .where(and(gt(conversations.sentiment, 0.8), gt(conversations.started_at, sinceWindow)))
-      .all()
-      .find((c) => (c.participants as number[]).includes(agent.id));
+      .where(
+        and(
+          eq(conversations.status, 'ended'),
+          gt(conversations.sentiment, 0.8),
+          gt(conversations.started_at, sinceWindow),
+        ),
+      )
+      .all();
+    const positiveConvo = positiveConvoRows.find((c) =>
+      (c.participants as number[]).includes(agent.id),
+    );
 
     if (positiveConvo) {
       const severity = 0.5 + Math.random() * 0.5;
@@ -497,12 +511,20 @@ function evaluateTriggers(
       const socialDuration = currentTick - lowSocialSince.get(agent.id)!;
       if (socialDuration >= 60) {
         const sinceWindow = Date.now() - 1440000; // last 24 minutes real-time (1440 ticks × 1000ms)
-        const positiveConvo = db
+        const positiveConvoRows = db
           .select()
           .from(conversations)
-          .where(and(gt(conversations.sentiment, 0), gt(conversations.started_at, sinceWindow)))
-          .all()
-          .find((c) => (c.participants as number[]).includes(agent.id));
+          .where(
+            and(
+              eq(conversations.status, 'ended'),
+              gt(conversations.sentiment, 0),
+              gt(conversations.started_at, sinceWindow),
+            ),
+          )
+          .all();
+        const positiveConvo = positiveConvoRows.find((c) =>
+          (c.participants as number[]).includes(agent.id),
+        );
 
         if (!positiveConvo) {
           const severity = clamp((20 - agentNeeds.social) / 20, 0.3, 1.0);

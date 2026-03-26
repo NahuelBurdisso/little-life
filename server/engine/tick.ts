@@ -11,6 +11,7 @@ import { tick as decisionsTick } from './systems/decisions';
 import { tick as movementTick } from './systems/movement';
 import { eventsTick } from './systems/events';
 import { CONFIG } from '../lib/constants';
+import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
 import crypto from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -180,12 +181,22 @@ async function gameTick(): Promise<void> {
         .run();
     }
 
+    // After the states phase completes, build the tick-level cache so that all
+    // subsequent phases (economy, relationships, conversations, decisions,
+    // movement, events) avoid per-agent DB round-trips for getAgentStates().
+    if (phase.name === 'states') {
+      cacheAllAgentStates();
+    }
+
     // Update current_tick_phase after each successful phase
     db.update(worldState)
       .set({ current_tick_phase: phaseNumber })
       .where(eq(worldState.id, world.id))
       .run();
   }
+
+  // Discard the tick-level cache before returning so stale data never leaks.
+  clearAgentStatesCache();
 
   // 8. Finalize tick
   db.update(worldState)

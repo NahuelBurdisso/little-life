@@ -5,7 +5,7 @@ import { emitter } from '../engine/emitter';
 
 class TaskRunner {
   private conversationSlots = 0;
-  private readonly maxConcurrentConversations = 2;
+  private readonly maxConcurrentConversations = 4;
   private pendingTasks = new Set<Promise<void>>();
 
   private track(task: Promise<void>) {

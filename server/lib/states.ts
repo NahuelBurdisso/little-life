@@ -123,9 +123,34 @@ export const STATE_DEFINITIONS: Record<StateType, StateDefinition> = {
   },
 };
 
+// ─── Tick-level agentStates cache ─────────────────────────────────────────────
+
+let agentStatesCache: Map<number, string[]> | null = null;
+
+export function cacheAllAgentStates(): void {
+  const allStates = db
+    .select({ agent_id: agentStates.agent_id, type: agentStates.type })
+    .from(agentStates)
+    .all();
+  agentStatesCache = new Map();
+  for (const s of allStates) {
+    const list = agentStatesCache.get(s.agent_id) ?? [];
+    list.push(s.type);
+    agentStatesCache.set(s.agent_id, list);
+  }
+}
+
+export function clearAgentStatesCache(): void {
+  agentStatesCache = null;
+}
+
 // ─── Helper Accessors ─────────────────────────────────────────────────────────
 
 export function getAgentStates(agentId: number): StateType[] {
+  if (agentStatesCache) {
+    return (agentStatesCache.get(agentId) ?? []) as StateType[];
+  }
+  // Fallback to DB query if cache not initialized
   const states = db
     .select({ type: agentStates.type })
     .from(agentStates)

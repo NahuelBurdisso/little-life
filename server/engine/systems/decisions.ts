@@ -296,8 +296,45 @@ function scoreFreeTimeActions(
     targetLocationId: foodLoc?.id ?? agent.home,
   });
 
+  // Pre-filter social candidates to avoid scoring all 100 agents per agent.
+  // Include: same-location agents, agents with existing relationship, + a few strangers for curious agents.
+  const relationshipMap = new Map<string, RelRow>();
+  for (const r of allRelationships) {
+    const key = `${Math.min(r.agent_a, r.agent_b)}_${Math.max(r.agent_a, r.agent_b)}`;
+    relationshipMap.set(key, r);
+  }
+
+  const socialCandidates = otherAgents.filter((other) => {
+    if (other.id === agent.id || !other.is_active) return false;
+    // Always include co-located agents
+    if (
+      other.current_location !== null &&
+      other.current_location === agent.current_location
+    ) return true;
+    // Include agents with a meaningful existing relationship
+    const key = `${Math.min(agent.id, other.id)}_${Math.max(agent.id, other.id)}`;
+    const rel = relationshipMap.get(key);
+    if (
+      rel &&
+      (rel.friendship_ab > 10 ||
+        rel.friendship_ba > 10 ||
+        rel.romance_ab > 5 ||
+        rel.romance_ba > 5)
+    ) return true;
+    return false;
+  });
+
+  // Curious agents get a small random sample of strangers too
+  if (personality && personality.curiosity > 60) {
+    const strangers = otherAgents.filter(
+      (a) => a.id !== agent.id && a.is_active && !socialCandidates.includes(a),
+    );
+    const sample = strangers.sort(() => Math.random() - 0.5).slice(0, 3);
+    socialCandidates.push(...sample);
+  }
+
   // Socialize per agent
-  for (const other of otherAgents) {
+  for (const other of socialCandidates) {
     if (other.id === agent.id || !other.is_active) continue;
     const rel = getRelationshipValues(allRelationships, agent.id, other.id);
     const friendship = rel?.friendship ?? 0;
