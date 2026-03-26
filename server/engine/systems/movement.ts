@@ -1,9 +1,9 @@
 import { db } from '../../db';
-import { agents, locations } from '../../db/schema';
+import { agents, locations, activityLog } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
-import { computeAStarPath } from '../../lib/pathfinding';
+import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 
@@ -18,6 +18,10 @@ type WorldRow = {
   map_width: number;
   map_height: number;
 };
+
+// Stuck detection: track positions for walking agents
+const stuckTracker = new Map<number, { x: number; y: number; ticks: number }>();
+const lastRecalcTick = new Map<number, number>();
 
 // --- Helpers ---
 
@@ -100,23 +104,41 @@ function handleArrival(
   // Interior movement doesn't need A* — the agent is already at the entry point.
   const zoneX = (nextAction as any)?.zoneX as number | undefined;
   const zoneY = (nextAction as any)?.zoneY as number | undefined;
-  const zonePosition =
-    zoneX !== undefined && zoneY !== undefined
-      ? { x: zoneX, y: zoneY }
-      : undefined;
-
-  db.update(agents)
-    .set({
-      current_destination: null,
-      current_path: null,
-      current_action: nextAction ?? { type: 'idle' },
-      action_started: world.time.totalTicks,
-      action_duration: minDuration > 0 ? minDuration : null,
-      action_queue: queue,
-      ...(zonePosition ? { position: zonePosition } : {}),
-    })
-    .where(eq(agents.id, agent.id))
-    .run();
+  if (zoneX !== undefined && zoneY !== undefined) {
+    // Smooth interior transition: lerp over 5 ticks instead of instant teleport
+    const transitionAction = {
+      ...(nextAction ?? { type: 'idle' }),
+      _transitioning: true,
+      _transitionTicks: 0,
+      _fromX: agent.position.x,
+      _fromY: agent.position.y,
+      _toX: zoneX,
+      _toY: zoneY,
+    };
+    db.update(agents)
+      .set({
+        current_destination: null,
+        current_path: null,
+        current_action: transitionAction,
+        action_started: world.time.totalTicks,
+        action_duration: minDuration > 0 ? minDuration + 5 : null, // add 5 ticks for transition
+        action_queue: queue,
+      })
+      .where(eq(agents.id, agent.id))
+      .run();
+  } else {
+    db.update(agents)
+      .set({
+        current_destination: null,
+        current_path: null,
+        current_action: nextAction ?? { type: 'idle' },
+        action_started: world.time.totalTicks,
+        action_duration: minDuration > 0 ? minDuration : null,
+        action_queue: queue,
+      })
+      .where(eq(agents.id, agent.id))
+      .run();
+  }
 }
 
 // --- Main Tick ---
@@ -133,8 +155,65 @@ export function tick(world: WorldRow): void {
   let dirty = false;
 
   for (const agent of activeAgents) {
+    // Handle smooth interior transitions
+    const action = agent.current_action as any;
+    if (action?._transitioning) {
+      const ticks = (action._transitionTicks ?? 0) + 1;
+      const t = Math.min(1, ticks / 5);
+      const newX = action._fromX + (action._toX - action._fromX) * t;
+      const newY = action._fromY + (action._toY - action._fromY) * t;
+
+      if (t >= 1) {
+        // Transition complete — remove transition metadata
+        const { _transitioning, _transitionTicks, _fromX, _fromY, _toX, _toY, ...cleanAction } = action;
+        db.update(agents).set({
+          position: { x: action._toX, y: action._toY },
+          current_action: cleanAction,
+        }).where(eq(agents.id, agent.id)).run();
+      } else {
+        db.update(agents).set({
+          position: { x: newX, y: newY },
+          current_action: { ...action, _transitionTicks: ticks },
+        }).where(eq(agents.id, agent.id)).run();
+      }
+      dirty = true;
+      continue;
+    }
+
     if (agent.current_destination === null) continue;
     if ((agent.current_action as any)?.type !== 'walking') continue;
+
+    // Stuck detection: if agent hasn't moved for 30 ticks, force idle
+    const prevPos = stuckTracker.get(agent.id);
+    if (prevPos) {
+      if (Math.abs(agent.position.x - prevPos.x) < 4 && Math.abs(agent.position.y - prevPos.y) < 4) {
+        prevPos.ticks++;
+        if (prevPos.ticks >= 30) {
+          db.update(agents).set({
+            current_action: { type: 'idle' },
+            current_destination: null,
+            action_duration: 10,
+            action_started: world.time.totalTicks,
+            current_path: null,
+          }).where(eq(agents.id, agent.id)).run();
+          stuckTracker.delete(agent.id);
+
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} got lost and gave up walking.`,
+            agent_ids: [agent.id],
+            timestamp: world.time.totalTicks,
+            real_timestamp: Date.now(),
+          }).run();
+          dirty = true;
+          continue;
+        }
+      } else {
+        stuckTracker.set(agent.id, { x: agent.position.x, y: agent.position.y, ticks: 0 });
+      }
+    } else {
+      stuckTracker.set(agent.id, { x: agent.position.x, y: agent.position.y, ticks: 0 });
+    }
 
     const dest = agent.current_destination;
     const destPoint = { x: dest.x, y: dest.y };
@@ -227,6 +306,27 @@ export function tick(world: WorldRow): void {
           .set({ current_path: path })
           .where(eq(agents.id, agent.id))
           .run();
+      }
+
+      // Path validity: check if next tile is blocked, recalculate if so
+      if (path.length > 0) {
+        const [nextWpX, nextWpY] = path[0];
+        const [tileX, tileY] = pixelToTile(nextWpX, nextWpY, CONFIG.MOVEMENT.TILE_SIZE);
+        const tileIdx = tileY * world.map_width + tileX;
+        if (tileX >= 0 && tileX < world.map_width && tileY >= 0 && tileY < world.map_height &&
+            world.collision_grid[tileIdx] === '1') {
+          const lastRecalc = lastRecalcTick.get(agent.id) ?? 0;
+          if (world.time.totalTicks - lastRecalc > 10) {
+            path = computeAStarPath(
+              agent.position, destPoint,
+              world.collision_grid, world.map_width, world.map_height,
+              CONFIG.MOVEMENT.TILE_SIZE,
+            );
+            if (!path || path.length === 0) path = [[destPoint.x, destPoint.y]];
+            db.update(agents).set({ current_path: path }).where(eq(agents.id, agent.id)).run();
+            lastRecalcTick.set(agent.id, world.time.totalTicks);
+          }
+        }
       }
 
       const result = advanceAlongPath(agent.position, path, moveDistance);

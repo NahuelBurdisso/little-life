@@ -19,7 +19,17 @@ export const agentsRouter = router({
         .from(needs)
         .where(eq(needs.agent_id, agent.id))
         .get();
-      return { ...agent, needs: agentNeeds ?? null };
+      const activeStates = db
+        .select({
+          type: agentStates.type,
+          severity: agentStates.severity,
+          target_agent_id: agentStates.target_agent_id,
+          metadata: agentStates.metadata,
+        })
+        .from(agentStates)
+        .where(eq(agentStates.agent_id, agent.id))
+        .all();
+      return { ...agent, needs: agentNeeds ?? null, activeStates };
     });
   }),
 

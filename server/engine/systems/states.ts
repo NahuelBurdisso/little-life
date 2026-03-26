@@ -105,6 +105,14 @@ export function statesTick() {
             timestamp: currentTick,
             real_timestamp: Date.now(),
           }).run();
+        } else {
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} is no longer ${state.type}.`,
+            agent_ids: [agent.id],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
+          }).run();
         }
         collectExpiryCascades(state, agent, pendingCascades);
         db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
@@ -237,6 +245,13 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} became drunk.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
         activeTypes.add('drunk');
         // Track for alcoholism escalation
         const history = drunkHistory.get(agent.id) ?? [];
@@ -271,6 +286,13 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} became sick.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
         activeTypes.add('sick');
         createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
       }
@@ -301,6 +323,13 @@ function evaluateTriggers(
             source: `relapse:drunk_count_${recentDrunkCount}`,
             metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
           }).run();
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} became alcoholic.`,
+            agent_ids: [agent.id],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
+          }).run();
           activeTypes.add('alcoholic');
           createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
         }
@@ -315,6 +344,13 @@ function evaluateTriggers(
           duration: 999999,
           source: `trigger:drunk_count_${recentDrunkCount}`,
           metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
+        }).run();
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} became alcoholic.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
         }).run();
         activeTypes.add('alcoholic');
         createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
@@ -344,6 +380,13 @@ function evaluateTriggers(
             duration: 999999,
             source: 'trigger:broke_3_days',
             metadata: { beggingFailCount: 0, desperationUnlocked: false },
+          }).run();
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} became in_debt.`,
+            agent_ids: [agent.id],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
           }).run();
           activeTypes.add('in_debt');
         }
@@ -392,6 +435,13 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} became heartbroken.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
         activeTypes.add('heartbroken');
         createFact('heartbreak', agent.id, targetId, 2, [agent.id], 'witnessed');
         break; // one heartbreak at a time
@@ -441,6 +491,13 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${agent.name} became angry.`,
+        agent_ids: [agent.id],
+        timestamp: currentTick,
+        real_timestamp: Date.now(),
+      }).run();
       activeTypes.add('angry');
       break;
     }
@@ -470,6 +527,13 @@ function evaluateTriggers(
           metadata: { lowNeedsCount },
         })
         .run();
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${agent.name} became stressed.`,
+        agent_ids: [agent.id],
+        timestamp: currentTick,
+        real_timestamp: Date.now(),
+      }).run();
       activeTypes.add('stressed');
     }
   }
@@ -507,6 +571,13 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${agent.name} became euphoric.`,
+        agent_ids: [agent.id],
+        timestamp: currentTick,
+        real_timestamp: Date.now(),
+      }).run();
       activeTypes.add('euphoric');
     }
   }
@@ -547,6 +618,13 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} became grieving.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
         activeTypes.add('grieving');
         break;
       }
@@ -579,6 +657,13 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} became infatuated.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
         activeTypes.add('infatuated');
         createFact('crush', agent.id, targetId, 2, [agent.id], 'witnessed');
 
@@ -638,6 +723,13 @@ function evaluateTriggers(
             source: 'trigger:rival_romance',
             metadata: { loveInterestId, rivalId },
           }).run();
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} became jealous.`,
+            agent_ids: [agent.id],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
+          }).run();
           activeTypes.add('jealous');
           break;
         }
@@ -682,6 +774,13 @@ function evaluateTriggers(
               metadata: null,
             })
             .run();
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} became lonely.`,
+            agent_ids: [agent.id],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
+          }).run();
           activeTypes.add('lonely');
         }
       }
@@ -750,6 +849,13 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${agent.name} became depressed.`,
+        agent_ids: [agent.id],
+        timestamp: currentTick,
+        real_timestamp: Date.now(),
+      }).run();
       activeTypes.add('depressed');
     }
   }
@@ -779,6 +885,13 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${agent.name} became confident.`,
+        agent_ids: [agent.id],
+        timestamp: currentTick,
+        real_timestamp: Date.now(),
+      }).run();
       activeTypes.add('confident');
     }
   }
@@ -962,6 +1075,14 @@ function checkConditionalExits(
           timestamp: currentTick,
           real_timestamp: Date.now(),
         }).run();
+      } else {
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} is no longer ${state.type}.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
       }
       db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
     }
@@ -1086,6 +1207,17 @@ function applyCascades(
         metadata: null,
       })
       .run();
+
+    {
+      const agentName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, cascade.agentId)).get()?.name ?? `Agent#${cascade.agentId}`;
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${agentName} became ${cascade.stateType}.`,
+        agent_ids: [cascade.agentId],
+        timestamp: currentTick,
+        real_timestamp: Date.now(),
+      }).run();
+    }
 
     // Collect any expiry cascades from the newly inserted state (only for fixed-duration states)
     // At depth 1 we don't generate further cascades — we only go 2 deep

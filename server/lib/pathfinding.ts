@@ -28,15 +28,21 @@ interface AStarNode {
   parent: AStarNode | null;
 }
 
-function manhattan(ax: number, ay: number, bx: number, by: number): number {
-  return Math.abs(ax - bx) + Math.abs(ay - by);
+function heuristic(ax: number, ay: number, bx: number, by: number): number {
+  const dx = Math.abs(ax - bx);
+  const dy = Math.abs(ay - by);
+  return Math.max(dx, dy) + (1.414 - 1) * Math.min(dx, dy);
 }
 
-const DIRECTIONS = [
-  [0, -1], // up
-  [0, 1],  // down
-  [-1, 0], // left
-  [1, 0],  // right
+const DIRECTIONS: [number, number, number][] = [
+  [0, -1, 1],      // up
+  [0, 1, 1],       // down
+  [-1, 0, 1],      // left
+  [1, 0, 1],       // right
+  [-1, -1, 1.414], // up-left
+  [1, -1, 1.414],  // up-right
+  [-1, 1, 1.414],  // down-left
+  [1, 1, 1.414],   // down-right
 ];
 
 export function computeAStarPath(
@@ -84,8 +90,8 @@ export function computeAStarPath(
     x: startX,
     y: startY,
     g: 0,
-    h: manhattan(startX, startY, endX, endY),
-    f: manhattan(startX, startY, endX, endY),
+    h: heuristic(startX, startY, endX, endY),
+    f: heuristic(startX, startY, endX, endY),
     parent: null,
   };
   openSet.push(startNode);
@@ -118,23 +124,30 @@ export function computeAStarPath(
     if (closedSet.has(ck)) continue;
     closedSet.add(ck);
 
-    for (const [dx, dy] of DIRECTIONS) {
+    for (const [dx, dy, cost] of DIRECTIONS) {
       const nx = current.x + dx;
       const ny = current.y + dy;
 
       if (isBlocked(nx, ny)) continue;
 
+      // Diagonal constraint: both adjacent orthogonal tiles must be free
+      const isDiagonal = dx !== 0 && dy !== 0;
+      if (isDiagonal) {
+        if (isBlocked(current.x + dx, current.y)) continue;
+        if (isBlocked(current.x, current.y + dy)) continue;
+      }
+
       const nk = key(nx, ny);
       if (closedSet.has(nk)) continue;
 
-      const tentativeG = current.g + 1;
+      const tentativeG = current.g + cost;
       const existingG = bestG.get(nk);
 
       if (existingG !== undefined && tentativeG >= existingG) continue;
 
       bestG.set(nk, tentativeG);
 
-      const h = manhattan(nx, ny, endX, endY);
+      const h = heuristic(nx, ny, endX, endY);
       openSet.push({
         x: nx,
         y: ny,

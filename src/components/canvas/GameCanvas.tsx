@@ -47,6 +47,8 @@ export function GameCanvas({
   const bubbleSystemRef = useRef<BubbleSystem | null>(null);
   const interactionRef = useRef<InteractionLayer | null>(null);
   const relationshipLinesRef = useRef<Graphics | null>(null);
+  const tensionLinesRef = useRef<Graphics | null>(null);
+  const pathTrailRef = useRef<Graphics | null>(null);
 
   // Layer containers
   const worldContainerRef = useRef<Container | null>(null);
@@ -98,6 +100,18 @@ export function GameCanvas({
     if (currentLocations && currentLocations.length > 0) {
       buildingRenderer.init(currentLocations);
     }
+
+    // Tension lines (always-on faint relationship indicators) — below sprites
+    const tensionLines = new Graphics();
+    tensionLines.eventMode = 'none';
+    worldContainer.addChild(tensionLines);
+    tensionLinesRef.current = tensionLines;
+
+    // Path trail (dotted line showing selected agent's A* path) — below sprites
+    const pathTrail = new Graphics();
+    pathTrail.eventMode = 'none';
+    worldContainer.addChild(pathTrail);
+    pathTrailRef.current = pathTrail;
 
     // Sprite pool (agent circles) — inside world so it moves with camera
     const spritePool = new SpritePool(worldContainer);
@@ -151,6 +165,8 @@ export function GameCanvas({
       tilemap.destroy();
       buildingRenderer.destroy();
       spritePool.destroy();
+      tensionLines.destroy();
+      pathTrail.destroy();
       bubbleSystem.destroy();
       worldContainer.destroy({ children: true });
     };
@@ -247,12 +263,73 @@ export function GameCanvas({
     }
   }, [selectedAgentId]);
 
-  // Draw relationship lines for hovered/selected agent
+  // Draw relationship lines, tension lines, and path trail
   useEffect(() => {
     const g = relationshipLinesRef.current;
+    const tg = tensionLinesRef.current;
+    const pg = pathTrailRef.current;
     if (!g) return;
     g.clear();
+    tg?.clear();
+    pg?.clear();
 
+    // --- Tension lines: always-on faint lines for dramatic relationships ---
+    if (tg && spritePoolRef.current && relationships && relationships.length > 0) {
+      for (const rel of relationships) {
+        let color = 0;
+        let shouldDraw = false;
+
+        if (rel.status === 'partners') { color = 0xec4899; shouldDraw = true; }
+        else if ((rel.tags as string[])?.includes('grudge')) { color = 0x991b1b; shouldDraw = true; }
+        else if (rel.status === 'rivals' || rel.status === 'enemies') { color = 0xef4444; shouldDraw = true; }
+
+        if (!shouldDraw) continue;
+
+        const spriteA = spritePoolRef.current.getSprite(String(rel.agent_a));
+        const spriteB = spritePoolRef.current.getSprite(String(rel.agent_b));
+        if (!spriteA || !spriteB) continue;
+
+        // Brighten if either agent is selected
+        const isSelected = String(rel.agent_a) === selectedAgentId || String(rel.agent_b) === selectedAgentId;
+        const alpha = isSelected ? 0.6 : 0.15;
+
+        tg.moveTo(spriteA.container.x, spriteA.container.y)
+          .lineTo(spriteB.container.x, spriteB.container.y)
+          .stroke({ color, alpha, width: 1.5 });
+      }
+    }
+
+    // --- Path trail: show A* path for selected agent ---
+    if (pg && selectedAgentId && agents) {
+      const agent = agents.find((a: any) => String(a.id) === selectedAgentId);
+      if (agent?.current_path && (agent.current_path as number[][]).length > 0) {
+        const path = agent.current_path as number[][];
+        // Draw dashed path
+        for (let i = 0; i < path.length - 1; i++) {
+          const [x1, y1] = path[i];
+          const [x2, y2] = path[i + 1];
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const steps = Math.max(1, Math.floor(dist / 8));
+          for (let j = 0; j < steps; j += 2) {
+            const t1 = j / steps;
+            const t2 = Math.min((j + 1) / steps, 1);
+            pg.moveTo(x1 + dx * t1, y1 + dy * t1);
+            pg.lineTo(x1 + dx * t2, y1 + dy * t2);
+          }
+        }
+        pg.stroke({ width: 2, color: 0xffffff, alpha: 0.3 });
+
+        // Destination X marker
+        const [destX, destY] = path[path.length - 1];
+        pg.moveTo(destX - 4, destY - 4).lineTo(destX + 4, destY + 4);
+        pg.moveTo(destX + 4, destY - 4).lineTo(destX - 4, destY + 4);
+        pg.stroke({ width: 2, color: 0xffffff, alpha: 0.5 });
+      }
+    }
+
+    // --- Selected agent relationship lines (detailed, with strength-based alpha) ---
     const agentId = selectedAgentId;
     if (!agentId || !spritePoolRef.current || !relationships || relationships.length === 0) return;
 
