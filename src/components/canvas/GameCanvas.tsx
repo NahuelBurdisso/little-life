@@ -51,6 +51,10 @@ export function GameCanvas({
   // Layer containers
   const worldContainerRef = useRef<Container | null>(null);
 
+  // Stable locations ref so the init effect can read the latest value without re-running
+  const locationsRef = useRef(locations);
+  locationsRef.current = locations;
+
   // Stable callback refs so the interaction layer doesn't go stale
   const callbacksRef = useRef({ onAgentSelect, onAgentContextMenu, onAgentHover });
   callbacksRef.current = { onAgentSelect, onAgentContextMenu, onAgentHover };
@@ -78,6 +82,12 @@ export function GameCanvas({
     // Building renderer (buildings with interiors) — sits above tilemap
     const buildingRenderer = new BuildingRenderer(worldContainer);
     buildingRendererRef.current = buildingRenderer;
+
+    // If location data already arrived before the app was ready, initialize now
+    const currentLocations = locationsRef.current;
+    if (currentLocations && currentLocations.length > 0) {
+      buildingRenderer.init(currentLocations);
+    }
 
     // Sprite pool (agent circles) — inside world so it moves with camera
     const spritePool = new SpritePool(worldContainer);

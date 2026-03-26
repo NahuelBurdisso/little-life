@@ -117,19 +117,17 @@ export class BuildingRenderer {
   private addBuilding(loc: LocationData): void {
     const { x, y, width, height } = loc.position;
 
-    // Walls
+    // Walls — fill then re-draw rect for stroke (PixiJS v8: fill() flushes the path)
     const walls = new PIXI.Graphics();
-    walls.rect(x, y, width, height);
-    walls.fill({ color: TERRAIN_COLORS.building });
-    walls.stroke({ width: 2, color: 0x444444 });
+    walls.rect(x, y, width, height).fill({ color: TERRAIN_COLORS.building });
+    walls.rect(x, y, width, height).stroke({ width: 2, color: 0x444444 });
 
     // Door — a small brown rectangle centered on the entry point edge
     const doorW = 12;
     const doorH = 8;
     const ex = loc.entry_point.x;
     const ey = loc.entry_point.y;
-    walls.rect(ex - doorW / 2, ey - doorH / 2, doorW, doorH);
-    walls.fill({ color: TERRAIN_COLORS.door });
+    walls.rect(ex - doorW / 2, ey - doorH / 2, doorW, doorH).fill({ color: TERRAIN_COLORS.door });
 
     this.buildingLayer.addChild(walls);
 
@@ -178,10 +176,8 @@ export class BuildingRenderer {
     const color = OPEN_AREA_COLORS[loc.type] ?? 0x888888;
 
     const patch = new PIXI.Graphics();
-    patch.roundRect(x, y, width, height, 4);
-    patch.fill({ color, alpha: 0.45 });
-    patch.roundRect(x, y, width, height, 4);
-    patch.stroke({ width: 1, color, alpha: 0.7 });
+    patch.roundRect(x, y, width, height, 4).fill({ color, alpha: 0.45 });
+    patch.roundRect(x, y, width, height, 4).stroke({ width: 1, color, alpha: 0.7 });
     this.buildingLayer.addChild(patch);
 
     const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE });
