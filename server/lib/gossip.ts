@@ -63,13 +63,14 @@ export function createFact(
   targetId: number | null,
   sensitivity: number,
   knownBy: number[],
-  source: string
+  source: string,
+  customContent?: string,
 ): number | null {
   const subjectName = getAgentName(subjectId);
   const targetName = targetId != null ? getAgentName(targetId) : undefined;
 
   const template = FACT_TEMPLATES[type];
-  const content = template ? template(subjectName, targetName) : `${subjectName}: ${type}`;
+  const content = customContent ?? (template ? template(subjectName, targetName) : `${subjectName}: ${type}`);
 
   // Check for existing duplicate (same type + subject + target)
   // For low-churn types (sickness, financial, work_issue), also check inactive facts

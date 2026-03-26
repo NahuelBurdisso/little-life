@@ -489,7 +489,18 @@ async function processCompletedConversation(
           )).get();
         const friendship = rel ? (participantId < otherId ? rel.friendship_ab : rel.friendship_ba) : 0;
         if (friendship > 60) {
-          createFact('secret_told', participantId, otherId, 3, [participantId, otherId], 'confided');
+          const speakerName = participants.find(p => p.id === participantId)?.name ?? 'someone';
+          const listenerName = participants.find(p => p.id === otherId)?.name ?? 'someone';
+          const topicDesc = fresh.topic ? ` about ${fresh.topic}` : '';
+          // Extract a snippet from what they actually said
+          const speakerMsgs = messages.filter(m => m.speakerId === participantId);
+          const snippet = speakerMsgs.length > 0
+            ? speakerMsgs[speakerMsgs.length - 1].text.substring(0, 60)
+            : '';
+          const detail = snippet
+            ? `${speakerName} confided to ${listenerName}: "${snippet}..."`
+            : `${speakerName} shared something personal with ${listenerName}${topicDesc}`;
+          createFact('secret_told', participantId, otherId, 3, [participantId, otherId], 'confided', detail);
         }
       }
     }
@@ -695,7 +706,10 @@ async function processCompletedConversation(
     // Share the sin with the friend
     const knownBy = [...new Set([...(hiddenSin.known_by as number[]), otherId])];
     db.update(facts).set({ known_by: knownBy }).where(eq(facts.id, hiddenSin.id)).run();
-    createFact('confession', pid, otherId, 2, [pid, otherId], 'confided');
+    const confessorName = pidAgent?.name ?? 'someone';
+    const friendName = participants.find(p => p.id === otherId)?.name ?? 'someone';
+    const sinDetail = `${confessorName} confessed to ${friendName}: "${hiddenSin.content}"`;
+    createFact('confession', pid, otherId, 2, [pid, otherId], 'confided', sinDetail);
 
     // Friend reaction based on personality
     const otherPersonality = participants.find(p => p.id === otherId)?.personality as PersonalityProfile | null;

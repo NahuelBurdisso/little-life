@@ -357,7 +357,7 @@ function seed() {
   if (rayId) {
     db.insert(facts).values({
       type: 'secret_told', subject_id: rayId, target_id: agentMap.get('Marco Rivera') ?? null,
-      content: 'Ray Kowalski confided something personal to Marco Rivera',
+      content: 'Ray Kowalski told Marco he was forced out of the city police after a disciplinary hearing — he hit a suspect during interrogation',
       sensitivity: 3, known_by: [rayId, agentMap.get('Marco Rivera')!],
       created_at: now, is_active: true, source: 'backstory',
     }).run();
