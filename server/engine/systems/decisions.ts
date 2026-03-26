@@ -24,7 +24,7 @@ import {
 } from '../../lib/personality';
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
-import { createFact, getShareableFacts, getAgentName } from '../../lib/gossip';
+import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
 
 // --- Types ---
 
@@ -385,6 +385,26 @@ function scoreFreeTimeActions(
     if (personality && personality.warmth < 35) socScore *= 0.7;
     if (personality && personality.warmth > 65) socScore *= 1.3;
 
+    // Escalation: reduce social score toward agents with many negative facts
+    const targetNegFacts = getNegativeFactCount(other.id);
+    if (targetNegFacts >= 10) {
+      socScore *= 0.1; // Pariah
+    } else if (targetNegFacts >= 3) {
+      socScore *= Math.max(0.3, 1 - targetNegFacts * 0.08);
+    }
+
+    // Mutual-enemy bonding: shared grudges create alliances
+    const agentGrudgeTargets = allRelationships
+      .filter(r => (r.agent_a === agent.id || r.agent_b === agent.id) && (r.tags as string[]).includes('grudge'))
+      .map(r => r.agent_a === agent.id ? r.agent_b : r.agent_a);
+    const otherGrudgeTargets = allRelationships
+      .filter(r => (r.agent_a === other.id || r.agent_b === other.id) && (r.tags as string[]).includes('grudge'))
+      .map(r => r.agent_a === other.id ? r.agent_b : r.agent_a);
+    const sharedEnemies = agentGrudgeTargets.filter(t => otherGrudgeTargets.includes(t));
+    if (sharedEnemies.length > 0) {
+      socScore += 5 * sharedEnemies.length;
+    }
+
     const noiseMultiplier = personality
       ? 0.1 + (personality.impulsiveness / 500)
       : CONFIG.DECISIONS.NOISE_FACTOR;
@@ -418,6 +438,25 @@ function scoreFreeTimeActions(
     }
   }
 
+  // Jealous: avoid rival, seek love interest obsessively
+  if (agentStateTypes.includes('jealous')) {
+    const jealousState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'jealous'))).get();
+    if (jealousState) {
+      const meta = (jealousState.metadata as Record<string, any> | null) ?? {};
+      const rivalId = meta.rivalId as number | undefined;
+      const loveInterestId = meta.loveInterestId as number | undefined;
+      for (const s of scores) {
+        if (s.targetAgentId === rivalId) {
+          s.score = Math.max(0, s.score - 50);
+        }
+        if (s.targetAgentId === loveInterestId) {
+          s.score += 50;
+        }
+      }
+    }
+  }
+
   // Tavern
   const tavern = nearestLocation(agent.position, allLocations, 'tavern');
   if (tavern) {
@@ -426,6 +465,10 @@ function scoreFreeTimeActions(
     // Hungover → avoid tavern
     if (agentStateTypes.includes('hungover')) {
       tavernScore = 0;
+    }
+    // Alcoholic: strong tavern pull
+    if (agentStateTypes.includes('alcoholic')) {
+      tavernScore += 40;
     }
     scores.push({ action: 'socializing', score: addNoise(tavernScore), targetLocationId: tavern.id });
   }

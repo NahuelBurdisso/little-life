@@ -12,6 +12,7 @@ import {
   relationshipEvents,
   memories,
   activityLog,
+  facts,
 } from '../../db/schema';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -52,6 +53,15 @@ const lowSocialSince = new Map<number, number>(); // agentId → tick when socia
 
 // Track when an agent recovered from sickness (for immunity cooldown)
 const sickRecoveredAtTick = new Map<number, number>(); // agentId → tick when sickness expired
+
+// Track drunk episode timestamps per agent for alcoholism detection
+const drunkHistory = new Map<number, number[]>();
+
+// Track alcoholism recovery for relapse mechanic
+const alcoholRecoveredAtTick = new Map<number, number>();
+
+// Track how long an agent has been broke (for in_debt trigger)
+const brokeSince = new Map<number, number>();
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
@@ -228,6 +238,11 @@ function evaluateTriggers(
           })
           .run();
         activeTypes.add('drunk');
+        // Track for alcoholism escalation
+        const history = drunkHistory.get(agent.id) ?? [];
+        history.push(currentTick);
+        const cutoff = currentTick - 10080; // 7 days
+        drunkHistory.set(agent.id, history.filter((t) => t > cutoff));
       }
     }
   }
@@ -259,6 +274,82 @@ function evaluateTriggers(
         activeTypes.add('sick');
         createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
       }
+    }
+  }
+
+  // ── Alcoholic ────────────────────────────────────────────────────────────
+  if (!activeTypes.has('alcoholic') && personality.impulsiveness > 50) {
+    const history = drunkHistory.get(agent.id) ?? [];
+    const recentWindow = currentTick - 10080; // 7 days
+    const recentDrunkCount = history.filter((t) => t > recentWindow).length;
+
+    if (recentDrunkCount >= 3) {
+      const recoveredAt = alcoholRecoveredAtTick.get(agent.id) ?? -9999;
+      const inRelapseWindow = currentTick - recoveredAt < 720;
+
+      if (inRelapseWindow) {
+        // Within relapse window: tavern visit has chance of re-triggering
+        const relapseChance = personality.neuroticism > 60 ? 0.5 : 0.3;
+        if (Math.random() < relapseChance) {
+          const severity = clamp(0.3 + (recentDrunkCount - 3) * 0.15, 0.3, 1.0);
+          db.insert(agentStates).values({
+            agent_id: agent.id,
+            type: 'alcoholic',
+            severity,
+            started_at: currentTick,
+            duration: 999999,
+            source: `relapse:drunk_count_${recentDrunkCount}`,
+            metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
+          }).run();
+          activeTypes.add('alcoholic');
+          createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
+        }
+      } else {
+        // Normal trigger: 3+ drunk in 7 days
+        const severity = clamp(0.3 + (recentDrunkCount - 3) * 0.15, 0.3, 1.0);
+        db.insert(agentStates).values({
+          agent_id: agent.id,
+          type: 'alcoholic',
+          severity,
+          started_at: currentTick,
+          duration: 999999,
+          source: `trigger:drunk_count_${recentDrunkCount}`,
+          metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
+        }).run();
+        activeTypes.add('alcoholic');
+        createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
+      }
+    }
+  }
+
+  // ── In Debt ──────────────────────────────────────────────────────────────
+  if (!activeTypes.has('in_debt')) {
+    const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
+      .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+    if (eco && eco.money === 0) {
+      const hasFood = (eco.inventory as any[]).some(
+        (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
+      );
+      if (!hasFood) {
+        if (!brokeSince.has(agent.id)) {
+          brokeSince.set(agent.id, currentTick);
+        }
+        const duration = currentTick - brokeSince.get(agent.id)!;
+        if (duration > 4320) { // 3 days
+          db.insert(agentStates).values({
+            agent_id: agent.id,
+            type: 'in_debt',
+            severity: 0.5,
+            started_at: currentTick,
+            duration: 999999,
+            source: 'trigger:broke_3_days',
+            metadata: { beggingFailCount: 0, desperationUnlocked: false },
+          }).run();
+          activeTypes.add('in_debt');
+        }
+      }
+    } else {
+      brokeSince.delete(agent.id);
     }
   }
 
@@ -522,6 +613,38 @@ function evaluateTriggers(
     }
   }
 
+  // ── Jealous ──────────────────────────────────────────────────────────────
+  if (!activeTypes.has('jealous') && activeTypes.has('infatuated')) {
+    const infatuatedState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'infatuated'))).get();
+    if (infatuatedState?.target_agent_id) {
+      const loveInterestId = infatuatedState.target_agent_id;
+      const loveInterestRels = db.select().from(relationships)
+        .where(or(eq(relationships.agent_a, loveInterestId), eq(relationships.agent_b, loveInterestId))).all();
+      for (const rel of loveInterestRels) {
+        const isA = rel.agent_a === loveInterestId;
+        const rivalId = isA ? rel.agent_b : rel.agent_a;
+        if (rivalId === agent.id) continue;
+        const rivalRomance = isA ? rel.romance_ab : rel.romance_ba;
+        if (rivalRomance > 40) {
+          const severity = clamp((rivalRomance - 40) / 60, 0.3, 1.0);
+          db.insert(agentStates).values({
+            agent_id: agent.id,
+            type: 'jealous',
+            severity,
+            started_at: currentTick,
+            duration: 999999,
+            target_agent_id: rivalId,
+            source: 'trigger:rival_romance',
+            metadata: { loveInterestId, rivalId },
+          }).run();
+          activeTypes.add('jealous');
+          break;
+        }
+      }
+    }
+  }
+
   // ── Lonely ────────────────────────────────────────────────────────────────
   if (!activeTypes.has('lonely') && agentNeeds) {
     if (agentNeeds.social < 20) {
@@ -757,6 +880,71 @@ function checkConditionalExits(
         break;
       }
 
+      case 'alcoholic': {
+        // Recovery path 1: metadata flag set by conversations system
+        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        if (meta.recoveryTriggered) {
+          shouldExit = true;
+          break;
+        }
+        // Recovery path 2: rock bottom (money = 0, no food)
+        const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
+          .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        if (eco && eco.money === 0) {
+          const hasFood = (eco.inventory as any[]).some(
+            (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
+          );
+          if (!hasFood && Math.random() < 0.01) {
+            shouldExit = true;
+          }
+        }
+        break;
+      }
+
+      case 'jealous': {
+        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const loveInterestId = meta.loveInterestId as number | undefined;
+        const rivalId = meta.rivalId as number | undefined;
+        if (!loveInterestId || !rivalId) { shouldExit = true; break; }
+
+        const rel = db.select().from(relationships).where(
+          or(
+            and(eq(relationships.agent_a, loveInterestId), eq(relationships.agent_b, rivalId)),
+            and(eq(relationships.agent_a, rivalId), eq(relationships.agent_b, loveInterestId)),
+          )
+        ).get();
+        if (rel) {
+          const isA = rel.agent_a === loveInterestId;
+          const rivalRomance = isA ? rel.romance_ab : rel.romance_ba;
+          if (rivalRomance < 30) shouldExit = true;
+        } else {
+          shouldExit = true;
+        }
+
+        if (!shouldExit) {
+          const ownRel = db.select().from(relationships).where(
+            or(
+              and(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, loveInterestId)),
+              and(eq(relationships.agent_a, loveInterestId), eq(relationships.agent_b, agent.id)),
+            )
+          ).get();
+          if (ownRel) {
+            const isA = ownRel.agent_a === agent.id;
+            const ownRomance = isA ? ownRel.romance_ab : ownRel.romance_ba;
+            if (ownRomance < 30) shouldExit = true;
+          }
+        }
+        break;
+      }
+
+      case 'in_debt': {
+        const eco = db.select({ money: economyTable.money })
+          .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        shouldExit = eco != null && eco.money > 20;
+        if (shouldExit) brokeSince.delete(agent.id);
+        break;
+      }
+
       default:
         break;
     }
@@ -764,6 +952,16 @@ function checkConditionalExits(
     if (shouldExit) {
       if (state.type === 'stressed') {
         stressRemovedAtTick.set(agent.id, currentTick);
+      }
+      if (state.type === 'alcoholic') {
+        alcoholRecoveredAtTick.set(agent.id, currentTick);
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} is recovering from alcoholism.`,
+          agent_ids: [agent.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
       }
       db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
     }
@@ -1351,8 +1549,310 @@ function processStateEffects(
         break;
       }
 
+      // ── Alcoholic: shame mood penalty ────────────────────────────────────
+      case 'alcoholic': {
+        if (personality && personality.morality > 70) {
+          const alcNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
+          if (alcNeeds) {
+            db.update(needsTable).set({ mood: Math.max(20, alcNeeds.mood - 0.5) }).where(eq(needsTable.agent_id, agent.id)).run();
+          }
+        }
+        break;
+      }
+
+      // ── In Debt: mood penalty + theft attempts ───────────────────────────
+      case 'in_debt': {
+        const debtNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
+        if (debtNeeds) {
+          db.update(needsTable).set({ mood: Math.max(5, debtNeeds.mood - 0.3) }).where(eq(needsTable.agent_id, agent.id)).run();
+        }
+
+        if (agent.current_location == null) break;
+        if (!personality) break;
+
+        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const desperationUnlocked = meta.desperationUnlocked as boolean ?? false;
+        const moralityThreshold = desperationUnlocked ? 50 : 40;
+
+        if (personality.morality >= moralityThreshold) break;
+        if (Math.random() > 0.05) break;
+
+        const loc = db.select().from(locations).where(eq(locations.id, agent.current_location)).get();
+        if (!loc?.owner || loc.owner === agent.id) break;
+
+        const ownerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, loc.owner)).get();
+        if (!ownerEcon || (ownerEcon.inventory as any[]).length === 0) break;
+
+        const items = ownerEcon.inventory as Array<{ itemId: string; quantity: number; acquiredAt: number }>;
+        const targetItem = items.find((i) => i.quantity > 0);
+        if (!targetItem) break;
+
+        // Detection chance
+        const witnesses = allAgents.filter(
+          (a) => a.id !== agent.id && a.current_location === agent.current_location
+        );
+        let detectionChance = 0.3 + witnesses.length * 0.1;
+        for (const w of witnesses) {
+          const wp = w.personality as PersonalityProfile | null;
+          if (wp && wp.curiosity > 60) detectionChance += 0.1;
+        }
+        detectionChance = Math.min(detectionChance, 0.95);
+
+        const caught = Math.random() < detectionChance;
+
+        // Transfer item
+        const newOwnerInv = items.map((i) =>
+          i.itemId === targetItem.itemId ? { ...i, quantity: i.quantity - 1 } : i
+        ).filter((i) => i.quantity > 0);
+        db.update(economyTable).set({ inventory: newOwnerInv }).where(eq(economyTable.agent_id, loc.owner)).run();
+
+        const thiefEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        if (thiefEcon) {
+          const existing = (thiefEcon.inventory as any[]).find((i: any) => i.itemId === targetItem.itemId);
+          let newThiefInv;
+          if (existing) {
+            newThiefInv = (thiefEcon.inventory as any[]).map((i: any) =>
+              i.itemId === targetItem.itemId ? { ...i, quantity: i.quantity + 1 } : i
+            );
+          } else {
+            newThiefInv = [...(thiefEcon.inventory as any[]), { itemId: targetItem.itemId, quantity: 1, acquiredAt: Date.now() }];
+          }
+          db.update(economyTable).set({ inventory: newThiefInv }).where(eq(economyTable.agent_id, agent.id)).run();
+        }
+
+        if (caught) {
+          const witnessIds = witnesses.map((w) => w.id);
+          createFact('theft', agent.id, loc.owner, 2, [agent.id, loc.owner, ...witnessIds], 'witnessed');
+
+          // Check theft escalation: 3+ theft facts = reputation + banned
+          const totalThefts = db.select().from(facts)
+            .where(and(eq(facts.type, 'theft'), eq(facts.subject_id, agent.id), eq(facts.is_active, true))).all();
+          if (totalThefts.length >= 3) {
+            createFact('reputation', agent.id, null, 1, allAgents.map(a => a.id), 'observed');
+            const ownerRel = db.select().from(relationships).where(
+              or(
+                and(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, loc.owner)),
+                and(eq(relationships.agent_a, loc.owner), eq(relationships.agent_b, agent.id)),
+              )
+            ).get();
+            if (ownerRel) {
+              const tags = ownerRel.tags as string[];
+              if (!tags.includes('banned')) {
+                db.update(relationships).set({ tags: [...tags, 'banned'] }).where(eq(relationships.id, ownerRel.id)).run();
+              }
+            }
+          }
+
+          const [ordA, ordB] = [Math.min(agent.id, loc.owner), Math.max(agent.id, loc.owner)];
+          db.insert(relationshipEvents).values({
+            agent_a: ordA, agent_b: ordB,
+            event_type: 'theft_caught',
+            description: `${agent.name} was caught stealing ${targetItem.itemId} from ${loc.name}`,
+            friendship_delta_ab: agent.id === ordA ? -15 : 0,
+            friendship_delta_ba: agent.id === ordA ? 0 : -15,
+            romance_delta_ab: 0, romance_delta_ba: 0,
+            trust_delta_ab: agent.id === ordA ? -30 : 0,
+            trust_delta_ba: agent.id === ordA ? 0 : -30,
+            sentiment: -0.8,
+            processed: false,
+            timestamp: Date.now(),
+          }).run();
+
+          db.insert(activityLog).values({
+            type: 'state_change',
+            message: `${agent.name} was caught stealing from ${loc.name}!`,
+            agent_ids: [agent.id, loc.owner],
+            timestamp: currentTick,
+            real_timestamp: Date.now(),
+          }).run();
+        } else {
+          const updatedMeta = { ...meta, theftCount: ((meta.theftCount as number) ?? 0) + 1 };
+          db.update(agentStates).set({ metadata: updatedMeta }).where(eq(agentStates.id, state.id)).run();
+        }
+        break;
+      }
+
+      // ── Jealous: mood penalty, grudge escalation, confrontation ──────────
+      case 'jealous': {
+        const jealousNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
+        if (jealousNeeds) {
+          db.update(needsTable).set({ mood: Math.max(5, jealousNeeds.mood - 0.2) }).where(eq(needsTable.agent_id, agent.id)).run();
+        }
+
+        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const rivalId = meta.rivalId as number | undefined;
+
+        if (rivalId && personality && personality.aggression > 60) {
+          const elapsed = currentTick - state.started_at;
+          if (elapsed > 480) {
+            const rel = db.select().from(relationships).where(
+              or(
+                and(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, rivalId)),
+                and(eq(relationships.agent_a, rivalId), eq(relationships.agent_b, agent.id)),
+              )
+            ).get();
+            if (rel) {
+              const tags = rel.tags as string[];
+              if (!tags.includes('grudge')) {
+                db.update(relationships).set({ tags: [...tags, 'grudge'] }).where(eq(relationships.id, rel.id)).run();
+                createFact('grudge', agent.id, rivalId, 1, [agent.id], 'witnessed');
+              }
+            }
+          }
+        }
+
+        // Rumor about rival if low morality + dishonest
+        if (rivalId && personality && personality.morality < 40 && personality.honesty < 30) {
+          const elapsed = currentTick - state.started_at;
+          if (elapsed > 720 && Math.random() < 0.005) {
+            createFact('rumor', rivalId, null, 2, [agent.id], 'fabricated');
+          }
+        }
+        break;
+      }
+
       default:
         break;
+    }
+  }
+
+  // ── Gambling: impulsive agents at tavern gamble (not state-dependent) ──
+  if (personality && personality.impulsiveness > 40 && agent.current_location != null) {
+    const loc = db.select({ type: locations.type }).from(locations).where(eq(locations.id, agent.current_location)).get();
+    if (loc?.type === 'tavern' && Math.random() < 0.08) {
+      const agentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+      if (agentEcon && agentEcon.money > 10) {
+        const nearbyAgents = allAgents.filter(
+          (a) => a.id !== agent.id && a.current_location === agent.current_location,
+        );
+        if (nearbyAgents.length > 0) {
+          const opponent = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
+          const opponentPersonality = opponent.personality as PersonalityProfile | null;
+          const betAmount = Math.floor(agentEcon.money * (0.1 + Math.random() * 0.2));
+
+          const agentCuriosity = personality.curiosity ?? 50;
+          const opponentCuriosity = opponentPersonality?.curiosity ?? 50;
+          const winChance = clamp(0.5 + (agentCuriosity - opponentCuriosity) * 0.002, 0.4, 0.6);
+          const agentWins = Math.random() < winChance;
+
+          const opponentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, opponent.id)).get();
+          if (opponentEcon && opponentEcon.money >= betAmount) {
+            if (agentWins) {
+              db.update(economyTable).set({ money: agentEcon.money + betAmount }).where(eq(economyTable.agent_id, agent.id)).run();
+              db.update(economyTable).set({ money: opponentEcon.money - betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
+            } else {
+              db.update(economyTable).set({ money: agentEcon.money - betAmount }).where(eq(economyTable.agent_id, agent.id)).run();
+              db.update(economyTable).set({ money: opponentEcon.money + betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
+
+              if (agentEcon.money - betAmount < 5) {
+                createFact('gambling_loss', agent.id, null, 1, [agent.id, opponent.id], 'witnessed');
+              }
+            }
+
+            db.insert(economyTransactions).values({
+              from_agent: agentWins ? opponent.id : agent.id,
+              to_agent: agentWins ? agent.id : opponent.id,
+              amount: betAmount,
+              reason: 'gambling',
+              items_exchanged: null,
+              location_id: agent.current_location,
+              timestamp: Date.now(),
+            }).run();
+
+            const [ordA, ordB] = [Math.min(agent.id, opponent.id), Math.max(agent.id, opponent.id)];
+            db.insert(relationshipEvents).values({
+              agent_a: ordA,
+              agent_b: ordB,
+              event_type: 'gambling',
+              description: `Gambling at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}`,
+              friendship_delta_ab: agentWins === (agent.id === ordA) ? 2 : -3,
+              friendship_delta_ba: agentWins === (agent.id === ordA) ? -3 : 2,
+              romance_delta_ab: 0, romance_delta_ba: 0,
+              trust_delta_ab: -1, trust_delta_ba: -1,
+              sentiment: 0,
+              processed: false,
+              timestamp: Date.now(),
+            }).run();
+
+            db.insert(activityLog).values({
+              type: 'economy',
+              message: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}`,
+              agent_ids: [agent.id, opponent.id],
+              timestamp: currentTick,
+              real_timestamp: Date.now(),
+            }).run();
+          }
+        }
+      }
+    }
+  }
+
+  // ── Seduction: manipulative flirting for personal gain ──────────────────
+  if (personality && personality.sensuality > 70 && personality.morality < 40 && agent.current_location != null) {
+    if (Math.random() < 0.02) {
+      const nearbyTargets = allAgents.filter(a => {
+        if (a.id === agent.id || a.current_location !== agent.current_location) return false;
+        const tp = a.personality as PersonalityProfile | null;
+        if (!tp || tp.sensuality <= 50) return false;
+        return true;
+      });
+
+      if (nearbyTargets.length > 0) {
+        const target = nearbyTargets[Math.floor(Math.random() * nearbyTargets.length)];
+        const [ordA, ordB] = [Math.min(agent.id, target.id), Math.max(agent.id, target.id)];
+
+        db.insert(relationshipEvents).values({
+          agent_a: ordA, agent_b: ordB,
+          event_type: 'seduction',
+          description: `${agent.name} is flirting with ${target.name} for personal gain`,
+          friendship_delta_ab: 2, friendship_delta_ba: 2,
+          romance_delta_ab: agent.id === ordA ? 5 : 3,
+          romance_delta_ba: agent.id === ordA ? 3 : 5,
+          trust_delta_ab: 0, trust_delta_ba: 0,
+          sentiment: 0.3, processed: false, timestamp: Date.now(),
+        }).run();
+
+        // Create seduction fact if witnesses present
+        const witnesses = allAgents.filter(a =>
+          a.id !== agent.id && a.id !== target.id && a.current_location === agent.current_location
+        );
+        if (witnesses.length > 0) {
+          createFact('seduction', agent.id, target.id, 2,
+            [agent.id, ...witnesses.map(w => w.id)], 'witnessed');
+        }
+      }
+    }
+  }
+
+  // ── Manipulation: dishonest + curious agents fabricate rumors ──────────
+  if (personality && personality.honesty < 30 && personality.curiosity > 60) {
+    if (Math.random() < 0.005) { // 0.5% per tick — very rare
+      // Pick a target to spread rumors about (not a close friend)
+      const agentRels = db.select().from(relationships)
+        .where(or(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, agent.id))).all();
+      const potentialTargets = allAgents.filter(a => {
+        if (a.id === agent.id) return false;
+        const rel = agentRels.find(r =>
+          (r.agent_a === agent.id && r.agent_b === a.id) ||
+          (r.agent_b === agent.id && r.agent_a === a.id)
+        );
+        if (!rel) return true; // stranger is fair game
+        const isA = rel.agent_a === agent.id;
+        const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
+        return friendship < 40; // not a friend
+      });
+      if (potentialTargets.length > 0) {
+        const target = potentialTargets[Math.floor(Math.random() * potentialTargets.length)];
+        createFact('rumor', target.id, null, 2, [agent.id], 'fabricated');
+
+        db.insert(activityLog).values({
+          type: 'state_change',
+          message: `${agent.name} started spreading rumors about ${target.name}.`,
+          agent_ids: [agent.id, target.id],
+          timestamp: currentTick,
+          real_timestamp: Date.now(),
+        }).run();
+      }
     }
   }
 }

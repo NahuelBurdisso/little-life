@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, facts, relationships, agentStates, economy, conversations } from '../db/schema';
+import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { PersonalityProfile } from './personality';
 
@@ -243,6 +243,48 @@ export function spreadGossip(
       .set({ known_by: updated })
       .where(eq(facts.id, fact.id))
       .run();
+  }
+
+  // Rumor discovery: if both agents know a rumor, they may compare notes and discover the fabricator
+  const speakerPersonality = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, _speakerId)).get();
+  const listenerPersonality = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, listenerId)).get();
+  if (speakerPersonality && listenerPersonality) {
+    const sp = speakerPersonality.personality as PersonalityProfile | null;
+    const lp = listenerPersonality.personality as PersonalityProfile | null;
+    if (sp && lp) {
+      const avgHonesty = (sp.honesty + lp.honesty) / 2;
+      const discoveryChance = 0.1 * avgHonesty / 100;
+
+      const rumorFacts = db.select().from(facts)
+        .where(and(eq(facts.type, 'rumor'), eq(facts.is_active, true))).all();
+      for (const rumor of rumorFacts) {
+        const knownBy = rumor.known_by as number[];
+        if (!knownBy.includes(listenerId) || !knownBy.includes(_speakerId)) continue;
+        if (rumor.source !== 'fabricated') continue;
+        const fabricatorId = knownBy[0]; // fabricator is first in known_by
+        if (fabricatorId === listenerId || fabricatorId === _speakerId) continue;
+
+        if (Math.random() < discoveryChance) {
+          // Both discover the manipulator
+          for (const discoverer of [listenerId, _speakerId]) {
+            const [ordA, ordB] = [Math.min(discoverer, fabricatorId), Math.max(discoverer, fabricatorId)];
+            db.insert(relationshipEvents).values({
+              agent_a: ordA, agent_b: ordB,
+              event_type: 'confrontation',
+              description: `Discovered that ${getAgentName(fabricatorId)} spread rumors`,
+              friendship_delta_ab: discoverer === ordA ? -20 : 0,
+              friendship_delta_ba: discoverer === ordA ? 0 : -20,
+              romance_delta_ab: 0, romance_delta_ba: 0,
+              trust_delta_ab: discoverer === ordA ? -40 : 0,
+              trust_delta_ba: discoverer === ordA ? 0 : -40,
+              sentiment: -0.7, processed: false, timestamp: Date.now(),
+            }).run();
+          }
+          createFact('reputation', fabricatorId, null, 1, [listenerId, _speakerId], 'discovered');
+          db.update(facts).set({ is_active: false }).where(eq(facts.id, rumor.id)).run();
+        }
+      }
+    }
   }
 }
 

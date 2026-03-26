@@ -1,6 +1,6 @@
 import { db } from '../../db';
-import { agents, economy, economyTransactions, worldState, worldEvents, activityLog, locations } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { agents, economy, economyTransactions, worldState, worldEvents, activityLog, locations, agentStates, facts } from '../../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { getItemPrice } from '../../lib/prices';
 import type { Season } from '../../lib/types';
@@ -199,7 +199,19 @@ export function economyTick(): void {
     }
 
     // Pay salary
-    const newMoney = econ.money + econ.salary;
+    // Check for alcoholic state — reduce salary
+    let effectiveSalary = econ.salary;
+    const alcoholicState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'alcoholic'))).get();
+    if (alcoholicState) {
+      const meta = (alcoholicState.metadata as Record<string, any> | null) ?? {};
+      if (meta.stage === 3) {
+        effectiveSalary = Math.floor(econ.salary * 0.6);
+      } else {
+        effectiveSalary = Math.floor(econ.salary * 0.7);
+      }
+    }
+    const newMoney = econ.money + effectiveSalary;
     db.update(economy).set({
       money: newMoney,
       last_payday: now,
@@ -211,12 +223,39 @@ export function economyTick(): void {
     db.insert(economyTransactions).values({
       from_agent: null,
       to_agent: agent.id,
-      amount: econ.salary,
+      amount: effectiveSalary,
       reason: 'salary',
       items_exchanged: null,
       location_id: agent.workplace,
       timestamp: now,
     }).run();
+
+    // Process blackmail payments (victim pays 10% of salary to blackmailer)
+    const blackmailFacts = db.select().from(facts)
+      .where(and(eq(facts.type, 'blackmail'), eq(facts.is_active, true), eq(facts.target_id, agent.id))).all();
+    for (const fact of blackmailFacts) {
+      const blackmailerId = fact.subject_id;
+      const paymentAmount = Math.floor(econ.salary * 0.1);
+      if (econ.money >= paymentAmount && paymentAmount > 0) {
+        const blackmailerEcon = econByAgent.get(blackmailerId);
+        if (blackmailerEcon) {
+          db.update(economy).set({ money: econ.money - paymentAmount }).where(eq(economy.id, econ.id)).run();
+          econ.money -= paymentAmount;
+          db.update(economy).set({ money: blackmailerEcon.money + paymentAmount }).where(eq(economy.id, blackmailerEcon.id)).run();
+          blackmailerEcon.money += paymentAmount;
+
+          db.insert(economyTransactions).values({
+            from_agent: agent.id,
+            to_agent: blackmailerId,
+            amount: paymentAmount,
+            reason: 'blackmail_payment',
+            items_exchanged: null,
+            location_id: null,
+            timestamp: now,
+          }).run();
+        }
+      }
+    }
   }
 
   // ========== 3. SHOP TRANSACTIONS ==========

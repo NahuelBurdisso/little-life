@@ -196,6 +196,90 @@ export function curiosityNoveltyBonus(curiosity: number, interactionCount: numbe
   return (curiosity / 100) * novelty; // up to +20
 }
 
+// ─── Conversation Context Types ──────────────────────────────────────────────
+
+export interface ConversationContext {
+  isRomantic: boolean;
+  isConflict: boolean;
+  witnessedVice: boolean;
+}
+
+export function generateToneModifiers(
+  personality: PersonalityProfile,
+  context: ConversationContext,
+): string[] {
+  const modifiers: string[] = [];
+
+  if (personality.aggression > 60) {
+    modifiers.push('Be confrontational and direct. Don\'t hold back.');
+  } else if (personality.aggression < 30) {
+    modifiers.push('You avoid direct conflict. Express displeasure passively or through implication.');
+  }
+
+  if (context.isRomantic) {
+    if (personality.sensuality > 60) {
+      modifiers.push('Be openly flirtatious and suggestive. You\'re comfortable with intimacy.');
+    } else if (personality.sensuality < 30) {
+      modifiers.push('Romance makes you uncomfortable. Deflect or change the subject.');
+    }
+  }
+
+  if (personality.honesty > 70) {
+    modifiers.push('You\'re blunt. Say exactly what you think, even if it\'s hurtful.');
+  } else if (personality.honesty < 30) {
+    modifiers.push('You hide your real feelings. Lie if it serves you. Be evasive.');
+  }
+
+  if (context.witnessedVice && personality.morality > 70) {
+    modifiers.push('You judge this behavior harshly. Make your disapproval clear.');
+  } else if (personality.morality < 30) {
+    modifiers.push('You don\'t see anything wrong with bending rules. Morality is flexible.');
+  }
+
+  return modifiers;
+}
+
+// ─── Situational Prompt Types ────────────────────────────────────────────────
+
+export interface SituationalContext {
+  type: 'blackmail' | 'jealousy_confrontation' | 'affair_discovery' |
+        'begging' | 'confession' | 'theft_confrontation' |
+        'price_gouging' | 'drunk_confrontation' | 'reconciliation' | null;
+  targetName?: string;
+  rivalName?: string;
+  loveInterestName?: string;
+  factContent?: string;
+  sinDescription?: string;
+  itemName?: string;
+  shopOwnerName?: string;
+  incidentDescription?: string;
+}
+
+export function generateSituationalPrompt(ctx: SituationalContext): string | null {
+  switch (ctx.type) {
+    case 'blackmail':
+      return `You know ${ctx.targetName}'s secret: ${ctx.factContent}. You want money to keep quiet.`;
+    case 'jealousy_confrontation':
+      return `You're jealous because ${ctx.loveInterestName} is close to ${ctx.rivalName}. You want to confront them.`;
+    case 'affair_discovery':
+      return `You just discovered your partner ${ctx.targetName} has been seeing ${ctx.rivalName}. You're devastated and furious.`;
+    case 'begging':
+      return `You're broke and desperate. You need to ask ${ctx.targetName} for help. You hate having to do this.`;
+    case 'confession':
+      return `You can't keep this secret anymore. You need to tell ${ctx.targetName} about ${ctx.sinDescription}. The guilt is eating you.`;
+    case 'theft_confrontation':
+      return `You saw ${ctx.targetName} steal from ${ctx.shopOwnerName}. Decide whether to say something.`;
+    case 'price_gouging':
+      return `${ctx.shopOwnerName} is charging double for ${ctx.itemName}. You think it's unfair.`;
+    case 'drunk_confrontation':
+      return `You're drunk and angry at ${ctx.targetName}. Old resentments are surfacing.`;
+    case 'reconciliation':
+      return `You used to be close with ${ctx.targetName} before ${ctx.incidentDescription}. They seem to have changed. Consider whether to forgive them.`;
+    default:
+      return null;
+  }
+}
+
 export function selectPersonalityTopic(
   personality: PersonalityProfile,
   mood: number,

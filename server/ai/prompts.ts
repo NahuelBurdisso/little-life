@@ -5,7 +5,7 @@
  * Pure functions — no I/O.
  */
 
-import { buildPersonalityDescription, PersonalityProfile } from '../lib/personality';
+import { buildPersonalityDescription, PersonalityProfile, generateToneModifiers, ConversationContext } from '../lib/personality';
 
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
@@ -137,6 +137,8 @@ export function buildAgentSystemPrompt(
   economy: EconomyRow,
   effectivePersonality?: PersonalityProfile | null,
   statePrompts?: string[],
+  toneModifiers?: string[],
+  situationalPrompt?: string | null,
 ): string {
   const resolvedPersonality = effectivePersonality ?? agent.personality;
   const personalityDesc = resolvedPersonality
@@ -164,6 +166,14 @@ RULES:
 
   if (statePrompts?.length) {
     systemPrompt += '\n\nCURRENT STATE:\n' + statePrompts.join('\n');
+  }
+
+  if (toneModifiers?.length) {
+    systemPrompt += '\n\nCONVERSATION STYLE:\n' + toneModifiers.join('\n');
+  }
+
+  if (situationalPrompt) {
+    systemPrompt += '\n\nSITUATION:\n' + situationalPrompt;
   }
 
   return systemPrompt;
@@ -298,7 +308,18 @@ export function buildConversationPrompt(
     gossipFacts,
   } = params;
 
-  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts);
+  // Compute tone modifiers from personality
+  const resolvedPersonality = effectivePersonality ?? speaker.personality;
+  const toneCtx: ConversationContext = {
+    isRomantic: conversation.topic?.includes('flirting') || conversation.topic?.includes('romance') || false,
+    isConflict: conversation.topic?.includes('confrontation') || conversation.topic?.includes('argument') || false,
+    witnessedVice: gossipFacts?.some(f =>
+      ['theft', 'drunk_incident', 'alcoholic', 'gambling_loss', 'affair'].some(vt => f.content.toLowerCase().includes(vt.replace('_', ' ')))
+    ) ?? false,
+  };
+  const toneModifiers = resolvedPersonality ? generateToneModifiers(resolvedPersonality as PersonalityProfile, toneCtx) : [];
+
+  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts, toneModifiers);
 
   // Build context message
   const contextParts: string[] = [];

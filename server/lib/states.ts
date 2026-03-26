@@ -33,7 +33,10 @@ export type StateType =
   | 'infatuated'
   | 'lonely'
   | 'depressed'
-  | 'confident';
+  | 'confident'
+  | 'jealous'
+  | 'alcoholic'
+  | 'in_debt';
 
 export interface StateDefinition {
   type: StateType;
@@ -120,6 +123,25 @@ export const STATE_DEFINITIONS: Record<StateType, StateDefinition> = {
     modifiers: { vanity: 15, neuroticism: -10, warmth: 10 },
     prompt:
       "You're feeling good about yourself. You're assertive, charming, and ready to take on anything.",
+  },
+  jealous: {
+    type: 'jealous',
+    modifiers: { aggression: 20, neuroticism: 10 },
+    prompt: (targetName) =>
+      `You're consumed by jealousy over ${targetName ?? 'someone'}. You can't stop thinking about them with your rival. It makes you irritable and obsessive.`,
+    conditionalExit: true,
+  },
+  alcoholic: {
+    type: 'alcoholic',
+    modifiers: { impulsiveness: 10, warmth: -20, morality: -10 },
+    prompt: "You have a drinking problem. You crave alcohol constantly. Work feels pointless compared to the tavern. You know it's destroying you but you can't stop.",
+    conditionalExit: true,
+  },
+  in_debt: {
+    type: 'in_debt',
+    modifiers: { neuroticism: 15 },
+    prompt: "You're broke and desperate. You can barely afford to eat. Every interaction is colored by your financial anxiety. You might need to ask for help — or take matters into your own hands.",
+    conditionalExit: true,
   },
 };
 

@@ -833,6 +833,74 @@ async function processCompletedConversation(
     }
   }
 
+  // Affair discovery: partner learns about affair through gossip
+  for (const pid of participantIds) {
+    const otherId = participantIds.find(p => p !== pid);
+    if (!otherId) continue;
+
+    // Check if pid has a partner relationship with otherId
+    const partnerRel = db.select().from(relationships).where(
+      and(
+        eq(relationships.agent_a, Math.min(pid, otherId)),
+        eq(relationships.agent_b, Math.max(pid, otherId)),
+      )
+    ).get();
+    if (!partnerRel || partnerRel.status !== 'partners') continue;
+
+    // Check if pid knows about an affair involving their partner (otherId)
+    const affairFacts = db.select().from(facts)
+      .where(and(eq(facts.type, 'affair'), eq(facts.subject_id, otherId), eq(facts.is_active, true))).all()
+      .filter(f => (f.known_by as number[]).includes(pid));
+    if (affairFacts.length === 0) continue;
+
+    const pidPersonality = participants.find(p => p.id === pid)?.personality as PersonalityProfile | null;
+    if (!pidPersonality) continue;
+
+    // Partner reaction based on personality
+    if (pidPersonality.aggression > 60) {
+      // Aggressive breakup: partnership → rivals, grudge
+      db.update(relationships).set({
+        status: 'rivals',
+        romance_ab: 0, romance_ba: 0,
+        tags: [...(partnerRel.tags as string[]).filter(t => t !== 'partner'), 'grudge'],
+      }).where(eq(relationships.id, partnerRel.id)).run();
+
+      // Heartbroken + angry
+      if (!getAgentStates(pid).includes('heartbroken')) {
+        db.insert(agentStates).values({
+          agent_id: pid, type: 'heartbroken', severity: 0.8,
+          started_at: time.totalTicks, duration: Math.floor(2880 + Math.random() * 4320),
+          target_agent_id: otherId, source: 'event:affair_discovery', metadata: null,
+        }).run();
+      }
+      if (!getAgentStates(pid).includes('angry')) {
+        db.insert(agentStates).values({
+          agent_id: pid, type: 'angry', severity: 0.9,
+          started_at: time.totalTicks, duration: Math.floor(480 + Math.random() * 720),
+          target_agent_id: otherId, source: 'event:affair_discovery', metadata: null,
+        }).run();
+      }
+
+      db.insert(activityLog).values({
+        type: 'state_change',
+        message: `${participants.find(p => p.id === pid)?.name} discovered ${participants.find(p => p.id === otherId)?.name}'s affair and broke up!`,
+        agent_ids: [pid, otherId],
+        timestamp: time.totalTicks, real_timestamp: now,
+      }).run();
+    } else if (pidPersonality.loyalty > 60) {
+      // Forgiveness path: trust drop but keep partnership
+      const trustField = pid < otherId ? 'trust_ab' : 'trust_ba';
+      const currentTrust = pid < otherId ? partnerRel.trust_ab : partnerRel.trust_ba;
+      db.update(relationships).set({
+        [trustField]: Math.max(0, currentTrust - 30),
+      }).where(eq(relationships.id, partnerRel.id)).run();
+    } else {
+      // Default: quiet breakup
+      db.update(relationships).set({ status: 'acquaintances', romance_ab: 0, romance_ba: 0 })
+        .where(eq(relationships.id, partnerRel.id)).run();
+    }
+  }
+
   // Mark conversation as ended
   db.update(conversations)
     .set({
