@@ -62,206 +62,244 @@ type WorldRow = typeof worldState.$inferSelect;
 // ---------------------------------------------------------------------------
 
 export async function conversationsTick(): Promise<void> {
-  const world = db.select().from(worldState).get();
-  if (!world) return;
+  // Collected LLM dispatch tasks — executed OUTSIDE the transaction (fire-and-forget async)
+  const dispatches: Array<{ conversationId: number; speakerId: number; participantIds: number[] }> = [];
+  // Completed LLM conversations to process asynchronously — OUTSIDE the transaction
+  const completedConversations: Array<{ conversation: ConversationRow; world: WorldRow }> = [];
+  // Timed-out queue entries needing template fallback — OUTSIDE the transaction
+  const timedOutQueue: Array<{ entry: QueueRow; world: WorldRow }> = [];
 
-  // Read scheduler state singleton
-  const schedulerState = db.select().from(conversationSchedulerState).get();
-  if (!schedulerState) return;
-
-  const activeLLM: ActiveLLMEntry[] = [
-    ...(schedulerState.active_llm_conversations as ActiveLLMEntry[]),
-  ];
-  let llmTotal = schedulerState.stats.llmConversationsTotal;
-  let templateTotal = schedulerState.stats.templateConversationsTotal;
-  let queueTimeouts = schedulerState.stats.queueTimeoutsTotal;
   let changed = false;
 
-  // --- Step A: Check active LLM conversations ---
-  const toRemove = new Set<number>();
-  const LLM_CONVERSATION_TIMEOUT_MS = 60000; // 60 seconds
-  const now = Date.now();
+  // ── Sync part: all DB reads and writes inside a single transaction ──────────
+  db.transaction(() => {
+    const world = db.select().from(worldState).get();
+    if (!world) return;
 
-  for (const entry of activeLLM) {
-    // Timeout check — force-end hung conversations
-    if (now - entry.startedAt > LLM_CONVERSATION_TIMEOUT_MS) {
-      const convo = db.select().from(conversations).where(eq(conversations.id, entry.conversationId)).get();
-      if (convo && convo.status !== 'ended') {
-        db.update(conversations).set({ status: 'ended', ended_at: now, sentiment: 0 })
-          .where(eq(conversations.id, entry.conversationId)).run();
-        // Reset agents
-        const participants = convo.participants as number[];
-        for (const pid of participants) {
-          const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
-          if (agent && (agent.current_action as any)?.type === 'talking') {
-            db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
-              .where(eq(agents.id, pid)).run();
+    // Read scheduler state singleton
+    const schedulerState = db.select().from(conversationSchedulerState).get();
+    if (!schedulerState) return;
+
+    const activeLLM: ActiveLLMEntry[] = [
+      ...(schedulerState.active_llm_conversations as ActiveLLMEntry[]),
+    ];
+    let llmTotal = schedulerState.stats.llmConversationsTotal;
+    let templateTotal = schedulerState.stats.templateConversationsTotal;
+    let queueTimeouts = schedulerState.stats.queueTimeoutsTotal;
+
+    // --- Step A: Check active LLM conversations ---
+    const toRemove = new Set<number>();
+    const LLM_CONVERSATION_TIMEOUT_MS = 60000; // 60 seconds
+    const now = Date.now();
+
+    for (const entry of activeLLM) {
+      // Timeout check — force-end hung conversations
+      if (now - entry.startedAt > LLM_CONVERSATION_TIMEOUT_MS) {
+        const convo = db.select().from(conversations).where(eq(conversations.id, entry.conversationId)).get();
+        if (convo && convo.status !== 'ended') {
+          db.update(conversations).set({ status: 'ended', ended_at: now, sentiment: 0 })
+            .where(eq(conversations.id, entry.conversationId)).run();
+          // Reset agents
+          const participants = convo.participants as number[];
+          for (const pid of participants) {
+            const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
+            if (agent && (agent.current_action as any)?.type === 'talking') {
+              db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
+                .where(eq(agents.id, pid)).run();
+            }
           }
+          changed = true;
         }
+        toRemove.add(entry.conversationId);
+        continue;
+      }
+
+      const conversation = db
+        .select()
+        .from(conversations)
+        .where(eq(conversations.id, entry.conversationId))
+        .get();
+
+      if (!conversation) {
+        toRemove.add(entry.conversationId);
+        continue;
+      }
+
+      const messages = conversation.messages as ConversationMessage[];
+      if (
+        conversation.status === 'ended' ||
+        messages.length >= conversation.max_turns
+      ) {
+        // Collect for async processing outside the transaction
+        completedConversations.push({ conversation, world });
+        toRemove.add(entry.conversationId);
+        llmTotal++;
         changed = true;
       }
-      toRemove.add(entry.conversationId);
-      continue;
     }
 
-    const conversation = db
+    const updatedActiveLLM = activeLLM.filter(
+      (e) => !toRemove.has(e.conversationId),
+    );
+
+    // --- Step C: Process queue timeouts ---
+    const queueEntries = db
       .select()
-      .from(conversations)
-      .where(eq(conversations.id, entry.conversationId))
-      .get();
+      .from(conversationQueue)
+      .orderBy(desc(conversationQueue.priority))
+      .all();
 
-    if (!conversation) {
-      toRemove.add(entry.conversationId);
-      continue;
+    const timedOutEntries: QueueRow[] = [];
+    const validEntries: QueueRow[] = [];
+
+    for (const entry of queueEntries) {
+      if (now > entry.queued_at + entry.max_wait) {
+        timedOutEntries.push(entry);
+      } else {
+        validEntries.push(entry);
+      }
     }
 
-    const messages = conversation.messages as ConversationMessage[];
-    if (
-      conversation.status === 'ended' ||
-      messages.length >= conversation.max_turns
-    ) {
-      await processCompletedConversation(conversation, world);
-      toRemove.add(entry.conversationId);
-      llmTotal++;
+    // Delete timed-out entries from queue; async template processing happens outside
+    for (const entry of timedOutEntries) {
+      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+      timedOutQueue.push({ entry, world });
+      templateTotal++;
+      queueTimeouts++;
       changed = true;
     }
-  }
 
-  const updatedActiveLLM = activeLLM.filter(
-    (e) => !toRemove.has(e.conversationId),
-  );
+    // --- Step D: Fill open LLM slots ---
+    let currentActive = updatedActiveLLM.length;
+    const fillEntries = [...updatedActiveLLM];
 
-  // --- Step C: Process queue timeouts ---
-  const queueEntries = db
-    .select()
-    .from(conversationQueue)
-    .orderBy(desc(conversationQueue.priority))
-    .all();
-
-  const timedOutEntries: QueueRow[] = [];
-  const validEntries: QueueRow[] = [];
-
-  for (const entry of queueEntries) {
-    if (now > entry.queued_at + entry.max_wait) {
-      timedOutEntries.push(entry);
-    } else {
-      validEntries.push(entry);
-    }
-  }
-
-  for (const entry of timedOutEntries) {
-    await processTimedOutEntry(entry, world);
-    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-    templateTotal++;
-    queueTimeouts++;
-    changed = true;
-  }
-
-  // --- Step D: Fill open LLM slots ---
-  let currentActive = updatedActiveLLM.length;
-  const fillEntries = [...updatedActiveLLM];
-
-  for (const entry of validEntries) {
-    if (currentActive >= schedulerState.max_concurrent_llm) break;
-
-    // Depressed agents skip conversations — remove from queue
-    const firstParticipantStates = getAgentStates(entry.participants[0]);
-    if (firstParticipantStates.includes('depressed')) {
-      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-      continue;
-    }
-
-    // Get first participant's position for location
-    const firstParticipant = db
-      .select()
-      .from(agents)
-      .where(eq(agents.id, entry.participants[0]))
-      .get();
-
-    if (!firstParticipant) {
-      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-      continue;
-    }
-
-    const locationId = firstParticipant.current_location;
-    if (!locationId) {
-      // Can't start a conversation without a location; skip for now
-      continue;
-    }
-
-    const maxTurns =
-      entry.tier === 'llm_deep'
-        ? schedulerState.max_turns_deep
-        : schedulerState.max_turns_standard;
-
-    // Create conversation record
-    const result = db
-      .insert(conversations)
-      .values({
-        participants: entry.participants,
-        messages: [],
-        location: locationId,
-        trigger_reason: entry.trigger_reason,
-        topic: entry.topic,
-        status: 'active',
-        started_at: now,
-        ended_at: null,
-        sentiment: 0,
-        max_turns: maxTurns,
-      })
-      .returning({ id: conversations.id })
-      .get();
-
-    const conversationId = result.id;
-
-    // Schedule first response via task runner
-    const accepted = taskRunner.startConversation(conversationId, entry.participants[0]);
-    if (!accepted) {
-      // Slots full — remove the conversation record and skip
-      db.delete(conversations).where(eq(conversations.id, conversationId)).run();
-      continue;
-    }
-
-    // Update both agents' currentAction to "talking"
     const time = world.time as { totalTicks: number };
-    for (const participantId of entry.participants) {
-      db.update(agents)
-        .set({
-          current_action: {
-            type: 'talking',
-            conversationId,
-          },
-          action_started: time.totalTicks,
-          action_duration: maxTurns * 2, // ticks, not milliseconds
+
+    for (const entry of validEntries) {
+      if (currentActive >= schedulerState.max_concurrent_llm) break;
+
+      // Depressed agents skip conversations — remove from queue
+      const firstParticipantStates = getAgentStates(entry.participants[0]);
+      if (firstParticipantStates.includes('depressed')) {
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        continue;
+      }
+
+      // Get first participant's position for location
+      const firstParticipant = db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, entry.participants[0]))
+        .get();
+
+      if (!firstParticipant) {
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        continue;
+      }
+
+      const locationId = firstParticipant.current_location;
+      if (!locationId) {
+        // Can't start a conversation without a location; skip for now
+        continue;
+      }
+
+      const maxTurns =
+        entry.tier === 'llm_deep'
+          ? schedulerState.max_turns_deep
+          : schedulerState.max_turns_standard;
+
+      // Create conversation record
+      const result = db
+        .insert(conversations)
+        .values({
+          participants: entry.participants,
+          messages: [],
+          location: locationId,
+          trigger_reason: entry.trigger_reason,
+          topic: entry.topic,
+          status: 'active',
+          started_at: now,
+          ended_at: null,
+          sentiment: 0,
+          max_turns: maxTurns,
         })
-        .where(eq(agents.id, participantId))
-        .run();
+        .returning({ id: conversations.id })
+        .get();
+
+      const conversationId = result.id;
+
+      // Update both agents' currentAction to "talking"
+      for (const participantId of entry.participants) {
+        db.update(agents)
+          .set({
+            current_action: {
+              type: 'talking',
+              conversationId,
+            },
+            action_started: time.totalTicks,
+            action_duration: maxTurns * 2, // ticks, not milliseconds
+          })
+          .where(eq(agents.id, participantId))
+          .run();
+      }
+
+      // Collect dispatch — actual startConversation() call goes outside transaction
+      dispatches.push({
+        conversationId,
+        speakerId: entry.participants[0],
+        participantIds: entry.participants as number[],
+      });
+
+      fillEntries.push({
+        conversationId,
+        startedAt: now,
+      });
+      currentActive++;
+      changed = true;
+
+      // Remove from queue
+      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
     }
 
-    fillEntries.push({
-      conversationId,
-      startedAt: now,
-    });
-    currentActive++;
-    changed = true;
+    // --- Update scheduler state ---
+    db.update(conversationSchedulerState)
+      .set({
+        active_llm_conversations: fillEntries,
+        stats: {
+          llmConversationsTotal: llmTotal,
+          templateConversationsTotal: templateTotal,
+          averageResponseTimeMs: schedulerState.stats.averageResponseTimeMs,
+          queueTimeoutsTotal: queueTimeouts,
+        },
+      })
+      .where(eq(conversationSchedulerState.id, schedulerState.id))
+      .run();
+  });
 
-    // Remove from queue
-    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+  // ── Async part: dispatch LLM calls outside transaction ─────────────────────
+  for (const d of dispatches) {
+    const accepted = taskRunner.startConversation(d.conversationId, d.speakerId);
+    if (!accepted) {
+      // Task runner slots full — remove the conversation record and reset agents to idle
+      db.delete(conversations).where(eq(conversations.id, d.conversationId)).run();
+      for (const pid of d.participantIds) {
+        db.update(agents)
+          .set({ current_action: { type: 'idle' }, action_duration: null })
+          .where(eq(agents.id, pid))
+          .run();
+      }
+    }
   }
 
-  // --- Update scheduler state ---
-  db.update(conversationSchedulerState)
-    .set({
-      active_llm_conversations: fillEntries,
-      stats: {
-        llmConversationsTotal: llmTotal,
-        templateConversationsTotal: templateTotal,
-        averageResponseTimeMs: schedulerState.stats.averageResponseTimeMs,
-        queueTimeoutsTotal: queueTimeouts,
-      },
-    })
-    .where(eq(conversationSchedulerState.id, schedulerState.id))
-    .run();
+  // Process timed-out queue entries with template fallback
+  for (const { entry, world } of timedOutQueue) {
+    await processTimedOutEntry(entry, world);
+  }
+
+  // Process completed LLM conversations
+  for (const { conversation, world } of completedConversations) {
+    await processCompletedConversation(conversation, world);
+  }
 
   if (changed) {
     emitter.markDirty('conversations');
@@ -280,7 +318,7 @@ async function processCompletedConversation(
   const fresh = db.select().from(conversations).where(eq(conversations.id, conversation.id)).get();
   if (!fresh || fresh.status === 'ended') return;
 
-  const messages = conversation.messages as ConversationMessage[];
+  const messages = fresh.messages as ConversationMessage[];
   const now = Date.now();
 
   // Calculate overall sentiment: average of all message sentiments
@@ -291,7 +329,7 @@ async function processCompletedConversation(
   }
 
   // Get participant agents
-  const participantIds = conversation.participants as number[];
+  const participantIds = fresh.participants as number[];
   const participants: AgentRow[] = [];
   for (const pid of participantIds) {
     const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
@@ -403,7 +441,7 @@ async function processCompletedConversation(
           agent_a: orderedA,
           agent_b: orderedB,
           event_type: 'conversation',
-          description: `Conversation about ${conversation.topic ?? 'various things'}`,
+          description: `Conversation about ${fresh.topic ?? 'various things'}`,
           friendship_delta_ab: friendshipDeltaAB,
           friendship_delta_ba: friendshipDeltaBA,
           romance_delta_ab: romanceDeltaAB,
@@ -491,7 +529,7 @@ async function processCompletedConversation(
       otherNames,
       otherIds,
       time.totalTicks,
-      conversation.location,
+      fresh.location,
     );
 
     // Drunk → fuzzy memories (halve importance)
@@ -569,7 +607,7 @@ async function processCompletedConversation(
       ended_at: now,
       sentiment: overallSentiment,
     })
-    .where(eq(conversations.id, conversation.id))
+    .where(eq(conversations.id, fresh.id))
     .run();
 
   // Reset participants back to idle — only if still talking THIS conversation
@@ -578,7 +616,7 @@ async function processCompletedConversation(
     if (agent) {
       const action = agent.current_action as any;
       // Only reset if agent is still talking in THIS conversation
-      if (action?.type === 'talking' && String(action?.conversationId) === String(conversation.id)) {
+      if (action?.type === 'talking' && String(action?.conversationId) === String(fresh.id)) {
         db.update(agents)
           .set({ current_action: { type: 'idle' }, action_duration: null })
           .where(eq(agents.id, participantId))
@@ -593,7 +631,7 @@ async function processCompletedConversation(
   db.insert(activityLog)
     .values({
       type: 'conversation_ended',
-      message: `${participants.map((p) => p.name).join(' and ')} finished talking${conversation.topic ? ` about ${conversation.topic}` : ''}.`,
+      message: `${participants.map((p) => p.name).join(' and ')} finished talking${fresh.topic ? ` about ${fresh.topic}` : ''}.`,
       agent_ids: participants.map((p) => p.id),
       timestamp: time.totalTicks,
       real_timestamp: now,

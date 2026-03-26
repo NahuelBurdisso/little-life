@@ -438,7 +438,7 @@ function buildAction(decision: ScoredAction): Record<string, unknown> {
 
 // --- Main Tick ---
 
-export async function tick(world: WorldRow): Promise<void> {
+export function tick(world: WorldRow): void {
   const activeAgents = db
     .select()
     .from(agents)

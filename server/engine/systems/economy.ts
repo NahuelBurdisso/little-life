@@ -320,7 +320,7 @@ export function economyTick(): void {
       }).where(eq(economy.id, econ.id)).run();
       econ.money = newMoney;
 
-      if (econ.money < 10) {
+      if (newMoney < 10) {
         createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
       }
     }

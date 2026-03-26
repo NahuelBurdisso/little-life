@@ -111,9 +111,9 @@ function normalizePair(
 
 // --- Main Tick ---
 
-export async function tick(
+export function tick(
   world: { tick_speed: number },
-): Promise<void> {
+): void {
   const gameHoursElapsed = world.tick_speed / 60;
   const now = Date.now();
 

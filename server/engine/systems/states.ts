@@ -13,6 +13,7 @@ import {
   memories,
 } from '../../db/schema';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
+import { CONFIG } from '../../lib/constants';
 import { PersonalityProfile } from '../../lib/personality';
 import { clamp } from '../../lib/utils';
 import {
@@ -242,7 +243,7 @@ function evaluateTriggers(
 
   // ── Heartbroken ───────────────────────────────────────────────────────────
   if (!activeTypes.has('heartbroken')) {
-    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 60 * msPerTick;
     const recentRomanceDrops = db
       .select()
@@ -288,7 +289,7 @@ function evaluateTriggers(
 
   // ── Angry ─────────────────────────────────────────────────────────────────
   if (!activeTypes.has('angry') && personality.aggression > 40) {
-    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 60 * msPerTick;
     const badConvos = db
       .select()
@@ -357,7 +358,7 @@ function evaluateTriggers(
 
   // ── Euphoric ──────────────────────────────────────────────────────────────
   if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 80) {
-    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 60 * msPerTick;
     const positiveConvo = db
       .select()
@@ -589,7 +590,7 @@ function evaluateTriggers(
 
   // ── Confident ─────────────────────────────────────────────────────────────
   if (!activeTypes.has('confident') && personality.vanity > 50) {
-    const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+    const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 1440 * msPerTick;
     const positiveConvos = db
       .select()
@@ -646,7 +647,7 @@ function checkConditionalExits(
 
       case 'depressed': {
         // Exits ONLY when a warm friend initiates a positive conversation
-        const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+        const msPerTick = CONFIG.TICK_INTERVAL_MS;
         const sinceWindow = Date.now() - 60 * msPerTick;
         const recentPositiveConvos = db
           .select()
@@ -1131,7 +1132,7 @@ function processStateEffects(
       case 'confident': {
         if (!personality || personality.vanity <= 60) break;
 
-        const msPerTick = 1000; // CONFIG.TICK_INTERVAL_MS
+        const msPerTick = CONFIG.TICK_INTERVAL_MS;
         const sinceWindow = Date.now() - 30 * msPerTick;
         const negativeConvo = db
           .select()
