@@ -40,6 +40,7 @@ export async function generateResponse(
     effectivePersonality,
     statePrompts,
     gossipFacts,
+    situationalPrompt,
   } = context;
 
   // 2. Build prompt
@@ -56,6 +57,7 @@ export async function generateResponse(
     effectivePersonality,
     statePrompts,
     gossipFacts,
+    situationalPrompt,
   };
 
   const { system, messages: promptMessages } = buildConversationPrompt(promptParams);

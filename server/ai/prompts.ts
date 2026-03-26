@@ -291,6 +291,7 @@ export interface ConversationPromptParams {
   effectivePersonality?: PersonalityProfile | null;
   statePrompts?: string[];
   gossipFacts?: Array<{ content: string; sensitivity: number }>;
+  situationalPrompt?: string | null;
 }
 
 export function buildConversationPrompt(
@@ -309,20 +310,21 @@ export function buildConversationPrompt(
     effectivePersonality,
     statePrompts,
     gossipFacts,
+    situationalPrompt,
   } = params;
 
   // Compute tone modifiers from personality
   const resolvedPersonality = effectivePersonality ?? speaker.personality;
   const toneCtx: ConversationContext = {
     isRomantic: conversation.topic?.includes('flirting') || conversation.topic?.includes('romance') || false,
-    isConflict: conversation.topic?.includes('confrontation') || conversation.topic?.includes('argument') || false,
+    isConflict: conversation.topic?.includes('confrontation') || conversation.topic?.includes('tension') || false,
     witnessedVice: gossipFacts?.some(f =>
       ['theft', 'drunk_incident', 'alcoholic', 'gambling_loss', 'affair'].some(vt => f.content.toLowerCase().includes(vt.replace('_', ' ')))
     ) ?? false,
   };
   const toneModifiers = resolvedPersonality ? generateToneModifiers(resolvedPersonality as PersonalityProfile, toneCtx) : [];
 
-  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts, toneModifiers);
+  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts, toneModifiers, situationalPrompt ?? null);
 
   // Build context message
   const contextParts: string[] = [];

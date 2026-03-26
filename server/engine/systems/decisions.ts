@@ -782,6 +782,8 @@ export function tick(world: WorldRow): void {
 
       // --- Determine conversation tier: LLM only for meaningful interactions ---
       const agentStatesArr = getAgentStates(agentId);
+      // Depressed agents skip conversations entirely — don't queue them
+      if ((agentStatesArr as string[]).includes('depressed')) continue;
       const targetStatesArr = getAgentStates(targetId);
       const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'depressed', 'drunk', 'infatuated'] as const;
       const hasDramaticState = dramaticStates.some(s => (agentStatesArr as string[]).includes(s) || (targetStatesArr as string[]).includes(s));
@@ -890,7 +892,9 @@ export function tick(world: WorldRow): void {
     // Use the same tier logic as regular socializing
     const aStates = getAgentStates(a.id);
     const bStates = getAgentStates(b.id);
-    const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'depressed', 'drunk', 'infatuated'] as const;
+    // Skip if either agent is depressed — they avoid conversations
+    if ((aStates as string[]).includes('depressed') || (bStates as string[]).includes('depressed')) continue;
+    const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'drunk', 'infatuated'] as const;
     const hasDrama = dramaticStates.some(s => (aStates as string[]).includes(s) || (bStates as string[]).includes(s));
 
     const aNeeds = db.select().from(needs).where(eq(needs.agent_id, a.id)).get();

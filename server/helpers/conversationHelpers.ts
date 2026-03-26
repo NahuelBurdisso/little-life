@@ -1,11 +1,12 @@
 import { db } from '../db';
-import { agents, needs, economy, conversations, relationships, memories, locations, worldState } from '../db/schema';
+import { agents, needs, economy, conversations, relationships, memories, locations, worldState, agentStates, facts } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
-import { getEffectivePersonality, getActiveStatePrompts } from '../lib/states';
-import { getShareableFacts } from '../lib/gossip';
+import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
+import { getShareableFacts, getAgentName } from '../lib/gossip';
 import { retrieveMemories, MemoryRow } from '../ai/memories';
 import { vectorStore } from '../lib/vectors';
+import { generateSituationalPrompt } from '../lib/personality';
 
 export async function getConversationContext(conversationId: number, speakerId: number) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
@@ -89,6 +90,43 @@ export async function getConversationContext(conversationId: number, speakerId: 
     ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality as any)
     : [];
 
+  // Build situational prompt from the speaker's active dramatic states
+  const speakerStates = getAgentStates(speakerId);
+  let situationalPrompt: string | null = null;
+  const otherName = otherAgent.name;
+
+  if (speakerStates.includes('in_debt')) {
+    situationalPrompt = generateSituationalPrompt({ type: 'begging', targetName: otherName });
+  } else if (speakerStates.includes('jealous')) {
+    const jealousState = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, speakerId), eq(agentStates.type, 'jealous'))).get();
+    if (jealousState) {
+      const meta = (jealousState.metadata as Record<string, any> | null) ?? {};
+      const rivalId = meta.rivalId as number | undefined;
+      const loveInterestId = meta.loveInterestId as number | undefined;
+      if (rivalId && loveInterestId && otherId === rivalId) {
+        situationalPrompt = generateSituationalPrompt({
+          type: 'jealousy_confrontation',
+          loveInterestName: getAgentName(loveInterestId),
+          rivalName: otherName,
+        });
+      }
+    }
+  } else if (speakerStates.includes('heartbroken')) {
+    // Check if otherAgent is the partner who caused heartbreak and speaker knows of an affair
+    const affairFact = db.select().from(facts)
+      .where(and(eq(facts.type, 'affair'), eq(facts.subject_id, otherId), eq(facts.is_active, true))).all()
+      .find(f => (f.known_by as number[]).includes(speakerId));
+    if (affairFact) {
+      const rivalId = affairFact.target_id;
+      situationalPrompt = generateSituationalPrompt({
+        type: 'affair_discovery',
+        targetName: otherName,
+        rivalName: rivalId ? getAgentName(rivalId) : 'someone else',
+      });
+    }
+  }
+
   return {
     conversation,
     speaker,
@@ -102,6 +140,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     effectivePersonality,
     statePrompts,
     gossipFacts,
+    situationalPrompt,
   };
 }
 

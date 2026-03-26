@@ -101,7 +101,7 @@ export function selectTemplate(
   // Filter out templates whose cooldown hasn't expired
   const available = matching.filter((t) => {
     if (!recentUsage) return true;
-    return now - recentUsage.used_at >= t.cooldown_per_pair;
+    return now - recentUsage.used_at >= t.cooldown_per_pair * 60_000;
   });
 
   if (available.length === 0) return null;

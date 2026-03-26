@@ -437,7 +437,7 @@ export function deactivateStaleFacts(): void {
         const negConvs = db
           .select({ id: conversations.id, participants: conversations.participants, sentiment: conversations.sentiment, ended_at: conversations.ended_at })
           .from(conversations)
-          .where(eq(conversations.status, 'completed'))
+          .where(eq(conversations.status, 'ended'))
           .all()
           .filter((c) => {
             const participants: number[] = c.participants as number[];

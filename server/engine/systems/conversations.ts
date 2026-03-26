@@ -1081,7 +1081,7 @@ async function processTimedOutEntry(
   let templateResult: { text: string; sentiment: number } | null = null;
   let matchedCategory = '';
   for (const category of categoriesToTry) {
-    templateResult = await selectTemplate(
+    templateResult = selectTemplate(
       category,
       entry.participants[0],
       entry.participants[1],
@@ -1099,7 +1099,7 @@ async function processTimedOutEntry(
   // If nothing matched, try one more time with greeting
   if (!templateResult) {
     const fallbackCategory = friendship > 30 ? 'greeting_friendly' : friendship < -20 ? 'greeting_cold' : 'greeting_neutral';
-    templateResult = await selectTemplate(
+    templateResult = selectTemplate(
       fallbackCategory,
       entry.participants[0],
       entry.participants[1],
