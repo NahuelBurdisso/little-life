@@ -25,6 +25,7 @@ const FACT_COLORS: Record<string, string> = {
 
 function KnownFacts({ agentId }: { agentId: number }) {
   const { data: knownFacts } = trpc.facts.getKnownBy.useQuery({ agentId });
+  const { agents: allAgents } = useAgents();
 
   if (!knownFacts || knownFacts.length === 0) {
     return (
@@ -35,23 +36,57 @@ function KnownFacts({ agentId }: { agentId: number }) {
     );
   }
 
+  // Sort: secrets first, then by sensitivity desc
+  const sorted = [...knownFacts].sort((a: any, b: any) => {
+    const aSecret = a.sensitivity >= 3 ? 2 : a.sensitivity >= 2 ? 1 : 0;
+    const bSecret = b.sensitivity >= 3 ? 2 : b.sensitivity >= 2 ? 1 : 0;
+    return bSecret - aSecret;
+  });
+
+  const totalAgents = allAgents.length;
+
   return (
     <div className="px-3 py-2 border-b border-gray-700">
       <div className="text-xs text-gray-500 font-medium mb-1.5">
         Known Facts ({knownFacts.length})
       </div>
-      <div className="space-y-1">
-        {knownFacts.slice(0, 15).map((fact: any) => (
-          <div key={fact.id} className="text-[11px] flex items-start gap-1.5">
-            <span className={`capitalize font-medium shrink-0 ${FACT_COLORS[fact.type] ?? 'text-gray-400'}`}>
-              {fact.type.replace(/_/g, ' ')}:
-            </span>
-            <span className="text-gray-400">{fact.content}</span>
-          </div>
-        ))}
-        {knownFacts.length > 15 && (
+      <div className="space-y-1.5">
+        {sorted.slice(0, 15).map((fact: any) => {
+          const knownCount = (fact.known_by as number[]).length;
+          const secrecyLabel = fact.sensitivity >= 3
+            ? '🔒' : fact.sensitivity >= 2
+            ? '🔑' : '';
+          const secrecyBg = fact.sensitivity >= 3
+            ? 'bg-red-900/20 border border-red-900/30' : fact.sensitivity >= 2
+            ? 'bg-yellow-900/10 border border-yellow-900/20' : '';
+
+          return (
+            <div key={fact.id} className={`text-[11px] rounded px-1.5 py-1 ${secrecyBg}`}>
+              <div className="flex items-start gap-1">
+                {secrecyLabel && <span className="shrink-0">{secrecyLabel}</span>}
+                <span className={`capitalize font-medium shrink-0 ${FACT_COLORS[fact.type] ?? 'text-gray-400'}`}>
+                  {fact.type.replace(/_/g, ' ')}
+                </span>
+                <span className="text-gray-400 flex-1">{fact.content}</span>
+              </div>
+              <div className="text-[9px] text-gray-600 mt-0.5 flex gap-2">
+                <span>Known by {knownCount}/{totalAgents}</span>
+                {fact.sensitivity >= 2 && knownCount <= 3 && (
+                  <span className="text-red-400">← Secret</span>
+                )}
+                {fact.sensitivity >= 2 && knownCount > 3 && knownCount < totalAgents / 2 && (
+                  <span className="text-yellow-400">← Spreading</span>
+                )}
+                {knownCount >= totalAgents / 2 && (
+                  <span className="text-gray-500">← Common knowledge</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {sorted.length > 15 && (
           <div className="text-[10px] text-gray-600 italic">
-            ...and {knownFacts.length - 15} more
+            ...and {sorted.length - 15} more
           </div>
         )}
       </div>
