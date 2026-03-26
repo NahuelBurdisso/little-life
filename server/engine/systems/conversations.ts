@@ -404,15 +404,25 @@ async function processCompletedConversation(
       let friendshipDeltaAB = baseFriendship;
       let friendshipDeltaBA = baseFriendship;
 
-      // Topic-driven trust impact
+      // Trust builds gradually from every interaction, with topic bonuses
       const isDeepTopic = ['sharing secrets', 'deep conversation', 'confession', 'venting worries', 'seeking comfort']
         .some(t => fresh.topic?.includes(t) ?? false);
-      const isConflictTopic = ['confrontation', 'tension', 'argument']
+      const isConflictTopic = ['confrontation', 'tension', 'argument', 'tense encounter']
         .some(t => fresh.topic?.includes(t) ?? false);
 
-      let trustDeltaAB = isDeepTopic && overallSentiment > 0 ? 4 : isConflictTopic ? -5 :
-        overallSentiment > 0.3 ? 3 : overallSentiment < -0.3 ? -4 : 0;
+      // Base trust: every positive conversation builds some trust, negative erodes it
+      let trustDeltaAB = overallSentiment * 4 * turnMultiplier;
       let trustDeltaBA = trustDeltaAB;
+      // Deep topics give a trust bonus
+      if (isDeepTopic && overallSentiment > 0) {
+        trustDeltaAB += 3;
+        trustDeltaBA += 3;
+      }
+      // Conflict breaks trust faster
+      if (isConflictTopic) {
+        trustDeltaAB -= 3;
+        trustDeltaBA -= 3;
+      }
 
       // Get both agents' personalities
       const personalityA = agentA.personality as PersonalityProfile | null;
@@ -430,15 +440,25 @@ async function processCompletedConversation(
       trustDeltaAB *= compat;
       trustDeltaBA *= compat;
 
-      // Generate romance deltas
+      // Generate romance deltas — scales with sensuality, sentiment, topic, and turns
       let romanceDeltaAB = 0;
       let romanceDeltaBA = 0;
-      if (overallSentiment > 0.2 && personalityA && personalityB) {
-        if (personalityA.sensuality > 40) {
-          romanceDeltaAB = overallSentiment * 3 * (personalityA.sensuality / 100) * compat;
+      const isRomanticTopic = ['flirting', 'romance', 'deep conversation', 'sharing secrets']
+        .some(t => fresh.topic?.includes(t) ?? false);
+      const romanceMultiplier = isRomanticTopic ? 3.0 : 1.0;
+
+      if (personalityA && personalityB) {
+        // Romance grows in positive conversations, faster for sensual agents and romantic topics
+        if (overallSentiment > 0 && personalityA.sensuality > 30) {
+          romanceDeltaAB = overallSentiment * 6 * (personalityA.sensuality / 100) * compat * romanceMultiplier * turnMultiplier;
         }
-        if (personalityB.sensuality > 40) {
-          romanceDeltaBA = overallSentiment * 3 * (personalityB.sensuality / 100) * compat;
+        if (overallSentiment > 0 && personalityB.sensuality > 30) {
+          romanceDeltaBA = overallSentiment * 6 * (personalityB.sensuality / 100) * compat * romanceMultiplier * turnMultiplier;
+        }
+        // Negative conversations reduce romance
+        if (overallSentiment < -0.2) {
+          if (personalityA.sensuality > 30) romanceDeltaAB = overallSentiment * 4;
+          if (personalityB.sensuality > 30) romanceDeltaBA = overallSentiment * 4;
         }
       }
 
