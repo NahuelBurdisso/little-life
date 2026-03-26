@@ -89,14 +89,6 @@ export class AgentSprite {
 
   constructor(name: string) {
     this.container = new PIXI.Container();
-    this.container.interactiveChildren = false; // only container hitArea handles events
-
-    this.container.hitArea = new PIXI.Rectangle(
-      -AGENT_RADIUS,
-      -AGENT_RADIUS,
-      AGENT_RADIUS * 2,
-      AGENT_RADIUS * 2 + 20,
-    );
 
     // --- Selection ring (yellow ellipse at feet) ---
     this.selectionRing = new PIXI.Graphics();

@@ -147,7 +147,7 @@ export function GameCanvas({
       onAgentHover: stableOnHover,
       onAgentContextMenu: stableOnContext,
     });
-    interaction.setup(app);
+    interaction.setup(app, worldContainer);
     interactionRef.current = interaction;
 
     // Animation loop — store ref for cleanup

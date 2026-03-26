@@ -1,5 +1,5 @@
-import * as PIXI from "pixi.js";
 import { SpritePool } from "./SpritePool";
+import { Container, Application } from "pixi.js";
 
 interface InteractionCallbacks {
   onAgentSelect: (agentId: string) => void;
@@ -8,90 +8,138 @@ interface InteractionCallbacks {
 }
 
 /**
- * Manages click/hover/right-click detection on agent sprites.
- * Binds PixiJS pointer events on each agent's container.
+ * Handles click/hover/right-click on agent sprites using native DOM events
+ * and manual hit testing. This avoids PixiJS v8 event system issues with
+ * autoDensity, resolution scaling, and eventMode going stale.
  */
 export class InteractionLayer {
   private spritePool: SpritePool;
   private callbacks: InteractionCallbacks;
-  private boundIds: Set<string> = new Set();
+  private canvas: HTMLCanvasElement | null = null;
+  private worldContainer: Container | null = null;
+  private hoveredId: string | null = null;
+
+  private onPointerDown: ((e: PointerEvent) => void) | null = null;
+  private _onPointerUp: ((e: PointerEvent) => void) | null = null;
+  private onPointerMove: ((e: PointerEvent) => void) | null = null;
+  private onContextMenu: ((e: MouseEvent) => void) | null = null;
+  private _clickStart: { x: number; y: number } | null = null;
 
   constructor(spritePool: SpritePool, callbacks: InteractionCallbacks) {
     this.spritePool = spritePool;
     this.callbacks = callbacks;
   }
 
-  /** Set up the background click (deselect) handler on the app stage. */
-  setup(app: PIXI.Application) {
-    app.stage.eventMode = "static";
-    app.stage.hitArea = app.screen;
+  setup(app: Application, worldContainer: Container) {
+    this.canvas = app.canvas;
+    this.worldContainer = worldContainer;
 
-    // Deselect when clicking on empty background
-    app.stage.on("pointerdown", (e: PIXI.FederatedPointerEvent) => {
-      // If the target is the stage itself (not an agent container), deselect
-      if (e.target === app.stage) {
+    this.onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return; // only left click
+      // Record click start position — we'll check on pointerup if it was a click vs drag
+      this._clickStart = { x: e.clientX, y: e.clientY };
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.button !== 0 || !this._clickStart) return;
+      // Only treat as click if mouse didn't move much (not a drag)
+      const dx = e.clientX - this._clickStart.x;
+      const dy = e.clientY - this._clickStart.y;
+      this._clickStart = null;
+      if (dx * dx + dy * dy > 25) return; // moved more than 5px — it's a drag
+
+      const hit = this.hitTest(e);
+      if (hit) {
+        this.callbacks.onAgentSelect(hit);
+      } else {
         this.callbacks.onAgentSelect("");
       }
-    });
+    };
+    this._onPointerUp = onPointerUp;
 
-    // Keep hitArea in sync with renderer size
-    app.renderer.on("resize", () => {
-      app.stage.hitArea = app.screen;
-    });
+    this.onPointerMove = (e: PointerEvent) => {
+      const hit = this.hitTest(e);
+      if (hit !== this.hoveredId) {
+        if (hit) {
+          this.callbacks.onAgentHover(hit, { x: e.clientX, y: e.clientY });
+          this.canvas!.style.cursor = "pointer";
+        } else {
+          this.callbacks.onAgentHover(null);
+          this.canvas!.style.cursor = "";
+        }
+        this.hoveredId = hit;
+      } else if (hit) {
+        // Update position even if same agent (mouse moved)
+        this.callbacks.onAgentHover(hit, { x: e.clientX, y: e.clientY });
+      }
+    };
+
+    this.onContextMenu = (e: MouseEvent) => {
+      const hit = this.hitTest(e);
+      if (hit) {
+        e.preventDefault();
+        this.callbacks.onAgentContextMenu(hit, { x: e.clientX, y: e.clientY });
+      }
+    };
+
+    this.canvas.addEventListener("pointerdown", this.onPointerDown);
+    this.canvas.addEventListener("pointerup", this._onPointerUp!);
+    this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("contextmenu", this.onContextMenu);
   }
 
-  /**
-   * Re-bind pointer events for the given agent IDs.
-   * Call this after SpritePool.update() to attach events to new sprites.
-   */
-  updateBindings(agentIds: string[]) {
-    for (const id of agentIds) {
+  /** Convert screen mouse position to world coordinates and find the closest agent. */
+  private hitTest(e: MouseEvent | PointerEvent): string | null {
+    if (!this.canvas || !this.worldContainer) return null;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+
+    // Convert screen coordinates to world coordinates
+    // Account for world container position (pan) and scale (zoom)
+    const wc = this.worldContainer;
+    const worldX = (screenX - wc.x) / wc.scale.x;
+    const worldY = (screenY - wc.y) / wc.scale.y;
+
+    // Check all sprites — find closest within hit radius
+    const HIT_RADIUS = 20; // pixels in world space
+    const HIT_RADIUS_SQ = HIT_RADIUS * HIT_RADIUS;
+    let bestId: string | null = null;
+    let bestDistSq = Infinity;
+
+    for (const id of this.spritePool.getAllIds()) {
       const sprite = this.spritePool.getSprite(id);
       if (!sprite) continue;
 
-      const c = sprite.container;
+      const dx = worldX - sprite.container.x;
+      const dy = worldY - sprite.container.y;
+      const distSq = dx * dx + dy * dy;
 
-      // Always force interaction state — PixiJS v8 can lose eventMode
-      // after container children are modified (clear/redraw cycles)
-      c.eventMode = "static";
-      c.cursor = "pointer";
-      c.interactiveChildren = false;
-      c.hitArea = new PIXI.Circle(0, 0, 16);
-
-      if (!this.boundIds.has(id)) {
-        c.on("pointertap", (e: PIXI.FederatedPointerEvent) => {
-          e.stopPropagation();
-          this.callbacks.onAgentSelect(id);
-        });
-
-        c.on("pointerover", (e: PIXI.FederatedPointerEvent) => {
-          this.callbacks.onAgentHover(id, { x: e.global.x, y: e.global.y });
-        });
-
-        c.on("pointerout", () => {
-          this.callbacks.onAgentHover(null);
-        });
-
-        c.on("rightclick", (e: PIXI.FederatedPointerEvent) => {
-          e.stopPropagation();
-          (e as any).preventDefault?.();
-          this.callbacks.onAgentContextMenu(id, { x: e.global.x, y: e.global.y });
-        });
-
-        this.boundIds.add(id);
+      if (distSq < HIT_RADIUS_SQ && distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestId = id;
       }
     }
 
-    // Clean up bindings for agents that no longer exist
-    const activeSet = new Set(agentIds);
-    for (const id of this.boundIds) {
-      if (!activeSet.has(id)) {
-        this.boundIds.delete(id);
-      }
-    }
+    return bestId;
+  }
+
+  /** No-op — native events don't need per-sprite rebinding. */
+  updateBindings(_agentIds: string[]) {
+    // Intentionally empty — hit testing is done via coordinate math,
+    // not PixiJS event bindings on containers.
   }
 
   destroy() {
-    this.boundIds.clear();
+    if (this.canvas) {
+      if (this.onPointerDown) this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+      if (this._onPointerUp) this.canvas.removeEventListener("pointerup", this._onPointerUp);
+      if (this.onPointerMove) this.canvas.removeEventListener("pointermove", this.onPointerMove);
+      if (this.onContextMenu) this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+    }
+    this.canvas = null;
+    this.worldContainer = null;
+    this.hoveredId = null;
   }
 }
