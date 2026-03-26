@@ -95,6 +95,7 @@ function ActiveStates({ states }: { states: any[] }) {
 
 export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
+  const [collapsed, setCollapsed] = useState(false);
 
   // Reset tab when agent changes
   useEffect(() => {
@@ -137,21 +138,42 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
     { id: "mind", label: "🧠 Mind" },
   ];
 
+  if (collapsed) {
+    return (
+      <div
+        className="flex-shrink-0 w-8 bg-gray-800 border-l border-gray-700 flex flex-col items-center pt-3 cursor-pointer hover:bg-gray-750 transition-colors"
+        onClick={() => setCollapsed(false)}
+        title={`Show ${agent.name}'s panel`}
+      >
+        <span className="text-base select-none">👤</span>
+      </div>
+    );
+  }
+
   return (
     <div className="w-[300px] flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
-      {/* Header: portrait + close button */}
+      {/* Header: portrait + collapse/close buttons */}
       <div className="p-3 border-b border-gray-700 flex justify-between items-start flex-shrink-0">
         <AgentPortrait
           agent={agent}
           economy={economy}
           mood={needs?.mood}
         />
-        <button
-          onClick={onClose}
-          className="text-gray-400 hover:text-white text-lg leading-none ml-2 flex-shrink-0"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+          <button
+            onClick={() => setCollapsed(true)}
+            className="text-gray-500 hover:text-gray-300 text-sm leading-none transition-colors"
+            title="Minimize panel"
+          >
+            ◀
+          </button>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white text-lg leading-none"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* Tab bar */}
