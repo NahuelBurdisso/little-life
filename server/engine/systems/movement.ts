@@ -95,6 +95,16 @@ function handleArrival(
   const actionType = (nextAction as any)?.type ?? 'idle';
   const minDuration = getMinDuration(actionType);
 
+  // Two-phase interior movement: if the queued action carries zone coordinates,
+  // teleport the agent directly to the zone position inside the building.
+  // Interior movement doesn't need A* — the agent is already at the entry point.
+  const zoneX = (nextAction as any)?.zoneX as number | undefined;
+  const zoneY = (nextAction as any)?.zoneY as number | undefined;
+  const zonePosition =
+    zoneX !== undefined && zoneY !== undefined
+      ? { x: zoneX, y: zoneY }
+      : undefined;
+
   db.update(agents)
     .set({
       current_destination: null,
@@ -103,6 +113,7 @@ function handleArrival(
       action_started: world.time.totalTicks,
       action_duration: minDuration > 0 ? minDuration : null,
       action_queue: queue,
+      ...(zonePosition ? { position: zonePosition } : {}),
     })
     .where(eq(agents.id, agent.id))
     .run();

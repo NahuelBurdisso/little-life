@@ -56,10 +56,9 @@ export function computeAStarPath(
   const endX = Math.max(0, Math.min(ex, mapWidth - 1));
   const endY = Math.max(0, Math.min(ey, mapHeight - 1));
 
-  // If start === end, just return the end pixel
+  // If start === end, just return the exact end pixel
   if (startX === endX && startY === endY) {
-    const [px, py] = tileCenterToPixel(endX, endY, tileSize);
-    return [[px, py]];
+    return [[endPixel.x, endPixel.y]];
   }
 
   // If end tile is blocked, return direct line as fallback
@@ -112,7 +111,7 @@ export function computeAStarPath(
 
     // Reached the goal
     if (current.x === endX && current.y === endY) {
-      return reconstructPath(current, tileSize);
+      return reconstructPath(current, tileSize, endPixel);
     }
 
     const ck = key(current.x, current.y);
@@ -154,7 +153,11 @@ export function computeAStarPath(
   ];
 }
 
-function reconstructPath(node: AStarNode, tileSize: number): number[][] {
+function reconstructPath(
+  node: AStarNode,
+  tileSize: number,
+  endPixel: { x: number; y: number },
+): number[][] {
   const tilePath: AStarNode[] = [];
   let current: AStarNode | null = node;
 
@@ -165,12 +168,18 @@ function reconstructPath(node: AStarNode, tileSize: number): number[][] {
 
   tilePath.reverse();
 
-  // Convert to pixel waypoints (tile centers), skip the start tile
-  // since the agent is already there
+  // Convert to pixel waypoints, skipping the start tile (agent is already there).
+  // Intermediate waypoints use tile centers for smooth movement.
+  // The last waypoint uses the exact destination pixel so agents arrive precisely.
   const waypoints: number[][] = [];
   for (let i = 1; i < tilePath.length; i++) {
-    const [px, py] = tileCenterToPixel(tilePath[i].x, tilePath[i].y, tileSize);
-    waypoints.push([px, py]);
+    if (i === tilePath.length - 1) {
+      // Last waypoint: use exact destination, not tile center
+      waypoints.push([endPixel.x, endPixel.y]);
+    } else {
+      const [px, py] = tileCenterToPixel(tilePath[i].x, tilePath[i].y, tileSize);
+      waypoints.push([px, py]);
+    }
   }
 
   return waypoints;

@@ -510,20 +510,25 @@ export function tick(world: WorldRow): void {
 
     // Build destination from the target location
     let destination: { x: number; y: number; locationId?: number } | null = null;
+    let zoneTarget: { x: number; y: number } | null = null;
     if (decision.targetLocationId) {
       const loc = allLocations.find((l) => l.id === decision!.targetLocationId);
       if (loc) {
-        // Try to target the zone center for the action type
-        let destX = loc.entry_point.x;
-        let destY = loc.entry_point.y;
+        // Always pathfind to the entry point — this is guaranteed to be a walkable tile.
+        // If the action targets an interior zone, store the zone center separately and
+        // teleport the agent there on arrival (two-phase interior movement).
+        const destX = loc.entry_point.x;
+        const destY = loc.entry_point.y;
 
         const locType = loc.type as string;
         const zones = INTERIOR_ZONES[locType] ?? [];
         const zone = zones.find((z) => z.action === decision!.action);
         if (zone) {
           const locPos = loc.position as { x: number; y: number; width: number; height: number };
-          destX = locPos.x + zone.relativePosition.x + zone.relativePosition.width / 2;
-          destY = locPos.y + zone.relativePosition.y + zone.relativePosition.height / 2;
+          zoneTarget = {
+            x: locPos.x + zone.relativePosition.x + zone.relativePosition.width / 2,
+            y: locPos.y + zone.relativePosition.y + zone.relativePosition.height / 2,
+          };
         }
 
         destination = {
@@ -546,8 +551,13 @@ export function tick(world: WorldRow): void {
         ? 120
         : minDuration;
 
-    // If agent needs to travel to destination, walk first then do the action
-    const finalAction = buildAction(decision);
+    // If a zone target exists, embed its coordinates into the queued action so that
+    // movement.ts can teleport the agent to the exact zone position on arrival.
+    const baseAction = buildAction(decision);
+    const finalAction = zoneTarget
+      ? { ...baseAction, zoneX: zoneTarget.x, zoneY: zoneTarget.y }
+      : baseAction;
+
     const needsToTravel =
       destination &&
       (Math.abs(agent.position.x - destination.x) > 4 ||
