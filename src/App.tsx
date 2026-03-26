@@ -4,6 +4,7 @@ import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
 import { AgentPanel } from "./components/ui/AgentPanel";
 import { ConversationPanel } from "./components/ui/ConversationPanel";
+import { ResizeHandle } from "./components/ui/ResizeHandle";
 import { GameCanvas } from "./components/canvas/GameCanvas";
 import { AgentTooltip } from "./components/overlays/AgentTooltip";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
@@ -30,6 +31,21 @@ export default function App() {
   const [showTownStats, setShowTownStats] = useState(false);
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
+
+  // Resizable panel sizes
+  const [leftWidth, setLeftWidth] = useState(280);
+  const [rightWidth, setRightWidth] = useState(300);
+  const [bottomHeight, setBottomHeight] = useState(120);
+
+  const handleLeftResize = useCallback((delta: number) => {
+    setLeftWidth(w => Math.max(40, Math.min(500, w + delta)));
+  }, []);
+  const handleRightResize = useCallback((delta: number) => {
+    setRightWidth(w => Math.max(40, Math.min(500, w - delta)));
+  }, []);
+  const handleBottomResize = useCallback((delta: number) => {
+    setBottomHeight(h => Math.max(24, Math.min(400, h - delta)));
+  }, []);
 
   // Tooltip state
   const [hoveredAgent, setHoveredAgent] = useState<{ name: string; currentAction: { type?: string } | string | null } | null>(null);
@@ -124,7 +140,10 @@ export default function App() {
       />
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Conversations sidebar */}
-        <ConversationPanel />
+        <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-hidden">
+          <ConversationPanel />
+        </div>
+        <ResizeHandle direction="horizontal" onResize={handleLeftResize} />
         {/* PixiJS game canvas */}
         <GameCanvas
           agents={agents}
@@ -139,13 +158,21 @@ export default function App() {
         />
         {/* AgentPanel sidebar */}
         {selectedAgentId && (
-          <AgentPanel
-            agentId={selectedAgentId}
-            onClose={() => setSelectedAgentId(null)}
-          />
+          <>
+            <ResizeHandle direction="horizontal" onResize={handleRightResize} />
+            <div style={{ width: rightWidth }} className="flex-shrink-0 overflow-hidden">
+              <AgentPanel
+                agentId={selectedAgentId}
+                onClose={() => setSelectedAgentId(null)}
+              />
+            </div>
+          </>
         )}
       </div>
-      <ActivityFeed />
+      <ResizeHandle direction="vertical" onResize={handleBottomResize} />
+      <div style={{ height: bottomHeight }} className="flex-shrink-0 overflow-hidden">
+        <ActivityFeed />
+      </div>
 
       {/* Floating toolbar for extra actions */}
       <div className="fixed bottom-16 right-4 z-30 flex flex-col gap-2">

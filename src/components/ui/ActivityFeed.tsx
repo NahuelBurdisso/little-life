@@ -41,7 +41,6 @@ interface ActivityEntry {
 export function ActivityFeed() {
   const { activities } = useActivityFeed();
   const { world } = useWorldState();
-  const [collapsed, setCollapsed] = useState(false);
   const [filters, setFilters] = useState<Record<EventCategory, boolean>>({
     conversation: true,
     economy: true,
@@ -82,29 +81,10 @@ export function ActivityFeed() {
     displayItems.push({ _summary: true, count: convoBatch, timestamp: lastConvoTimestamp });
   }
 
-  if (collapsed) {
-    return (
-      <div
-        className="h-6 bg-gray-800 border-t border-gray-700 flex items-center px-2 cursor-pointer hover:bg-gray-750 transition-colors shrink-0"
-        onClick={() => setCollapsed(false)}
-        title="Show activity feed"
-      >
-        <span className="text-[10px] text-gray-400">▲ Activity Feed</span>
-      </div>
-    );
-  }
-
   return (
-    <div className="h-[120px] bg-gray-800 border-t border-gray-700 flex flex-col shrink-0">
+    <div className="h-full bg-gray-800 border-t border-gray-700 flex flex-col">
       {/* Filter bar */}
       <div className="flex gap-1 px-2 py-1 border-b border-gray-700 shrink-0">
-        <button
-          onClick={() => setCollapsed(true)}
-          className="text-gray-500 hover:text-gray-300 text-[10px] mr-1 transition-colors"
-          title="Minimize feed"
-        >
-          ▼
-        </button>
         {(Object.entries(EVENT_CATEGORIES) as [EventCategory, (typeof EVENT_CATEGORIES)[EventCategory]][]).map(
           ([key, { icon, color, label }]) => (
             <button
