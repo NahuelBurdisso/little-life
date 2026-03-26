@@ -195,6 +195,8 @@ export const nudgeRouter = router({
             })
             .run();
 
+          emitter.markDirty('agents.all');
+          emitter.flush();
           return { success: true };
         }
 
@@ -241,6 +243,8 @@ export const nudgeRouter = router({
             })
             .run();
 
+          emitter.markDirty('agents.all');
+          emitter.flush();
           return { success: true };
         }
 
@@ -296,6 +300,8 @@ export const nudgeRouter = router({
             })
             .run();
 
+          emitter.markDirty('world.state');
+          emitter.flush();
           return { success: true };
         }
 
@@ -348,6 +354,8 @@ export const nudgeRouter = router({
             })
             .run();
 
+          emitter.markDirty('agents.all');
+          emitter.flush();
           return { success: true };
         }
 
@@ -549,6 +557,9 @@ export const nudgeRouter = router({
             })
             .run();
 
+          emitter.markDirty('agents.all');
+          emitter.markDirty('world.state');
+          emitter.flush();
           return { success: true };
         }
 
@@ -615,6 +626,9 @@ export const nudgeRouter = router({
             })
             .run();
 
+          emitter.markDirty('agents.all');
+          emitter.markDirty('conversations');
+          emitter.flush();
           return { success: true };
         }
 

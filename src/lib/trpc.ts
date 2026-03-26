@@ -6,6 +6,7 @@ export const trpc = createTRPCReact<AppRouter>();
 
 const wsClient = createWSClient({
   url: 'ws://localhost:3001',
+  retryDelayMs: () => 1000,
 });
 
 export const trpcClient = trpc.createClient({

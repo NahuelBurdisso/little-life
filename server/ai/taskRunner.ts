@@ -27,7 +27,6 @@ class TaskRunner {
       if (!result) {
         this.conversationSlots--;
         emitter.markDirty('conversations');
-        emitter.flush();
         return;
       }
       emitter.markDirty('conversations');
@@ -38,13 +37,11 @@ class TaskRunner {
         // Conversation complete — let conversationsTick handle cleanup
         this.conversationSlots--;
         emitter.markDirty('conversations');
-        emitter.flush();
       }
     } catch (err) {
       console.error(`Conversation ${conversationId} error:`, err);
       this.conversationSlots--;
       emitter.markDirty('conversations');
-      emitter.flush();
     }
   }
 

@@ -199,6 +199,7 @@ async function gameTick(): Promise<void> {
 
   // 9. Mark emitter dirty and flush
   emitter.markDirty('world.state');
+  emitter.markDirty('activity.all');
   emitter.flush();
 }
 
