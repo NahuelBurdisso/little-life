@@ -65,6 +65,7 @@ export interface ConversationRow {
   trigger_reason: string;
   topic: string | null;
   sentiment: number;
+  max_turns?: number;
 }
 
 export interface MemoryRow {
@@ -373,9 +374,21 @@ export function buildConversationPrompt(
   }
 
   const messageCount = conversation.messages.length;
+  const maxTurns = conversation.max_turns ?? 6;
+  const isLastTurn = messageCount >= maxTurns - 2; // within last 2 turns
+  const isSecondToLast = messageCount === maxTurns - 2;
+
   if (messageCount === 0) {
     contextParts.push(
       `\nStart a conversation with ${otherAgent.name}. Greet them naturally based on your relationship and current mood.`,
+    );
+  } else if (isLastTurn) {
+    contextParts.push(
+      `\nThis conversation is wrapping up. Give a final response that brings closure — say goodbye, make a concluding remark, or wrap up the topic naturally. Don't leave things hanging.`,
+    );
+  } else if (isSecondToLast) {
+    contextParts.push(
+      `\nContinue the conversation naturally. Start wrapping up — you'll need to say goodbye soon.`,
     );
   } else {
     contextParts.push(
