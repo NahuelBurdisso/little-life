@@ -43,6 +43,8 @@ export async function generateResponse(
     situationalPrompt,
   } = context;
 
+  const hasSituationalPrompt = !!situationalPrompt;
+
   // 2. Build prompt
   const promptParams: ConversationPromptParams = {
     speaker,
@@ -75,7 +77,9 @@ export async function generateResponse(
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,
-          num_predict: CONFIG.AI.CHAT_MAX_TOKENS,
+          num_predict: hasSituationalPrompt
+            ? CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL
+            : CONFIG.AI.CHAT_MAX_TOKENS,
           repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
         },
       });
