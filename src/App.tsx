@@ -36,6 +36,20 @@ export default function App() {
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
 
+  // Reset all UI state when world returns to wizard state (after resetToWizard)
+  const isNewSimulation = world && world.time?.totalTicks === 0 && world.is_paused;
+  useEffect(() => {
+    if (isNewSimulation) {
+      setSetupComplete(false);
+      setSelectedAgentId(null);
+      setShowEventMenu(false);
+      setShowTownStats(false);
+      setShowNewAgent(false);
+      setShowRelGraph(false);
+      setShowConvoHistory(false);
+    }
+  }, [isNewSimulation]);
+
   // Resizable panel sizes
   const [leftWidth, setLeftWidth] = useState(280);
   const [rightWidth, setRightWidth] = useState(300);
@@ -124,7 +138,6 @@ export default function App() {
   }, []);
 
   // Show setup wizard if simulation hasn't started
-  const isNewSimulation = world && world.time?.totalTicks === 0 && world.is_paused;
   if (isNewSimulation && !setupComplete) {
     return <SetupWizard onStart={() => setSetupComplete(true)} />;
   }
