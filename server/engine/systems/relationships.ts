@@ -1,6 +1,7 @@
 import { db } from '../../db';
-import { agents, relationships, relationshipEvents, activityLog } from '../../db/schema';
+import { agents, relationships, relationshipEvents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '../../lib/activityLogger';
 import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
 import { emitter } from '../emitter';
@@ -349,13 +350,11 @@ export function tick(
     if (newStatus !== oldStatus) {
       const nameA = db.select({ name: agents.name }).from(agents).where(eq(agents.id, a)).get()?.name ?? `Agent#${a}`;
       const nameB = db.select({ name: agents.name }).from(agents).where(eq(agents.id, b)).get()?.name ?? `Agent#${b}`;
-      db.insert(activityLog).values({
-        type: 'relationship',
-        message: `${nameA} and ${nameB} are now ${newStatus}.`,
-        agent_ids: [a, b],
-        timestamp: world.time?.totalTicks ?? 0,
-        real_timestamp: now,
-      }).run();
+      logActivity({
+        type: 'relationship_status_change',
+        agents: [a, b],
+        templateData: { agent1: nameA, agent2: nameB, status: newStatus },
+      });
     }
 
     // Mark event as processed

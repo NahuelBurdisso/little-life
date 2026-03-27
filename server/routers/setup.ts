@@ -25,6 +25,7 @@ import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { logActivity } from '../lib/activityLogger';
 import { startTickLoop, stopTickLoopAndWait } from '../engine/tick';
 import { taskRunner } from '../ai/taskRunner';
 import { vectorStore } from '../lib/vectors';
@@ -468,13 +469,10 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
   // 11. Create initial activity log entry
   const seasonLabel =
     config.world.season.charAt(0).toUpperCase() + config.world.season.slice(1);
-  db.insert(activityLog).values({
+  logActivity({
     type: 'system',
-    message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents start their day.`,
-    agent_ids: [],
-    timestamp: 0,
-    real_timestamp: now,
-  }).run();
+    templateData: { message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents start their day.` },
+  });
 
   return { agentCount: agentMap.size, locationCount: locationMap.size };
 }

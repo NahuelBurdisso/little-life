@@ -26,6 +26,7 @@ import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '../lib/activityLogger';
 
 const ALL_TABLES = [
   activityLog,
@@ -310,14 +311,10 @@ function seed() {
 
   // 10. Insert initial activity log entry
   console.log('[seed] Creating initial activity log...');
-  db.insert(activityLog).values({
-    type: "system",
-    message:
-      `Little Life begins. Day 1, Spring morning. ${agentMap.size} residents start their day.`,
-    agent_ids: [],
-    timestamp: 0,
-    real_timestamp: now,
-  }).run();
+  logActivity({
+    type: 'system',
+    templateData: { message: `Little Life begins. Day 1, Spring morning. ${agentMap.size} residents start their day.` },
+  });
 
   // 11. Seed initial drama — pre-existing conditions for early story hooks
   console.log('[seed] Seeding initial drama...');

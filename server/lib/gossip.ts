@@ -1,6 +1,7 @@
 import { db } from '../db';
-import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents, activityLog } from '../db/schema';
+import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
+import { logActivity } from './activityLogger';
 import { PersonalityProfile } from './personality';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
@@ -296,13 +297,12 @@ export function spreadGossip(
 
     if (fact.sensitivity >= 2) {
       const listenerName = getAgentName(listenerId);
-      db.insert(activityLog).values({
+      logActivity({
         type: 'drama',
-        message: `${listenerName} learned that ${fact.content}.`,
-        agent_ids: [listenerId, fact.subject_id],
-        timestamp: Date.now(),
-        real_timestamp: Date.now(),
-      }).run();
+        initiator: listenerId,
+        target: fact.subject_id,
+        templateData: { description: `${listenerName} learned that ${fact.content}.` },
+      });
     }
   }
 

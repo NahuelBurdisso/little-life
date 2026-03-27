@@ -10,8 +10,8 @@ import {
   worldState,
   worldEvents,
   economyTransactions,
-  activityLog,
 } from '../db/schema';
+import { logActivity } from '../lib/activityLogger';
 import { eq, and, ne } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { z } from 'zod';
@@ -91,7 +91,6 @@ export const nudgeRouter = router({
       if (!world) throw new Error('World not initialized');
 
       const now = (world.time as any).totalTicks as number;
-      const realNow = Date.now();
 
       switch (action.type) {
         // ─── suggest_talk ──────────────────────────────────────────────────
@@ -185,15 +184,11 @@ export const nudgeRouter = router({
             .where(eq(agents.id, agentBId))
             .run();
 
-          db.insert(activityLog)
-            .values({
-              type: 'player_nudge',
-              message: `Player suggested ${agentA.name} and ${agentB.name} talk${topic ? ` about "${topic}"` : ''}`,
-              agent_ids: [agentAId, agentBId],
-              timestamp: now,
-              real_timestamp: realNow,
-            })
-            .run();
+          logActivity({
+            type: 'player_nudge',
+            agents: [agentAId, agentBId],
+            templateData: { description: `Player suggested ${agentA.name} and ${agentB.name} talk${topic ? ` about "${topic}"` : ''}` },
+          });
 
           emitter.markDirty('agents.all');
           emitter.flush();
@@ -233,15 +228,11 @@ export const nudgeRouter = router({
             .where(eq(agents.id, agentId))
             .run();
 
-          db.insert(activityLog)
-            .values({
-              type: 'player_nudge',
-              message: `Player sent ${agent.name} to ${location.name}`,
-              agent_ids: [agentId],
-              timestamp: now,
-              real_timestamp: realNow,
-            })
-            .run();
+          logActivity({
+            type: 'player_nudge',
+            initiator: agentId,
+            templateData: { description: `Player sent ${agent.name} to ${location.name}` },
+          });
 
           emitter.markDirty('agents.all');
           emitter.flush();
@@ -290,15 +281,10 @@ export const nudgeRouter = router({
             })
             .run();
 
-          db.insert(activityLog)
-            .values({
-              type: 'player_event',
-              message: `Player triggered: ${eventDef.name}`,
-              agent_ids: [],
-              timestamp: now,
-              real_timestamp: realNow,
-            })
-            .run();
+          logActivity({
+            type: 'player_event',
+            templateData: { description: `Player triggered: ${eventDef.name}` },
+          });
 
           emitter.markDirty('world.state');
           emitter.flush();
@@ -344,15 +330,11 @@ export const nudgeRouter = router({
             })
             .run();
 
-          db.insert(activityLog)
-            .values({
-              type: 'player_gift',
-              message: `Player gave ${agent.name} $${amount}`,
-              agent_ids: [agentId],
-              timestamp: now,
-              real_timestamp: realNow,
-            })
-            .run();
+          logActivity({
+            type: 'player_gift',
+            initiator: agentId,
+            templateData: { description: `Player gave ${agent.name} $${amount}` },
+          });
 
           emitter.markDirty('agents.all');
           emitter.flush();
@@ -547,15 +529,11 @@ export const nudgeRouter = router({
             })
             .run();
 
-          db.insert(activityLog)
-            .values({
-              type: 'player_introduce',
-              message: `Player introduced ${name} to the town`,
-              agent_ids: [agentId],
-              timestamp: now,
-              real_timestamp: realNow,
-            })
-            .run();
+          logActivity({
+            type: 'player_introduce',
+            initiator: agentId,
+            templateData: { description: `Player introduced ${name} to the town` },
+          });
 
           emitter.markDirty('agents.all');
           emitter.markDirty('world.state');
@@ -616,15 +594,11 @@ export const nudgeRouter = router({
             }
           }
 
-          db.insert(activityLog)
-            .values({
-              type: 'player_remove',
-              message: `Player removed ${agent.name} from the town`,
-              agent_ids: [agentId],
-              timestamp: now,
-              real_timestamp: realNow,
-            })
-            .run();
+          logActivity({
+            type: 'player_remove',
+            initiator: agentId,
+            templateData: { description: `Player removed ${agent.name} from the town` },
+          });
 
           emitter.markDirty('agents.all');
           emitter.markDirty('conversations');

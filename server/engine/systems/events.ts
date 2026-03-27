@@ -1,9 +1,10 @@
 import { db } from '../../db';
-import { worldState, worldEvents, activityLog } from '../../db/schema';
+import { worldState, worldEvents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
+import { logActivity } from '../../lib/activityLogger';
 
 // Season-based weather weights
 const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
@@ -182,14 +183,10 @@ export function eventsTick(): void {
   }).run();
 
   // Log to activity log
-  const now = Date.now();
-  db.insert(activityLog).values({
+  logActivity({
     type: 'world_event',
-    message: `${chosen.name}: ${chosen.description}`,
-    agent_ids: [],
-    timestamp: world.time!.totalTicks,
-    real_timestamp: now,
-  }).run();
+    templateData: { description: `${chosen.name}: ${chosen.description}` },
+  });
 
   eventsChanged = true;
 

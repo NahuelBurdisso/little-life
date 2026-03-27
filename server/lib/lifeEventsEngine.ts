@@ -8,7 +8,8 @@
  */
 
 import { db } from '../db';
-import { agents, economy, locations, relationships, worldState, worldEvents, activityLog, agentStates, memories, conversations, conversationQueue } from '../db/schema';
+import { agents, economy, locations, relationships, worldState, worldEvents, agentStates, memories, conversations, conversationQueue } from '../db/schema';
+import { logActivity } from './activityLogger';
 import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { createObservationMemory } from '../ai/memories';
@@ -251,13 +252,13 @@ function processInheritance(ctx: DeathEffectContext): void {
       }
       db.update(economy).set({ inventory: inv }).where(eq(economy.agent_id, bestFriend.id)).run();
 
-      db.insert(activityLog).values({
-        type: 'economy',
-        message: `${ctx.agentName}'s possessions were inherited by ${db.select({ name: agents.name }).from(agents).where(eq(agents.id, bestFriend.id)).get()?.name ?? 'someone'}.`,
-        agent_ids: [ctx.agentId, bestFriend.id],
-        timestamp: ctx.currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      const inheritorName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, bestFriend.id)).get()?.name ?? 'someone';
+      logActivity({
+        type: 'drama',
+        initiator: ctx.agentId,
+        target: bestFriend.id,
+        templateData: { description: `${ctx.agentName}'s possessions were inherited by ${inheritorName}.` },
+      });
     }
   } else {
     // No inheritor — money goes to tax pool
@@ -352,15 +353,12 @@ function createMemorialMemories(ctx: DeathEffectContext): void {
 }
 
 function logDeath(ctx: DeathEffectContext): void {
-  db.insert(activityLog).values({
+  logActivity({
     type: 'drama',
-    message: `${ctx.agentName} has died. ${ctx.causeDescription}. The town mourns.`,
-    agent_ids: [ctx.agentId],
-    timestamp: ctx.currentTick,
-    real_timestamp: Date.now(),
-  }).run();
+    initiator: ctx.agentId,
+    templateData: { description: `${ctx.agentName} has died. ${ctx.causeDescription}. The town mourns.` },
+  });
   emitter.markDirty('agents.all');
-  emitter.markDirty('activity.all');
 }
 
 // --- Pipeline ---

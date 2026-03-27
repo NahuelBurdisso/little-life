@@ -1,6 +1,7 @@
 import { db } from '../db';
-import { worldState, activityLog } from '../db/schema';
+import { worldState } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '../lib/activityLogger';
 import { emitter } from './emitter';
 import { needsTick } from './systems/needs';
 import { statesTick } from './systems/states';
@@ -171,16 +172,10 @@ async function gameTick(): Promise<void> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const realNow = Date.now();
-      db.insert(activityLog)
-        .values({
-          type: 'error',
-          message: `System phase ${phaseNumber} (${phase.name}) error: ${message}`,
-          agent_ids: [],
-          timestamp: newTime.totalTicks,
-          real_timestamp: realNow,
-        })
-        .run();
+      logActivity({
+        type: 'error',
+        templateData: { system: phase.name, message: `System phase ${phaseNumber} (${phase.name}) error: ${message}` },
+      });
     }
 
     // After the states phase completes, build the tick-level cache so that all

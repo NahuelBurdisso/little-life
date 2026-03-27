@@ -12,10 +12,10 @@
  */
 
 import { db } from '../../db';
-import { agents, facts, relationships, conversations, activityLog } from '../../db/schema';
+import { agents, facts, relationships, conversations } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
-import { emitter } from '../emitter';
+import { logActivity } from '../../lib/activityLogger';
 
 interface AgentInfo {
   id: number;
@@ -24,7 +24,7 @@ interface AgentInfo {
   personality: PersonalityProfile | null;
 }
 
-export function gossipTick(currentTick: number): void {
+export function gossipTick(_currentTick: number): void {
   const allAgents: AgentInfo[] = db.select({
     id: agents.id,
     name: agents.name,
@@ -43,8 +43,6 @@ export function gossipTick(currentTick: number): void {
     group.push(agent);
     locationGroups.set(agent.current_location, group);
   }
-
-  let changed = false;
 
   // ── 1. Public knowledge spread (sensitivity 1) ──────────────────────────
   // Co-located agents automatically learn public facts about nearby people
@@ -65,7 +63,6 @@ export function gossipTick(currentTick: number): void {
       .set({ known_by: [...new Set([...knownBy, ...newKnowers])] })
       .where(eq(facts.id, fact.id))
       .run();
-    changed = true;
   }
 
   // ── 2. Passive eavesdropping ────────────────────────────────────────────
@@ -105,16 +102,14 @@ export function gossipTick(currentTick: number): void {
           db.update(facts).set({ known_by: updated }).where(eq(facts.id, fact.id)).run();
 
           if (fact.sensitivity >= 2) {
-            db.insert(activityLog).values({
+            logActivity({
               type: 'drama',
-              message: `${eavesdropper.name} overheard something about ${fact.content}.`,
-              agent_ids: [eavesdropper.id, fact.subject_id],
-              timestamp: currentTick,
-              real_timestamp: Date.now(),
-            }).run();
+              initiator: eavesdropper.id,
+              target: fact.subject_id,
+              templateData: { description: `${eavesdropper.name} overheard something about ${fact.content}.` },
+            });
           }
-          changed = true;
-        }
+              }
       }
     }
   }
@@ -171,16 +166,15 @@ export function gossipTick(currentTick: number): void {
         .where(eq(facts.id, fact.id)).run();
 
       if (fact.sensitivity >= 2) {
-        db.insert(activityLog).values({
+        logActivity({
           type: 'drama',
-          message: `${agent.name} told ${target.name} that ${fact.content}.`,
-          agent_ids: [agent.id, target.id, fact.subject_id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+          initiator: agent.id,
+          target: target.id,
+          agents: [agent.id, target.id, fact.subject_id],
+          templateData: { description: `${agent.name} told ${target.name} that ${fact.content}.` },
+        });
       }
-      changed = true;
-    }
+      }
   }
 
   // ── 4. Secret discovery ────────────────────────────────────────────────
@@ -207,18 +201,13 @@ export function gossipTick(currentTick: number): void {
       db.update(facts).set({ known_by: [...new Set([...knownBy, agent.id])] })
         .where(eq(facts.id, fact.id)).run();
 
-      db.insert(activityLog).values({
+      logActivity({
         type: 'drama',
-        message: `${agent.name} discovered that ${fact.content}.`,
-        agent_ids: [agent.id, fact.subject_id],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
-      changed = true;
-    }
+        initiator: agent.id,
+        target: fact.subject_id,
+        templateData: { description: `${agent.name} discovered that ${fact.content}.` },
+      });
+      }
   }
 
-  if (changed) {
-    emitter.markDirty('activity.all');
-  }
 }

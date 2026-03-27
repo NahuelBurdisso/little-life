@@ -27,12 +27,29 @@ function getCategory(type: string): EventCategory {
   return 'system';
 }
 
+// --- Helpers ---
+
+function renderMessage(entry: ActivityEntry): string {
+  const d = entry.template_data ?? {};
+  if (d.message) return String(d.message);
+  if (d.description) return String(d.description);
+  if (d.agent && d.state) {
+    if (entry.type === 'state_gained') return `${d.agent} became ${d.state}.`;
+    if (entry.type === 'state_lost') return `${d.agent} is no longer ${d.state}.`;
+  }
+  if (d.agent1 && d.agent2 && d.status) return `${d.agent1} and ${d.agent2} are now ${d.status}.`;
+  if (d.agent1 && d.agent2 && d.location !== undefined) return `${d.agent1} and ${d.agent2} finished talking.`;
+  if (d.agent && d.amount) return `${d.agent} earned ${d.amount} coins.`;
+  if (d.agent && d.item) return `${d.agent} bought ${d.item}.`;
+  return entry.type;
+}
+
 // --- Component ---
 
 interface ActivityEntry {
   id?: number;
   type: string;
-  message: string;
+  template_data?: Record<string, string | number>;
   timestamp: number;
   real_timestamp?: number;
   agent_ids?: number[];
@@ -56,7 +73,7 @@ export function ActivityFeed() {
   };
 
   // Filter activities
-  const filtered = (activities as ActivityEntry[]).filter(a => filters[getCategory(a.type)]);
+  const filtered = (activities as unknown as ActivityEntry[]).filter(a => filters[getCategory(a.type)]);
 
   // Collapse consecutive conversations into summaries
   type DisplayItem = ActivityEntry | { _summary: true; count: number; timestamp: number };
@@ -144,7 +161,7 @@ export function ActivityFeed() {
                       : ''}
                   </span>
                   <span className={isDrama ? 'text-red-300' : 'text-gray-300'}>
-                    {item.message}
+                    {renderMessage(item)}
                   </span>
                 </div>
               );

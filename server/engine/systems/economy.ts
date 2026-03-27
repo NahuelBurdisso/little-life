@@ -1,5 +1,6 @@
 import { db } from '../../db';
-import { agents, economy, economyTransactions, worldState, worldEvents, activityLog, locations, agentStates, facts } from '../../db/schema';
+import { agents, economy, economyTransactions, worldState, worldEvents, locations, agentStates, facts } from '../../db/schema';
+import { logActivity } from '../../lib/activityLogger';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import type { Season } from '../../lib/types';
@@ -329,13 +330,12 @@ export function economyTick(): void {
             timestamp: now,
           }).run();
 
-          db.insert(activityLog).values({
-            type: 'economy',
-            message: `${agent.name} bought ${itemToBuy} for ${price} coins`,
-            agent_ids: [agent.id, eatLocation.owner],
-            timestamp: world.time!.totalTicks,
-            real_timestamp: now,
-          }).run();
+          logActivity({
+            type: 'purchase',
+            initiator: agent.id,
+            target: eatLocation.owner,
+            templateData: { agent: agent.name, item: itemToBuy, amount: price },
+          });
         }
       }
       continue;
@@ -416,13 +416,12 @@ export function economyTick(): void {
       }).run();
 
       // Log to activity feed
-      db.insert(activityLog).values({
-        type: 'economy',
-        message: `${agent.name} bought ${item} for ${price} coins`,
-        agent_ids: [agent.id, shopLocation.owner],
-        timestamp: world.time!.totalTicks,
-        real_timestamp: now,
-      }).run();
+      logActivity({
+        type: 'purchase',
+        initiator: agent.id,
+        target: shopLocation.owner,
+        templateData: { agent: agent.name, item, amount: price },
+      });
     }
   }
 
@@ -451,21 +450,15 @@ export function economyTick(): void {
     const ratio = targetTotal > 0 ? totalMoney / targetTotal : 1;
 
     if (ratio > CONFIG.ECONOMY.INFLATION_THRESHOLD) {
-      db.insert(activityLog).values({
-        type: 'economy',
-        message: `Money supply check: inflation detected (ratio ${ratio.toFixed(2)}). Total: ${totalMoney}, target: ${targetTotal}`,
-        agent_ids: [],
-        timestamp: world.time!.totalTicks,
-        real_timestamp: now,
-      }).run();
+      logActivity({
+        type: 'system',
+        templateData: { message: `Money supply check: inflation detected (ratio ${ratio.toFixed(2)}). Total: ${totalMoney}, target: ${targetTotal}` },
+      });
     } else if (ratio < CONFIG.ECONOMY.DEFLATION_THRESHOLD) {
-      db.insert(activityLog).values({
-        type: 'economy',
-        message: `Money supply check: deflation detected (ratio ${ratio.toFixed(2)}). Total: ${totalMoney}, target: ${targetTotal}`,
-        agent_ids: [],
-        timestamp: world.time!.totalTicks,
-        real_timestamp: now,
-      }).run();
+      logActivity({
+        type: 'system',
+        templateData: { message: `Money supply check: deflation detected (ratio ${ratio.toFixed(2)}). Total: ${totalMoney}, target: ${targetTotal}` },
+      });
     }
   }
 

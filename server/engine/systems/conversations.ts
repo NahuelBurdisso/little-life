@@ -20,13 +20,13 @@ import {
   relationships,
   relationshipEvents,
   memories,
-  activityLog,
   worldState,
   agentStates,
   economy,
   facts,
   locations,
 } from '../../db/schema';
+import { logActivity } from '../../lib/activityLogger';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { emitter } from '../emitter';
@@ -748,13 +748,12 @@ async function processCompletedConversation(
       }).where(eq(needs.agent_id, pid)).run();
     }
 
-    db.insert(activityLog).values({
-      type: 'state_change',
-      message: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}.`,
-      agent_ids: [pid, otherId],
-      timestamp: time.totalTicks,
-      real_timestamp: now,
-    }).run();
+    logActivity({
+      type: 'drama',
+      initiator: pid,
+      target: otherId,
+      templateData: { description: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}.` },
+    });
   }
 
   // Reconciliation outcome: loyal agent forgives transgressor who has cleaned up
@@ -796,13 +795,12 @@ async function processCompletedConversation(
         sentiment: 0.7, processed: false, timestamp: now,
       }).run();
 
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} have reconciled.`,
-        agent_ids: [pid, otherId],
-        timestamp: time.totalTicks,
-        real_timestamp: now,
-      }).run();
+      logActivity({
+        type: 'drama',
+        initiator: pid,
+        target: otherId,
+        templateData: { description: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} have reconciled.` },
+      });
     }
   }
 
@@ -885,12 +883,12 @@ async function processCompletedConversation(
         }).run();
       }
 
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${participants.find(p => p.id === pid)?.name} discovered ${participants.find(p => p.id === otherId)?.name}'s affair and broke up!`,
-        agent_ids: [pid, otherId],
-        timestamp: time.totalTicks, real_timestamp: now,
-      }).run();
+      logActivity({
+        type: 'drama',
+        initiator: pid,
+        target: otherId,
+        templateData: { description: `${participants.find(p => p.id === pid)?.name} discovered ${participants.find(p => p.id === otherId)?.name}'s affair and broke up!` },
+      });
     } else if (pidPersonality.loyalty > 60) {
       // Forgiveness path: trust drop but keep partnership
       const trustField = pid < otherId ? 'trust_ab' : 'trust_ba';
@@ -933,15 +931,15 @@ async function processCompletedConversation(
   emitter.markDirty('agents.all');
 
   // Log activity
-  db.insert(activityLog)
-    .values({
-      type: 'conversation_ended',
-      message: `${participants.map((p) => p.name).join(' and ')} finished talking${fresh.topic ? ` about ${fresh.topic}` : ''}.`,
-      agent_ids: participants.map((p) => p.id),
-      timestamp: time.totalTicks,
-      real_timestamp: now,
-    })
-    .run();
+  logActivity({
+    type: 'conversation_ended',
+    agents: participants.map((p) => p.id),
+    templateData: {
+      agent1: participants[0]?.name ?? '',
+      agent2: participants[1]?.name ?? '',
+      location: fresh.topic ?? '',
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

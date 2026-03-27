@@ -1,6 +1,7 @@
 import { db } from '../../db';
-import { agents, locations, activityLog } from '../../db/schema';
+import { agents, locations } from '../../db/schema';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '../../lib/activityLogger';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
 import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
@@ -198,13 +199,11 @@ export function tick(world: WorldRow): void {
           }).where(eq(agents.id, agent.id)).run();
           stuckTracker.delete(agent.id);
 
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} got lost and gave up walking.`,
-            agent_ids: [agent.id],
-            timestamp: world.time.totalTicks,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_gained',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: 'stuck' },
+          });
           dirty = true;
           continue;
         }

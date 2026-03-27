@@ -7,10 +7,10 @@ import {
   locations,
   conversationQueue,
   conversations,
-  activityLog,
   relationshipEvents,
   memories,
 } from '../../db/schema';
+import { logActivity } from '../../lib/activityLogger';
 import { INTERIOR_ZONES } from '../../data/interiors';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -1048,13 +1048,12 @@ export function tick(world: WorldRow): void {
         timestamp: Date.now(),
       }).run();
 
-      db.insert(activityLog).values({
+      logActivity({
         type: 'drama',
-        message: `${agent.name} arrested ${other.name}!`,
-        agent_ids: [agent.id, other.id],
-        timestamp: totalTicks,
-        real_timestamp: Date.now(),
-      }).run();
+        initiator: agent.id,
+        target: other.id,
+        templateData: { description: `${agent.name} arrested ${other.name}!` },
+      });
 
       // Arrest memories
       const arrestMem1 = createObservationMemory(

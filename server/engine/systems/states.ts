@@ -11,9 +11,9 @@ import {
   economyTransactions,
   relationshipEvents,
   memories,
-  activityLog,
   facts,
 } from '../../db/schema';
+import { logActivity } from '../../lib/activityLogger';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { PersonalityProfile } from '../../lib/personality';
@@ -100,21 +100,17 @@ export function statesTick() {
         // Track sickness recovery for immunity cooldown
         if (state.type === 'sick') {
           sickRecoveredAtTick.set(agent.id, currentTick);
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} recovered from sickness.`,
-            agent_ids: [agent.id],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_lost',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: 'sick' },
+          });
         } else {
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} is no longer ${state.type}.`,
-            agent_ids: [agent.id],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_lost',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: state.type },
+          });
         }
         collectExpiryCascades(state, agent, pendingCascades);
         db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
@@ -273,13 +269,11 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} became drunk.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_gained',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'drunk' },
+        });
         activeTypes.add('drunk');
         // Track for alcoholism escalation
         const history = drunkHistory.get(agent.id) ?? [];
@@ -314,13 +308,11 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} became sick.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_gained',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'sick' },
+        });
         activeTypes.add('sick');
         createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
       }
@@ -351,13 +343,11 @@ function evaluateTriggers(
             source: `relapse:drunk_count_${recentDrunkCount}`,
             metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
           }).run();
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} became alcoholic.`,
-            agent_ids: [agent.id],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_gained',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: 'alcoholic' },
+          });
           activeTypes.add('alcoholic');
           createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
         }
@@ -373,13 +363,11 @@ function evaluateTriggers(
           source: `trigger:drunk_count_${recentDrunkCount}`,
           metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
         }).run();
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} became alcoholic.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_gained',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'alcoholic' },
+        });
         activeTypes.add('alcoholic');
         createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
       }
@@ -409,13 +397,11 @@ function evaluateTriggers(
             source: 'trigger:broke_3_days',
             metadata: { beggingFailCount: 0, desperationUnlocked: false },
           }).run();
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} became in_debt.`,
-            agent_ids: [agent.id],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_gained',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: 'in_debt' },
+          });
           activeTypes.add('in_debt');
         }
       }
@@ -463,13 +449,11 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} became heartbroken.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_gained',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'heartbroken' },
+        });
         activeTypes.add('heartbroken');
         createFact('heartbreak', agent.id, targetId, 2, [agent.id], 'witnessed');
         break; // one heartbreak at a time
@@ -519,13 +503,11 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${agent.name} became angry.`,
-        agent_ids: [agent.id],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      logActivity({
+        type: 'state_gained',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: 'angry' },
+      });
       activeTypes.add('angry');
       break;
     }
@@ -555,13 +537,11 @@ function evaluateTriggers(
           metadata: { lowNeedsCount },
         })
         .run();
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${agent.name} became stressed.`,
-        agent_ids: [agent.id],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      logActivity({
+        type: 'state_gained',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: 'stressed' },
+      });
       activeTypes.add('stressed');
     }
   }
@@ -599,13 +579,11 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${agent.name} became euphoric.`,
-        agent_ids: [agent.id],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      logActivity({
+        type: 'state_gained',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: 'euphoric' },
+      });
       activeTypes.add('euphoric');
     }
   }
@@ -646,13 +624,11 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} became grieving.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_gained',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'grieving' },
+        });
         activeTypes.add('grieving');
         break;
       }
@@ -685,13 +661,11 @@ function evaluateTriggers(
             metadata: null,
           })
           .run();
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} became infatuated.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_gained',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'infatuated' },
+        });
         activeTypes.add('infatuated');
         createFact('crush', agent.id, targetId, 2, [agent.id], 'witnessed');
 
@@ -751,13 +725,11 @@ function evaluateTriggers(
             source: 'trigger:rival_romance',
             metadata: { loveInterestId, rivalId },
           }).run();
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} became jealous.`,
-            agent_ids: [agent.id],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_gained',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: 'jealous' },
+          });
           activeTypes.add('jealous');
           break;
         }
@@ -802,13 +774,11 @@ function evaluateTriggers(
               metadata: null,
             })
             .run();
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} became lonely.`,
-            agent_ids: [agent.id],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'state_gained',
+            initiator: agent.id,
+            templateData: { agent: agent.name, state: 'lonely' },
+          });
           activeTypes.add('lonely');
         }
       }
@@ -877,13 +847,11 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${agent.name} became depressed.`,
-        agent_ids: [agent.id],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      logActivity({
+        type: 'state_gained',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: 'depressed' },
+      });
       activeTypes.add('depressed');
     }
   }
@@ -913,13 +881,11 @@ function evaluateTriggers(
           metadata: null,
         })
         .run();
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${agent.name} became confident.`,
-        agent_ids: [agent.id],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      logActivity({
+        type: 'state_gained',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: 'confident' },
+      });
       activeTypes.add('confident');
     }
   }
@@ -1096,21 +1062,17 @@ function checkConditionalExits(
       }
       if (state.type === 'alcoholic') {
         alcoholRecoveredAtTick.set(agent.id, currentTick);
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} is recovering from alcoholism.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_lost',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: 'alcoholic' },
+        });
       } else {
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} is no longer ${state.type}.`,
-          agent_ids: [agent.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'state_lost',
+          initiator: agent.id,
+          templateData: { agent: agent.name, state: state.type },
+        });
       }
       db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
     }
@@ -1238,13 +1200,11 @@ function applyCascades(
 
     {
       const agentName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, cascade.agentId)).get()?.name ?? `Agent#${cascade.agentId}`;
-      db.insert(activityLog).values({
-        type: 'state_change',
-        message: `${agentName} became ${cascade.stateType}.`,
-        agent_ids: [cascade.agentId],
-        timestamp: currentTick,
-        real_timestamp: Date.now(),
-      }).run();
+      logActivity({
+        type: 'state_gained',
+        initiator: cascade.agentId,
+        templateData: { agent: agentName, state: cascade.stateType },
+      });
     }
 
     // Collect any expiry cascades from the newly inserted state (only for fixed-duration states)
@@ -1402,13 +1362,11 @@ function processStateEffects(
               db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, healerNearby.id)).run();
               meta.lastMedicineUsed = currentTick;
 
-              db.insert(activityLog).values({
-                type: 'economy',
-                message: `${healerNearby.name} used medicine to treat ${agent.name}.`,
-                agent_ids: [healerNearby.id, agent.id],
-                timestamp: currentTick,
-                real_timestamp: Date.now(),
-              }).run();
+              logActivity({
+                type: 'system',
+                agents: [healerNearby.id, agent.id],
+                templateData: { message: `${healerNearby.name} used medicine to treat ${agent.name}.` },
+              });
             }
           } else {
             // No medicine: slower healing (original rate)
@@ -1854,13 +1812,12 @@ function processStateEffects(
             timestamp: Date.now(),
           }).run();
 
-          db.insert(activityLog).values({
-            type: 'state_change',
-            message: `${agent.name} was caught stealing from ${loc.name}!`,
-            agent_ids: [agent.id, loc.owner],
-            timestamp: currentTick,
-            real_timestamp: Date.now(),
-          }).run();
+          logActivity({
+            type: 'drama',
+            initiator: agent.id,
+            target: loc.owner ?? undefined,
+            templateData: { description: `${agent.name} was caught stealing from ${loc.name}!` },
+          });
 
           // Observation memories for witnesses
           for (const w of witnesses) {
@@ -1962,13 +1919,11 @@ function processStateEffects(
             ).filter((i: any) => i.quantity > 0);
             db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, agent.id)).run();
 
-            db.insert(activityLog).values({
-              type: 'state_change',
-              message: `${agent.name} is treating ${patient.name}'s alcoholism.`,
-              agent_ids: [agent.id, patient.id],
-              timestamp: currentTick,
-              real_timestamp: Date.now(),
-            }).run();
+            logActivity({
+              type: 'system',
+              agents: [agent.id, patient.id],
+              templateData: { message: `${agent.name} is treating ${patient.name}'s alcoholism.` },
+            });
 
             const [ordA, ordB] = [Math.min(agent.id, patient.id), Math.max(agent.id, patient.id)];
             db.insert(relationshipEvents).values({
@@ -2000,13 +1955,11 @@ function processStateEffects(
               db.update(needsTable).set({ mood: Math.min(100, patientNeeds.mood + 20) }).where(eq(needsTable.agent_id, patient.id)).run();
             }
 
-            db.insert(activityLog).values({
-              type: 'state_change',
-              message: `${agent.name} treated ${patient.name}'s depression with medicine.`,
-              agent_ids: [agent.id, patient.id],
-              timestamp: currentTick,
-              real_timestamp: Date.now(),
-            }).run();
+            logActivity({
+              type: 'system',
+              agents: [agent.id, patient.id],
+              templateData: { message: `${agent.name} treated ${patient.name}'s depression with medicine.` },
+            });
 
             const [ordA, ordB] = [Math.min(agent.id, patient.id), Math.max(agent.id, patient.id)];
             db.insert(relationshipEvents).values({
@@ -2085,13 +2038,12 @@ function processStateEffects(
               timestamp: Date.now(),
             }).run();
 
-            db.insert(activityLog).values({
-              type: 'economy',
-              message: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}`,
-              agent_ids: [agent.id, opponent.id],
-              timestamp: currentTick,
-              real_timestamp: Date.now(),
-            }).run();
+            logActivity({
+              type: 'drama',
+              initiator: agent.id,
+              target: opponent.id,
+              templateData: { description: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}` },
+            });
           }
         }
       }
@@ -2156,13 +2108,12 @@ function processStateEffects(
         const target = potentialTargets[Math.floor(Math.random() * potentialTargets.length)];
         createFact('rumor', target.id, null, 2, [agent.id], 'fabricated');
 
-        db.insert(activityLog).values({
-          type: 'state_change',
-          message: `${agent.name} started spreading rumors about ${target.name}.`,
-          agent_ids: [agent.id, target.id],
-          timestamp: currentTick,
-          real_timestamp: Date.now(),
-        }).run();
+        logActivity({
+          type: 'drama',
+          initiator: agent.id,
+          target: target.id,
+          templateData: { description: `${agent.name} started spreading rumors about ${target.name}.` },
+        });
       }
     }
   }
