@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { trpc } from "./lib/trpc";
+import { SetupWizard } from "./components/setup/SetupWizard";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
 import { AgentPanel } from "./components/ui/AgentPanel";
@@ -27,6 +28,7 @@ export default function App() {
   const { data: locations } = trpc.locations.getAll.useQuery();
   const { data: allRelationships } = trpc.relationships.getGraph.useQuery();
 
+  const [setupComplete, setSetupComplete] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null); // string representation of numeric ID
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
@@ -120,6 +122,12 @@ export default function App() {
     setContextMenuAgent(null);
     setContextMenuPos(null);
   }, []);
+
+  // Show setup wizard if simulation hasn't started
+  const isNewSimulation = world && world.time?.totalTicks === 0 && world.is_paused;
+  if (isNewSimulation && !setupComplete) {
+    return <SetupWizard onStart={() => setSetupComplete(true)} />;
+  }
 
   if (worldLoading || !world) {
     return (
