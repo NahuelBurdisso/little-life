@@ -219,6 +219,12 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
+      // Remove queue entry if either participant has died since it was queued
+      if (!firstParticipant.is_active || !secondParticipant.is_active) {
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        continue;
+      }
+
       // Skip if agents are not at the same location or too far apart
       const sameLocation = firstParticipant.current_location != null &&
         firstParticipant.current_location === secondParticipant.current_location;

@@ -184,6 +184,9 @@ export function statesTick() {
   deactivateStaleFacts();
 
   // ── Death check — runs after all state processing ────────────────────
+  // Track agents who die this tick so Pass 3 (already run) didn't harm anything,
+  // and we avoid processing the same agent twice.
+  const diedThisTick = new Set<number>();
   for (const agent of allAgents) {
     const agentNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
     if (!agentNeeds) continue;
@@ -198,7 +201,8 @@ export function statesTick() {
       currentTick, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season,
     );
 
-    if (deathCause) {
+    if (deathCause && !diedThisTick.has(agent.id)) {
+      diedThisTick.add(agent.id);
       processAgentDeath(agent.id, agent.name, deathCause, currentTick);
     }
   }

@@ -8,7 +8,7 @@
  */
 
 import { db } from '../db';
-import { agents, economy, locations, relationships, worldState, worldEvents, activityLog, agentStates, memories } from '../db/schema';
+import { agents, economy, locations, relationships, worldState, worldEvents, activityLog, agentStates, memories, conversations, conversationQueue } from '../db/schema';
 import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { createObservationMemory } from '../ai/memories';
@@ -139,12 +139,42 @@ function deactivateAgent(ctx: DeathEffectContext): void {
 
   // Clear all active states
   db.delete(agentStates).where(eq(agentStates.agent_id, ctx.agentId)).run();
+
+  // End any active conversations the deceased was participating in
+  const activeConvos = db.select().from(conversations)
+    .where(eq(conversations.status, 'active')).all();
+  for (const convo of activeConvos) {
+    const participants = convo.participants as number[];
+    if (!participants.includes(ctx.agentId)) continue;
+    db.update(conversations).set({ status: 'ended', ended_at: Date.now() })
+      .where(eq(conversations.id, convo.id)).run();
+    // Reset any surviving participants who were set to 'talking'
+    for (const pid of participants) {
+      if (pid === ctx.agentId) continue;
+      const other = db.select({ current_action: agents.current_action, is_active: agents.is_active })
+        .from(agents).where(eq(agents.id, pid)).get();
+      if (other?.is_active && (other.current_action as any)?.type === 'talking') {
+        db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
+          .where(eq(agents.id, pid)).run();
+      }
+    }
+  }
+
+  // Remove the deceased from any pending conversation queue entries
+  const queueEntries = db.select().from(conversationQueue).all();
+  for (const entry of queueEntries) {
+    if ((entry.participants as number[]).includes(ctx.agentId)) {
+      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    }
+  }
 }
 
 function createDeathFact(ctx: DeathEffectContext): void {
-  const allAgentIds = db.select({ id: agents.id }).from(agents)
+  // Note: query runs after deactivateAgent, so is_active = false for the deceased.
+  // We seed knownBy with all currently living agents only.
+  const livingAgentIds = db.select({ id: agents.id }).from(agents)
     .where(eq(agents.is_active, true)).all().map(a => a.id);
-  createFact('death', ctx.agentId, null, 3, [ctx.agentId, ...allAgentIds], 'event', {
+  createFact('death', ctx.agentId, null, 3, livingAgentIds, 'event', {
     detail: ctx.causeDescription,
   });
 }
