@@ -22,6 +22,12 @@ export class VectorStore {
     this.memoryAgentMap.delete(id);
   }
 
+  /** Clear all vectors and mappings (for simulation reset). */
+  clear() {
+    this.vectors.clear();
+    this.memoryAgentMap.clear();
+  }
+
   search(query: Float32Array, agentId: number, topK: number): number[] {
     return this.searchWithScores(query, agentId, topK).map(s => s.id);
   }
