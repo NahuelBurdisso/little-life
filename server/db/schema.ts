@@ -450,8 +450,107 @@ export const facts = sqliteTable('facts', {
   known_by: text('known_by', { mode: 'json' }).notNull().$type<number[]>(),
   created_at: integer('created_at').notNull(),
   is_active: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  reliability: text('reliability').default('confirmed'),
   source: text('source').notNull(),
 }, (table) => [
   index('idx_facts_subject').on(table.subject_id),
   index('idx_facts_active').on(table.is_active),
 ]);
+
+// ─── 19. interactions ─────────────────────────────────────────────────────────
+
+export const interactions = sqliteTable(
+  'interactions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    type: text('type').notNull(),
+    location_id: integer('location_id'),
+    trigger: text('trigger').notNull(),
+    trigger_rule_id: text('trigger_rule_id'),
+    goal_id: integer('goal_id'),
+    outcome: text('outcome').notNull(),
+    severity: real('severity').notNull(),
+    context: text('context', { mode: 'json' }).$type<Record<string, any> | null>(),
+    narration: text('narration'),
+    narration_status: text('narration_status').notNull().default('pending'),
+    started_at: integer('started_at').notNull(),
+    resolved_at: integer('resolved_at'),
+  },
+  (table) => [
+    index('idx_interactions_location_tick').on(table.location_id, table.started_at),
+  ]
+);
+
+// ─── 20. interactionParticipants ──────────────────────────────────────────────
+
+export const interactionParticipants = sqliteTable(
+  'interaction_participants',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    interaction_id: integer('interaction_id').notNull(),
+    agent_id: integer('agent_id').notNull(),
+    role: text('role').notNull(),
+    awareness: text('awareness'),
+  },
+  (table) => [
+    index('idx_ip_agent').on(table.agent_id),
+    index('idx_ip_interaction').on(table.interaction_id),
+  ]
+);
+
+// ─── 21. goals ────────────────────────────────────────────────────────────────
+
+export const goals = sqliteTable(
+  'goals',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    agent_id: integer('agent_id').notNull(),
+    type: text('type').notNull(),
+    target_id: integer('target_id'),
+    motivation: text('motivation').notNull(),
+    priority: real('priority').notNull(),
+    progress: real('progress').notNull().default(0),
+    status: text('status').notNull().default('active'),
+    created_at: integer('created_at').notNull(),
+    expires_at: integer('expires_at'),
+  },
+  (table) => [
+    index('idx_goals_agent_status').on(table.agent_id, table.status),
+    index('idx_goals_target').on(table.target_id),
+  ]
+);
+
+// ─── 22. aspirations ──────────────────────────────────────────────────────────
+
+export const aspirations = sqliteTable(
+  'aspirations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    agent_id: integer('agent_id').notNull(),
+    type: text('type').notNull(),
+    intensity: real('intensity').notNull(),
+    status: text('status').notNull().default('active'),
+    adopted_at: integer('adopted_at').notNull(),
+    shifted_at: integer('shifted_at'),
+    trigger: text('trigger').notNull(),
+    shifted_to: text('shifted_to'),
+  },
+  (table) => [
+    index('idx_aspirations_agent_status').on(table.agent_id, table.status),
+  ]
+);
+
+// ─── 23. interactionCooldowns ─────────────────────────────────────────────────
+
+export const interactionCooldowns = sqliteTable(
+  'interaction_cooldowns',
+  {
+    agent_a: integer('agent_a').notNull(),
+    agent_b: integer('agent_b').notNull().default(0),
+    type: text('type').notNull(),
+    expires_at: integer('expires_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_cooldown_pk').on(table.agent_a, table.agent_b, table.type),
+  ]
+);
