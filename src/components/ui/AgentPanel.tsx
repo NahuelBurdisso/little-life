@@ -202,6 +202,31 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
   }
 
   const { agent, needs, economy } = data;
+
+  // Deceased agent view
+  if (!agent.is_active) {
+    return (
+      <div className="h-full bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
+        <div className="p-3 border-b border-gray-700 flex justify-between items-start flex-shrink-0">
+          <div>
+            <div className="text-sm font-bold text-gray-500 line-through">{agent.name}</div>
+            <div className="text-xs text-red-400 font-medium">☠ Deceased</div>
+            {economy && <div className="text-[10px] text-gray-600 mt-0.5">{economy.job_title}</div>}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">✕</button>
+        </div>
+        <div className="px-3 py-3 text-xs text-gray-500 italic border-b border-gray-700">
+          {agent.name} has passed away. Their memory lives on in the town.
+        </div>
+        {agent.bio && (
+          <div className="px-3 py-2 border-b border-gray-700">
+            <div className="text-xs text-gray-600 font-medium mb-1">Bio</div>
+            <p className="text-[11px] text-gray-500 leading-relaxed">{agent.bio}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
   const worldTick = world?.time?.totalTicks ?? 0;
   const tickSpeed = world?.tick_speed ?? 1;
 
