@@ -8,6 +8,13 @@ export class TickEmitter {
     this.dirty.add(channel);
   }
 
+  /** Mark all subscribed channels as dirty — used after reset to push full refresh. */
+  markAllDirty() {
+    for (const channel of this.subscribers.keys()) {
+      this.dirty.add(channel);
+    }
+  }
+
   subscribe(channel: string, cb: Callback): () => void {
     if (!this.subscribers.has(channel)) {
       this.subscribers.set(channel, new Set());
