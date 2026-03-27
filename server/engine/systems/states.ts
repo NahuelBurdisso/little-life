@@ -28,6 +28,7 @@ import { emitter } from '../emitter';
 import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
 import { createObservationMemory } from '../../ai/memories';
+import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -181,6 +182,26 @@ export function statesTick() {
 
   spreadPublicKnowledge();
   deactivateStaleFacts();
+
+  // ── Death check — runs after all state processing ────────────────────
+  for (const agent of allAgents) {
+    const agentNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
+    if (!agentNeeds) continue;
+
+    const states = db.select().from(agentStates).where(eq(agentStates.agent_id, agent.id)).all();
+    const econ = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+    const action = (agent.current_action as any)?.type ?? 'idle';
+    const isOutdoors = agent.current_location == null;
+
+    const deathCause = checkDeathTriggers(
+      { id: agent.id, name: agent.name, age: agent.age },
+      currentTick, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season,
+    );
+
+    if (deathCause) {
+      processAgentDeath(agent.id, agent.name, deathCause, currentTick);
+    }
+  }
 
   emitter.markDirty('agents.all');
 }

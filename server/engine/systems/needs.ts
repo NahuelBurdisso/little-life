@@ -5,6 +5,7 @@ import { clamp } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { getAgentStates } from '../../lib/states';
+import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 
 // Need names for iteration
 const NEED_KEYS = ['hunger', 'energy', 'social', 'comfort', 'fun'] as const;
@@ -186,6 +187,9 @@ export function needsTick(): void {
         // Silently ignore if scheduling fails
       }
     }
+
+    // Step 12.5: Track hunger-at-zero for death mechanic
+    updateHungerTracking(agent.id, updatedNeeds.hunger);
 
     // Step 13: Write updated values
     db.update(needs).set({
