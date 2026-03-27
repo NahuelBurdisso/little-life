@@ -19,6 +19,11 @@ import {
   facts,
   agentStates,
   relationshipEvents,
+  interactions,
+  interactionParticipants,
+  goals,
+  aspirations,
+  interactionCooldowns,
 } from '../db/schema';
 import { MAP_WIDTH, MAP_HEIGHT, generateLocationsForAgentCount, generateHomes, getPublicBuildings, generateCollisionGridForLocations } from '../data/maps';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -71,6 +76,10 @@ const AgentConfigSchema = z.object({
   schedule: ScheduleSchema,
   personality: PersonalityConfigSchema,
   backstoryMemories: z.array(z.string()),
+  aspiration: z.object({
+    type: z.string(),
+    intensity: z.number(),
+  }).optional(),
 });
 
 const RelationshipConfigSchema = z.object({
@@ -107,6 +116,11 @@ const SetupConfigSchema = z.object({
 // ─── Table reset order (reverse-dependency) ───────────────────────────────────
 
 const ALL_TABLES = [
+  interactionCooldowns,
+  interactionParticipants,
+  interactions,
+  goals,
+  aspirations,
   activityLog,
   templateUsage,
   templates,
@@ -249,6 +263,17 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       .get();
 
     agentMap.set(agentCfg.name, inserted.id);
+
+    // Insert aspiration for this agent
+    const aspConfig = agentCfg.aspiration ?? { type: 'freedom', intensity: 0.5 };
+    db.insert(aspirations).values({
+      agent_id: inserted.id,
+      type: aspConfig.type,
+      intensity: aspConfig.intensity,
+      status: 'active',
+      adopted_at: 0,
+      trigger: 'initial',
+    }).run();
   }
 
   // 4. Insert needs + economy for each agent

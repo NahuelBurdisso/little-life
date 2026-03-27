@@ -33,6 +33,7 @@ export interface AgentConfig {
   };
   personality: PersonalityConfig;
   backstoryMemories: string[];
+  aspiration?: { type: string; intensity: number };
 }
 
 export interface RelationshipConfig {
