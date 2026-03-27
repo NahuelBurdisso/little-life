@@ -12,7 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx server/db/migrate.ts",
     "db:seed": "tsx server/db/seed.ts",
-    "db:reset": "tsx server/db/seed.ts --reset"
+    "db:reset": "tsx server/db/seed.ts --reset",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.95.2",
@@ -44,6 +45,7 @@
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vite": "^8.0.1"
+    "vite": "^8.0.1",
+    "vitest": "^2.0.0"
   }
 }
