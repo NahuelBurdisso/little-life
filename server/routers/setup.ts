@@ -131,302 +131,357 @@ function getDayPhase(hour: number): string {
   return 'night';
 }
 
+// ─── Helper: clear all tables ─────────────────────────────────────────────────
+
+/** Clear all tables in reverse-dependency order */
+function clearAllTables() {
+  sqlite.exec('PRAGMA foreign_keys = OFF;');
+  for (const table of ALL_TABLES) {
+    db.delete(table).run();
+  }
+  sqlite.exec('PRAGMA foreign_keys = ON;');
+}
+
+// ─── Helper: seed world from config ──────────────────────────────────────────
+
+function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: number; locationCount: number } {
+  const now = Date.now();
+
+  // 2. Generate locations dynamically — enough homes for all agent assignments
+  let homesNeeded = Math.ceil(config.agents.length / 2);
+  for (const agent of config.agents) {
+    const match = agent.homeName.match(/Home (\d+)/);
+    if (match) homesNeeded = Math.max(homesNeeded, Number(match[1]));
+  }
+  const dynamicLocations = generateLocationsForAgentCount(config.agents.length, homesNeeded);
+  const homesRaw = generateHomes(homesNeeded);
+  const publicRaw = getPublicBuildings();
+  const allRawBuildings = [...homesRaw, ...publicRaw];
+  const dynamicCollisionGrid = generateCollisionGridForLocations(allRawBuildings);
+
+  const locationMap = new Map<string, number>();
+  for (const loc of dynamicLocations) {
+    const inserted = db
+      .insert(locations)
+      .values({
+        name: loc.name,
+        type: loc.type,
+        position: loc.position,
+        entry_point: loc.entry_point,
+        owner: null,
+        capacity: loc.capacity,
+        current_occupants: loc.current_occupants,
+        operating_hours: loc.operating_hours,
+        services: loc.services,
+        description: loc.description,
+      })
+      .returning({ id: locations.id })
+      .get();
+    locationMap.set(loc.name, inserted.id);
+  }
+
+  // 3. Insert agents, build name → ID map
+  const agentMap = new Map<string, number>();
+
+  for (const agentCfg of config.agents) {
+    const homeId = locationMap.get(agentCfg.homeName);
+    if (homeId === undefined) {
+      throw new Error(`Home location not found: ${agentCfg.homeName}`);
+    }
+    const workplaceId = agentCfg.workplaceName
+      ? (locationMap.get(agentCfg.workplaceName) ?? null)
+      : null;
+
+    const homeLoc = dynamicLocations.find((l) => l.name === agentCfg.homeName)!;
+    const isAtWork =
+      workplaceId !== null &&
+      config.world.startHour >= agentCfg.schedule.workStart &&
+      config.world.startHour < agentCfg.schedule.workEnd;
+
+    const startLocationId = isAtWork ? workplaceId! : homeId;
+    const startLoc = isAtWork
+      ? dynamicLocations.find((l) => l.name === agentCfg.workplaceName)
+      : homeLoc;
+    const startAction = isAtWork
+      ? { type: 'working', taskDescription: 'daily work' }
+      : { type: 'idle' };
+
+    // Derive sprite names from agent name (fallback to generic)
+    const nameSlug = agentCfg.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const spriteSheet = `sprites/${nameSlug}.png`;
+    const portraitSprite = `portraits/${nameSlug}.png`;
+
+    const inserted = db
+      .insert(agents)
+      .values({
+        name: agentCfg.name,
+        bio: agentCfg.bio,
+        traits: agentCfg.traits,
+        personality: agentCfg.personality,
+        age: agentCfg.age,
+        gender: agentCfg.gender,
+        sprite_sheet: spriteSheet,
+        portrait_sprite: portraitSprite,
+        position: {
+          x: startLoc?.entry_point.x ?? homeLoc.entry_point.x,
+          y: startLoc?.entry_point.y ?? homeLoc.entry_point.y,
+        },
+        current_destination: null,
+        current_location: startLocationId,
+        current_action: startAction,
+        action_started: 0,
+        action_duration: null,
+        action_queue: [],
+        current_path: null,
+        schedule: agentCfg.schedule,
+        home: homeId,
+        workplace: workplaceId,
+        created_at: 0,
+        is_active: true,
+      })
+      .returning({ id: agents.id })
+      .get();
+
+    agentMap.set(agentCfg.name, inserted.id);
+  }
+
+  // 4. Insert needs + economy for each agent
+  for (const agentCfg of config.agents) {
+    const agentId = agentMap.get(agentCfg.name)!;
+
+    db.insert(needs).values({
+      agent_id: agentId,
+      hunger: 50 + Math.floor(Math.random() * 40),
+      energy: 55 + Math.floor(Math.random() * 35),
+      social: 30 + Math.floor(Math.random() * 40),
+      comfort: 50 + Math.floor(Math.random() * 30),
+      fun: 30 + Math.floor(Math.random() * 40),
+      mood: 55 + Math.floor(Math.random() * 25),
+      stress: 10 + Math.floor(Math.random() * 20),
+      decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
+      thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
+      mood_modifiers: [],
+      last_updated: 0,
+    }).run();
+
+    db.insert(economy).values({
+      agent_id: agentId,
+      job: agentCfg.job,
+      job_title: agentCfg.jobTitle,
+      salary: agentCfg.salary,
+      work_performance: 70 + Math.floor(Math.random() * 20),
+      money: (config.rules.startingMoney as number) ?? 50,
+      daily_expenses:
+        CONFIG.ECONOMY.DAILY_EXPENSES.min +
+        Math.floor(
+          Math.random() *
+            (CONFIG.ECONOMY.DAILY_EXPENSES.max - CONFIG.ECONOMY.DAILY_EXPENSES.min)
+        ),
+      inventory: [],
+      last_payday: 0,
+      production_remainder: 0,
+    }).run();
+  }
+
+  // 5. Set location owners — map job-based workplaces to their agent owners
+  //    Ownership: whichever agent's workplaceName matches a location and their
+  //    job is an "owner-type" job (shopkeeper, doctor, mayor, farmer, baker,
+  //    bartender, handyperson, constable, retired).
+  const ownerJobs = new Set([
+    'shopkeeper', 'doctor', 'mayor', 'farmer', 'baker',
+    'bartender', 'handyperson', 'constable', 'retired',
+  ]);
+
+  for (const agentCfg of config.agents) {
+    if (agentCfg.workplaceName && ownerJobs.has(agentCfg.job)) {
+      const locId = locationMap.get(agentCfg.workplaceName);
+      const ownerId = agentMap.get(agentCfg.name);
+      if (locId !== undefined && ownerId !== undefined) {
+        // Only set owner if not already taken
+        const existing = db
+          .select({ owner: locations.owner })
+          .from(locations)
+          .where(eq(locations.id, locId))
+          .get();
+        if (existing && existing.owner === null) {
+          db.update(locations)
+            .set({ owner: ownerId })
+            .where(eq(locations.id, locId))
+            .run();
+        }
+      }
+    }
+  }
+
+  // 6. Insert relationships from config
+  for (const relCfg of config.relationships) {
+    const agentAId = agentMap.get(relCfg.agentAName);
+    const agentBId = agentMap.get(relCfg.agentBName);
+    if (agentAId === undefined || agentBId === undefined) continue;
+
+    db.insert(relationships).values({
+      agent_a: agentAId,
+      agent_b: agentBId,
+      friendship_ab: relCfg.friendshipAB,
+      friendship_ba: relCfg.friendshipBA,
+      romance_ab: relCfg.romanceAB,
+      romance_ba: relCfg.romanceBA,
+      trust_ab: relCfg.trustAB,
+      trust_ba: relCfg.trustBA,
+      familiarity: relCfg.familiarity,
+      interaction_count: 0,
+      last_interaction: 0,
+      average_interaction_sentiment: 0,
+      tags: relCfg.tags,
+      status: relCfg.status,
+      created_at: 0,
+      last_updated: 0,
+    }).run();
+  }
+
+  // 7. Insert backstory memories from each agent's backstoryMemories
+  for (const agentCfg of config.agents) {
+    const agentId = agentMap.get(agentCfg.name)!;
+    const memCount = agentCfg.backstoryMemories.length;
+    for (let i = 0; i < memCount; i++) {
+      db.insert(memories).values({
+        agent_id: agentId,
+        content: agentCfg.backstoryMemories[i],
+        type: 'experience',
+        importance: 8,
+        emotional_valence: 0.3,
+        embedding: null,
+        related_agents: [],
+        related_location: null,
+        tags: ['backstory'],
+        // Stagger timestamps so memories have distinct ordering
+        timestamp: 0 - (memCount - i) * 1000,
+        access_count: 0,
+        last_accessed: 0,
+      }).run();
+    }
+  }
+
+  // 7b. Seed initial drama facts (only if matching agents exist)
+  const diegoId = agentMap.get('Diego Santos');
+  const luciaId = agentMap.get('Lucia Fernandez');
+  const marcoId = agentMap.get('Marco Rivera');
+  const rosaId = agentMap.get('Rosa Chen');
+  const carlosId = agentMap.get('Carlos Mendez');
+  const rayId = agentMap.get('Ray Kowalski');
+
+  if (diegoId && luciaId && marcoId && rosaId) {
+    db.insert(facts).values({
+      type: 'crush', subject_id: diegoId, target_id: luciaId,
+      content: 'Diego Santos has a crush on Lucia Fernandez',
+      sensitivity: 2, known_by: [diegoId, marcoId],
+      created_at: 0, is_active: true, source: 'backstory',
+    }).run();
+    db.insert(facts).values({
+      type: 'crush', subject_id: luciaId, target_id: diegoId,
+      content: 'Lucia Fernandez has a crush on Diego Santos',
+      sensitivity: 2, known_by: [luciaId, rosaId],
+      created_at: 0, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  if (carlosId && marcoId) {
+    db.insert(facts).values({
+      type: 'financial', subject_id: carlosId, target_id: null,
+      content: 'Carlos Mendez is struggling with money',
+      sensitivity: 1, known_by: [carlosId, marcoId],
+      created_at: 0, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  if (rayId && marcoId) {
+    db.insert(facts).values({
+      type: 'secret_told', subject_id: rayId, target_id: marcoId,
+      content: 'Ray Kowalski told Marco he was forced out of the city police after a disciplinary hearing — he hit a suspect during interrogation',
+      sensitivity: 3, known_by: [rayId, marcoId],
+      created_at: 0, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 8. Insert conversation templates
+  for (const tmpl of CONVERSATION_TEMPLATES) {
+    db.insert(templates).values({
+      category: tmpl.category,
+      conditions: tmpl.conditions,
+      variants: tmpl.variants,
+      cooldown_per_pair: tmpl.cooldownPerPair,
+    }).run();
+  }
+
+  // 9. Create worldState with rules embedded in time JSON
+  const startHour = config.world.startHour;
+  const dayPhase = getDayPhase(startHour);
+
+  db.insert(worldState).values({
+    time: {
+      day: config.world.startDay,
+      hour: startHour,
+      minute: 0,
+      totalTicks: 0,
+      seasonDay: config.world.startDay,
+      season: config.world.season,
+      // Rules embedded so the simulation engine can read them
+      rules: config.rules,
+    } as any,
+    day_phase: dayPhase,
+    weather: config.world.weather,
+    weather_duration: 6,
+    tick_speed: (config.rules.tickSpeed as number) ?? 1,
+    is_paused: false,
+    last_tick_completed: now,
+    current_tick_phase: 0,
+    tick_id: 'init',
+    pending_transitions: [],
+    tax_pool: 0,
+    map_width: MAP_WIDTH,
+    map_height: MAP_HEIGHT,
+    collision_grid: dynamicCollisionGrid,
+    setup_config: config as any,
+  }).run();
+
+  // 10. Create conversationSchedulerState singleton
+  db.insert(conversationSchedulerState).values({
+    active_llm_conversations: [],
+    max_concurrent_llm: CONFIG.CONVERSATIONS.MAX_CONCURRENT_LLM,
+    max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
+    max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
+    max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
+    template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
+    stats: {
+      llmConversationsTotal: 0,
+      templateConversationsTotal: 0,
+      averageResponseTimeMs: 0,
+      queueTimeoutsTotal: 0,
+    },
+  }).run();
+
+  // 11. Create initial activity log entry
+  const seasonLabel =
+    config.world.season.charAt(0).toUpperCase() + config.world.season.slice(1);
+  db.insert(activityLog).values({
+    type: 'system',
+    message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents start their day.`,
+    agent_ids: [],
+    timestamp: 0,
+    real_timestamp: now,
+  }).run();
+
+  return { agentCount: agentMap.size, locationCount: locationMap.size };
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const setupRouter = router({
   initialize: publicProcedure
     .input(SetupConfigSchema)
     .mutation(async ({ input }) => {
-      const now = Date.now();
-      const config = input;
-
-      // 1. Reset all tables
-      sqlite.exec('PRAGMA foreign_keys = OFF;');
-      for (const table of ALL_TABLES) {
-        db.delete(table).run();
-      }
-      sqlite.exec('PRAGMA foreign_keys = ON;');
-
-      // 2. Generate locations dynamically — enough homes for all agent assignments
-      let homesNeeded = Math.ceil(config.agents.length / 2);
-      for (const agent of config.agents) {
-        const match = agent.homeName.match(/Home (\d+)/);
-        if (match) homesNeeded = Math.max(homesNeeded, Number(match[1]));
-      }
-      const dynamicLocations = generateLocationsForAgentCount(config.agents.length, homesNeeded);
-      const homesRaw = generateHomes(homesNeeded);
-      const publicRaw = getPublicBuildings();
-      const allRawBuildings = [...homesRaw, ...publicRaw];
-      const dynamicCollisionGrid = generateCollisionGridForLocations(allRawBuildings);
-
-      const locationMap = new Map<string, number>();
-      for (const loc of dynamicLocations) {
-        const inserted = db
-          .insert(locations)
-          .values({
-            name: loc.name,
-            type: loc.type,
-            position: loc.position,
-            entry_point: loc.entry_point,
-            owner: null,
-            capacity: loc.capacity,
-            current_occupants: loc.current_occupants,
-            operating_hours: loc.operating_hours,
-            services: loc.services,
-            description: loc.description,
-          })
-          .returning({ id: locations.id })
-          .get();
-        locationMap.set(loc.name, inserted.id);
-      }
-
-      // 3. Insert agents, build name → ID map
-      const agentMap = new Map<string, number>();
-
-      for (const agentCfg of config.agents) {
-        const homeId = locationMap.get(agentCfg.homeName);
-        if (homeId === undefined) {
-          throw new Error(`Home location not found: ${agentCfg.homeName}`);
-        }
-        const workplaceId = agentCfg.workplaceName
-          ? (locationMap.get(agentCfg.workplaceName) ?? null)
-          : null;
-
-        const homeLoc = dynamicLocations.find((l) => l.name === agentCfg.homeName)!;
-        const isAtWork =
-          workplaceId !== null &&
-          config.world.startHour >= agentCfg.schedule.workStart &&
-          config.world.startHour < agentCfg.schedule.workEnd;
-
-        const startLocationId = isAtWork ? workplaceId! : homeId;
-        const startLoc = isAtWork
-          ? dynamicLocations.find((l) => l.name === agentCfg.workplaceName)
-          : homeLoc;
-        const startAction = isAtWork
-          ? { type: 'working', taskDescription: 'daily work' }
-          : { type: 'idle' };
-
-        // Derive sprite names from agent name (fallback to generic)
-        const nameSlug = agentCfg.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-        const spriteSheet = `sprites/${nameSlug}.png`;
-        const portraitSprite = `portraits/${nameSlug}.png`;
-
-        const inserted = db
-          .insert(agents)
-          .values({
-            name: agentCfg.name,
-            bio: agentCfg.bio,
-            traits: agentCfg.traits,
-            personality: agentCfg.personality,
-            age: agentCfg.age,
-            gender: agentCfg.gender,
-            sprite_sheet: spriteSheet,
-            portrait_sprite: portraitSprite,
-            position: {
-              x: startLoc?.entry_point.x ?? homeLoc.entry_point.x,
-              y: startLoc?.entry_point.y ?? homeLoc.entry_point.y,
-            },
-            current_destination: null,
-            current_location: startLocationId,
-            current_action: startAction,
-            action_started: 0,
-            action_duration: null,
-            action_queue: [],
-            current_path: null,
-            schedule: agentCfg.schedule,
-            home: homeId,
-            workplace: workplaceId,
-            created_at: 0,
-            is_active: true,
-          })
-          .returning({ id: agents.id })
-          .get();
-
-        agentMap.set(agentCfg.name, inserted.id);
-      }
-
-      // 4. Insert needs + economy for each agent
-      for (const agentCfg of config.agents) {
-        const agentId = agentMap.get(agentCfg.name)!;
-
-        db.insert(needs).values({
-          agent_id: agentId,
-          hunger: 50 + Math.floor(Math.random() * 40),
-          energy: 55 + Math.floor(Math.random() * 35),
-          social: 30 + Math.floor(Math.random() * 40),
-          comfort: 50 + Math.floor(Math.random() * 30),
-          fun: 30 + Math.floor(Math.random() * 40),
-          mood: 55 + Math.floor(Math.random() * 25),
-          stress: 10 + Math.floor(Math.random() * 20),
-          decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
-          thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
-          mood_modifiers: [],
-          last_updated: 0,
-        }).run();
-
-        db.insert(economy).values({
-          agent_id: agentId,
-          job: agentCfg.job,
-          job_title: agentCfg.jobTitle,
-          salary: agentCfg.salary,
-          work_performance: 70 + Math.floor(Math.random() * 20),
-          money: (config.rules.startingMoney as number) ?? 50,
-          daily_expenses:
-            CONFIG.ECONOMY.DAILY_EXPENSES.min +
-            Math.floor(
-              Math.random() *
-                (CONFIG.ECONOMY.DAILY_EXPENSES.max - CONFIG.ECONOMY.DAILY_EXPENSES.min)
-            ),
-          inventory: [],
-          last_payday: 0,
-          production_remainder: 0,
-        }).run();
-      }
-
-      // 5. Set location owners — map job-based workplaces to their agent owners
-      //    Ownership: whichever agent's workplaceName matches a location and their
-      //    job is an "owner-type" job (shopkeeper, doctor, mayor, farmer, baker,
-      //    bartender, handyperson, constable, retired).
-      const ownerJobs = new Set([
-        'shopkeeper', 'doctor', 'mayor', 'farmer', 'baker',
-        'bartender', 'handyperson', 'constable', 'retired',
-      ]);
-
-      for (const agentCfg of config.agents) {
-        if (agentCfg.workplaceName && ownerJobs.has(agentCfg.job)) {
-          const locId = locationMap.get(agentCfg.workplaceName);
-          const ownerId = agentMap.get(agentCfg.name);
-          if (locId !== undefined && ownerId !== undefined) {
-            // Only set owner if not already taken
-            const existing = db
-              .select({ owner: locations.owner })
-              .from(locations)
-              .where(eq(locations.id, locId))
-              .get();
-            if (existing && existing.owner === null) {
-              db.update(locations)
-                .set({ owner: ownerId })
-                .where(eq(locations.id, locId))
-                .run();
-            }
-          }
-        }
-      }
-
-      // 6. Insert relationships from config
-      for (const relCfg of config.relationships) {
-        const agentAId = agentMap.get(relCfg.agentAName);
-        const agentBId = agentMap.get(relCfg.agentBName);
-        if (agentAId === undefined || agentBId === undefined) continue;
-
-        db.insert(relationships).values({
-          agent_a: agentAId,
-          agent_b: agentBId,
-          friendship_ab: relCfg.friendshipAB,
-          friendship_ba: relCfg.friendshipBA,
-          romance_ab: relCfg.romanceAB,
-          romance_ba: relCfg.romanceBA,
-          trust_ab: relCfg.trustAB,
-          trust_ba: relCfg.trustBA,
-          familiarity: relCfg.familiarity,
-          interaction_count: 0,
-          last_interaction: 0,
-          average_interaction_sentiment: 0,
-          tags: relCfg.tags,
-          status: relCfg.status,
-          created_at: 0,
-          last_updated: 0,
-        }).run();
-      }
-
-      // 7. Insert backstory memories from each agent's backstoryMemories
-      for (const agentCfg of config.agents) {
-        const agentId = agentMap.get(agentCfg.name)!;
-        for (const memContent of agentCfg.backstoryMemories) {
-          db.insert(memories).values({
-            agent_id: agentId,
-            content: memContent,
-            type: 'backstory',
-            importance: 6,
-            emotional_valence: 0,
-            embedding: null,
-            related_agents: [],
-            related_location: null,
-            tags: ['backstory'],
-            timestamp: 0,
-            access_count: 0,
-            last_accessed: 0,
-          }).run();
-        }
-      }
-
-      // 8. Insert conversation templates
-      for (const tmpl of CONVERSATION_TEMPLATES) {
-        db.insert(templates).values({
-          category: tmpl.category,
-          conditions: tmpl.conditions,
-          variants: tmpl.variants,
-          cooldown_per_pair: tmpl.cooldownPerPair,
-        }).run();
-      }
-
-      // 9. Create worldState with rules embedded in time JSON
-      const startHour = config.world.startHour;
-      const dayPhase = getDayPhase(startHour);
-
-      db.insert(worldState).values({
-        time: {
-          day: config.world.startDay,
-          hour: startHour,
-          minute: 0,
-          totalTicks: 0,
-          seasonDay: config.world.startDay,
-          season: config.world.season,
-          // Rules embedded so the simulation engine can read them
-          rules: config.rules,
-        } as any,
-        day_phase: dayPhase,
-        weather: config.world.weather,
-        weather_duration: 6,
-        tick_speed: (config.rules.tickSpeed as number) ?? 1,
-        is_paused: false,
-        last_tick_completed: now,
-        current_tick_phase: 0,
-        tick_id: 'init',
-        pending_transitions: [],
-        tax_pool: 0,
-        map_width: MAP_WIDTH,
-        map_height: MAP_HEIGHT,
-        collision_grid: dynamicCollisionGrid,
-      }).run();
-
-      // 10. Create conversationSchedulerState singleton
-      db.insert(conversationSchedulerState).values({
-        active_llm_conversations: [],
-        max_concurrent_llm: CONFIG.CONVERSATIONS.MAX_CONCURRENT_LLM,
-        max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
-        max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
-        max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
-        template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
-        stats: {
-          llmConversationsTotal: 0,
-          templateConversationsTotal: 0,
-          averageResponseTimeMs: 0,
-          queueTimeoutsTotal: 0,
-        },
-      }).run();
-
-      // 11. Create initial activity log entry
-      const seasonLabel =
-        config.world.season.charAt(0).toUpperCase() + config.world.season.slice(1);
-      db.insert(activityLog).values({
-        type: 'system',
-        message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents start their day.`,
-        agent_ids: [],
-        timestamp: 0,
-        real_timestamp: now,
-      }).run();
-
-      return { ok: true, agentCount: agentMap.size, locationCount: locationMap.size };
+      clearAllTables();
+      const result = seedWorld(input);
+      return { ok: true, ...result };
     }),
 });
