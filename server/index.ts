@@ -4,7 +4,7 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { applyWSSHandler } from '@trpc/server/adapters/ws';
 import { appRouter } from './router';
-import { startTickLoop, stopTickLoop, stopTickLoopAndWait } from './engine/tick';
+import { startTickLoop, stopTickLoop } from './engine/tick';
 import { taskRunner } from './ai/taskRunner';
 import { sqlite, db } from './db';
 import { vectorStore } from './lib/vectors';

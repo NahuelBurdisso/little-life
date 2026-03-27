@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectConversationContext, ContextItem } from '../contextSelector';
+import { selectConversationContext } from '../contextSelector';
 
 const makeMemory = (overrides: Partial<{
   content: string; emotional_valence: number; timestamp: number;

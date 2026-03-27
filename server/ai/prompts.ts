@@ -232,26 +232,6 @@ function buildTurnInstruction(
 }
 
 // ---------------------------------------------------------------------------
-// Time formatting (kept for external use)
-// ---------------------------------------------------------------------------
-
-function formatTime(hour: number, minute: number): string {
-  const period = hour >= 12 ? "PM" : "AM";
-  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  const displayMinute = String(minute).padStart(2, "0");
-  return `${displayHour}:${displayMinute} ${period}`;
-}
-
-function formatTimeAgo(memoryTimestamp: number, currentTick: number): string {
-  const tickDiff = currentTick - memoryTimestamp;
-  if (tickDiff < 60) return `${tickDiff} minutes ago`;
-  const hours = Math.floor(tickDiff / 60);
-  if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days > 1 ? "s" : ""} ago`;
-}
-
-// ---------------------------------------------------------------------------
 // System prompt
 // ---------------------------------------------------------------------------
 
