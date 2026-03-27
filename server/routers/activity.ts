@@ -1,7 +1,7 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
 import { activityLog } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
 
@@ -9,15 +9,36 @@ export const activityRouter = router({
   getRecent: publicProcedure
     .input(
       z.object({
-        limit: z.number().optional().default(50),
-      })
+        categories: z.array(z.string()).optional(),
+        minImportance: z.number().optional(),
+        cursor: z.number().optional(),
+        limit: z.number().optional().default(30),
+        agentId: z.number().optional(),
+      }).optional()
     )
     .query(({ input }) => {
-      return db
-        .select()
-        .from(activityLog)
+      const conditions = [];
+
+      if (input?.categories?.length) {
+        conditions.push(inArray(activityLog.category, input.categories));
+      }
+      if (input?.minImportance != null) {
+        conditions.push(gte(activityLog.importance, input.minImportance));
+      }
+      if (input?.cursor) {
+        conditions.push(lt(activityLog.id, input.cursor));
+      }
+      if (input?.agentId) {
+        conditions.push(eq(activityLog.initiator_id, input.agentId));
+      }
+
+      const query = conditions.length
+        ? db.select().from(activityLog).where(and(...conditions))
+        : db.select().from(activityLog);
+
+      return query
         .orderBy(desc(activityLog.real_timestamp))
-        .limit(input.limit)
+        .limit(input?.limit ?? 30)
         .all();
     }),
 
