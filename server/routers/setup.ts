@@ -25,6 +25,11 @@ import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { startTickLoop, stopTickLoopAndWait } from '../engine/tick';
+import { taskRunner } from '../ai/taskRunner';
+import { vectorStore } from '../lib/vectors';
+import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
+import { emitter } from '../engine/emitter';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -474,6 +479,26 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
   return { agentCount: agentMap.size, locationCount: locationMap.size };
 }
 
+// ─── Helper: reload vector store from DB ──────────────────────────────────────
+
+/** Reload vector store from current DB memories. */
+function reloadVectorStore() {
+  vectorStore.clear();
+  const allMemories = db.select({
+    id: memories.id,
+    agentId: memories.agent_id,
+    embedding: memories.embedding,
+  }).from(memories).all();
+  vectorStore.load(allMemories);
+
+  // Queue embedding generation for unembedded memories
+  const unembedded = allMemories.filter(m => !m.embedding);
+  for (const mem of unembedded) {
+    const full = db.select({ content: memories.content }).from(memories).where(eq(memories.id, mem.id)).get();
+    if (full) taskRunner.generateEmbedding(mem.id, full.content);
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const setupRouter = router({
@@ -484,4 +509,87 @@ export const setupRouter = router({
       const result = seedWorld(input);
       return { ok: true, ...result };
     }),
+
+  restart: publicProcedure.mutation(async () => {
+    const world = db.select({ setup_config: worldState.setup_config }).from(worldState).limit(1).get();
+    if (!world?.setup_config) {
+      throw new Error('No saved setup config — use Reset to Wizard instead');
+    }
+    const config = SetupConfigSchema.parse(world.setup_config);
+
+    await stopTickLoopAndWait();
+    await Promise.race([
+      taskRunner.drain(),
+      new Promise(resolve => setTimeout(resolve, 10_000)),
+    ]);
+    taskRunner.resetSlots();
+
+    clearAllTables();
+    seedWorld(config);
+
+    clearEffectivePersonalities();
+    clearAgentStatesCache();
+    reloadVectorStore();
+    startTickLoop();
+    emitter.markAllDirty();
+    emitter.flush();
+
+    return { ok: true };
+  }),
+
+  resetToWizard: publicProcedure.mutation(async () => {
+    await stopTickLoopAndWait();
+    await Promise.race([
+      taskRunner.drain(),
+      new Promise(resolve => setTimeout(resolve, 10_000)),
+    ]);
+    taskRunner.resetSlots();
+
+    clearAllTables();
+
+    // Insert minimal worldState for wizard detection (totalTicks === 0, is_paused)
+    db.insert(worldState).values({
+      time: { day: 0, hour: 8, minute: 0, totalTicks: 0, seasonDay: 0, season: 'spring' },
+      day_phase: 'morning',
+      weather: 'clear',
+      weather_duration: 6,
+      tick_speed: 0,
+      is_paused: true,
+      last_tick_completed: 0,
+      current_tick_phase: 0,
+      tick_id: 'reset',
+      pending_transitions: [],
+      tax_pool: 0,
+      map_width: MAP_WIDTH,
+      map_height: MAP_HEIGHT,
+      collision_grid: '',
+      setup_config: null,
+    }).run();
+
+    // Minimal scheduler state
+    db.insert(conversationSchedulerState).values({
+      active_llm_conversations: [],
+      max_concurrent_llm: CONFIG.CONVERSATIONS.MAX_CONCURRENT_LLM,
+      max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
+      max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
+      max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
+      template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
+      stats: {
+        llmConversationsTotal: 0,
+        templateConversationsTotal: 0,
+        averageResponseTimeMs: 0,
+        queueTimeoutsTotal: 0,
+      },
+    }).run();
+
+    clearEffectivePersonalities();
+    clearAgentStatesCache();
+    vectorStore.clear();
+
+    // Do NOT restart tick loop — leave paused for wizard
+    emitter.markAllDirty();
+    emitter.flush();
+
+    return { ok: true };
+  }),
 });
