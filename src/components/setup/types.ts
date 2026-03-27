@@ -56,17 +56,8 @@ export interface WorldConfig {
   startDay: number;
 }
 
-export interface RulesConfig {
-  deathEnabled: boolean;
-  sicknessRate: 'off' | 'low' | 'medium' | 'high';
-  contagionRate: 'off' | 'low' | 'medium' | 'high';
-  dramaIntensity: 'low' | 'medium' | 'high' | 'chaos';
-  startingMoney: number;
-  llmModel: string;
-  llmTemperature: number;
-  llmMaxTokens: number;
-  tickSpeed: number;
-}
+// RulesConfig is now a dynamic Record — fields defined in configRegistry.ts
+export type RulesConfig = Record<string, boolean | number | string>;
 
 export interface SetupConfig {
   agents: AgentConfig[];
@@ -82,17 +73,9 @@ export const DEFAULT_WORLD: WorldConfig = {
   startDay: 1,
 };
 
-export const DEFAULT_RULES: RulesConfig = {
-  deathEnabled: true,
-  sicknessRate: 'low',
-  contagionRate: 'low',
-  dramaIntensity: 'medium',
-  startingMoney: 50,
-  llmModel: 'dolphin3:8b',
-  llmTemperature: 0.8,
-  llmMaxTokens: 250,
-  tickSpeed: 1,
-};
+// DEFAULT_RULES generated from registry — no manual sync needed
+import { getDefaultRules } from './configRegistry';
+export const DEFAULT_RULES: RulesConfig = getDefaultRules();
 
 export const JOB_OPTIONS = [
   { job: 'farmer', title: 'Farmer', salary: 25, workplace: 'Green Acres Farm' },

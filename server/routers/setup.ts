@@ -88,17 +88,8 @@ const WorldConfigSchema = z.object({
   startDay: z.number(),
 });
 
-const RulesConfigSchema = z.object({
-  deathEnabled: z.boolean(),
-  sicknessRate: z.enum(['off', 'low', 'medium', 'high']),
-  contagionRate: z.enum(['off', 'low', 'medium', 'high']),
-  dramaIntensity: z.enum(['low', 'medium', 'high', 'chaos']),
-  startingMoney: z.number(),
-  llmModel: z.string(),
-  llmTemperature: z.number(),
-  llmMaxTokens: z.number(),
-  tickSpeed: z.number(),
-});
+// Dynamic rules — accepts any key/value pairs from the config registry
+const RulesConfigSchema = z.record(z.string(), z.union([z.boolean(), z.number(), z.string()]));
 
 const SetupConfigSchema = z.object({
   agents: z.array(AgentConfigSchema),
@@ -268,7 +259,7 @@ export const setupRouter = router({
           job_title: agentCfg.jobTitle,
           salary: agentCfg.salary,
           work_performance: 70 + Math.floor(Math.random() * 20),
-          money: config.rules.startingMoney,
+          money: (config.rules.startingMoney as number) ?? 50,
           daily_expenses:
             CONFIG.ECONOMY.DAILY_EXPENSES.min +
             Math.floor(
@@ -386,7 +377,7 @@ export const setupRouter = router({
         day_phase: dayPhase,
         weather: config.world.weather,
         weather_duration: 6,
-        tick_speed: config.rules.tickSpeed,
+        tick_speed: (config.rules.tickSpeed as number) ?? 1,
         is_paused: false,
         last_tick_completed: now,
         current_tick_phase: 0,
