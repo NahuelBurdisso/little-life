@@ -1,0 +1,160 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { buildAgentSystemPrompt, buildConversationPrompt, ConversationPromptParams } from '../prompts';
+import { clearVoiceDirectiveCache } from '../voiceDirective';
+
+const mockAgent = {
+  id: 1, name: 'Ray Kowalski', bio: '', age: 44, gender: 'male',
+  traits: ['cynical', 'observant', 'intimidating'],
+  personality: {
+    honesty: 35, aggression: 65, warmth: 30, impulsiveness: 45,
+    vanity: 55, curiosity: 70, loyalty: 50, morality: 40,
+    sensuality: 35, neuroticism: 45,
+  },
+};
+
+const mockNeeds = { mood: 25, energy: 60, hunger: 50, social: 40 };
+const mockEcon = { job: 'constable', job_title: 'Town Constable', money: 50 };
+
+describe('buildAgentSystemPrompt', () => {
+  beforeEach(() => clearVoiceDirectiveCache());
+
+  it('includes name, age, job title', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
+    expect(prompt).toContain('Ray Kowalski');
+    expect(prompt).toContain('44');
+    expect(prompt).toContain('Town Constable');
+  });
+
+  it('includes traits line', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
+    expect(prompt).toContain('cynical, observant, and intimidating');
+  });
+
+  it('includes voice directive from personality', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
+    expect(prompt).toContain('You ask a lot of questions');
+  });
+
+  it('includes mood line when mood < 35', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, { ...mockNeeds, mood: 25 }, mockEcon);
+    expect(prompt).toContain("You're in a bad mood");
+  });
+
+  it('omits mood line when mood is neutral', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, { ...mockNeeds, mood: 50 }, mockEcon);
+    expect(prompt).not.toContain('mood');
+  });
+
+  it('includes critical needs when hunger < 15', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, { ...mockNeeds, hunger: 10 }, mockEcon);
+    expect(prompt).toContain('starving');
+  });
+
+  it('includes money when < 10', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, { ...mockEcon, money: 3 });
+    expect(prompt).toContain('$3');
+  });
+
+  it('includes state line when provided', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, mockAgent.personality, ["You've been drinking."]);
+    expect(prompt).toContain("You've been drinking");
+  });
+
+  it('includes instruction line', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
+    expect(prompt).toContain('Reply in 1-2 sentences');
+  });
+});
+
+describe('buildConversationPrompt', () => {
+  beforeEach(() => clearVoiceDirectiveCache());
+
+  const mockOther = {
+    id: 2, name: 'Carlos Mendez', bio: '', age: 45, gender: 'male',
+    traits: ['generous', 'funny'], personality: null,
+  };
+
+  const baseParams: ConversationPromptParams = {
+    speaker: mockAgent,
+    speakerNeeds: mockNeeds,
+    speakerEcon: mockEcon,
+    conversation: {
+      id: 1, messages: [], trigger_reason: 'proximity',
+      topic: 'confrontation', sentiment: 0, max_turns: 6,
+    },
+    relationship: {
+      agent_a: 1, agent_b: 2,
+      friendship_ab: -50, friendship_ba: -30,
+      romance_ab: 0, romance_ba: 0,
+      trust_ab: -40, trust_ba: -20,
+      familiarity: 45, interaction_count: 10,
+      tags: ['grudge', 'antagonist'],
+    },
+    otherAgent: mockOther,
+    memories: [],
+    world: { time: { day: 5, hour: 20, minute: 30, totalTicks: 100, season: 'spring' }, weather: 'cloudy' },
+    location: { id: 1, name: 'The Rusty Lantern', description: 'A cozy tavern' },
+  };
+
+  it('produces compact setting line', () => {
+    const { messages } = buildConversationPrompt(baseParams);
+    const userMsg = messages[0].content;
+    expect(userMsg).toContain('Evening, day 5');
+    expect(userMsg).toContain('Spring');
+    expect(userMsg).toContain('cloudy');
+    expect(userMsg).toContain('The Rusty Lantern');
+  });
+
+  it('produces emotionally-weighted relationship tag for hostile relationship', () => {
+    const { messages } = buildConversationPrompt(baseParams);
+    const userMsg = messages[0].content;
+    expect(userMsg).toContain("You can't stand Carlos");
+  });
+
+  it('includes structural tags', () => {
+    const { messages } = buildConversationPrompt(baseParams);
+    const userMsg = messages[0].content;
+    expect(userMsg).toContain('You hold a grudge');
+  });
+
+  it('includes topic in first turn instruction', () => {
+    const { messages } = buildConversationPrompt(baseParams);
+    const userMsg = messages[0].content;
+    expect(userMsg).toContain('Start talking to Carlos Mendez about confrontation');
+  });
+
+  it('uses "Respond to" for mid-conversation turns', () => {
+    const params = {
+      ...baseParams,
+      conversation: {
+        ...baseParams.conversation,
+        messages: [{ speakerId: 2, text: 'Hey Ray' }],
+      },
+    };
+    const { messages } = buildConversationPrompt(params);
+    const userMsg = messages[0].content;
+    expect(userMsg).toContain('Respond to Carlos');
+  });
+
+  it('handles null relationship', () => {
+    const params = { ...baseParams, relationship: null };
+    const { messages } = buildConversationPrompt(params);
+    const userMsg = messages[0].content;
+    expect(userMsg).toContain("You don't know Carlos");
+    expect(userMsg).not.toContain('grudge');
+  });
+
+  it('limits message history to 6', () => {
+    const msgs = Array.from({ length: 10 }, (_, i) => ({
+      speakerId: i % 2 === 0 ? 1 : 2,
+      text: `Message ${i}`,
+    }));
+    const params = {
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs },
+    };
+    const { messages } = buildConversationPrompt(params);
+    const historyMessages = messages.slice(1);
+    expect(historyMessages.length).toBe(6);
+  });
+});

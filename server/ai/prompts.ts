@@ -5,7 +5,9 @@
  * Pure functions — no I/O.
  */
 
-import { buildPersonalityDescription, PersonalityProfile, generateToneModifiers, ConversationContext } from '../lib/personality';
+import { PersonalityProfile } from '../lib/personality';
+import { generateVoiceDirective } from './voiceDirective';
+import { selectConversationContext, ContextItem } from './contextSelector';
 
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
@@ -93,39 +95,160 @@ export interface LocationRow {
 }
 
 // ---------------------------------------------------------------------------
-// Need description helpers
+// Internal helpers
 // ---------------------------------------------------------------------------
 
-function describeMood(mood: number): string {
-  if (mood > 80) return "very happy";
-  if (mood > 60) return "content";
-  if (mood > 40) return "okay";
-  if (mood > 20) return "down";
-  return "miserable";
+function formatTimeOfDay(hour: number): string {
+  if (hour >= 5 && hour < 7) return 'Dawn';
+  if (hour >= 7 && hour < 12) return 'Morning';
+  if (hour >= 12 && hour < 17) return 'Afternoon';
+  if (hour >= 17 && hour <= 20) return 'Evening';
+  return 'Night';
 }
 
-function describeEnergy(energy: number): string {
-  if (energy > 80) return "well-rested and energetic";
-  if (energy > 60) return "feeling fine";
-  if (energy > 40) return "a bit tired";
-  if (energy > 20) return "exhausted";
-  return "barely able to keep your eyes open";
+function buildTraitsLine(traits: string[]): string {
+  if (traits.length === 0) return '';
+  if (traits.length === 1) return `People describe you as ${traits[0]}.`;
+  if (traits.length === 2) return `People describe you as ${traits[0]} and ${traits[1]}.`;
+  const last = traits[traits.length - 1];
+  const rest = traits.slice(0, -1);
+  return `People describe you as ${rest.join(', ')}, and ${last}.`;
 }
 
-export function describeHunger(hunger: number): string {
-  if (hunger > 80) return "well-fed";
-  if (hunger > 60) return "not hungry";
-  if (hunger > 40) return "getting hungry";
-  if (hunger > 20) return "very hungry";
-  return "starving";
+function buildMoodLine(mood: number): string {
+  if (mood < 15) return "You're miserable right now.";
+  if (mood < 35) return "You're in a bad mood.";
+  if (mood > 90) return "You're in a great mood.";
+  if (mood > 75) return "You're in a good mood.";
+  return '';
 }
 
-export function describeSocial(social: number): string {
-  if (social > 80) return "socially fulfilled";
-  if (social > 60) return "content with your social life";
-  if (social > 40) return "could use some company";
-  if (social > 20) return "feeling lonely";
-  return "desperately lonely";
+function buildCriticalNeedsLine(needs: NeedsRow, money: number): string {
+  const parts: string[] = [];
+  if (needs.hunger < 15) parts.push('starving');
+  if (needs.energy < 15) parts.push('exhausted');
+  if (needs.social < 15) parts.push('desperately lonely');
+
+  const moneyWarning = money < 10 ? `You have $${Math.round(money)}.` : '';
+
+  if (parts.length === 0 && !moneyWarning) return '';
+
+  let line = '';
+  if (parts.length === 1) {
+    line = `You're ${parts[0]}.`;
+  } else if (parts.length === 2) {
+    line = `You're ${parts[0]} and ${parts[1]}.`;
+  } else if (parts.length > 2) {
+    const last = parts[parts.length - 1];
+    const rest = parts.slice(0, -1);
+    line = `You're ${rest.join(', ')}, and ${last}.`;
+  }
+
+  return [line, moneyWarning].filter(Boolean).join(' ');
+}
+
+function buildSettingLine(world: WorldStateRow, locationName: string): string {
+  const timeOfDay = formatTimeOfDay(world.time.hour);
+  const season = world.time.season.charAt(0).toUpperCase() + world.time.season.slice(1);
+  return `${timeOfDay}, day ${world.time.day}. ${season}, ${world.weather}. At ${locationName}.`;
+}
+
+function buildRelationshipTag(
+  relationship: RelationshipRow | null,
+  speakerId: number,
+  otherName: string,
+): string {
+  if (!relationship) return `You don't know ${otherName}.`;
+
+  const isA = relationship.agent_a === speakerId;
+  const friendship = isA ? relationship.friendship_ab : relationship.friendship_ba;
+  const romance = isA ? relationship.romance_ab : relationship.romance_ba;
+  const trust = isA ? relationship.trust_ab : relationship.trust_ba;
+
+  const parts: string[] = [];
+
+  // Friendship tier
+  if (friendship > 70) {
+    parts.push(`You're close with ${otherName}. You'd do anything for them.`);
+  } else if (friendship > 40) {
+    parts.push(`You like ${otherName}.`);
+  } else if (friendship >= 0) {
+    parts.push(`You know ${otherName}. No strong feelings.`);
+  } else if (friendship > -30) {
+    parts.push(`You don't like ${otherName}. They annoy you.`);
+  } else if (friendship > -60) {
+    parts.push(`You can't stand ${otherName}. You don't hide your contempt.`);
+  } else {
+    parts.push(`You hate ${otherName}. Seeing them makes your blood boil.`);
+  }
+
+  // Structural tags
+  const tagMap: Record<string, string> = {
+    coworkers: 'You work together.',
+    housemate: 'You live together.',
+    roommate: 'You live together.',
+    crush: 'You have a crush on them.',
+    grudge: 'You hold a grudge against them.',
+    drinking_buddy: 'You drink together.',
+    antagonist: "They're your antagonist.",
+    partner: "You're together.",
+  };
+  for (const tag of relationship.tags) {
+    const mapped = tagMap[tag];
+    if (mapped) parts.push(mapped);
+  }
+
+  // Romance
+  if (romance > 60) {
+    parts.push(`You have deep feelings for ${otherName}.`);
+  } else if (romance > 40) {
+    parts.push(`You're attracted to ${otherName}.`);
+  } else if (romance > 20) {
+    parts.push(`You find ${otherName} appealing.`);
+  }
+
+  // Trust
+  if (trust > 50) {
+    parts.push(`You trust ${otherName} deeply.`);
+  } else if (trust < -50) {
+    parts.push(`You deeply distrust ${otherName}.`);
+  } else if (trust < -30) {
+    parts.push(`You're wary of ${otherName}.`);
+  }
+
+  return parts.join(' ');
+}
+
+function buildTurnInstruction(
+  messageCount: number,
+  maxTurns: number,
+  otherName: string,
+  topic: string | null,
+): string {
+  if (messageCount === 0 && topic) return `Start talking to ${otherName} about ${topic}.`;
+  if (messageCount === 0) return `Start talking to ${otherName}.`;
+  if (messageCount >= maxTurns - 2) return 'Wrap up the conversation.';
+  return `Respond to ${otherName}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Time formatting (kept for external use)
+// ---------------------------------------------------------------------------
+
+function formatTime(hour: number, minute: number): string {
+  const period = hour >= 12 ? "PM" : "AM";
+  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  const displayMinute = String(minute).padStart(2, "0");
+  return `${displayHour}:${displayMinute} ${period}`;
+}
+
+function formatTimeAgo(memoryTimestamp: number, currentTick: number): string {
+  const tickDiff = currentTick - memoryTimestamp;
+  if (tickDiff < 60) return `${tickDiff} minutes ago`;
+  const hours = Math.floor(tickDiff / 60);
+  if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days > 1 ? "s" : ""} ago`;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,141 +261,36 @@ export function buildAgentSystemPrompt(
   economy: EconomyRow,
   effectivePersonality?: PersonalityProfile | null,
   statePrompts?: string[],
-  toneModifiers?: string[],
-  situationalPrompt?: string | null,
 ): string {
   const resolvedPersonality = effectivePersonality ?? agent.personality;
-  const personalityDesc = resolvedPersonality
-    ? buildPersonalityDescription(resolvedPersonality, agent.traits as string[])
-    : `Your personality traits: ${(agent.traits as string[]).join(', ')}.`;
 
-  let systemPrompt = `You are ${agent.name}, ${agent.age} years old, ${economy.job_title} in a small town.
+  // Identity line
+  const identity = `You are ${agent.name}, ${agent.age}, ${economy.job_title}.`;
 
-${agent.bio}
+  // Traits
+  const traitsLine = buildTraitsLine(agent.traits);
 
-${personalityDesc}
+  // Voice directive
+  const voiceDirective = resolvedPersonality
+    ? generateVoiceDirective(agent.id, resolvedPersonality as PersonalityProfile)
+    : '';
 
-You are currently feeling ${describeMood(needs.mood)} (mood: ${Math.round(needs.mood)}/100).
-Your energy is ${describeEnergy(needs.energy)} (${Math.round(needs.energy)}/100).
-You have $${Math.round(economy.money)} to your name.
+  // Mood
+  const moodLine = buildMoodLine(needs.mood);
 
-RULES:
-- Stay in character. You ARE this person.
-- Express genuine emotions — anger, jealousy, attraction, contempt, affection.
-- If you dislike someone, show it. If you're attracted, show it.
-- You can lie, manipulate, gossip, flirt, argue, or refuse to talk based on who you are.
-- Your responses reflect your current state — tired, hungry, stressed, happy.
-- Do NOT be generically nice. Real people are sometimes rude, passive-aggressive, dismissive, or hostile.
-- If your mood is low, show frustration. If someone annoys you, snap at them. If you're jealous, let it seep through.
-- Conflict is natural. Don't resolve disagreements too quickly. Let tension build.
-- 1-3 sentences. Natural speech, not formal.
-- Reference your memories and relationships when relevant.`;
+  // States
+  const stateLines = statePrompts?.length ? statePrompts.join('\n') : '';
 
-  if (statePrompts?.length) {
-    systemPrompt += '\n\nCURRENT STATE:\n' + statePrompts.join('\n');
-  }
+  // Critical needs
+  const criticalNeedsLine = buildCriticalNeedsLine(needs, economy.money);
 
-  if (toneModifiers?.length) {
-    systemPrompt += '\n\nCONVERSATION STYLE:\n' + toneModifiers.join('\n');
-  }
+  // Build prompt parts, filtering empties
+  const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ');
+  const middle = [moodLine, stateLines, criticalNeedsLine].filter(Boolean).join('\n');
+  const instruction = "Reply in 1-2 sentences. Natural speech, not prose. You can be rude, evasive, flirty, or dismissive — whatever fits.";
 
-  if (situationalPrompt) {
-    systemPrompt += '\n\nSITUATION:\n' + situationalPrompt;
-  }
-
-  return systemPrompt;
-}
-
-// ---------------------------------------------------------------------------
-// Relationship context
-// ---------------------------------------------------------------------------
-
-export function buildRelationshipContext(
-  relationship: RelationshipRow | null,
-  speakerId: number,
-  otherAgent: AgentRow,
-): string {
-  if (!relationship) {
-    return `You don't really know ${otherAgent.name}. This might be one of your first conversations.`;
-  }
-
-  const isA = relationship.agent_a === speakerId;
-  const friendship = isA ? relationship.friendship_ab : relationship.friendship_ba;
-  const romance = isA ? relationship.romance_ab : relationship.romance_ba;
-  const trust = isA ? relationship.trust_ab : relationship.trust_ba;
-
-  const parts: string[] = [];
-
-  // Friendship
-  if (friendship > 70) {
-    parts.push(`You consider ${otherAgent.name} one of your closest friends.`);
-  } else if (friendship > 40) {
-    parts.push(`You're friendly with ${otherAgent.name}.`);
-  } else if (friendship > 10) {
-    parts.push(`You know ${otherAgent.name} a little.`);
-  } else if (friendship > -20) {
-    parts.push(`You're mostly indifferent toward ${otherAgent.name}. You don't go out of your way for them.`);
-  } else if (friendship > -50) {
-    parts.push(`You dislike ${otherAgent.name}. They irritate you and you'd rather not deal with them.`);
-  } else {
-    parts.push(`You can't stand ${otherAgent.name}. Being around them makes your skin crawl. You don't hide your contempt.`);
-  }
-
-  // Romance
-  if (romance > 60) {
-    parts.push(`You have deep romantic feelings for ${otherAgent.name}.`);
-  } else if (romance > 40) {
-    parts.push(`You're attracted to ${otherAgent.name}.`);
-  } else if (romance > 20) {
-    parts.push(`You find ${otherAgent.name} somewhat appealing.`);
-  }
-
-  // Trust
-  if (trust > 50) {
-    parts.push(`You trust ${otherAgent.name} deeply.`);
-  } else if (trust > 30) {
-    parts.push(`You generally trust ${otherAgent.name}.`);
-  } else if (trust < -50) {
-    parts.push(`You deeply distrust ${otherAgent.name}.`);
-  } else if (trust < -30) {
-    parts.push(`You're wary of ${otherAgent.name} and don't fully trust them.`);
-  }
-
-  // Tags
-  if (relationship.tags.length > 0) {
-    const tagStr = relationship.tags.join(", ");
-    parts.push(`Notable aspects of your relationship: ${tagStr}.`);
-  }
-
-  // Interaction history
-  if (relationship.interaction_count > 20) {
-    parts.push(`You've talked many times before.`);
-  } else if (relationship.interaction_count > 5) {
-    parts.push(`You've had several conversations in the past.`);
-  }
-
-  return parts.join(" ");
-}
-
-// ---------------------------------------------------------------------------
-// Time formatting
-// ---------------------------------------------------------------------------
-
-function formatTime(hour: number, minute: number): string {
-  const period = hour >= 12 ? "PM" : "AM";
-  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  const displayMinute = String(minute).padStart(2, "0");
-  return `${displayHour}:${displayMinute} ${period}`;
-}
-
-function formatTimeAgo(memoryTimestamp: number, currentTick: number): string {
-  const tickDiff = currentTick - memoryTimestamp;
-  // Each tick = 1 game minute
-  if (tickDiff < 60) return `${tickDiff} minutes ago`;
-  const hours = Math.floor(tickDiff / 60);
-  if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days > 1 ? "s" : ""} ago`;
+  const sections = [header, middle, instruction].filter(Boolean);
+  return sections.join('\n\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -314,96 +332,72 @@ export function buildConversationPrompt(
     situationalPrompt,
   } = params;
 
-  // Compute tone modifiers from personality
-  const resolvedPersonality = effectivePersonality ?? speaker.personality;
-  const toneCtx: ConversationContext = {
-    isRomantic: conversation.topic?.includes('flirting') || conversation.topic?.includes('romance') || false,
-    isConflict: conversation.topic?.includes('confrontation') || conversation.topic?.includes('tension') || false,
-    witnessedVice: gossipFacts?.some(f =>
-      ['theft', 'drunk_incident', 'alcoholic', 'gambling_loss', 'affair'].some(vt => f.content.toLowerCase().includes(vt.replace('_', ' ')))
-    ) ?? false,
+  // Extract friendship for context selector
+  const friendship = relationship
+    ? (relationship.agent_a === speaker.id ? relationship.friendship_ab : relationship.friendship_ba)
+    : 0;
+
+  // Select context items
+  const contextItems = selectConversationContext({
+    memories: memories.map(m => ({
+      content: m.content,
+      emotional_valence: (m as any).emotional_valence ?? 0,
+      timestamp: m.timestamp,
+      related_agents: (m as any).related_agents ?? [],
+      tags: (m as any).tags ?? [],
+    })),
+    facts: gossipFacts ?? [],
+    statePrompts: statePrompts ?? [],
+    situationalPrompt: situationalPrompt ?? null,
+    otherAgentName: otherAgent.name,
+    otherAgentId: otherAgent.id,
+    topic: conversation.topic,
+    currentTick: world.time.totalTicks,
+    friendship,
+  });
+
+  // Build system prompt (new signature — no toneModifiers/situationalPrompt)
+  const system = buildAgentSystemPrompt(
+    speaker,
+    speakerNeeds,
+    speakerEcon,
+    effectivePersonality,
+    statePrompts,
+  );
+
+  // Build user message parts
+  const userParts: string[] = [];
+
+  // Setting line
+  userParts.push(buildSettingLine(world, location.name));
+
+  // Relationship tag
+  userParts.push(buildRelationshipTag(relationship, speaker.id, otherAgent.name));
+
+  // Context items with prefixes
+  const contextPrefixes: Record<ContextItem['type'], string> = {
+    situation: '[Situation]',
+    state: '[State]',
+    memory: '[Memory]',
+    fact: '[You know]',
   };
-  const toneModifiers = resolvedPersonality ? generateToneModifiers(resolvedPersonality as PersonalityProfile, toneCtx) : [];
-
-  const system = buildAgentSystemPrompt(speaker, speakerNeeds, speakerEcon, effectivePersonality, statePrompts, toneModifiers, situationalPrompt ?? null);
-
-  // Build context message
-  const contextParts: string[] = [];
-
-  // Current situation
-  contextParts.push(
-    `## Current situation`,
-    `It's ${formatTime(world.time.hour, world.time.minute)} on day ${world.time.day} (${world.time.season}, ${world.weather}).`,
-    `You're at ${location.name}: ${location.description}.`,
-    "",
-  );
-
-  // Relationship
-  contextParts.push(
-    `## Your relationship with ${otherAgent.name}`,
-    buildRelationshipContext(relationship, speaker.id, otherAgent),
-    "",
-  );
-
-  // Gossip facts
-  if (gossipFacts && gossipFacts.length > 0) {
-    const factsText = gossipFacts.map(f => `- ${f.content}`).join('\n');
-    contextParts.push(
-      `## Things you know (that ${params.otherAgent?.name ?? 'they'} might not know)`,
-      factsText,
-      `\nYou can share this, keep it to yourself, or use it however fits your personality.`,
-      "",
-    );
+  for (const item of contextItems) {
+    userParts.push(`${contextPrefixes[item.type]} ${item.text}`);
   }
 
-  // Memories
-  if (memories.length > 0) {
-    contextParts.push(`## Your relevant memories`);
-    for (const memory of memories) {
-      const timeAgo = formatTimeAgo(memory.timestamp, world.time.totalTicks);
-      contextParts.push(`- ${memory.content} (${timeAgo})`);
-    }
-    contextParts.push("");
-  }
-
-  // What's happening
-  contextParts.push(`## What's happening`);
-  contextParts.push(`Trigger: ${conversation.trigger_reason}`);
-  if (conversation.topic) {
-    contextParts.push(`The conversation topic is: ${conversation.topic}`);
-  }
-
+  // Turn instruction
   const messageCount = conversation.messages.length;
   const maxTurns = conversation.max_turns ?? 6;
-  const isLastTurn = messageCount >= maxTurns - 2; // within last 2 turns
-  const isSecondToLast = messageCount === maxTurns - 2;
-
-  if (messageCount === 0) {
-    contextParts.push(
-      `\nStart a conversation with ${otherAgent.name}. Greet them naturally based on your relationship and current mood.`,
-    );
-  } else if (isLastTurn) {
-    contextParts.push(
-      `\nThis conversation is wrapping up. Give a final response that brings closure — say goodbye, make a concluding remark, or wrap up the topic naturally. Don't leave things hanging.`,
-    );
-  } else if (isSecondToLast) {
-    contextParts.push(
-      `\nContinue the conversation naturally. Start wrapping up — you'll need to say goodbye soon.`,
-    );
-  } else {
-    contextParts.push(
-      `\nContinue the conversation naturally. Respond to what ${otherAgent.name} just said.`,
-    );
-  }
+  userParts.push(buildTurnInstruction(messageCount, maxTurns, otherAgent.name, conversation.topic));
 
   // Build message array
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
 
   // First message is context
-  messages.push({ role: "user", content: contextParts.join("\n") });
+  messages.push({ role: "user", content: userParts.join('\n') });
 
-  // Add recent conversation history (last 10 messages)
-  const recentMessages = conversation.messages.slice(-10) as Array<{
+  // Add recent conversation history (last 6 messages)
+  const recentMessages = conversation.messages.slice(-6) as Array<{
     speakerId: number;
     text: string;
   }>;
