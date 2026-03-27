@@ -40,7 +40,6 @@ interface BuildingEntry {
   id: number;
   type: string;
   wallGraphic: PIXI.Graphics;
-  roofGraphic: PIXI.Graphics | null;
   interiorContainer: PIXI.Container | null;
   label: PIXI.Text;
   position: { x: number; y: number; width: number; height: number };
@@ -53,7 +52,6 @@ export class BuildingRenderer {
   private labelLayer: PIXI.Container;
 
   private buildings: Map<number, BuildingEntry> = new Map();
-  private selectedId: number | null = null;
 
   constructor(parent: PIXI.Container) {
     this.container = new PIXI.Container();
@@ -85,35 +83,8 @@ export class BuildingRenderer {
     }
   }
 
-  update(agentLocations: Map<number, number | null>): void {
-    // Build a set of location IDs that have occupants
-    const occupied = new Set<number>();
-    for (const [, locId] of agentLocations) {
-      if (locId != null) occupied.add(locId);
-    }
-
-    for (const [id, entry] of this.buildings) {
-      if (!entry.roofGraphic) continue;
-      const hasOccupants = occupied.has(id);
-      const isSelected = this.selectedId === id;
-      const targetAlpha = hasOccupants || isSelected ? 0.2 : 0.85;
-      entry.roofGraphic.alpha = targetAlpha;
-      if (entry.interiorContainer) {
-        entry.interiorContainer.alpha = 1 - targetAlpha;
-      }
-    }
-  }
-
-  selectBuilding(id: number | null): void {
-    this.selectedId = id;
-    for (const [bid, entry] of this.buildings) {
-      if (!entry.roofGraphic) continue;
-      const isSelected = bid === id;
-      if (isSelected) {
-        entry.roofGraphic.alpha = 0.1;
-        if (entry.interiorContainer) entry.interiorContainer.alpha = 0.9;
-      }
-    }
+  update(_agentLocations: Map<number, number | null>): void {
+    // Interiors always visible — nothing to toggle
   }
 
   destroy(): void {
@@ -142,7 +113,7 @@ export class BuildingRenderer {
 
     // Interior zones
     const interiorContainer = new PIXI.Container();
-    interiorContainer.alpha = 0;
+    interiorContainer.alpha = 1;
     const zones = INTERIOR_ZONES[loc.type] ?? [];
     for (const zone of zones) {
       const zg = new PIXI.Graphics();
@@ -164,12 +135,7 @@ export class BuildingRenderer {
     }
     this.buildingLayer.addChild(interiorContainer);
 
-    // Roof overlay
-    const roof = new PIXI.Graphics();
-    roof.rect(x, y, width, height);
-    roof.fill({ color: TERRAIN_COLORS.buildingRoof, alpha: 0.85 });
-    roof.alpha = 0.85;
-    this.buildingLayer.addChild(roof);
+    // No roof overlay — interiors always visible
 
     // Name label centered below the building
     const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE });
@@ -182,7 +148,6 @@ export class BuildingRenderer {
       id: loc.id,
       type: loc.type,
       wallGraphic: walls,
-      roofGraphic: roof,
       interiorContainer,
       label,
       position: loc.position,
@@ -209,7 +174,6 @@ export class BuildingRenderer {
       id: loc.id,
       type: loc.type,
       wallGraphic: patch,
-      roofGraphic: null,
       interiorContainer: null,
       label,
       position: loc.position,
@@ -219,7 +183,6 @@ export class BuildingRenderer {
 
   private destroyEntry(entry: BuildingEntry): void {
     entry.wallGraphic.destroy();
-    entry.roofGraphic?.destroy();
     entry.interiorContainer?.destroy({ children: true });
     entry.label.destroy();
   }
