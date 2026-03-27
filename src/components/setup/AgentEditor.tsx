@@ -52,7 +52,7 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
       id, name: 'New Resident', age: 25 + Math.floor(Math.random() * 30),
       gender: Math.random() > 0.5 ? 'male' : 'female', bio: '', traits: [],
       job: 'retired', jobTitle: 'Retired', salary: 15,
-      homeName: HOME_OPTIONS[agents.length % HOME_OPTIONS.length], workplaceName: null,
+      homeName: HOME_OPTIONS.find(h => (homeUsage.get(h) ?? 0) < 2) ?? HOME_OPTIONS[0], workplaceName: null,
       schedule: { wakeTime: 7, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: ['park', 'tavern'] },
       personality: randomPersonality(), backstoryMemories: [],
     };
@@ -72,14 +72,27 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
     updateAgent(id, { job: opt.job, jobTitle: opt.title, salary: opt.salary, workplaceName: opt.workplace });
   };
 
+  // Homes have capacity 2 each, 9 homes = 18 max agents
+  const MAX_AGENTS = HOME_OPTIONS.length * 2;
+  const homeUsage = new Map<string, number>();
+  agents.forEach(a => homeUsage.set(a.homeName, (homeUsage.get(a.homeName) ?? 0) + 1));
+  const overCapacity = Array.from(homeUsage.entries()).filter(([, count]) => count > 2);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold">👥 Agents ({agents.length})</h2>
-        <button onClick={addAgent} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg">
+        <h2 className="text-lg font-bold">👥 Agents ({agents.length}/{MAX_AGENTS})</h2>
+        <button onClick={addAgent} disabled={agents.length >= MAX_AGENTS}
+          className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
           + New Resident
         </button>
       </div>
+
+      {overCapacity.length > 0 && (
+        <div className="mb-3 p-2 bg-yellow-900/20 border border-yellow-700/30 rounded-lg text-[10px] text-yellow-300">
+          ⚠️ Over-capacity homes: {overCapacity.map(([h, c]) => `${h} (${c}/2)`).join(', ')}. Reassign agents or remove extras.
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-3 mb-4">
         {agents.map(a => (
