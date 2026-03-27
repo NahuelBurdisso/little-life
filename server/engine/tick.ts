@@ -12,6 +12,7 @@ import { tick as decisionsTick } from './systems/decisions';
 import { tick as movementTick } from './systems/movement';
 import { eventsTick } from './systems/events';
 import { gossipTick } from './systems/gossipEngine';
+import { goalsTick } from './systems/goals';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
 import crypto from 'crypto';
@@ -104,6 +105,7 @@ const SYSTEM_PHASES: Array<{
   { name: 'economy',       run: () => economyTick() },
   { name: 'relationships', run: (w) => relationshipsTick(w) },
   { name: 'conversations', run: () => conversationsTick() },
+  { name: 'goals',         run: () => goalsTick() },
   { name: 'decisions',     run: (w) => decisionsTick(w) },
   { name: 'movement',      run: (w) => movementTick(w) },
   { name: 'events',        run: () => eventsTick() },
