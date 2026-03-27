@@ -220,6 +220,7 @@ async function gameTick(): Promise<void> {
 
 let running = false;
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
+let tickInFlight: Promise<void> | null = null;
 
 export function startTickLoop(): void {
   if (running) return;
@@ -229,11 +230,12 @@ export function startTickLoop(): void {
     if (!running) return;
     const start = Date.now();
 
-    gameTick()
+    tickInFlight = gameTick()
       .catch((err) => {
         console.error('[tick] Unhandled error in gameTick:', err);
       })
       .finally(() => {
+        tickInFlight = null;
         if (!running) return;
         const elapsed = Date.now() - start;
         tickTimer = setTimeout(loop, Math.max(0, CONFIG.TICK_INTERVAL_MS - elapsed));
@@ -248,5 +250,13 @@ export function stopTickLoop(): void {
   if (tickTimer !== null) {
     clearTimeout(tickTimer);
     tickTimer = null;
+  }
+}
+
+/** Stop the tick loop and wait for any in-flight tick to finish. */
+export async function stopTickLoopAndWait(): Promise<void> {
+  stopTickLoop();
+  if (tickInFlight) {
+    await tickInFlight;
   }
 }
