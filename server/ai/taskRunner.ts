@@ -64,6 +64,12 @@ class TaskRunner {
   async drain() {
     await Promise.allSettled([...this.pendingTasks]);
   }
+
+  /** Force-clear slot counters after drain/timeout. */
+  resetSlots() {
+    this.conversationSlots = 0;
+    this.pendingTasks.clear();
+  }
 }
 
 export const taskRunner = new TaskRunner();
