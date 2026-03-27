@@ -147,9 +147,14 @@ export const setupRouter = router({
       }
       sqlite.exec('PRAGMA foreign_keys = ON;');
 
-      // 2. Generate locations dynamically based on agent count, then insert
-      const dynamicLocations = generateLocationsForAgentCount(config.agents.length);
-      const homesRaw = generateHomes(Math.ceil(config.agents.length / 2));
+      // 2. Generate locations dynamically — enough homes for all agent assignments
+      let homesNeeded = Math.ceil(config.agents.length / 2);
+      for (const agent of config.agents) {
+        const match = agent.homeName.match(/Home (\d+)/);
+        if (match) homesNeeded = Math.max(homesNeeded, Number(match[1]));
+      }
+      const dynamicLocations = generateLocationsForAgentCount(config.agents.length, homesNeeded);
+      const homesRaw = generateHomes(homesNeeded);
       const publicRaw = getPublicBuildings();
       const allRawBuildings = [...homesRaw, ...publicRaw];
       const dynamicCollisionGrid = generateCollisionGridForLocations(allRawBuildings);

@@ -404,8 +404,8 @@ export function getPublicBuildings(): MapLocationRaw[] {
   return MAP_LOCATIONS.filter(l => l.type !== 'home');
 }
 
-export function generateLocationsForAgentCount(agentCount: number): LocationSeed[] {
-  const homesNeeded = Math.ceil(agentCount / 2);
+export function generateLocationsForAgentCount(agentCount: number, homeCountOverride?: number): LocationSeed[] {
+  const homesNeeded = homeCountOverride ?? Math.ceil(agentCount / 2);
   const homes = generateHomes(homesNeeded);
   const publicBuildings = getPublicBuildings();
   const allBuildings = [...homes, ...publicBuildings];
