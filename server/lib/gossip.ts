@@ -68,6 +68,9 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} confessed something to ${t ?? 'someone'}`,
   alcoholic: (s) =>
     `${s} has a serious drinking problem`,
+  death: (s, _t, ctx) =>
+    ctx?.detail ? `${s} has died — ${ctx.detail}` :
+    `${s} has passed away`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────
