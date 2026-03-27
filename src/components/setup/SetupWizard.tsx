@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import type { SetupConfig, AgentConfig, RelationshipConfig } from './types';
+import type { AgentConfig, RelationshipConfig } from './types';
 import { DEFAULT_WORLD, DEFAULT_RULES } from './types';
 import { AgentEditor } from './AgentEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { WorldSettings } from './WorldSettings';
 import { RulesSettings } from './RulesSettings';
 import { getDefaultAgents, getDefaultRelationships } from './defaults';
+import { trpc } from '../../lib/trpc';
 
 const STEPS = [
   { id: 'agents', label: 'Agents', icon: 'A' },
@@ -27,16 +28,14 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
   const [world, setWorld] = useState(DEFAULT_WORLD);
   const [rules, setRules] = useState(DEFAULT_RULES);
   const [starting, setStarting] = useState(false);
+  const initMutation = trpc.setup.initialize.useMutation();
 
   const stepIndex = STEPS.findIndex(s => s.id === step);
 
   const handleStart = async () => {
     setStarting(true);
     try {
-      const config: SetupConfig = { agents, relationships, world, rules };
-      // TODO: trpc.setup.initialize.useMutation() — endpoint created in Task 5
-      // For now, log the config and proceed
-      console.log('[SetupWizard] Starting simulation with config:', config);
+      await initMutation.mutateAsync({ agents, relationships, world, rules });
       onStart();
     } catch (err) {
       console.error('Failed to start simulation:', err);
