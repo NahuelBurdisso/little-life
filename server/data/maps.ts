@@ -343,3 +343,129 @@ function generateCollisionGrid(): string {
 }
 
 export const COLLISION_GRID = generateCollisionGrid();
+
+// --- Dynamic home generation for setup wizard ---
+
+const HOME_DESCRIPTIONS = [
+  "A cozy farmhouse with a well-worn porch",
+  "A warm house with flower boxes in every window",
+  "A tidy house with an herb garden out back",
+  "A quiet residence, always well-lit",
+  "A stately house with a polished front door",
+  "A cluttered but charming cottage",
+  "A small apartment decorated with paintings",
+  "A bohemian loft filled with instruments",
+  "A spartan house with heavy curtains",
+  "A bright cottage with a red roof",
+  "A stone house with ivy-covered walls",
+  "A modest cabin near the edge of town",
+  "A cheerful yellow house with a garden",
+  "A renovated barn turned cozy home",
+  "A two-story house with a balcony",
+];
+
+// Residential placement zones (x ranges for north and south rows)
+const RESIDENTIAL_ROWS = [
+  { y: 64, entryY: 160 },   // North row
+  { y: 768, entryY: 864 },  // South row
+];
+
+const HOME_X_START = 96;
+const HOME_X_SPACING = 192; // space between home centers
+const HOME_WIDTH = 96;
+const HOME_HEIGHT = 96;
+const MAX_HOMES_PER_ROW = 8; // fits in the 1920px map width
+
+export function generateHomes(count: number): MapLocationRaw[] {
+  const homes: MapLocationRaw[] = [];
+  for (let i = 0; i < count; i++) {
+    const row = RESIDENTIAL_ROWS[Math.floor(i / MAX_HOMES_PER_ROW) % RESIDENTIAL_ROWS.length];
+    const col = i % MAX_HOMES_PER_ROW;
+    const x = HOME_X_START + col * HOME_X_SPACING;
+
+    homes.push({
+      name: `Home ${i + 1}`,
+      type: 'home',
+      x,
+      y: row.y,
+      width: HOME_WIDTH,
+      height: HOME_HEIGHT,
+      entryX: x + HOME_WIDTH / 2,
+      entryY: row.entryY,
+      capacity: 2,
+      description: HOME_DESCRIPTIONS[i % HOME_DESCRIPTIONS.length],
+    });
+  }
+  return homes;
+}
+
+// Public buildings (non-residential) — exported separately for setup wizard
+export function getPublicBuildings(): MapLocationRaw[] {
+  return MAP_LOCATIONS.filter(l => l.type !== 'home');
+}
+
+export function generateLocationsForAgentCount(agentCount: number): LocationSeed[] {
+  const homesNeeded = Math.ceil(agentCount / 2);
+  const homes = generateHomes(homesNeeded);
+  const publicBuildings = getPublicBuildings();
+  const allBuildings = [...homes, ...publicBuildings];
+
+  return allBuildings.map(loc => ({
+    name: loc.name,
+    type: loc.type,
+    position: { x: loc.x, y: loc.y, width: loc.width, height: loc.height },
+    entry_point: { x: loc.entryX, y: loc.entryY },
+    capacity: loc.capacity,
+    current_occupants: [],
+    operating_hours: getOperatingHours(loc.type),
+    services: getDefaultServices(loc.type),
+    description: loc.description,
+    owner: null,
+  }));
+}
+
+export function generateCollisionGridForLocations(locs: MapLocationRaw[]): string {
+  const grid: number[][] = [];
+  for (let y = 0; y < MAP_HEIGHT; y++) {
+    grid[y] = [];
+    for (let x = 0; x < MAP_WIDTH; x++) {
+      grid[y][x] = 0;
+    }
+  }
+
+  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison']);
+
+  for (const loc of locs) {
+    const tileX = Math.floor(loc.x / TILE_SIZE);
+    const tileY = Math.floor(loc.y / TILE_SIZE);
+    const tileW = Math.ceil(loc.width / TILE_SIZE);
+    const tileH = Math.ceil(loc.height / TILE_SIZE);
+
+    if (BUILDING_TYPES.has(loc.type)) {
+      for (let x = tileX; x < tileX + tileW; x++) {
+        for (let y = tileY; y < tileY + tileH; y++) {
+          if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
+          grid[y][x] = 1;
+        }
+      }
+      const doorTileX = Math.floor(loc.entryX / TILE_SIZE);
+      const doorTileY = Math.floor(loc.entryY / TILE_SIZE);
+      if (doorTileX >= 0 && doorTileX < MAP_WIDTH && doorTileY >= 0 && doorTileY < MAP_HEIGHT) {
+        grid[doorTileY][doorTileX] = 0;
+      }
+      const outsideDoorY = doorTileY + 1;
+      if (outsideDoorY >= 0 && outsideDoorY < MAP_HEIGHT) {
+        grid[outsideDoorY][doorTileX] = 0;
+      }
+    }
+  }
+
+  let result = "";
+  for (let y = 0; y < MAP_HEIGHT; y++) {
+    for (let x = 0; x < MAP_WIDTH; x++) {
+      result += grid[y][x].toString();
+    }
+  }
+  return result;
+}
+

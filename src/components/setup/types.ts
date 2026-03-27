@@ -93,7 +93,11 @@ export const JOB_OPTIONS = [
   { job: 'retired', title: 'Retired', salary: 15, workplace: null },
 ];
 
-export const HOME_OPTIONS = [
-  'Home 1', 'Home 2', 'Home 3', 'Home 4', 'Home 5',
-  'Home 6', 'Home 7', 'Home 8', 'Home 9',
-];
+// Homes auto-scale with agent count — this generates the options list
+export function getHomeOptions(agentCount: number): string[] {
+  const homesNeeded = Math.ceil(agentCount / 2);
+  return Array.from({ length: homesNeeded }, (_, i) => `Home ${i + 1}`);
+}
+
+// Max homes per residential row × 2 rows
+export const MAX_AGENTS = 32; // 8 homes per row × 2 rows × 2 capacity

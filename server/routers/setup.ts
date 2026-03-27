@@ -20,7 +20,7 @@ import {
   agentStates,
   relationshipEvents,
 } from '../db/schema';
-import { LOCATIONS, MAP_WIDTH, MAP_HEIGHT, COLLISION_GRID } from '../data/maps';
+import { MAP_WIDTH, MAP_HEIGHT, generateLocationsForAgentCount, generateHomes, getPublicBuildings, generateCollisionGridForLocations } from '../data/maps';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
@@ -147,9 +147,15 @@ export const setupRouter = router({
       }
       sqlite.exec('PRAGMA foreign_keys = ON;');
 
-      // 2. Insert locations, build name → ID map
+      // 2. Generate locations dynamically based on agent count, then insert
+      const dynamicLocations = generateLocationsForAgentCount(config.agents.length);
+      const homesRaw = generateHomes(Math.ceil(config.agents.length / 2));
+      const publicRaw = getPublicBuildings();
+      const allRawBuildings = [...homesRaw, ...publicRaw];
+      const dynamicCollisionGrid = generateCollisionGridForLocations(allRawBuildings);
+
       const locationMap = new Map<string, number>();
-      for (const loc of LOCATIONS) {
+      for (const loc of dynamicLocations) {
         const inserted = db
           .insert(locations)
           .values({
@@ -181,7 +187,7 @@ export const setupRouter = router({
           ? (locationMap.get(agentCfg.workplaceName) ?? null)
           : null;
 
-        const homeLoc = LOCATIONS.find((l) => l.name === agentCfg.homeName)!;
+        const homeLoc = dynamicLocations.find((l) => l.name === agentCfg.homeName)!;
         const isAtWork =
           workplaceId !== null &&
           config.world.startHour >= agentCfg.schedule.workStart &&
@@ -189,7 +195,7 @@ export const setupRouter = router({
 
         const startLocationId = isAtWork ? workplaceId! : homeId;
         const startLoc = isAtWork
-          ? LOCATIONS.find((l) => l.name === agentCfg.workplaceName)
+          ? dynamicLocations.find((l) => l.name === agentCfg.workplaceName)
           : homeLoc;
         const startAction = isAtWork
           ? { type: 'working', taskDescription: 'daily work' }
@@ -386,7 +392,7 @@ export const setupRouter = router({
         tax_pool: 0,
         map_width: MAP_WIDTH,
         map_height: MAP_HEIGHT,
-        collision_grid: COLLISION_GRID,
+        collision_grid: dynamicCollisionGrid,
       }).run();
 
       // 10. Create conversationSchedulerState singleton
