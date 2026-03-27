@@ -427,14 +427,25 @@ export const activityLog = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     type: text('type').notNull(),
-    message: text('message').notNull(),
+    category: text('category').notNull(),
+    importance: real('importance').notNull(),
+    initiator_id: integer('initiator_id'),
+    target_id: integer('target_id'),
     agent_ids: text('agent_ids', { mode: 'json' }).notNull().$type<number[]>(),
+    template_key: text('template_key').notNull(),
+    template_data: text('template_data', { mode: 'json' }).notNull().$type<Record<string, string | number>>(),
+    location_id: integer('location_id'),
+    source_type: text('source_type'),
+    source_id: integer('source_id'),
+    severity: real('severity'),
     timestamp: integer('timestamp').notNull(),
     real_timestamp: integer('real_timestamp').notNull(),
   },
   (table) => [
+    index('idx_activity_category_ts').on(table.category, table.timestamp),
+    index('idx_activity_importance_ts').on(table.importance, table.timestamp),
+    index('idx_activity_agent').on(table.initiator_id, table.timestamp),
     index('idx_activity_log_timestamp').on(table.timestamp),
-    index('idx_activity_log_type_timestamp').on(table.type, table.timestamp),
   ]
 );
 

@@ -1,0 +1,28 @@
+export interface ActivityDef {
+  category: string;
+  base_importance: number;
+  retention: 'short' | 'medium' | 'long' | 'permanent';
+  template: string;
+}
+
+export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
+  state_gained: { category: 'state', base_importance: 0.3, retention: 'short', template: '{agent} is now {state}' },
+  state_lost: { category: 'state', base_importance: 0.2, retention: 'short', template: '{agent} is no longer {state}' },
+  conversation_ended: { category: 'social', base_importance: 0.2, retention: 'short', template: '{agent1} and {agent2} finished talking at {location}' },
+  salary_paid: { category: 'economy', base_importance: 0.1, retention: 'short', template: '{agent} received {amount} coins as salary' },
+  purchase: { category: 'economy', base_importance: 0.15, retention: 'short', template: '{agent} bought {item} for {amount} coins' },
+  relationship_status_change: { category: 'relationship', base_importance: 0.7, retention: 'long', template: '{agent1} and {agent2} are now {status}' },
+  drama: { category: 'drama', base_importance: 0.8, retention: 'long', template: '{description}' },
+  world_event: { category: 'world_event', base_importance: 0.9, retention: 'permanent', template: '{description}' },
+  system: { category: 'system', base_importance: 0.1, retention: 'short', template: '{message}' },
+  error: { category: 'error', base_importance: 0.5, retention: 'medium', template: 'Error in {system}: {message}' },
+  interaction_resolved: { category: 'interaction', base_importance: 0.6, retention: 'medium', template: '{initiator_name} {verb} {target_name} at {location}' },
+  goal_completed: { category: 'goal', base_importance: 0.6, retention: 'medium', template: '{agent} accomplished their goal: {goal_description}' },
+  goal_abandoned: { category: 'goal', base_importance: 0.3, retention: 'short', template: '{agent} gave up on {goal_description}' },
+  aspiration_shifted: { category: 'aspiration', base_importance: 0.8, retention: 'long', template: '{agent} had a change of heart — now driven by {aspiration}' },
+  player_nudge: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
+  player_event: { category: 'player', base_importance: 0.5, retention: 'medium', template: '{description}' },
+  player_gift: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
+  player_introduce: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
+  player_remove: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
+};
