@@ -349,6 +349,7 @@ export const worldState = sqliteTable('world_state', {
   map_width: integer('map_width').notNull(),
   map_height: integer('map_height').notNull(),
   collision_grid: text('collision_grid').notNull(),
+  setup_config: text('setup_config', { mode: 'json' }).$type<Record<string, any> | null>(),
 });
 
 // ─── 13. worldEvents ──────────────────────────────────────────────────────────
