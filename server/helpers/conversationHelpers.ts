@@ -4,7 +4,7 @@ import { eq, and } from 'drizzle-orm';
 
 import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
 import { getShareableFacts, getAgentName } from '../lib/gossip';
-import type { MemoryRow } from '../ai/memories';
+import type { MemoryRow } from '../ai/prompts';
 import { contextBuilder, memoryService } from '../lib/memory/instance';
 import { generateSituationalPrompt } from '../lib/personality';
 

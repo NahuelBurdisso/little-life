@@ -4,7 +4,7 @@ import { shared_knowledge } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-export const factsRouter = router({
+export const knowledgeRouter = router({
   getKnownBy: publicProcedure
     .input(z.object({ agentId: z.number() }))
     .query(({ input }) => {

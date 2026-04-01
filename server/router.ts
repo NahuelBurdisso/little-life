@@ -8,7 +8,7 @@ import { economyRouter } from './routers/economy';
 import { locationsRouter } from './routers/locations';
 import { activityRouter } from './routers/activity';
 import { nudgeRouter } from './routers/nudge';
-import { factsRouter } from './routers/facts';
+import { knowledgeRouter } from './routers/knowledge';
 import { setupRouter } from './routers/setup';
 
 export const appRouter = router({
@@ -21,7 +21,7 @@ export const appRouter = router({
   locations: locationsRouter,
   activity: activityRouter,
   nudge: nudgeRouter,
-  facts: factsRouter,
+  knowledge: knowledgeRouter,
   setup: setupRouter,
 });
 

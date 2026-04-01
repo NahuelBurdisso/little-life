@@ -24,7 +24,7 @@ const FACT_COLORS: Record<string, string> = {
 };
 
 function KnownFacts({ agentId }: { agentId: number }) {
-  const { data: knownFacts } = trpc.facts.getKnownBy.useQuery({ agentId });
+  const { data: knownFacts } = trpc.knowledge.getKnownBy.useQuery({ agentId });
   const { agents: allAgents } = useAgents();
 
   if (!knownFacts || knownFacts.length === 0) {
