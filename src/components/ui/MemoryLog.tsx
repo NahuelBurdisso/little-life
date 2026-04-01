@@ -25,6 +25,7 @@ const TYPE_COLORS: Record<string, string> = {
   conversation: "bg-green-900/50 text-green-300",
   event: "bg-orange-900/50 text-orange-300",
   routine: "bg-gray-700/50 text-gray-400",
+  reflection: "bg-purple-900/50 text-purple-300",
 };
 
 function importanceDots(importance: number): React.ReactElement {
@@ -82,7 +83,7 @@ export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
                 {timeAgo(memory.created_at, worldTick, tickSpeed)}
               </span>
             </div>
-            <div className="text-[11px] text-gray-300 leading-tight">
+            <div className={`text-[11px] leading-tight ${memory.type === 'reflection' ? 'text-purple-300 italic' : 'text-gray-300'}`}>
               {memory.description}
             </div>
           </div>

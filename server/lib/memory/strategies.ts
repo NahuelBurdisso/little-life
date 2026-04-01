@@ -1,4 +1,4 @@
-import type { RetrievalStrategy } from './types';
+import type { RetrievalStrategy, MemoryType } from './types';
 import { CONVERSATION_TOKEN_BUDGET, CONVERSATION_TOP_K } from './constants';
 
 export function conversationStrategy(otherAgentName: string, topic: string | null): RetrievalStrategy {
@@ -10,5 +10,6 @@ export function conversationStrategy(otherAgentName: string, topic: string | nul
     topK: CONVERSATION_TOP_K,
     tokenBudget: CONVERSATION_TOKEN_BUDGET,
     deduplicate: true,
+    boostTypes: ['reflection'] as MemoryType[],
   };
 }

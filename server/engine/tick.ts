@@ -15,6 +15,7 @@ import { gossipTick } from './systems/gossipEngine';
 import { goalsTick } from './systems/goals';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
+import { reflectionTrigger, reflectionRunner } from '../lib/memory/instance';
 import crypto from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -196,6 +197,12 @@ async function gameTick(): Promise<void> {
 
   // Discard the tick-level cache before returning so stale data never leaks.
   clearAgentStatesCache();
+
+  // Check if any agents should reflect (async, doesn't block tick)
+  const agentsToReflect = reflectionTrigger.check(worldWithNewTime.time.totalTicks);
+  for (const agentId of agentsToReflect) {
+    reflectionRunner.queueReflection(agentId);
+  }
 
   // 8. Finalize tick
   db.update(worldState)

@@ -33,7 +33,7 @@ import { z } from 'zod';
 import { logActivity } from '../lib/activityLogger';
 import { startTickLoop, stopTickLoopAndWait } from '../engine/tick';
 import { taskRunner } from '../ai/taskRunner';
-import { memoryService } from '../lib/memory/instance';
+import { memoryService, reflectionTrigger, reflectionRunner } from '../lib/memory/instance';
 import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
 import { emitter } from '../engine/emitter';
 
@@ -539,6 +539,8 @@ export const setupRouter = router({
     clearEffectivePersonalities();
     clearAgentStatesCache();
     reloadMemoryService();
+    reflectionTrigger.clear();
+    reflectionRunner.clearQueue();
     startTickLoop();
     emitter.markAllDirty();
     emitter.flush();
@@ -594,6 +596,8 @@ export const setupRouter = router({
     clearEffectivePersonalities();
     clearAgentStatesCache();
     memoryService.clear();
+    reflectionTrigger.clear();
+    reflectionRunner.clearQueue();
 
     // Do NOT restart tick loop — leave paused for wizard
     emitter.markAllDirty();
