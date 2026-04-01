@@ -6,35 +6,15 @@ import { applyWSSHandler } from '@trpc/server/adapters/ws';
 import { appRouter } from './router';
 import { startTickLoop, stopTickLoop } from './engine/tick';
 import { taskRunner } from './ai/taskRunner';
-import { sqlite, db } from './db';
-import { vectorStore } from './lib/vectors';
-import { memories } from './db/schema';
+import { sqlite } from './db';
+import { memoryService } from './lib/memory/instance';
+import { initMemoryObserver } from './lib/memory/MemoryObserver';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
-// Load vector store on startup + embed any unembedded memories
-try {
-  const allMemories = db.select({
-    id: memories.id,
-    agentId: memories.agent_id,
-    embedding: memories.embedding,
-  }).from(memories).all();
-  vectorStore.load(allMemories);
-  console.log(`Loaded ${vectorStore.size} embeddings into vector store`);
-
-  // Queue embedding generation for memories that don't have embeddings yet (e.g. seed/backstory)
-  const unembedded = db.select({ id: memories.id, description: memories.description })
-    .from(memories).all()
-    .filter(m => !allMemories.find(am => am.id === m.id && am.embedding));
-  if (unembedded.length > 0) {
-    console.log(`Queueing ${unembedded.length} unembedded memories for embedding generation...`);
-    for (const mem of unembedded) {
-      taskRunner.generateEmbedding(mem.id, mem.description);
-    }
-  }
-} catch (err) {
-  console.error('Failed to load vector store, continuing with empty store:', err);
-}
+// Initialize memory system
+initMemoryObserver(memoryService);
+console.log('Memory service initialized');
 
 // Express for health check
 const app = express();

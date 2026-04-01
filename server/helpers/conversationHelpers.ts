@@ -1,11 +1,11 @@
 import { db } from '../db';
-import { agents, needs, economy, conversations, relationships, memories, locations, worldState, agentStates, shared_knowledge } from '../db/schema';
-import { eq, and, desc } from 'drizzle-orm';
-import { CONFIG } from '../lib/constants';
+import { agents, needs, economy, conversations, relationships, locations, worldState, agentStates, shared_knowledge } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
+
 import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
 import { getShareableFacts, getAgentName } from '../lib/gossip';
-import { retrieveMemories, MemoryRow } from '../ai/memories';
-import { vectorStore } from '../lib/vectors';
+import type { MemoryRow } from '../ai/memories';
+import { contextBuilder, memoryService } from '../lib/memory/instance';
 import { generateSituationalPrompt } from '../lib/personality';
 
 export async function getConversationContext(conversationId: number, speakerId: number) {
@@ -35,61 +35,18 @@ export async function getConversationContext(conversationId: number, speakerId: 
 
   const otherAgentName = otherAgent.name ?? '';
   const topic = (conversation.topic as string) ?? '';
-  const queryText = `talking with ${otherAgentName}${topic ? ' about ' + topic : ''}`;
   const world = db.select().from(worldState).get();
   const currentTick = world?.time?.totalTicks ?? 0;
-
-  const vectorSearchFn = async (
-    agentId: number,
-    embedding: number[],
-    limit: number,
-  ): Promise<Array<MemoryRow & { _score?: number }>> => {
-    const queryVec = Float32Array.from(embedding);
-    const results = vectorStore.searchWithScores(queryVec, agentId, limit);
-    if (results.length === 0) return [];
-    const scoreMap = new Map(results.map(r => [r.id, r.score]));
-    const rows = db.select().from(memories).where(eq(memories.agent_id, agentId)).all();
-    return rows
-      .filter((r) => scoreMap.has(r.id))
-      .map((r) => ({ ...(r as unknown as MemoryRow), _score: scoreMap.get(r.id) }));
-  };
-
-  const fallbackFn = async (agentId: number, limit: number): Promise<MemoryRow[]> => {
-    return db
-      .select()
-      .from(memories)
-      .where(eq(memories.agent_id, agentId))
-      .orderBy(desc(memories.created_at))
-      .limit(limit)
-      .all() as unknown as MemoryRow[];
-  };
-
-  const relevantMemories = await retrieveMemories(
-    vectorSearchFn,
-    fallbackFn,
-    speakerId,
-    {
-      queryText,
-      relatedAgents: [otherId],
-      limit: CONFIG.AI.MEMORY_RETRIEVAL_LIMIT,
-    },
-    currentTick,
-  );
 
   const location = conversation.location
     ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
     : null;
   if (!location) return null;
 
-  // world already queried above for currentTick
   if (!world) return null;
 
   const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
   const statePrompts = getActiveStatePrompts(speaker.id, world?.time?.totalTicks);
-
-  const gossipFacts = effectivePersonality
-    ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality as any)
-    : [];
 
   // Build situational prompt from the speaker's active dramatic states
   const speakerStates = getAgentStates(speakerId);
@@ -127,6 +84,41 @@ export async function getConversationContext(conversationId: number, speakerId: 
       });
     }
   }
+
+  // Sync tick so retrieval scoring is accurate
+  memoryService.setTick(currentTick);
+
+  // Retrieve memories using the new memory stream ContextBuilder
+  const contextItems = await contextBuilder.forConversation({
+    agentId: speakerId,
+    otherAgentName,
+    topic,
+    statePrompts,
+    situationalPrompt,
+  });
+
+  // Extract memory descriptions to pass as MemoryRow-compatible objects for the prompt builder
+  const relevantMemories: MemoryRow[] = contextItems
+    .filter(item => item.type === 'memory')
+    .map((item, idx) => ({
+      id: -(idx + 1), // placeholder ID since these come from retrieval, not direct DB query
+      agent_id: speakerId,
+      description: item.text,
+      type: 'retrieved',
+      importance: 5,
+      emotional_valence: 0,
+      embedding: null,
+      depth: 0,
+      created_at: currentTick,
+      last_accessed: currentTick,
+      metadata: {} as Record<string, unknown>,
+      is_active: 1,
+      parent_ids: [],
+    }));
+
+  const gossipFacts = effectivePersonality
+    ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality as any)
+    : [];
 
   return {
     conversation,

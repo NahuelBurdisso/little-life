@@ -33,7 +33,7 @@ import { z } from 'zod';
 import { logActivity } from '../lib/activityLogger';
 import { startTickLoop, stopTickLoopAndWait } from '../engine/tick';
 import { taskRunner } from '../ai/taskRunner';
-import { vectorStore } from '../lib/vectors';
+import { memoryService } from '../lib/memory/instance';
 import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
 import { emitter } from '../engine/emitter';
 
@@ -501,24 +501,11 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
   return { agentCount: agentMap.size, locationCount: locationMap.size };
 }
 
-// ─── Helper: reload vector store from DB ──────────────────────────────────────
+// ─── Helper: reload memory service caches ─────────────────────────────────────
 
-/** Reload vector store from current DB memories. */
-function reloadVectorStore() {
-  vectorStore.clear();
-  const allMemories = db.select({
-    id: memories.id,
-    agentId: memories.agent_id,
-    embedding: memories.embedding,
-  }).from(memories).all();
-  vectorStore.load(allMemories);
-
-  // Queue embedding generation for unembedded memories
-  const unembedded = allMemories.filter(m => !m.embedding);
-  for (const mem of unembedded) {
-    const full = db.select({ description: memories.description }).from(memories).where(eq(memories.id, mem.id)).get();
-    if (full) taskRunner.generateEmbedding(mem.id, full.description);
-  }
+/** Clear MemoryService caches so they reload lazily on next access. */
+function reloadMemoryService() {
+  memoryService.clear();
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -551,7 +538,7 @@ export const setupRouter = router({
 
     clearEffectivePersonalities();
     clearAgentStatesCache();
-    reloadVectorStore();
+    reloadMemoryService();
     startTickLoop();
     emitter.markAllDirty();
     emitter.flush();
@@ -606,7 +593,7 @@ export const setupRouter = router({
 
     clearEffectivePersonalities();
     clearAgentStatesCache();
-    vectorStore.clear();
+    memoryService.clear();
 
     // Do NOT restart tick loop — leave paused for wizard
     emitter.markAllDirty();
