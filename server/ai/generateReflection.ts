@@ -15,7 +15,7 @@ export async function generateReflection(agentId: number): Promise<void> {
 
   // 3. Build reflection prompt
   const memoryDescriptions = recentMemories
-    .map((m: { content: string }) => `- ${m.content}`)
+    .map((m: { description: string }) => `- ${m.description}`)
     .join('\n');
 
   const moodValue = needs ? Math.round(needs.mood) : 50;

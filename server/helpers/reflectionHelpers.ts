@@ -17,8 +17,8 @@ export function getReflectionContext(agentId: number) {
   const recentMemories = db
     .select()
     .from(memories)
-    .where(and(eq(memories.agent_id, agentId), gte(memories.timestamp, cutoffTick)))
-    .orderBy(desc(memories.timestamp))
+    .where(and(eq(memories.agent_id, agentId), gte(memories.created_at, cutoffTick)))
+    .orderBy(desc(memories.created_at))
     .limit(20)
     .all();
 
@@ -35,17 +35,17 @@ export function insertReflectionMemory(agentId: number, content: string, timesta
     .insert(memories)
     .values({
       agent_id: agentId,
-      content,
+      description: content,
       type: 'emotional',
       importance: CONFIG.AI.REFLECTION_IMPORTANCE,
       emotional_valence: Math.round(valence * 100) / 100,
       embedding: null,
-      related_agents: [],
-      related_location: null,
-      tags: ['reflection', 'daily'],
-      timestamp,
-      access_count: 0,
+      metadata: { tags: ['reflection', 'daily'] },
+      depth: 0,
+      created_at: timestamp,
       last_accessed: timestamp,
+      is_active: 1,
+      parent_ids: [],
     })
     .returning()
     .get();

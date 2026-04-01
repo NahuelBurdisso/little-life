@@ -2,28 +2,32 @@ import { describe, it, expect } from 'vitest';
 import { selectConversationContext } from '../contextSelector';
 
 const makeMemory = (overrides: Partial<{
-  content: string; emotional_valence: number; timestamp: number;
+  description: string; emotional_valence: number; created_at: number;
   related_agents: number[]; tags: string[];
 }> = {}) => ({
   id: 1,
   agent_id: 1,
-  content: overrides.content ?? 'A generic memory about something.',
+  description: overrides.description ?? 'A generic memory about something.',
   type: 'experience',
   importance: 5,
   emotional_valence: overrides.emotional_valence ?? 0,
   embedding: null,
-  related_agents: overrides.related_agents ?? [],
-  related_location: null,
-  tags: overrides.tags ?? [],
-  timestamp: overrides.timestamp ?? 0,
-  access_count: 0,
+  depth: 0,
+  created_at: overrides.created_at ?? 0,
   last_accessed: 0,
+  metadata: {
+    related_agents: overrides.related_agents ?? [],
+    tags: overrides.tags ?? [],
+    location_id: null,
+  },
+  is_active: 1,
+  parent_ids: [],
 });
 
 describe('selectConversationContext', () => {
   it('situational prompt always wins slot 1', () => {
     const result = selectConversationContext({
-      memories: [makeMemory({ content: 'Great memory about Bob', related_agents: [2] })],
+      memories: [makeMemory({ description: 'Great memory about Bob', related_agents: [2] })],
       facts: [{ content: 'Bob has a secret', sensitivity: 2 }],
       statePrompts: ['You are drunk.'],
       situationalPrompt: 'You need to confront Bob.',
@@ -58,8 +62,8 @@ describe('selectConversationContext', () => {
   it('picks highest-scored memory when no situational prompt', () => {
     const result = selectConversationContext({
       memories: [
-        makeMemory({ content: 'Something about weather', timestamp: 50 }),
-        makeMemory({ content: 'Argued with Bob last week about money', related_agents: [2], emotional_valence: -0.8, timestamp: 80 }),
+        makeMemory({ description: 'Something about weather', created_at: 50 }),
+        makeMemory({ description: 'Argued with Bob last week about money', related_agents: [2], emotional_valence: -0.8, created_at: 80 }),
       ],
       facts: [],
       statePrompts: [],
@@ -77,7 +81,7 @@ describe('selectConversationContext', () => {
 
   it('picks fact when no relevant memory', () => {
     const result = selectConversationContext({
-      memories: [makeMemory({ content: 'Something generic about nothing' })],
+      memories: [makeMemory({ description: 'Something generic about nothing' })],
       facts: [{ content: 'Bob secretly hates his job.', sensitivity: 1 }],
       statePrompts: [],
       situationalPrompt: null,
@@ -92,7 +96,7 @@ describe('selectConversationContext', () => {
 
   it('returns empty when nothing is relevant', () => {
     const result = selectConversationContext({
-      memories: [makeMemory({ content: 'I ate a sandwich' })],
+      memories: [makeMemory({ description: 'I ate a sandwich' })],
       facts: [],
       statePrompts: [],
       situationalPrompt: null,
@@ -107,16 +111,16 @@ describe('selectConversationContext', () => {
 
   it('boosts negative memories for hostile relationships', () => {
     const negativeMemory = makeMemory({
-      content: 'Bob stole from the shop',
+      description: 'Bob stole from the shop',
       related_agents: [2],
       emotional_valence: -0.9,
-      timestamp: 80,
+      created_at: 80,
     });
     const positiveMemory = makeMemory({
-      content: 'Had a nice chat with Bob about music',
+      description: 'Had a nice chat with Bob about music',
       related_agents: [2],
       emotional_valence: 0.6,
-      timestamp: 90,
+      created_at: 90,
     });
     const result = selectConversationContext({
       memories: [positiveMemory, negativeMemory],

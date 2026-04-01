@@ -11,7 +11,7 @@ import {
   economyTransactions,
   relationshipEvents,
   memories,
-  facts,
+  shared_knowledge,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
@@ -1626,13 +1626,13 @@ function processStateEffects(
             and(
               eq(memories.agent_id, agent.id),
               eq(memories.type, 'conversation'),
-              gt(memories.timestamp, state.started_at - 300),
+              gt(memories.created_at, state.started_at - 300),
             ),
           )
           .all();
 
         for (const mem of recentConvoMemories) {
-          const relatedAgents = (mem.related_agents as number[]) ?? [];
+          const relatedAgents = ((mem.metadata as Record<string, unknown>)?.related_agents as number[] | undefined) ?? [];
           for (const otherId of relatedAgents) {
             const rel = db
               .select()
@@ -1661,17 +1661,17 @@ function processStateEffects(
               const regretResult = db.insert(memories)
                 .values({
                   agent_id: agent.id,
-                  content: regretContent,
+                  description: regretContent,
                   type: 'emotional',
                   importance: 4,
                   emotional_valence: -0.6,
                   embedding: null,
-                  related_agents: [otherId],
-                  related_location: null,
-                  tags: ['regret', 'drunk'],
-                  timestamp: currentTick,
-                  access_count: 0,
+                  depth: 0,
+                  created_at: currentTick,
                   last_accessed: currentTick,
+                  metadata: { related_agents: [otherId], tags: ['regret', 'drunk'] },
+                  is_active: 1,
+                  parent_ids: [],
                 })
                 .returning({ id: memories.id })
                 .get();
@@ -1778,9 +1778,9 @@ function processStateEffects(
             item: targetItem.itemId, location: loc.name,
           });
 
-          // Check theft escalation: 3+ theft facts = reputation + banned
-          const totalThefts = db.select().from(facts)
-            .where(and(eq(facts.type, 'theft'), eq(facts.subject_id, agent.id), eq(facts.is_active, true))).all();
+          // Check theft escalation: 3+ theft shared_knowledge = reputation + banned
+          const totalThefts = db.select().from(shared_knowledge)
+            .where(and(eq(shared_knowledge.type, 'theft'), eq(shared_knowledge.subject_id, agent.id), eq(shared_knowledge.is_active, true))).all();
           if (totalThefts.length >= 3) {
             createFact('reputation', agent.id, null, 1, allAgents.map(a => a.id), 'observed');
             const ownerRel = db.select().from(relationships).where(
@@ -1826,7 +1826,7 @@ function processStateEffects(
               [agent.id, loc.owner], agent.current_location, 7, -0.6, currentTick,
             );
             const memResult = db.insert(memories).values(memData).returning({ id: memories.id }).get();
-            taskRunner.generateEmbedding(memResult.id, memData.content);
+            taskRunner.generateEmbedding(memResult.id, memData.description);
           }
           // Thief's own memory
           const thiefMem = createObservationMemory(
@@ -1834,7 +1834,7 @@ function processStateEffects(
             [loc.owner], agent.current_location, 6, -0.5, currentTick,
           );
           const thiefMemResult = db.insert(memories).values(thiefMem).returning({ id: memories.id }).get();
-          taskRunner.generateEmbedding(thiefMemResult.id, thiefMem.content);
+          taskRunner.generateEmbedding(thiefMemResult.id, thiefMem.description);
         } else {
           const updatedMeta = { ...meta, theftCount: ((meta.theftCount as number) ?? 0) + 1 };
           db.update(agentStates).set({ metadata: updatedMeta }).where(eq(agentStates.id, state.id)).run();

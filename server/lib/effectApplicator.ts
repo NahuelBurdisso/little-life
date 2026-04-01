@@ -346,17 +346,21 @@ function createParticipantMemory(
 ): void {
   db.insert(memories).values({
     agent_id: agentId,
-    content: ctx.narration,
+    description: ctx.narration,
     type: 'interaction',
     importance: Math.round(ctx.severity * 8),
     // Initiator: slight positive (acted); target: slight negative (acted upon)
     emotional_valence: role === 'initiator' ? 0.2 : -0.2,
-    related_agents: [agentId === ctx.initiatorId ? ctx.targetId : ctx.initiatorId],
-    related_location: ctx.locationId,
-    tags: [ctx.interactionType],
-    timestamp: ctx.currentTick,
-    access_count: 0,
+    depth: 0,
+    created_at: ctx.currentTick,
     last_accessed: ctx.currentTick,
+    metadata: {
+      related_agents: [agentId === ctx.initiatorId ? ctx.targetId : ctx.initiatorId],
+      location_id: ctx.locationId,
+      tags: [ctx.interactionType],
+    },
+    is_active: 1,
+    parent_ids: [],
   }).run();
 }
 
@@ -372,15 +376,19 @@ function createWitnessMemory(witness: WitnessInfo, ctx: InteractionContext): voi
 
   db.insert(memories).values({
     agent_id: witness.agent_id,
-    content,
+    description: content,
     type: 'observation',
     importance: Math.round(ctx.severity * 8 * template.importance_modifier),
     emotional_valence: 0,
-    related_agents: [ctx.initiatorId, ctx.targetId],
-    related_location: ctx.locationId,
-    tags: [ctx.interactionType, 'witnessed'],
-    timestamp: ctx.currentTick,
-    access_count: 0,
+    depth: 0,
+    created_at: ctx.currentTick,
     last_accessed: ctx.currentTick,
+    metadata: {
+      related_agents: [ctx.initiatorId, ctx.targetId],
+      location_id: ctx.locationId,
+      tags: [ctx.interactionType, 'witnessed'],
+    },
+    is_active: 1,
+    parent_ids: [],
   }).run();
 }

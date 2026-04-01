@@ -348,7 +348,7 @@ function createMemorialMemories(ctx: DeathEffectContext): void {
       other.id, reflection, [ctx.agentId], null, importance, valence, ctx.currentTick,
     );
     const memResult = db.insert(memories).values(memData).returning({ id: memories.id }).get();
-    taskRunner.generateEmbedding(memResult.id, memData.content);
+    taskRunner.generateEmbedding(memResult.id, memData.description);
   }
 }
 

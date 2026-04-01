@@ -3,13 +3,12 @@ import { timeAgo } from "../../lib/formatters";
 
 interface Memory {
   id: number;
-  content: string;
+  description: string;
   type: string;
   importance: number;
   emotional_valence: number;
-  related_agents: number[];
-  tags: string[];
-  timestamp: number;
+  created_at: number;
+  metadata: Record<string, unknown>;
 }
 
 interface MemoryLogProps {
@@ -80,11 +79,11 @@ export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
               </span>
               {importanceDots(memory.importance)}
               <span className="text-[10px] text-gray-600 ml-auto">
-                {timeAgo(memory.timestamp, worldTick, tickSpeed)}
+                {timeAgo(memory.created_at, worldTick, tickSpeed)}
               </span>
             </div>
             <div className="text-[11px] text-gray-300 leading-tight">
-              {memory.content}
+              {memory.description}
             </div>
           </div>
         ))}

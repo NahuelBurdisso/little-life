@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, needs, economy, conversations, relationships, memories, locations, worldState, agentStates, facts } from '../db/schema';
+import { agents, needs, economy, conversations, relationships, memories, locations, worldState, agentStates, shared_knowledge } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
 import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
@@ -59,7 +59,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
       .select()
       .from(memories)
       .where(eq(memories.agent_id, agentId))
-      .orderBy(desc(memories.timestamp))
+      .orderBy(desc(memories.created_at))
       .limit(limit)
       .all() as unknown as MemoryRow[];
   };
@@ -115,8 +115,8 @@ export async function getConversationContext(conversationId: number, speakerId: 
     }
   } else if (speakerStates.includes('heartbroken')) {
     // Check if otherAgent is the partner who caused heartbreak and speaker knows of an affair
-    const affairFact = db.select().from(facts)
-      .where(and(eq(facts.type, 'affair'), eq(facts.subject_id, otherId), eq(facts.is_active, true))).all()
+    const affairFact = db.select().from(shared_knowledge)
+      .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.subject_id, otherId), eq(shared_knowledge.is_active, true))).all()
       .find(f => (f.known_by as number[]).includes(speakerId));
     if (affairFact) {
       const rivalId = affairFact.target_id;

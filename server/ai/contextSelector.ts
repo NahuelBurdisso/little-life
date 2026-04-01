@@ -4,11 +4,10 @@ export interface ContextItem {
 }
 
 interface MemoryInput {
-  content: string;
+  description: string;
   emotional_valence: number;
-  timestamp: number;
-  related_agents: number[];
-  tags: string[];
+  created_at: number;
+  metadata: Record<string, unknown>;
 }
 
 interface FactInput {
@@ -40,18 +39,19 @@ function scoreMemory(
 ): number {
   let score = 0;
 
+  const relatedAgents = (memory.metadata?.related_agents as number[] | undefined) ?? [];
   if (
-    memory.content.toLowerCase().includes(otherAgentName.toLowerCase()) ||
-    memory.related_agents.includes(otherAgentId)
+    memory.description.toLowerCase().includes(otherAgentName.toLowerCase()) ||
+    relatedAgents.includes(otherAgentId)
   ) {
     score += 0.5;
   }
 
-  if (topic && memory.content.toLowerCase().includes(topic.toLowerCase())) {
+  if (topic && memory.description.toLowerCase().includes(topic.toLowerCase())) {
     score += 0.3;
   }
 
-  const ticksAgo = currentTick - memory.timestamp;
+  const ticksAgo = currentTick - memory.created_at;
   if (ticksAgo >= 0 && ticksAgo < 1440) {
     score += 0.2;
   }
@@ -91,7 +91,7 @@ export function selectConversationContext(params: ContextSelectorParams): Contex
     .sort((a, b) => b.score - a.score);
 
   if (scoredMemories.length > 0 && items.length < 2) {
-    items.push({ type: 'memory', text: scoredMemories[0].memory.content });
+    items.push({ type: 'memory', text: scoredMemories[0].memory.description });
   }
 
   if (items.length >= 2) return items;

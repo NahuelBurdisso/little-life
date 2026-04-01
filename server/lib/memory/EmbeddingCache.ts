@@ -49,16 +49,14 @@ function dotProduct(a: Float32Array, b: Float32Array): number {
  */
 export class EmbeddingCache {
   private readonly capacity: number;
-  private readonly dims: number;
   /** agentId → (memoryId → CacheEntry) */
   private readonly store: Map<number, Map<number, CacheEntry>> = new Map();
 
   constructor(
     capacity: number = CACHE_CAPACITY_PER_AGENT,
-    dims: number = EMBEDDING_DIMENSIONS,
+    _dims: number = EMBEDDING_DIMENSIONS,
   ) {
     this.capacity = capacity;
-    this.dims = dims;
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────

@@ -9,8 +9,6 @@
  * Creation functions are pure — they return insert data for the caller.
  */
 
-import { CONFIG } from "../lib/constants";
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -19,33 +17,33 @@ import { CONFIG } from "../lib/constants";
 export interface MemoryRow {
   id: number;
   agent_id: number;
-  content: string;
+  description: string;
   type: string;
   importance: number;
   emotional_valence: number;
   embedding: Buffer | null;
-  related_agents: number[];
-  related_location: number | null;
-  tags: string[];
-  timestamp: number;
-  access_count: number;
+  depth: number;
+  created_at: number;
   last_accessed: number;
+  metadata: Record<string, unknown>;
+  is_active: number;
+  parent_ids: number[];
 }
 
 /** Data ready to be inserted into the memories table. */
 export interface MemoryInsertData {
   agent_id: number;
-  content: string;
+  description: string;
   type: string;
   importance: number;
   emotional_valence: number;
   embedding: Buffer | null;
-  related_agents: number[];
-  related_location: number | null;
-  tags: string[];
-  timestamp: number;
-  access_count: number;
+  depth: number;
+  created_at: number;
   last_accessed: number;
+  metadata: Record<string, unknown>;
+  is_active: number;
+  parent_ids: number[];
 }
 
 export interface MemoryQuery {
@@ -104,27 +102,25 @@ export async function retrieveMemories(
   const relatedLocation = query.relatedLocation ?? null;
 
   const scored = candidates.map((memory) => {
-    const ticksAgo = Math.max(0, currentTick - memory.timestamp);
+    const ticksAgo = Math.max(0, currentTick - memory.created_at);
     const hoursAgo = ticksAgo / 60;
     const recency = Math.exp(-hoursAgo / (24 * 7));
     const importance = memory.importance / 10;
 
     let agentBonus = 0;
-    for (const aid of memory.related_agents) {
+    const relatedAgents = (memory.metadata?.related_agents as number[] | undefined) ?? [];
+    for (const aid of relatedAgents) {
       if (relatedAgentSet.has(aid)) {
         agentBonus += 0.15;
       }
     }
 
     const locationBonus =
-      relatedLocation != null && memory.related_location === relatedLocation
+      relatedLocation != null && (memory.metadata?.location_id as number | null) === relatedLocation
         ? 0.1
         : 0;
 
-    const accessPenalty = Math.min(
-      memory.access_count * CONFIG.AI.MEMORY_ACCESS_PENALTY,
-      CONFIG.AI.MEMORY_ACCESS_PENALTY_MAX,
-    );
+    const accessPenalty = 0; // access_count removed; no penalty applied
 
     // Use vector score if available, otherwise 0.5 as neutral
     const relevance = (memory as { _score?: number })._score ?? 0.5;
@@ -144,14 +140,13 @@ export async function retrieveMemories(
 
   const result = scored.slice(0, query.limit).map((s) => s.memory);
 
-  // Update access tracking for retrieved memories
+  // Update last_accessed for retrieved memories
   if (result.length > 0) {
     const { db: dbInstance } = await import("../db");
     const { memories: memoriesTable } = await import("../db/schema");
     const { eq: eqOp } = await import("drizzle-orm");
     for (const mem of result) {
       dbInstance.update(memoriesTable).set({
-        access_count: mem.access_count + 1,
         last_accessed: currentTick,
       }).where(eqOp(memoriesTable.id, mem.id)).run();
     }
@@ -243,17 +238,21 @@ export function createConversationMemory(
 
   return {
     agent_id: agentId,
-    content,
+    description: content,
     type: "conversation",
     importance,
     emotional_valence: sentiment,
     embedding: null, // Caller should compute via Ollama if needed
-    related_agents: otherAgentIds,
-    related_location: locationId,
-    tags: topic ? [topic] : [],
-    timestamp: worldTick,
-    access_count: 0,
+    depth: 0,
+    created_at: worldTick,
     last_accessed: worldTick,
+    metadata: {
+      related_agents: otherAgentIds,
+      location_id: locationId,
+      tags: topic ? [topic] : [],
+    },
+    is_active: 1,
+    parent_ids: [],
   };
 }
 
@@ -276,17 +275,21 @@ export function createObservationMemory(
 ): MemoryInsertData {
   return {
     agent_id: agentId,
-    content: description,
+    description,
     type: "observation",
     importance: Math.min(10, Math.max(1, importance)),
     emotional_valence: Math.min(1, Math.max(-1, valence)),
     embedding: null, // Caller should compute via Ollama if needed
-    related_agents: involvedAgents,
-    related_location: locationId,
-    tags: [],
-    timestamp: worldTick,
-    access_count: 0,
+    depth: 0,
+    created_at: worldTick,
     last_accessed: worldTick,
+    metadata: {
+      related_agents: involvedAgents,
+      location_id: locationId,
+      tags: [],
+    },
+    is_active: 1,
+    parent_ids: [],
   };
 }
 

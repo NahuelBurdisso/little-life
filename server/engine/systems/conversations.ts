@@ -23,7 +23,7 @@ import {
   worldState,
   agentStates,
   economy,
-  facts,
+  shared_knowledge,
   locations,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
@@ -567,7 +567,7 @@ async function processCompletedConversation(
       .get();
 
     // Queue embedding generation
-    taskRunner.generateEmbedding(memoryResult.id, memoryData.content);
+    taskRunner.generateEmbedding(memoryResult.id, memoryData.description);
 
     // Update needs: social boost + mood modifier
     const agentNeeds = db
@@ -610,7 +610,7 @@ async function processCompletedConversation(
     }
   }
 
-  // Spread gossip: for each participant, share known facts if the subject was mentioned
+  // Spread gossip: for each participant, share known shared_knowledge if the subject was mentioned
   const messageTexts = messages.map((m) => m.text);
   for (const pid of participantIds) {
     const otherId = participantIds.find((p) => p !== pid);
@@ -701,14 +701,14 @@ async function processCompletedConversation(
     if (trust <= 50) continue;
 
     // Find a hidden sin to reveal
-    const hiddenSin = db.select().from(facts)
-      .where(and(eq(facts.subject_id, pid), eq(facts.is_active, true))).all()
+    const hiddenSin = db.select().from(shared_knowledge)
+      .where(and(eq(shared_knowledge.subject_id, pid), eq(shared_knowledge.is_active, true))).all()
       .find(f => ['theft', 'affair', 'blackmail'].includes(f.type) && (f.known_by as number[]).length <= 2);
     if (!hiddenSin) continue;
 
     // Share the sin with the friend
     const knownBy = [...new Set([...(hiddenSin.known_by as number[]), otherId])];
-    db.update(facts).set({ known_by: knownBy }).where(eq(facts.id, hiddenSin.id)).run();
+    db.update(shared_knowledge).set({ known_by: knownBy }).where(eq(shared_knowledge.id, hiddenSin.id)).run();
     createFact('confession', pid, otherId, 2, [pid, otherId], 'confided', {
       relatedFact: hiddenSin.content,
     });
@@ -850,8 +850,8 @@ async function processCompletedConversation(
     if (!partnerRel || partnerRel.status !== 'partners') continue;
 
     // Check if pid knows about an affair involving their partner (otherId)
-    const affairFacts = db.select().from(facts)
-      .where(and(eq(facts.type, 'affair'), eq(facts.subject_id, otherId), eq(facts.is_active, true))).all()
+    const affairFacts = db.select().from(shared_knowledge)
+      .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.subject_id, otherId), eq(shared_knowledge.is_active, true))).all()
       .filter(f => (f.known_by as number[]).includes(pid));
     if (affairFacts.length === 0) continue;
 
@@ -1199,7 +1199,7 @@ async function processTimedOutEntry(
       .returning({ id: memories.id })
       .get();
 
-    taskRunner.generateEmbedding(memoryResult.id, memoryData.content);
+    taskRunner.generateEmbedding(memoryResult.id, memoryData.description);
   }
 
   // Minimal social boost

@@ -16,7 +16,7 @@ import {
   templateUsage,
   activityLog,
   economyTransactions,
-  facts,
+  shared_knowledge,
   agentStates,
   relationshipEvents,
   interactions,
@@ -134,7 +134,7 @@ const ALL_TABLES = [
   relationships,
   economyTransactions,
   economy,
-  facts,
+  shared_knowledge,
   agentStates,
   needs,
   agents,
@@ -377,23 +377,22 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
     for (let i = 0; i < memCount; i++) {
       db.insert(memories).values({
         agent_id: agentId,
-        content: agentCfg.backstoryMemories[i],
+        description: agentCfg.backstoryMemories[i],
         type: 'experience',
         importance: 8,
         emotional_valence: 0.3,
         embedding: null,
-        related_agents: [],
-        related_location: null,
-        tags: ['backstory'],
-        // Stagger timestamps so memories have distinct ordering
-        timestamp: 0 - (memCount - i) * 1000,
-        access_count: 0,
+        depth: 0,
+        created_at: 0 - (memCount - i) * 1000,
         last_accessed: 0,
+        metadata: { tags: ['backstory'] },
+        is_active: 1,
+        parent_ids: [],
       }).run();
     }
   }
 
-  // 7b. Seed initial drama facts (only if matching agents exist)
+  // 7b. Seed initial drama shared_knowledge (only if matching agents exist)
   const diegoId = agentMap.get('Diego Santos');
   const luciaId = agentMap.get('Lucia Fernandez');
   const marcoId = agentMap.get('Marco Rivera');
@@ -402,13 +401,13 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
   const rayId = agentMap.get('Ray Kowalski');
 
   if (diegoId && luciaId && marcoId && rosaId) {
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'crush', subject_id: diegoId, target_id: luciaId,
       content: 'Diego Santos has a crush on Lucia Fernandez',
       sensitivity: 2, known_by: [diegoId, marcoId],
       created_at: 0, is_active: true, source: 'backstory',
     }).run();
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'crush', subject_id: luciaId, target_id: diegoId,
       content: 'Lucia Fernandez has a crush on Diego Santos',
       sensitivity: 2, known_by: [luciaId, rosaId],
@@ -417,7 +416,7 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
   }
 
   if (carlosId && marcoId) {
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'financial', subject_id: carlosId, target_id: null,
       content: 'Carlos Mendez is struggling with money',
       sensitivity: 1, known_by: [carlosId, marcoId],
@@ -426,7 +425,7 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
   }
 
   if (rayId && marcoId) {
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'secret_told', subject_id: rayId, target_id: marcoId,
       content: 'Ray Kowalski told Marco he was forced out of the city police after a disciplinary hearing — he hit a suspect during interrogation',
       sensitivity: 3, known_by: [rayId, marcoId],
@@ -517,8 +516,8 @@ function reloadVectorStore() {
   // Queue embedding generation for unembedded memories
   const unembedded = allMemories.filter(m => !m.embedding);
   for (const mem of unembedded) {
-    const full = db.select({ content: memories.content }).from(memories).where(eq(memories.id, mem.id)).get();
-    if (full) taskRunner.generateEmbedding(mem.id, full.content);
+    const full = db.select({ description: memories.description }).from(memories).where(eq(memories.id, mem.id)).get();
+    if (full) taskRunner.generateEmbedding(mem.id, full.description);
   }
 }
 

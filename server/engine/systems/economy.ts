@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { agents, economy, economyTransactions, worldState, worldEvents, locations, agentStates, facts } from '../../db/schema';
+import { agents, economy, economyTransactions, worldState, worldEvents, locations, agentStates, shared_knowledge } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -218,8 +218,8 @@ export function economyTick(): void {
     }).run();
 
     // Process blackmail payments (victim pays 10% of salary to blackmailer)
-    const blackmailFacts = db.select().from(facts)
-      .where(and(eq(facts.type, 'blackmail'), eq(facts.is_active, true), eq(facts.target_id, agent.id))).all();
+    const blackmailFacts = db.select().from(shared_knowledge)
+      .where(and(eq(shared_knowledge.type, 'blackmail'), eq(shared_knowledge.is_active, true), eq(shared_knowledge.target_id, agent.id))).all();
     for (const fact of blackmailFacts) {
       const blackmailerId = fact.subject_id;
       const paymentAmount = Math.floor(econ.salary * 0.1);

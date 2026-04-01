@@ -1,6 +1,6 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
-import { conversations, relationshipEvents, agents, facts } from '../db/schema';
+import { conversations, relationshipEvents, agents, shared_knowledge } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
@@ -124,8 +124,8 @@ export const conversationsRouter = router({
         if (agent) names[pid] = agent.name;
       }
 
-      // Find facts created during this conversation
-      const createdFacts = db.select().from(facts).all()
+      // Find shared_knowledge created during this conversation
+      const createdFacts = db.select().from(shared_knowledge).all()
         .filter(f => {
           return f.created_at >= startedAt - 5000 && f.created_at <= endedAt + 5000 &&
             (participantIds.includes(f.subject_id) || (f.target_id != null && participantIds.includes(f.target_id)));

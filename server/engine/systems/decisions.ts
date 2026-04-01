@@ -1066,8 +1066,8 @@ export function tick(world: WorldRow): void {
       );
       const amr1 = db.insert(memories).values(arrestMem1).returning({ id: memories.id }).get();
       const amr2 = db.insert(memories).values(arrestMem2).returning({ id: memories.id }).get();
-      taskRunner.generateEmbedding(amr1.id, arrestMem1.content);
-      taskRunner.generateEmbedding(amr2.id, arrestMem2.content);
+      taskRunner.generateEmbedding(amr1.id, arrestMem1.description);
+      taskRunner.generateEmbedding(amr2.id, arrestMem2.description);
 
       break; // One arrest per tick
     }

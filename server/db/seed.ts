@@ -16,7 +16,7 @@ import {
   templates,
   templateUsage,
   activityLog,
-  facts,
+  shared_knowledge,
   agentStates,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
@@ -42,7 +42,7 @@ const ALL_TABLES = [
   relationships,
   economyTransactions,
   economy,
-  facts,
+  shared_knowledge,
   agentStates,
   needs,
   agents,
@@ -318,19 +318,19 @@ function seed() {
 
   // 11. Seed initial drama — pre-existing conditions for early story hooks
   console.log('[seed] Seeding initial drama...');
-  // facts is already imported from schema at the top
+  // shared_knowledge is already imported from schema at the top
 
   // Diego has a crush on Lucia (already in relationships, but make it a known fact)
   const diegoId = agentMap.get('Diego Santos');
   const luciaId = agentMap.get('Lucia Fernandez');
   if (diegoId && luciaId) {
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'crush', subject_id: diegoId, target_id: luciaId,
       content: 'Diego Santos has a crush on Lucia Fernandez',
       sensitivity: 2, known_by: [diegoId, agentMap.get('Marco Rivera')!],
       created_at: now, is_active: true, source: 'backstory',
     }).run();
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'crush', subject_id: luciaId, target_id: diegoId,
       content: 'Lucia Fernandez has a crush on Diego Santos',
       sensitivity: 2, known_by: [luciaId, agentMap.get('Rosa Chen')!],
@@ -341,7 +341,7 @@ function seed() {
   // Carlos is struggling financially (he starts with $25)
   const carlosId = agentMap.get('Carlos Mendez');
   if (carlosId) {
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'financial', subject_id: carlosId, target_id: null,
       content: 'Carlos Mendez is struggling with money',
       sensitivity: 1, known_by: [carlosId, agentMap.get('Marco Rivera')!],
@@ -352,7 +352,7 @@ function seed() {
   // Ray has a mysterious past — people are curious
   const rayId = agentMap.get('Ray Kowalski');
   if (rayId) {
-    db.insert(facts).values({
+    db.insert(shared_knowledge).values({
       type: 'secret_told', subject_id: rayId, target_id: agentMap.get('Marco Rivera') ?? null,
       content: 'Ray Kowalski told Marco he was forced out of the city police after a disciplinary hearing — he hit a suspect during interrogation',
       sensitivity: 3, known_by: [rayId, agentMap.get('Marco Rivera')!],

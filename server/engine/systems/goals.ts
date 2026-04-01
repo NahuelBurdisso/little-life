@@ -4,7 +4,7 @@ import {
   goals,
   aspirations,
   agentStates,
-  facts,
+  shared_knowledge,
   economy,
   relationships,
   worldState,
@@ -88,10 +88,10 @@ function checkTriggerCondition(
     }
 
     case 'fact_learned': {
-      const relevantFacts = db.select().from(facts)
+      const relevantFacts = db.select().from(shared_knowledge)
         .where(and(
-          eq(facts.type, cond.fact_type!),
-          eq(facts.is_active, true),
+          eq(shared_knowledge.type, cond.fact_type!),
+          eq(shared_knowledge.is_active, true),
         ))
         .all()
         .filter(f => {

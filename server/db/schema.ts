@@ -300,23 +300,27 @@ export const memories = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     agent_id: integer('agent_id').notNull().references(() => agents.id),
-    content: text('content').notNull(),
     type: text('type').notNull(),
+    description: text('description').notNull(),
     importance: real('importance').notNull(),
-    emotional_valence: real('emotional_valence').notNull(),
-    embedding: blob('embedding', { mode: 'buffer' }),
-    related_agents: text('related_agents', { mode: 'json' })
-      .notNull()
-      .$type<number[]>(),
-    related_location: integer('related_location').references(() => locations.id),
-    tags: text('tags', { mode: 'json' }).notNull().$type<string[]>(),
-    timestamp: integer('timestamp').notNull(),
-    access_count: integer('access_count').notNull(),
+    emotional_valence: real('emotional_valence').notNull().default(0),
+    depth: integer('depth').notNull().default(0),
+    created_at: integer('created_at').notNull(),
     last_accessed: integer('last_accessed').notNull(),
+    embedding: blob('embedding', { mode: 'buffer' }),
+    metadata: text('metadata', { mode: 'json' })
+      .notNull()
+      .default('{}')
+      .$type<Record<string, unknown>>(),
+    is_active: integer('is_active').notNull().default(1),
+    parent_ids: text('parent_ids', { mode: 'json' })
+      .notNull()
+      .default('[]')
+      .$type<number[]>(),
   },
   (table) => [
-    index('idx_memories_agent_id').on(table.agent_id),
-    index('idx_memories_agent_id_timestamp').on(table.agent_id, table.timestamp),
+    index('idx_memories_agent_active').on(table.agent_id, table.is_active, table.created_at),
+    index('idx_memories_agent_type').on(table.agent_id, table.type, table.is_active),
   ]
 );
 
@@ -449,9 +453,9 @@ export const activityLog = sqliteTable(
   ]
 );
 
-// ─── 18. facts ────────────────────────────────────────────────────────────────
+// ─── 18. shared_knowledge ─────────────────────────────────────────────────────
 
-export const facts = sqliteTable('facts', {
+export const shared_knowledge = sqliteTable('shared_knowledge', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   type: text('type').notNull(),
   subject_id: integer('subject_id').notNull().references(() => agents.id),
@@ -464,8 +468,8 @@ export const facts = sqliteTable('facts', {
   reliability: text('reliability').default('confirmed'),
   source: text('source').notNull(),
 }, (table) => [
-  index('idx_facts_subject').on(table.subject_id),
-  index('idx_facts_active').on(table.is_active),
+  index('idx_shared_knowledge_subject').on(table.subject_id),
+  index('idx_shared_knowledge_active').on(table.is_active),
 ]);
 
 // ─── 19. interactions ─────────────────────────────────────────────────────────

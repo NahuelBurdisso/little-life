@@ -18,7 +18,7 @@ export const memoriesRouter = router({
         .select()
         .from(memories)
         .where(eq(memories.agent_id, input.agentId))
-        .orderBy(desc(memories.timestamp))
+        .orderBy(desc(memories.created_at))
         .limit(input.limit)
         .all();
     }),

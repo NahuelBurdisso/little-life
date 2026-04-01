@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, facts, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
+import { agents, shared_knowledge, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { PersonalityProfile } from './personality';
@@ -123,19 +123,19 @@ export function createFact(
   const content = generator ? generator(subjectName, targetName, ctx) : `${subjectName}: ${type}`;
 
   // Check for existing duplicate (same type + subject + target)
-  // For low-churn types (sickness, financial, work_issue), also check inactive facts
+  // For low-churn types (sickness, financial, work_issue), also check inactive shared_knowledge
   // created recently to prevent duplicate spam
   const checkInactiveToo = ['sickness', 'financial', 'work_issue'].includes(type);
   const existing = db
-    .select({ id: facts.id })
-    .from(facts)
+    .select({ id: shared_knowledge.id })
+    .from(shared_knowledge)
     .where(
       and(
-        eq(facts.type, type),
-        eq(facts.subject_id, subjectId),
-        ...(checkInactiveToo ? [] : [eq(facts.is_active, true)]),
+        eq(shared_knowledge.type, type),
+        eq(shared_knowledge.subject_id, subjectId),
+        ...(checkInactiveToo ? [] : [eq(shared_knowledge.is_active, true)]),
         ...(targetId != null
-          ? [eq(facts.target_id, targetId)]
+          ? [eq(shared_knowledge.target_id, targetId)]
           : [])
       )
     )
@@ -145,21 +145,21 @@ export function createFact(
     // If there's an inactive duplicate, reactivate it instead of creating new
     if (checkInactiveToo) {
       const inactive = db
-        .select({ id: facts.id, is_active: facts.is_active })
-        .from(facts)
+        .select({ id: shared_knowledge.id, is_active: shared_knowledge.is_active })
+        .from(shared_knowledge)
         .where(
           and(
-            eq(facts.type, type),
-            eq(facts.subject_id, subjectId),
-            eq(facts.is_active, false),
-            ...(targetId != null ? [eq(facts.target_id, targetId)] : [])
+            eq(shared_knowledge.type, type),
+            eq(shared_knowledge.subject_id, subjectId),
+            eq(shared_knowledge.is_active, false),
+            ...(targetId != null ? [eq(shared_knowledge.target_id, targetId)] : [])
           )
         )
         .get();
       if (inactive) {
-        db.update(facts)
+        db.update(shared_knowledge)
           .set({ is_active: true, known_by: knownBy, created_at: Date.now() })
-          .where(eq(facts.id, inactive.id))
+          .where(eq(shared_knowledge.id, inactive.id))
           .run();
         return inactive.id;
       }
@@ -168,7 +168,7 @@ export function createFact(
   }
 
   const result = db
-    .insert(facts)
+    .insert(shared_knowledge)
     .values({
       type,
       subject_id: subjectId,
@@ -194,18 +194,18 @@ const NEGATIVE_FACT_TYPES = [
 
 export function getNegativeFactCount(agentId: number): number {
   const activeFacts = db
-    .select({ type: facts.type })
-    .from(facts)
-    .where(and(eq(facts.subject_id, agentId), eq(facts.is_active, true)))
+    .select({ type: shared_knowledge.type })
+    .from(shared_knowledge)
+    .where(and(eq(shared_knowledge.subject_id, agentId), eq(shared_knowledge.is_active, true)))
     .all();
   return activeFacts.filter((f) => NEGATIVE_FACT_TYPES.includes(f.type)).length;
 }
 
 export function getHiddenSinCount(agentId: number): number {
   const hiddenFacts = db
-    .select({ type: facts.type, known_by: facts.known_by })
-    .from(facts)
-    .where(and(eq(facts.subject_id, agentId), eq(facts.is_active, true)))
+    .select({ type: shared_knowledge.type, known_by: shared_knowledge.known_by })
+    .from(shared_knowledge)
+    .where(and(eq(shared_knowledge.subject_id, agentId), eq(shared_knowledge.is_active, true)))
     .all()
     .filter((f) =>
       ['theft', 'affair', 'blackmail'].includes(f.type) &&
@@ -220,12 +220,12 @@ export function getShareableFacts(
   speakerId: number,
   listenerId: number,
   personality: PersonalityProfile
-): typeof facts.$inferSelect[] {
+): typeof shared_knowledge.$inferSelect[] {
   const allActive = db
     .select()
-    .from(facts)
-    .where(eq(facts.is_active, true))
-    .orderBy(desc(facts.sensitivity), desc(facts.created_at))
+    .from(shared_knowledge)
+    .where(eq(shared_knowledge.is_active, true))
+    .orderBy(desc(shared_knowledge.sensitivity), desc(shared_knowledge.created_at))
     .all();
 
   const shareable = allActive.filter((fact) => {
@@ -240,7 +240,7 @@ export function getShareableFacts(
     if (fact.sensitivity >= 2 && personality.honesty > 60) return false;
     if (fact.sensitivity >= 3 && personality.morality > 60) return false;
 
-    // Loyalty gate: skip facts about the speaker's friends
+    // Loyalty gate: skip shared_knowledge about the speaker's friends
     if (personality.loyalty > 60) {
       const friendshipWithSubject = getRelationshipFriendship(speakerId, fact.subject_id);
       if (friendshipWithSubject > 50) return false;
@@ -249,7 +249,7 @@ export function getShareableFacts(
     return true;
   });
 
-  // Sort: sensitivity desc, then relevance to listener (facts about listener or their friends first)
+  // Sort: sensitivity desc, then relevance to listener (shared_knowledge about listener or their friends first)
   shareable.sort((a, b) => {
     if (b.sensitivity !== a.sensitivity) return b.sensitivity - a.sensitivity;
 
@@ -277,7 +277,7 @@ export function spreadGossip(
   _speakerId: number,
   listenerId: number,
   messages: string[],
-  speakerFacts: typeof facts.$inferSelect[]
+  speakerFacts: typeof shared_knowledge.$inferSelect[]
 ): void {
   const combinedText = messages.join(' ').toLowerCase();
 
@@ -290,9 +290,9 @@ export function spreadGossip(
 
     const updated = [...new Set([...knownBy, listenerId])];
 
-    db.update(facts)
+    db.update(shared_knowledge)
       .set({ known_by: updated })
-      .where(eq(facts.id, fact.id))
+      .where(eq(shared_knowledge.id, fact.id))
       .run();
 
     if (fact.sensitivity >= 2) {
@@ -316,8 +316,8 @@ export function spreadGossip(
       const avgHonesty = (sp.honesty + lp.honesty) / 2;
       const discoveryChance = 0.1 * avgHonesty / 100;
 
-      const rumorFacts = db.select().from(facts)
-        .where(and(eq(facts.type, 'rumor'), eq(facts.is_active, true))).all();
+      const rumorFacts = db.select().from(shared_knowledge)
+        .where(and(eq(shared_knowledge.type, 'rumor'), eq(shared_knowledge.is_active, true))).all();
       for (const rumor of rumorFacts) {
         const knownBy = rumor.known_by as number[];
         if (!knownBy.includes(listenerId) || !knownBy.includes(_speakerId)) continue;
@@ -342,7 +342,7 @@ export function spreadGossip(
             }).run();
           }
           createFact('reputation', fabricatorId, null, 1, [listenerId, _speakerId], 'discovered');
-          db.update(facts).set({ is_active: false }).where(eq(facts.id, rumor.id)).run();
+          db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, rumor.id)).run();
         }
       }
     }
@@ -354,8 +354,8 @@ export function spreadGossip(
 export function spreadPublicKnowledge(): void {
   const publicFacts = db
     .select()
-    .from(facts)
-    .where(and(eq(facts.is_active, true), eq(facts.sensitivity, 1)))
+    .from(shared_knowledge)
+    .where(and(eq(shared_knowledge.is_active, true), eq(shared_knowledge.sensitivity, 1)))
     .all();
 
   if (publicFacts.length === 0) return;
@@ -388,9 +388,9 @@ export function spreadPublicKnowledge(): void {
     const updated = [...new Set([...knownBy, ...coLocated])];
 
     if (updated.length !== knownBy.length) {
-      db.update(facts)
+      db.update(shared_knowledge)
         .set({ known_by: updated })
-        .where(eq(facts.id, fact.id))
+        .where(eq(shared_knowledge.id, fact.id))
         .run();
     }
   }
@@ -401,8 +401,8 @@ export function spreadPublicKnowledge(): void {
 export function deactivateStaleFacts(): void {
   const activeFacts = db
     .select()
-    .from(facts)
-    .where(eq(facts.is_active, true))
+    .from(shared_knowledge)
+    .where(eq(shared_knowledge.is_active, true))
     .all();
 
   for (const fact of activeFacts) {
@@ -507,7 +507,7 @@ export function deactivateStaleFacts(): void {
       }
 
       case 'theft': {
-        // Theft facts expire after ~2 hours real time
+        // Theft shared_knowledge expire after ~2 hours real time
         if (Date.now() - fact.created_at > 7_200_000) stale = true;
         break;
       }
@@ -546,9 +546,9 @@ export function deactivateStaleFacts(): void {
     }
 
     if (stale) {
-      db.update(facts)
+      db.update(shared_knowledge)
         .set({ is_active: false })
-        .where(eq(facts.id, fact.id))
+        .where(eq(shared_knowledge.id, fact.id))
         .run();
     }
   }

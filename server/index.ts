@@ -23,13 +23,13 @@ try {
   console.log(`Loaded ${vectorStore.size} embeddings into vector store`);
 
   // Queue embedding generation for memories that don't have embeddings yet (e.g. seed/backstory)
-  const unembedded = db.select({ id: memories.id, content: memories.content })
+  const unembedded = db.select({ id: memories.id, description: memories.description })
     .from(memories).all()
     .filter(m => !allMemories.find(am => am.id === m.id && am.embedding));
   if (unembedded.length > 0) {
     console.log(`Queueing ${unembedded.length} unembedded memories for embedding generation...`);
     for (const mem of unembedded) {
-      taskRunner.generateEmbedding(mem.id, mem.content);
+      taskRunner.generateEmbedding(mem.id, mem.description);
     }
   }
 } catch (err) {

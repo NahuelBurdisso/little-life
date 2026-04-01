@@ -72,9 +72,11 @@ export interface ConversationRow {
 
 export interface MemoryRow {
   id: number;
-  content: string;
+  description: string;
   importance: number;
-  timestamp: number;
+  created_at: number;
+  emotional_valence: number;
+  metadata: Record<string, unknown>;
 }
 
 export interface WorldStateRow {
@@ -320,11 +322,10 @@ export function buildConversationPrompt(
   // Select context items
   const contextItems = selectConversationContext({
     memories: memories.map(m => ({
-      content: m.content,
+      description: m.description,
       emotional_valence: (m as any).emotional_valence ?? 0,
-      timestamp: m.timestamp,
-      related_agents: (m as any).related_agents ?? [],
-      tags: (m as any).tags ?? [],
+      created_at: m.created_at,
+      metadata: (m as any).metadata ?? {},
     })),
     facts: gossipFacts ?? [],
     statePrompts: statePrompts ?? [],

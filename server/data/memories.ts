@@ -2,17 +2,17 @@ import { AGENT_SEEDS } from './agents';
 
 export interface MemorySeed {
   agent_id: number;
-  content: string;
   type: string;
+  description: string;
   importance: number;
   emotional_valence: number;
-  embedding: null;
-  related_agents: number[];
-  related_location: null;
-  tags: string[];
-  timestamp: number;
-  access_count: number;
+  depth: number;
+  created_at: number;
   last_accessed: number;
+  embedding: null;
+  metadata: Record<string, unknown>;
+  is_active: number;
+  parent_ids: number[];
 }
 
 export function getMemorySeeds(
@@ -30,17 +30,17 @@ export function getMemorySeeds(
     for (let i = 0; i < seed.backstoryMemories.length; i++) {
       results.push({
         agent_id: agentId,
-        content: seed.backstoryMemories[i],
         type: "experience",
+        description: seed.backstoryMemories[i],
         importance: 8,
         emotional_valence: 0.3,
-        embedding: null,
-        related_agents: [],
-        related_location: null,
-        tags: ["backstory"],
-        timestamp: now - (seed.backstoryMemories.length - i) * 1000,
-        access_count: 0,
+        depth: 0,
+        created_at: now - (seed.backstoryMemories.length - i) * 1000,
         last_accessed: now,
+        embedding: null,
+        metadata: { tags: ["backstory"] },
+        is_active: 1,
+        parent_ids: [],
       });
     }
 
@@ -51,18 +51,18 @@ export function getMemorySeeds(
 
       results.push({
         agent_id: agentId,
-        content: rel.backstoryMemory,
         type: "opinion",
+        description: rel.backstoryMemory,
         importance: 6,
         emotional_valence:
           rel.friendshipAB > 40 ? 0.5 : rel.friendshipAB > 20 ? 0.2 : -0.2,
-        embedding: null,
-        related_agents: [otherId],
-        related_location: null,
-        tags: ["backstory", "relationship"],
-        timestamp: now - 500,
-        access_count: 0,
+        depth: 0,
+        created_at: now - 500,
         last_accessed: now,
+        embedding: null,
+        metadata: { related_agents: [otherId], tags: ["backstory", "relationship"] },
+        is_active: 1,
+        parent_ids: [],
       });
     }
   }

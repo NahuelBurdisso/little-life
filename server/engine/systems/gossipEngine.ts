@@ -1,10 +1,10 @@
 /**
  * Gossip Engine — Centralized fact spread system
  *
- * Called once per tick. Handles all the ways facts spread between agents:
- * 1. Public knowledge spread (co-located agents learn public facts)
- * 2. Passive eavesdropping (agents at the same location as a conversation learn facts)
- * 3. Active gossip sharing (curious agents proactively share facts with friends)
+ * Called once per tick. Handles all the ways shared_knowledge spread between agents:
+ * 1. Public knowledge spread (co-located agents learn public shared_knowledge)
+ * 2. Passive eavesdropping (agents at the same location as a conversation learn shared_knowledge)
+ * 3. Active gossip sharing (curious agents proactively share shared_knowledge with friends)
  * 4. Secret discovery (curious agents piece together hidden information)
  * 5. Observation-based learning (witnessing actions creates knowledge)
  *
@@ -12,7 +12,7 @@
  */
 
 import { db } from '../../db';
-import { agents, facts, relationships, conversations } from '../../db/schema';
+import { agents, shared_knowledge, relationships, conversations } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
 import { logActivity } from '../../lib/activityLogger';
@@ -32,7 +32,7 @@ export function gossipTick(_currentTick: number): void {
     personality: agents.personality,
   }).from(agents).where(eq(agents.is_active, true)).all() as AgentInfo[];
 
-  const allFacts = db.select().from(facts).where(eq(facts.is_active, true)).all();
+  const allFacts = db.select().from(shared_knowledge).where(eq(shared_knowledge.is_active, true)).all();
   if (allFacts.length === 0) return;
 
   // Build location groups
@@ -45,7 +45,7 @@ export function gossipTick(_currentTick: number): void {
   }
 
   // ── 1. Public knowledge spread (sensitivity 1) ──────────────────────────
-  // Co-located agents automatically learn public facts about nearby people
+  // Co-located agents automatically learn public shared_knowledge about nearby people
   for (const fact of allFacts) {
     if (fact.sensitivity > 1) continue;
 
@@ -59,14 +59,14 @@ export function gossipTick(_currentTick: number): void {
     const newKnowers = coLocated.filter(a => !knownBy.includes(a.id)).map(a => a.id);
     if (newKnowers.length === 0) continue;
 
-    db.update(facts)
+    db.update(shared_knowledge)
       .set({ known_by: [...new Set([...knownBy, ...newKnowers])] })
-      .where(eq(facts.id, fact.id))
+      .where(eq(shared_knowledge.id, fact.id))
       .run();
   }
 
   // ── 2. Passive eavesdropping ────────────────────────────────────────────
-  // Agents at the same location as an active conversation may learn discussed facts
+  // Agents at the same location as an active conversation may learn discussed shared_knowledge
   // Check active conversations and see if non-participants are nearby
   const activeConvos = db.select().from(conversations)
     .where(eq(conversations.status, 'active')).all();
@@ -82,7 +82,7 @@ export function gossipTick(_currentTick: number): void {
     const eavesdroppers = nearby.filter(a => !participants.includes(a.id));
     if (eavesdroppers.length === 0) continue;
 
-    // Each participant's known facts may be overheard
+    // Each participant's known shared_knowledge may be overheard
     for (const pid of participants) {
       const participantFacts = allFacts.filter(f =>
         (f.known_by as number[]).includes(pid) && f.sensitivity <= 2
@@ -99,7 +99,7 @@ export function gossipTick(_currentTick: number): void {
           if (Math.random() > chance) continue;
 
           const updated = [...new Set([...knownBy, eavesdropper.id])];
-          db.update(facts).set({ known_by: updated }).where(eq(facts.id, fact.id)).run();
+          db.update(shared_knowledge).set({ known_by: updated }).where(eq(shared_knowledge.id, fact.id)).run();
 
           if (fact.sensitivity >= 2) {
             logActivity({
@@ -115,7 +115,7 @@ export function gossipTick(_currentTick: number): void {
   }
 
   // ── 3. Active gossip sharing ───────────────────────────────────────────
-  // Curious + dishonest agents proactively share facts with co-located friends
+  // Curious + dishonest agents proactively share shared_knowledge with co-located friends
   // Runs with low probability to avoid spamming
   for (const [, group] of locationGroups) {
     if (group.length < 2) continue;
@@ -138,7 +138,7 @@ export function gossipTick(_currentTick: number): void {
         const knownBy = f.known_by as number[];
         if (!knownBy.includes(agent.id)) return false;
         if (knownBy.includes(target.id)) return false;
-        // Loyalty gate: loyal agents don't share facts about friends
+        // Loyalty gate: loyal agents don't share shared_knowledge about friends
         if (loyalty > 60) {
           const rel = db.select({ friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })
             .from(relationships).where(
@@ -152,7 +152,7 @@ export function gossipTick(_currentTick: number): void {
             : 0;
           if (friendship > 50) return false;
         }
-        // Sensitivity gate: high-sensitivity facts need lower honesty
+        // Sensitivity gate: high-sensitivity shared_knowledge need lower honesty
         if (f.sensitivity >= 3 && honesty > 30) return false;
         if (f.sensitivity >= 2 && honesty > 50) return false;
         return true;
@@ -162,8 +162,8 @@ export function gossipTick(_currentTick: number): void {
 
       const fact = shareable[Math.floor(Math.random() * shareable.length)];
       const knownBy = fact.known_by as number[];
-      db.update(facts).set({ known_by: [...new Set([...knownBy, target.id])] })
-        .where(eq(facts.id, fact.id)).run();
+      db.update(shared_knowledge).set({ known_by: [...new Set([...knownBy, target.id])] })
+        .where(eq(shared_knowledge.id, fact.id)).run();
 
       if (fact.sensitivity >= 2) {
         logActivity({
@@ -191,15 +191,15 @@ export function gossipTick(_currentTick: number): void {
         if (!(f.known_by as number[]).includes(agent.id) === false) return false; // already knows
         if ((f.known_by as number[]).includes(agent.id)) return false;
         if (!coLocatedIds.includes(f.subject_id)) return false;
-        return f.sensitivity >= 2; // only discover non-public facts
+        return f.sensitivity >= 2; // only discover non-public shared_knowledge
       });
 
       if (discoverable.length === 0) continue;
 
       const fact = discoverable[Math.floor(Math.random() * discoverable.length)];
       const knownBy = fact.known_by as number[];
-      db.update(facts).set({ known_by: [...new Set([...knownBy, agent.id])] })
-        .where(eq(facts.id, fact.id)).run();
+      db.update(shared_knowledge).set({ known_by: [...new Set([...knownBy, agent.id])] })
+        .where(eq(shared_knowledge.id, fact.id)).run();
 
       logActivity({
         type: 'drama',
