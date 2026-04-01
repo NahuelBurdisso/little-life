@@ -27,7 +27,7 @@ import {
 import { emitter } from '../emitter';
 import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
-import { createObservationMemory } from '../../ai/memories';
+import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1821,20 +1821,18 @@ function processStateEffects(
 
           // Observation memories for witnesses
           for (const w of witnesses) {
-            const memData = createObservationMemory(
-              w.id, `I saw ${agent.name} steal from ${loc.name}. It was shocking.`,
-              [agent.id, loc.owner], agent.current_location, 7, -0.6, currentTick,
-            );
-            const memResult = db.insert(memories).values(memData).returning({ id: memories.id }).get();
-            taskRunner.generateEmbedding(memResult.id, memData.description);
+            simEvents.emit('interaction:completed', {
+              agentId: w.id,
+              otherName: agent.name,
+              action: `saw ${agent.name} steal from ${loc.name}`,
+            });
           }
           // Thief's own memory
-          const thiefMem = createObservationMemory(
-            agent.id, `I stole ${targetItem.itemId} from ${loc.name}. ${caught ? 'I got caught.' : ''}`,
-            [loc.owner], agent.current_location, 6, -0.5, currentTick,
-          );
-          const thiefMemResult = db.insert(memories).values(thiefMem).returning({ id: memories.id }).get();
-          taskRunner.generateEmbedding(thiefMemResult.id, thiefMem.description);
+          simEvents.emit('interaction:completed', {
+            agentId: agent.id,
+            otherName: loc.name,
+            action: `stole ${targetItem.itemId} from ${loc.name}${caught ? ' and got caught' : ''}`,
+          });
         } else {
           const updatedMeta = { ...meta, theftCount: ((meta.theftCount as number) ?? 0) + 1 };
           db.update(agentStates).set({ metadata: updatedMeta }).where(eq(agentStates.id, state.id)).run();

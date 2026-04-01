@@ -8,12 +8,11 @@
  */
 
 import { db } from '../db';
-import { agents, economy, locations, relationships, worldState, worldEvents, agentStates, memories, conversations, conversationQueue } from '../db/schema';
+import { agents, economy, locations, relationships, worldState, worldEvents, agentStates, conversations, conversationQueue } from '../db/schema';
 import { logActivity } from './activityLogger';
 import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
-import { createObservationMemory } from '../ai/memories';
-import { taskRunner } from '../ai/taskRunner';
+import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
 
 // --- Types ---
@@ -341,14 +340,11 @@ function createMemorialMemories(ctx: DeathEffectContext): void {
       reflection = `I heard ${ctx.agentName} died. ${ctx.causeDescription}. Strange how quickly things change.`;
     }
 
-    const importance = friendship > 70 ? 8 : friendship > 40 ? 6 : 4;
-    const valence = friendship > 40 ? -0.7 : -0.3;
-
-    const memData = createObservationMemory(
-      other.id, reflection, [ctx.agentId], null, importance, valence, ctx.currentTick,
-    );
-    const memResult = db.insert(memories).values(memData).returning({ id: memories.id }).get();
-    taskRunner.generateEmbedding(memResult.id, memData.description);
+    simEvents.emit('state:triggered', {
+      agentId: other.id,
+      state: 'grieving',
+      cause: reflection,
+    });
   }
 }
 

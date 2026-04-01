@@ -8,7 +8,6 @@ import {
   conversationQueue,
   conversations,
   relationshipEvents,
-  memories,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { INTERIOR_ZONES } from '../../data/interiors';
@@ -28,8 +27,7 @@ import { agentStates } from '../../db/schema';
 import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
 import { getCheapestFoodPrice } from '../../lib/economyEngine';
-import { createObservationMemory } from '../../ai/memories';
-import { taskRunner } from '../../ai/taskRunner';
+import { simEvents } from '../../lib/simEvents';
 
 // --- Types ---
 
@@ -1056,18 +1054,14 @@ export function tick(world: WorldRow): void {
       });
 
       // Arrest memories
-      const arrestMem1 = createObservationMemory(
-        agent.id, `I arrested ${other.name} today. They had it coming.`,
-        [other.id], agent.current_location, 7, -0.3, totalTicks,
-      );
-      const arrestMem2 = createObservationMemory(
-        other.id, `${agent.name} arrested me. This is humiliating.`,
-        [agent.id], agent.current_location, 8, -0.8, totalTicks,
-      );
-      const amr1 = db.insert(memories).values(arrestMem1).returning({ id: memories.id }).get();
-      const amr2 = db.insert(memories).values(arrestMem2).returning({ id: memories.id }).get();
-      taskRunner.generateEmbedding(amr1.id, arrestMem1.description);
-      taskRunner.generateEmbedding(amr2.id, arrestMem2.description);
+      simEvents.emit('interaction:completed', {
+        agentId: agent.id, otherName: other.name,
+        action: `arrested ${other.name}`,
+      });
+      simEvents.emit('interaction:completed', {
+        agentId: other.id, otherName: agent.name,
+        action: `was arrested by ${agent.name}`,
+      });
 
       break; // One arrest per tick
     }

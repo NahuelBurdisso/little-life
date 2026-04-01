@@ -19,7 +19,6 @@ import {
   conversationSchedulerState,
   relationships,
   relationshipEvents,
-  memories,
   worldState,
   agentStates,
   economy,
@@ -32,7 +31,7 @@ import { CONFIG } from '../../lib/constants';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate } from '../../ai/templates';
-import { createConversationMemory } from '../../ai/memories';
+import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
@@ -539,35 +538,14 @@ async function processCompletedConversation(
       (p) => p.id !== participant.id,
     );
     const otherNames = otherParticipants.map((p) => p.name);
-    const otherIds = otherParticipants.map((p) => p.id);
 
-    const memoryData = createConversationMemory(
-      participant.id,
-      {
-        messages: messages as Array<{ text: string; speakerId?: number }>,
-        sentiment: overallSentiment,
-        topic: fresh.topic,
-      },
-      otherNames,
-      otherIds,
-      time.totalTicks,
-      fresh.location,
-    );
-
-    // Drunk → fuzzy memories (halve importance)
-    const participantStates = getAgentStates(participant.id);
-    if (participantStates.includes('drunk')) {
-      memoryData.importance = Math.max(1, Math.round(memoryData.importance * 0.5));
-    }
-
-    const memoryResult = db
-      .insert(memories)
-      .values(memoryData)
-      .returning({ id: memories.id })
-      .get();
-
-    // Queue embedding generation
-    taskRunner.generateEmbedding(memoryResult.id, memoryData.description);
+    simEvents.emit('conversation:ended', {
+      agentId: participant.id,
+      otherName: otherNames.join(' and '),
+      summary: fresh.topic ?? '',
+      turns: messages.length,
+      sentiment: overallSentiment ?? 0,
+    });
 
     // Update needs: social boost + mood modifier
     const agentNeeds = db
@@ -1173,33 +1151,16 @@ async function processTimedOutEntry(
     })
     .run();
 
-  const time = world.time as { totalTicks: number };
-
   // Lighter memory for each participant
   for (const agent of agentList) {
     const otherAgent = agentList.find((a) => a.id !== agent.id)!;
-    const memoryData = createConversationMemory(
-      agent.id,
-      {
-        messages: conversationDoc.messages as Array<{ text: string; speakerId?: number }>,
-        sentiment: messageSentiment,
-        topic: conversationDoc.topic,
-      },
-      [otherAgent.name],
-      [otherAgent.id],
-      time.totalTicks,
-      locationId,
-    );
-    // Lower importance for template conversations
-    memoryData.importance = Math.max(1, memoryData.importance - 2);
-
-    const memoryResult = db
-      .insert(memories)
-      .values(memoryData)
-      .returning({ id: memories.id })
-      .get();
-
-    taskRunner.generateEmbedding(memoryResult.id, memoryData.description);
+    simEvents.emit('conversation:ended', {
+      agentId: agent.id,
+      otherName: otherAgent.name,
+      summary: conversationDoc.topic ?? '',
+      turns: (conversationDoc.messages as Array<unknown>).length,
+      sentiment: messageSentiment ?? 0,
+    });
   }
 
   // Minimal social boost
