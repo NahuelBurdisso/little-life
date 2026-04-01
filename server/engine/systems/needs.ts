@@ -3,7 +3,6 @@ import { agents, needs, economy, locations, worldState } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { clamp } from '../../lib/utils';
 import { emitter } from '../emitter';
-import { taskRunner } from '../../ai/taskRunner';
 import { getAgentStates } from '../../lib/states';
 import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 
@@ -179,14 +178,6 @@ export function needsTick(): void {
     if (agentStateTypes.includes('heartbroken')) stress = clamp(stress + 12, 0, 100);
     if (agentStateTypes.includes('angry')) stress = clamp(stress + 6, 0, 100);
 
-    // Detect sleep transition: schedule daily reflection when agent starts sleeping.
-    if (actionType === 'sleeping' && agentNeeds.last_updated < agent.action_started) {
-      try {
-        taskRunner.triggerReflection(agent.id);
-      } catch {
-        // Silently ignore if scheduling fails
-      }
-    }
 
     // Step 12.5: Track hunger-at-zero for death mechanic
     updateHungerTracking(agent.id, updatedNeeds.hunger);

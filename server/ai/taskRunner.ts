@@ -1,5 +1,4 @@
 import { generateResponse } from './generateResponse';
-import { generateReflection } from './generateReflection';
 import { generateEmbeddingForMemory } from './generateEmbedding';
 import { emitter } from '../engine/emitter';
 
@@ -48,13 +47,6 @@ class TaskRunner {
   generateEmbedding(memoryId: number, text: string) {
     const task = generateEmbeddingForMemory(memoryId, text).catch(err => {
       console.error(`Embedding failed for memory ${memoryId}:`, err);
-    });
-    this.track(task);
-  }
-
-  triggerReflection(agentId: number) {
-    const task = generateReflection(agentId).catch(err => {
-      console.error(`Reflection failed for agent ${agentId}:`, err);
     });
     this.track(task);
   }
