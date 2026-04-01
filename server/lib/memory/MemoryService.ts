@@ -5,6 +5,7 @@ import type {
   RetrievalStrategy,
   ScoredCandidate,
 } from './types';
+import { simEvents } from '../simEvents';
 import { MemoryStore } from './MemoryStore';
 import { EmbeddingCache } from './EmbeddingCache';
 import { EmbeddingBatcher } from './EmbeddingBatcher';
@@ -31,6 +32,8 @@ interface QueueEntry {
   emotional_valence: number;
   metadata: Record<string, unknown>;
   priority: number; // getTypePriority result, cached here for overflow sort
+  depth: number;
+  parentIds: number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,8 @@ export class MemoryService {
     metadata: Record<string, unknown> = {},
     emotionalValence = 0,
     importanceOverride?: number,
+    depth = 0,
+    parentIds: number[] = [],
   ): void {
     const importance = importanceOverride ?? getImportance(type);
     const priority = getTypePriority(type);
@@ -113,6 +118,8 @@ export class MemoryService {
       emotional_valence: emotionalValence,
       metadata,
       priority,
+      depth,
+      parentIds,
     });
 
     this.scheduleFlush();
@@ -270,6 +277,13 @@ export class MemoryService {
     return this.store.getByAgentAndType(agentId, type, limit);
   }
 
+  /**
+   * Get most recent active memories for an agent, regardless of type.
+   */
+  getRecent(agentId: number, limit: number): Memory[] {
+    return this.store.getRecentByAgent(agentId, limit);
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
   /**
@@ -360,6 +374,8 @@ export class MemoryService {
         embedding: vectors[i] ? float32ArrayToBuffer(vectors[i]) : null,
         metadata: entry.metadata,
         currentTick: tick,
+        depth: entry.depth,
+        parentIds: entry.parentIds,
       }));
 
       // Batch insert
@@ -376,6 +392,15 @@ export class MemoryService {
         // (only if we know they were already initialized)
         // Note: we do NOT mark agents as loaded here — they could have older memories in DB
         // that aren't yet in cache. ensureAgentLoaded handles the initial hydration.
+      }
+
+      // Emit memory:created events for ReflectionTrigger and other listeners
+      for (const row of inserted) {
+        simEvents.emit('memory:created', {
+          agentId: row.agent_id,
+          importance: row.importance,
+          type: row.type,
+        });
       }
     } finally {
       this.flushInProgress = false;
