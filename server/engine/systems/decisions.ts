@@ -28,6 +28,7 @@ import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } fro
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
 import { getCheapestFoodPrice } from '../../lib/economyEngine';
 import { simEvents } from '../../lib/simEvents';
+import { planExecutor, planGenerator } from '../../lib/planning/instance';
 
 // --- Types ---
 
@@ -589,6 +590,16 @@ export function tick(world: WorldRow): void {
     // Skip agents whose current action is still in progress
     if (!isActionComplete(agent, totalTicks)) continue;
 
+    // Wake-up detection: if the completed action was sleeping and it's now wake time,
+    // queue daily plan generation for the new day.
+    const completedActionType = (agent.current_action as any)?.type;
+    if (completedActionType === 'sleeping') {
+      const sched = agent.schedule as { wakeTime: number };
+      if (world.time.hour >= sched.wakeTime) {
+        planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
+      }
+    }
+
     // Fetch per-agent data
     const agentNeeds = db
       .select()
@@ -615,6 +626,14 @@ export function tick(world: WorldRow): void {
         allRelationships,
         activeAgents,
       );
+    }
+
+    // Phase 1b: Plan layer (score 6000 — above free-time, below emergency)
+    if (!decision) {
+      const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks);
+      if (planned) {
+        decision = planned;
+      }
     }
 
     // Phase 2: Schedule

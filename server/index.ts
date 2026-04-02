@@ -9,12 +9,17 @@ import { taskRunner } from './ai/taskRunner';
 import { sqlite } from './db';
 import { memoryService } from './lib/memory/instance';
 import { initMemoryObserver } from './lib/memory/MemoryObserver';
+import { initPlanEventAdapter } from './lib/planning/PlanEventAdapter';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
 // Initialize memory system
 initMemoryObserver(memoryService);
 console.log('Memory service initialized');
+
+// Initialize planning system
+initPlanEventAdapter();
+console.log('Planning system initialized');
 
 // Express for health check
 const app = express();
