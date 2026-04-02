@@ -10,6 +10,7 @@ import { NeedsBars } from "./NeedsBars";
 import { ConversationViewer } from "./ConversationViewer";
 import { RelationshipList } from "./RelationshipList";
 import { MemoryLog } from "./MemoryLog";
+import { PlanTimeline } from "./PlanTimeline";
 import type { PersonalityProfile } from "../../../server/lib/personality";
 
 type TabId = "profile" | "social" | "mind";
@@ -412,6 +413,9 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
                 </div>
               </div>
             )}
+
+            {/* Daily plan */}
+            <PlanTimeline dailyPlan={(agent as any).daily_plan} />
 
             {/* Known facts / gossip */}
             <KnownFacts agentId={Number(agentId)} />
