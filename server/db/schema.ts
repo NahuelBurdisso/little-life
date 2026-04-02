@@ -82,6 +82,7 @@ export const agents = sqliteTable(
         lunchTime: number;
         freeTimePreferences: string[];
       }>(),
+    daily_plan: text('daily_plan', { mode: 'json' }).default(null).$type<Record<string, unknown> | null>(),
     home: integer('home').notNull().references(() => locations.id),
     workplace: integer('workplace').references(() => locations.id),
     created_at: integer('created_at').notNull(),
