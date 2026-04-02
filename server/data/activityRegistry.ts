@@ -25,4 +25,6 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   player_gift: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
   player_introduce: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
   player_remove: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
+  plan_generated: { category: 'planning', base_importance: 0.3, retention: 'short', template: '{agentName} planned their day: {summary}' },
+  plan_changed: { category: 'planning', base_importance: 0.5, retention: 'medium', template: '{agentName} changed plans: {reason}. Now: {summary}' },
 };

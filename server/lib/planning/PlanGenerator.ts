@@ -7,6 +7,7 @@ import type { PersonalityProfile } from '../personality';
 import { buildDailyPlanPrompt, buildReplanPrompt } from './planPrompts';
 import { parsePlanBlocks } from './planParser';
 import type { DailyPlan, PlanBlock, PlanExecutionState, ReplanEvent } from './types';
+import { logActivity } from '../activityLogger';
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for injected singletons
@@ -250,6 +251,12 @@ export class PlanGenerator {
     console.log(
       `[PlanGenerator] Agent ${agentRow.name} planned day ${currentDay}: ${blocks.length} blocks`,
     );
+
+    logActivity({
+      type: 'plan_generated',
+      templateData: { agentName: agentRow.name, summary },
+      agents: [agentId],
+    });
   }
 
   // ── Private: replan ────────────────────────────────────────────────────────
@@ -388,16 +395,27 @@ export class PlanGenerator {
     });
 
     // 12. Record replan memory
+    const newBlocksSummary = newBlocks.map((b) => b.broad_action).join(', ');
     this.memoryService.record(
       agentId,
       'plan',
-      `Replanned after: ${event.description}. New blocks: ${newBlocks.map((b) => b.broad_action).join(', ')}`,
+      `Replanned after: ${event.description}. New blocks: ${newBlocksSummary}`,
       { subtype: 'replan', event_type: event.type },
       event.sentiment,
       3,
     );
 
     console.log(`[PlanGenerator] Agent ${agentRow.name} replanned: ${event.description}`);
+
+    logActivity({
+      type: 'plan_changed',
+      templateData: {
+        agentName: agentRow.name,
+        reason: event.description,
+        summary: newBlocksSummary,
+      },
+      agents: [agentId],
+    });
   }
 
   // ── Private: fallback ──────────────────────────────────────────────────────

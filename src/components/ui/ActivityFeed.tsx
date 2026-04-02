@@ -13,6 +13,7 @@ const EVENT_CATEGORIES = {
   relationship: { icon: '🤝', color: '#60a5fa', label: 'Social' },
   world_event: { icon: '🌍', color: '#22c55e', label: 'World' },
   system: { icon: '⚙️', color: '#6b7280', label: 'System' },
+  planning: { icon: '🧭', color: '#f59e0b', label: 'Plans' },
 } as const;
 
 type EventCategory = keyof typeof EVENT_CATEGORIES;
@@ -24,6 +25,7 @@ function getCategory(type: string): EventCategory {
   if (type === 'relationship' || type === 'relationship_status_change') return 'relationship';
   if (type === 'drama' || type === 'theft_caught' || type === 'affair_discovery') return 'drama';
   if (type === 'world_event') return 'world_event';
+  if (type === 'plan_generated' || type === 'plan_changed') return 'planning';
   return 'system';
 }
 
@@ -66,6 +68,7 @@ export function ActivityFeed() {
     relationship: true,
     world_event: true,
     system: true,
+    planning: true,
   });
 
   const toggleFilter = (cat: EventCategory) => {
