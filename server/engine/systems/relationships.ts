@@ -6,6 +6,7 @@ import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
 import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
+import { simEvents } from '../../lib/simEvents';
 
 // --- Types ---
 
@@ -355,6 +356,8 @@ export function tick(
         agents: [a, b],
         templateData: { agent1: nameA, agent2: nameB, status: newStatus },
       });
+      simEvents.emit('relationship:changed', { agentId: a, otherName: nameB, status: newStatus });
+      simEvents.emit('relationship:changed', { agentId: b, otherName: nameA, status: newStatus });
     }
 
     // Mark event as processed

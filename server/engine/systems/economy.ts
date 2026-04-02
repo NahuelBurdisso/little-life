@@ -8,6 +8,7 @@ import { emitter } from '../emitter';
 import { createFact } from '../../lib/gossip';
 import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation } from '../../lib/economyEngine';
 import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
+import { simEvents } from '../../lib/simEvents';
 
 // --- Helpers ---
 
@@ -216,6 +217,7 @@ export function economyTick(): void {
       location_id: agent.workplace,
       timestamp: now,
     }).run();
+    simEvents.emit('economy:transaction', { agentId: agent.id, amount: effectiveSalary });
 
     // Process blackmail payments (victim pays 10% of salary to blackmailer)
     const blackmailFacts = db.select().from(shared_knowledge)
@@ -437,6 +439,7 @@ export function economyTick(): void {
 
         if (newMoney < 10) {
           createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
+          simEvents.emit('economy:distress', { agentId: econ.agent_id });
         }
       }
     }

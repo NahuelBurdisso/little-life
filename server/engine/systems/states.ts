@@ -112,6 +112,7 @@ export function statesTick() {
             templateData: { agent: agent.name, state: state.type },
           });
         }
+        simEvents.emit('state:cleared', { agentId: agent.id, state: state.type });
         collectExpiryCascades(state, agent, pendingCascades);
         db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
       }
@@ -274,6 +275,7 @@ function evaluateTriggers(
           initiator: agent.id,
           templateData: { agent: agent.name, state: 'drunk' },
         });
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'drunk', cause: 'action:drinking' });
         activeTypes.add('drunk');
         // Track for alcoholism escalation
         const history = drunkHistory.get(agent.id) ?? [];
@@ -313,6 +315,7 @@ function evaluateTriggers(
           initiator: agent.id,
           templateData: { agent: agent.name, state: 'sick' },
         });
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'sick', cause: 'random:environment' });
         activeTypes.add('sick');
         createFact('sickness', agent.id, null, 1, [agent.id], 'observed');
       }
@@ -348,6 +351,7 @@ function evaluateTriggers(
             initiator: agent.id,
             templateData: { agent: agent.name, state: 'alcoholic' },
           });
+          simEvents.emit('state:triggered', { agentId: agent.id, state: 'alcoholic', cause: 'relapse' });
           activeTypes.add('alcoholic');
           createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
         }
@@ -368,6 +372,7 @@ function evaluateTriggers(
           initiator: agent.id,
           templateData: { agent: agent.name, state: 'alcoholic' },
         });
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'alcoholic', cause: `drunk_count_${recentDrunkCount}` });
         activeTypes.add('alcoholic');
         createFact('alcoholic', agent.id, null, 2, [agent.id], 'observed');
       }
@@ -402,6 +407,7 @@ function evaluateTriggers(
             initiator: agent.id,
             templateData: { agent: agent.name, state: 'in_debt' },
           });
+          simEvents.emit('state:triggered', { agentId: agent.id, state: 'in_debt', cause: 'broke_3_days' });
           activeTypes.add('in_debt');
         }
       }
@@ -454,6 +460,7 @@ function evaluateTriggers(
           initiator: agent.id,
           templateData: { agent: agent.name, state: 'heartbroken' },
         });
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'heartbroken', cause: 'romance_drop' });
         activeTypes.add('heartbroken');
         createFact('heartbreak', agent.id, targetId, 2, [agent.id], 'witnessed');
         break; // one heartbreak at a time
@@ -508,6 +515,7 @@ function evaluateTriggers(
         initiator: agent.id,
         templateData: { agent: agent.name, state: 'angry' },
       });
+      simEvents.emit('state:triggered', { agentId: agent.id, state: 'angry', cause: 'bad_conversation' });
       activeTypes.add('angry');
       break;
     }
@@ -584,6 +592,7 @@ function evaluateTriggers(
         initiator: agent.id,
         templateData: { agent: agent.name, state: 'euphoric' },
       });
+      simEvents.emit('state:triggered', { agentId: agent.id, state: 'euphoric', cause: 'positive_conversation' });
       activeTypes.add('euphoric');
     }
   }
@@ -629,6 +638,7 @@ function evaluateTriggers(
           initiator: agent.id,
           templateData: { agent: agent.name, state: 'grieving' },
         });
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'grieving', cause: 'agent_removed' });
         activeTypes.add('grieving');
         break;
       }
@@ -666,6 +676,7 @@ function evaluateTriggers(
           initiator: agent.id,
           templateData: { agent: agent.name, state: 'infatuated' },
         });
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'infatuated', cause: 'high_romance' });
         activeTypes.add('infatuated');
         createFact('crush', agent.id, targetId, 2, [agent.id], 'witnessed');
 
@@ -730,6 +741,7 @@ function evaluateTriggers(
             initiator: agent.id,
             templateData: { agent: agent.name, state: 'jealous' },
           });
+          simEvents.emit('state:triggered', { agentId: agent.id, state: 'jealous', cause: 'rival_romance' });
           activeTypes.add('jealous');
           break;
         }
@@ -779,6 +791,7 @@ function evaluateTriggers(
             initiator: agent.id,
             templateData: { agent: agent.name, state: 'lonely' },
           });
+          simEvents.emit('state:triggered', { agentId: agent.id, state: 'lonely', cause: 'low_social' });
           activeTypes.add('lonely');
         }
       }
@@ -852,6 +865,7 @@ function evaluateTriggers(
         initiator: agent.id,
         templateData: { agent: agent.name, state: 'depressed' },
       });
+      simEvents.emit('state:triggered', { agentId: agent.id, state: 'depressed', cause: depressSource });
       activeTypes.add('depressed');
     }
   }
@@ -886,6 +900,7 @@ function evaluateTriggers(
         initiator: agent.id,
         templateData: { agent: agent.name, state: 'confident' },
       });
+      simEvents.emit('state:triggered', { agentId: agent.id, state: 'confident', cause: 'positive_conversations' });
       activeTypes.add('confident');
     }
   }
@@ -1074,6 +1089,7 @@ function checkConditionalExits(
           templateData: { agent: agent.name, state: state.type },
         });
       }
+      simEvents.emit('state:cleared', { agentId: agent.id, state: state.type });
       db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
     }
   }
@@ -1205,6 +1221,7 @@ function applyCascades(
         initiator: cascade.agentId,
         templateData: { agent: agentName, state: cascade.stateType },
       });
+      simEvents.emit('state:triggered', { agentId: cascade.agentId, state: cascade.stateType, cause: cascade.source });
     }
 
     // Collect any expiry cascades from the newly inserted state (only for fixed-duration states)

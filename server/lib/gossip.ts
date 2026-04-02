@@ -3,6 +3,7 @@ import { agents, shared_knowledge, relationships, agentStates, economy, conversa
 import { eq, and, desc } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { PersonalityProfile } from './personality';
+import { simEvents } from './simEvents';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -294,6 +295,10 @@ export function spreadGossip(
       .set({ known_by: updated })
       .where(eq(shared_knowledge.id, fact.id))
       .run();
+
+    const speakerName = getAgentName(_speakerId);
+    simEvents.emit('gossip:learned', { agentId: listenerId, sourceName: speakerName, content: fact.content });
+    simEvents.emit('gossip:shared', { agentId: _speakerId, otherName: getAgentName(listenerId), content: fact.content });
 
     if (fact.sensitivity >= 2) {
       const listenerName = getAgentName(listenerId);

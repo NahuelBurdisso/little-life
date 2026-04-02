@@ -7,6 +7,7 @@ import { distance } from '../../lib/utils';
 import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
+import { simEvents } from '../../lib/simEvents';
 
 // --- Types ---
 
@@ -225,6 +226,22 @@ export function tick(world: WorldRow): void {
       // Handle zone transition on arrival
       const oldLocationId = agent.current_location;
       const newLocationId = findContainingLocation(destPoint, allLocations);
+
+      // Emit arrival event when entering a new location
+      if (newLocationId && newLocationId !== oldLocationId) {
+        const arrivedLoc = allLocations.find((l) => l.id === newLocationId);
+        if (arrivedLoc) {
+          simEvents.emit('agent:arrived', { agentId: agent.id, locationName: arrivedLoc.name });
+        }
+      }
+
+      // Emit departure event when leaving a location
+      if (oldLocationId && newLocationId !== oldLocationId) {
+        const departedLoc = allLocations.find((l) => l.id === oldLocationId);
+        if (departedLoc) {
+          simEvents.emit('agent:departed', { agentId: agent.id, locationName: departedLoc.name });
+        }
+      }
 
       if (oldLocationId !== newLocationId) {
         if (oldLocationId) {

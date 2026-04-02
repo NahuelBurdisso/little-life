@@ -5,6 +5,10 @@ import { clamp } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { updateHungerTracking } from '../../lib/lifeEventsEngine';
+import { simEvents } from '../../lib/simEvents';
+
+// Track which agents already have an active critical need event to avoid spamming
+const criticalNeedFired = new Map<number, Set<string>>();
 
 // Need names for iteration
 const NEED_KEYS = ['hunger', 'energy', 'social', 'comfort', 'fun'] as const;
@@ -178,6 +182,25 @@ export function needsTick(): void {
     if (agentStateTypes.includes('heartbroken')) stress = clamp(stress + 12, 0, 100);
     if (agentStateTypes.includes('angry')) stress = clamp(stress + 6, 0, 100);
 
+
+    // Step 12.4: Emit critical need events (once per threshold crossing, not every tick)
+    const agentCritical = criticalNeedFired.get(agent.id) ?? new Set<string>();
+    const CRITICAL_THRESHOLD = 15;
+    const needActionMap: Record<string, string> = {
+      hunger: 'eat',
+      energy: 'sleep',
+      social: 'socialize',
+    };
+    for (const [needKey, action] of Object.entries(needActionMap)) {
+      const value = updatedNeeds[needKey as NeedKey];
+      if (value <= CRITICAL_THRESHOLD && !agentCritical.has(needKey)) {
+        simEvents.emit('need:critical', { agentId: agent.id, action });
+        agentCritical.add(needKey);
+      } else if (value > CRITICAL_THRESHOLD + 10) {
+        agentCritical.delete(needKey); // Reset so it can fire again if need drops again
+      }
+    }
+    criticalNeedFired.set(agent.id, agentCritical);
 
     // Step 12.5: Track hunger-at-zero for death mechanic
     updateHungerTracking(agent.id, updatedNeeds.hunger);
