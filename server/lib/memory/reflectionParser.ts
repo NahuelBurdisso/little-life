@@ -46,8 +46,8 @@ export function parseQuestions(raw: string): string[] {
 type CitationMatch = { text: string; citations: number[] } | null;
 
 function matchBecauseOf(line: string): CitationMatch {
-  // (because of 1, 5, 12)
-  const re = /\s*\(because of\s+([\d,\s]+)\)\s*$/i;
+  // (because of 1, 5, 12) — can appear anywhere in the line, not just at end
+  const re = /\s*\(because of\s+([\d,\s]+)\)/i;
   const m = line.match(re);
   if (!m) return null;
   const citations = m[1].split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => !isNaN(n));
@@ -56,23 +56,24 @@ function matchBecauseOf(line: string): CitationMatch {
 }
 
 function matchParenNumbers(line: string): CitationMatch {
-  // (1, 5, 12) at end of line — but NOT "(because of ...)"
-  const re = /\s*\(([\d,\s]+)\)\s*$/;
+  // (1, 5, 12) anywhere — but NOT "(because of ...)" which is handled above
+  if (/\(because of/i.test(line)) return null;
+  const re = /\s*\(([\d,\s]+)\)/;
   const m = line.match(re);
   if (!m) return null;
-  // Make sure it's not a "because of" pattern (already handled above, but guard anyway)
-  if (/\(because of/i.test(line)) return null;
   const citations = m[1].split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => !isNaN(n));
+  if (citations.length === 0) return null;
   const text = line.replace(re, '').trim();
   return { text, citations };
 }
 
 function matchBracketNumbers(line: string): CitationMatch {
-  // [1, 5, 12] at end of line
-  const re = /\s*\[([\d,\s]+)\]\s*$/;
+  // [1, 5, 12] anywhere
+  const re = /\s*\[([\d,\s]+)\]/;
   const m = line.match(re);
   if (!m) return null;
   const citations = m[1].split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => !isNaN(n));
+  if (citations.length === 0) return null;
   const text = line.replace(re, '').trim();
   return { text, citations };
 }

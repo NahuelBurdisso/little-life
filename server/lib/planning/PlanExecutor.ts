@@ -140,10 +140,10 @@ export class PlanExecutor {
     // Check for an already-active block
     const activeBlock = plan.blocks.find((b) => b.status === 'active');
     if (activeBlock) {
-      if (currentHour < activeBlock.end_hour) {
+      if (currentHour >= activeBlock.start_hour && currentHour < activeBlock.end_hour) {
         return activeBlock;
       }
-      // Past its end — mark completed
+      // Outside the block's time window — mark completed
       activeBlock.status = 'completed';
       this.cache.set(agentId, plan);
     }
