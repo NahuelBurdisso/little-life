@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { timeAgo } from "../../lib/formatters";
 
 interface Memory {
@@ -26,6 +26,11 @@ const TYPE_COLORS: Record<string, string> = {
   event: "bg-orange-900/50 text-orange-300",
   routine: "bg-gray-700/50 text-gray-400",
   reflection: "bg-purple-900/50 text-purple-300",
+  plan: "bg-amber-900/50 text-amber-300",
+  experience: "bg-teal-900/50 text-teal-300",
+  opinion: "bg-indigo-900/50 text-indigo-300",
+  gossip: "bg-yellow-900/50 text-yellow-300",
+  secret: "bg-red-900/50 text-red-300",
 };
 
 function importanceDots(importance: number): React.ReactElement {
@@ -49,10 +54,24 @@ function valenceColor(valence: number): string {
   return "border-l-gray-600";
 }
 
-export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
-  const displayMemories = memories.slice(0, 20);
+const TYPE_FILTER_BUTTONS: { label: string; value: string | null }[] = [
+  { label: "ALL", value: null },
+  { label: "💬", value: "conversation" },
+  { label: "👁", value: "observation" },
+  { label: "💭", value: "reflection" },
+  { label: "📋", value: "plan" },
+];
 
-  if (displayMemories.length === 0) {
+export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+
+  const filteredMemories = typeFilter
+    ? memories.filter((m) => m.type === typeFilter)
+    : memories;
+
+  const displayMemories = filteredMemories.slice(0, 20);
+
+  if (memories.length === 0) {
     return (
       <div className="px-3 py-2 border-b border-gray-700">
         <div className="text-xs text-gray-500 font-medium mb-1">Memories</div>
@@ -64,7 +83,22 @@ export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
   return (
     <div className="px-3 py-2 border-b border-gray-700">
       <div className="text-xs text-gray-500 font-medium mb-1.5">
-        Memories ({memories.length})
+        Memories ({filteredMemories.length})
+      </div>
+      <div className="flex gap-1 mb-1.5 flex-wrap">
+        {TYPE_FILTER_BUTTONS.map(({ label, value }) => (
+          <button
+            key={label}
+            onClick={() => setTypeFilter(value)}
+            className={`text-[10px] px-1.5 py-px rounded ${
+              typeFilter === value
+                ? "bg-gray-600 text-gray-200"
+                : "bg-gray-800 text-gray-500 hover:text-gray-400"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
         {displayMemories.map((memory) => (
@@ -86,6 +120,12 @@ export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
             <div className={`text-[11px] leading-tight ${memory.type === 'reflection' ? 'text-purple-300 italic' : 'text-gray-300'}`}>
               {memory.description}
             </div>
+            {memory.type === 'reflection' &&
+              (memory.metadata as any)?.citation_ids?.length > 0 && (
+                <div className="text-[10px] text-gray-500 mt-0.5">
+                  ── based on {(memory.metadata as any).citation_ids.length} memories
+                </div>
+              )}
           </div>
         ))}
       </div>
