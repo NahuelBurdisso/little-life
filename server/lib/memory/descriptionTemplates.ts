@@ -2,81 +2,71 @@ type TemplateContext = Record<string, string | number>;
 
 type TemplateFn = (ctx: TemplateContext) => string;
 
+// Templates are first-person — these are private memories from the agent's own perspective.
+// No need to reference the agent by name since the memory belongs to them.
 const TEMPLATES: Record<string, TemplateFn[]> = {
   arrival: [
-    (ctx) => `${ctx.agent} arrived at ${ctx.location}.`,
-    (ctx) => `${ctx.agent} walked into ${ctx.location}.`,
-    (ctx) => `${ctx.agent} showed up at ${ctx.location}.`,
+    (ctx) => `I arrived at ${ctx.location}.`,
+    (ctx) => `I went to ${ctx.location}.`,
+    (ctx) => `I headed over to ${ctx.location}.`,
   ],
   departure: [
-    (ctx) => `${ctx.agent} left ${ctx.location}.`,
-    (ctx) => `${ctx.agent} walked away from ${ctx.location}.`,
-    (ctx) => `${ctx.agent} departed from ${ctx.location}.`,
+    (ctx) => `I left ${ctx.location}.`,
+    (ctx) => `I headed out from ${ctx.location}.`,
   ],
   conversation_start: [
-    (ctx) => `${ctx.agent} started talking with ${ctx.other}.`,
-    (ctx) => `${ctx.agent} and ${ctx.other} began a conversation.`,
-    (ctx) => `${ctx.agent} struck up a conversation with ${ctx.other}.`,
+    (ctx) => `I started talking with ${ctx.other}.`,
+    (ctx) => `${ctx.other} and I began a conversation.`,
   ],
   conversation_end: [
-    (ctx) => `${ctx.agent} finished talking with ${ctx.other}.`,
-    (ctx) => `${ctx.agent} and ${ctx.other} wrapped up their conversation.`,
-    (ctx) => `${ctx.agent} parted ways with ${ctx.other} after talking.`,
+    (ctx) => `${ctx.other} and I talked about ${ctx.summary || 'things'}.`,
+    (ctx) => `I had a conversation with ${ctx.other} about ${ctx.summary || 'things'}.`,
+    (ctx) => `${ctx.other} and I wrapped up our conversation.`,
   ],
   state_triggered: [
-    (ctx) => `${ctx.agent} is now ${ctx.state}.`,
-    (ctx) => `${ctx.agent} became ${ctx.state}.`,
-    (ctx) => `A ${ctx.state} state came over ${ctx.agent}.`,
+    (ctx) => `I started feeling ${ctx.state}.`,
+    (ctx) => `I'm ${ctx.state} now.`,
+    (ctx) => `A wave of ${ctx.state} came over me.`,
   ],
   state_cleared: [
-    (ctx) => `${ctx.agent} is no longer ${ctx.state}.`,
-    (ctx) => `${ctx.agent} recovered from being ${ctx.state}.`,
-    (ctx) => `The ${ctx.state} state cleared for ${ctx.agent}.`,
+    (ctx) => `I'm no longer feeling ${ctx.state}.`,
+    (ctx) => `The ${ctx.state} feeling has passed.`,
   ],
   relationship_changed: [
-    (ctx) => `${ctx.agent}'s relationship with ${ctx.other} changed to ${ctx.status}.`,
-    (ctx) => `${ctx.agent} and ${ctx.other} are now ${ctx.status}.`,
-    (ctx) => `The bond between ${ctx.agent} and ${ctx.other} shifted — they are now ${ctx.status}.`,
+    (ctx) => `${ctx.other} and I are now ${ctx.status}.`,
+    (ctx) => `My relationship with ${ctx.other} changed — we're ${ctx.status} now.`,
   ],
   relationship_sentiment: [
-    (ctx) => `${ctx.agent} feels ${ctx.sentiment} towards ${ctx.other}.`,
-    (ctx) => `${ctx.agent}'s feelings toward ${ctx.other} are ${ctx.sentiment}.`,
-    (ctx) => `${ctx.agent} thinks of ${ctx.other} with ${ctx.sentiment} feelings.`,
+    (ctx) => `I'm starting to feel ${ctx.sentiment} toward ${ctx.other}.`,
+    (ctx) => `My feelings toward ${ctx.other} have shifted — I feel ${ctx.sentiment}.`,
   ],
   gossip_learned: [
-    (ctx) => `${ctx.agent} heard gossip: "${ctx.content}".`,
-    (ctx) => `${ctx.agent} learned some gossip from ${ctx.source}: "${ctx.content}".`,
-    (ctx) => `Word reached ${ctx.agent} that ${ctx.content}.`,
+    (ctx) => `${ctx.source} told me that ${ctx.content}.`,
+    (ctx) => `I heard from ${ctx.source}: ${ctx.content}.`,
   ],
   gossip_shared: [
-    (ctx) => `${ctx.agent} shared gossip with ${ctx.other}: "${ctx.content}".`,
-    (ctx) => `${ctx.agent} told ${ctx.other} that ${ctx.content}.`,
-    (ctx) => `${ctx.agent} passed on gossip to ${ctx.other}.`,
+    (ctx) => `I told ${ctx.other} about ${ctx.content}.`,
+    (ctx) => `I shared with ${ctx.other} that ${ctx.content}.`,
   ],
   need_critical: [
-    (ctx) => `${ctx.agent}'s ${ctx.need} has reached a critical level.`,
-    (ctx) => `${ctx.agent} is in desperate need of ${ctx.need}.`,
-    (ctx) => `${ctx.agent} can no longer ignore their ${ctx.need}.`,
+    (ctx) => `I really need ${ctx.need}.`,
+    (ctx) => `I can't ignore my ${ctx.need} anymore.`,
   ],
   economy_transaction: [
-    (ctx) => `${ctx.agent} ${ctx.action} ${ctx.item} for ${ctx.amount}g.`,
-    (ctx) => `${ctx.agent} spent ${ctx.amount}g on ${ctx.item}.`,
-    (ctx) => `${ctx.agent} completed a transaction: ${ctx.item} for ${ctx.amount}g.`,
+    (ctx) => `I got paid $${ctx.amount} for my work.`,
+    (ctx) => `I earned $${ctx.amount} today.`,
   ],
   economy_distress: [
-    (ctx) => `${ctx.agent} is experiencing financial hardship.`,
-    (ctx) => `${ctx.agent} is struggling to make ends meet.`,
-    (ctx) => `${ctx.agent}'s finances are in a critical state.`,
+    () => `I'm almost out of money.`,
+    () => `I'm struggling financially.`,
   ],
   world_event: [
-    (ctx) => `A ${ctx.event} is happening in ${ctx.location}.`,
-    (ctx) => `Word spread about a ${ctx.event} in ${ctx.location}.`,
-    (ctx) => `${ctx.agent} witnessed a ${ctx.event} at ${ctx.location}.`,
+    (ctx) => `There's ${ctx.event} happening in town.`,
+    (ctx) => `I noticed ${ctx.event} going on.`,
   ],
   interaction_completed: [
-    (ctx) => `${ctx.agent} completed an interaction with ${ctx.other}.`,
-    (ctx) => `${ctx.agent} and ${ctx.other} finished their interaction.`,
-    (ctx) => `The interaction between ${ctx.agent} and ${ctx.other} concluded.`,
+    (ctx) => `I ${ctx.action} with ${ctx.other}.`,
+    (ctx) => `${ctx.other} and I had an interaction — ${ctx.action}.`,
   ],
 };
 
