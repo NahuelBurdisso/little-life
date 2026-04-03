@@ -12,6 +12,7 @@ if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 const sqlite = new Database(dbPath);
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
+sqlite.pragma('busy_timeout = 3000'); // wait up to 3s for lock instead of throwing immediately
 
 export const db = drizzle(sqlite, { schema });
 export { sqlite };

@@ -590,14 +590,22 @@ export function tick(world: WorldRow): void {
     // Skip agents whose current action is still in progress
     if (!isActionComplete(agent, totalTicks)) continue;
 
-    // Wake-up detection: if the completed action was sleeping and it's now wake time,
-    // queue daily plan generation for the new day.
+    // Plan generation: trigger when waking up OR when plan is stale during daytime.
+    // The wake-up path catches the normal case; the stale-plan path catches agents
+    // who missed a sleep→wake cycle (e.g., sick, depressed, or stuck agents).
     const completedActionType = (agent.current_action as any)?.type;
-    if (completedActionType === 'sleeping') {
-      const sched = agent.schedule as { wakeTime: number };
-      if (world.time.hour >= sched.wakeTime) {
-        planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
-      }
+    const sched = agent.schedule as { wakeTime?: number; sleepTime?: number } | null;
+    const wakeTime = sched?.wakeTime ?? 7;
+    const sleepTime = sched?.sleepTime ?? 22;
+    const isDaytime = world.time.hour >= wakeTime && world.time.hour < sleepTime;
+    const currentPlan = (agent as any).daily_plan as { day: number } | null;
+    const planIsStale = !currentPlan || currentPlan.day < (world.time.day ?? 1);
+
+    if (completedActionType === 'sleeping' && world.time.hour >= wakeTime) {
+      planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
+    } else if (isDaytime && planIsStale && completedActionType !== 'dead') {
+      // Catch-all: agent has no plan for today but it's daytime — generate one now
+      planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
     }
 
     // Fetch per-agent data
