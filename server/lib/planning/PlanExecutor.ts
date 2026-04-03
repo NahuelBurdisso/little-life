@@ -41,10 +41,14 @@ export class PlanExecutor {
     agentId: number,
     currentHour: number,
     currentTick: number,
+    currentDay?: number,
   ): ScoredAction | null {
     // 1. Get plan — null means no plan generated yet
     const plan = this.cache.get(agentId);
     if (!plan) return null;
+
+    // 1b. Stale plan check — skip plans from previous days
+    if (currentDay !== undefined && plan.day < currentDay - 1) return null;
 
     // 2. Find the appropriate block for the current hour
     const block = this._resolveBlock(plan, agentId, currentHour);
