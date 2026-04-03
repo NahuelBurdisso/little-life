@@ -35,6 +35,9 @@ function renderMessage(entry: ActivityEntry): string {
   const d = entry.template_data ?? {};
   if (d.message) return String(d.message);
   if (d.description) return String(d.description);
+  // Plan events
+  if (entry.type === 'plan_generated' && d.agentName) return `${d.agentName} planned their day.`;
+  if (entry.type === 'plan_changed' && d.agentName) return `${d.agentName} changed plans${d.reason ? ': ' + String(d.reason).substring(0, 50) : ''}.`;
   if (d.agent && d.state) {
     if (entry.type === 'state_gained') return `${d.agent} became ${d.state}.`;
     if (entry.type === 'state_lost') return `${d.agent} is no longer ${d.state}.`;

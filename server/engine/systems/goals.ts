@@ -164,7 +164,7 @@ function evaluateTriggers(agent: any, currentTick: number): void {
   // Also load recently abandoned/completed goals to prevent create→abandon spam.
   // Without this, a persistent trigger (e.g., infatuated state) creates a goal every tick
   // that gets immediately abandoned, flooding the activity log.
-  const COOLDOWN_TICKS = 120; // ~2 game hours
+  const COOLDOWN_TICKS = 720; // ~12 game hours — prevents goal→abandon spam for persistent triggers
   const recentGoals = db.select().from(goals)
     .where(eq(goals.agent_id, agent.id))
     .all()

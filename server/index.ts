@@ -28,13 +28,13 @@ const unembedded = db.select({ id: memories.id, description: memories.descriptio
   .where(sql`${memories.embedding} IS NULL AND ${memories.is_active} = 1`)
   .all();
 if (unembedded.length > 0) {
-  console.log(`Backfilling embeddings for ${unembedded.length} memories...`);
-  const backfillBatcher = new EmbeddingBatcher();
-  (async () => {
+  console.log(`Will backfill ${unembedded.length} embeddings after tick loop stabilizes...`);
+  // Delay backfill by 30 seconds to avoid DB lock contention with initial tick burst
+  setTimeout(async () => {
     try {
-      // Process in batches of 10 to avoid overwhelming Ollama
-      for (let i = 0; i < unembedded.length; i += 10) {
-        const batch = unembedded.slice(i, i + 10);
+      const backfillBatcher = new EmbeddingBatcher();
+      for (let i = 0; i < unembedded.length; i += 5) {
+        const batch = unembedded.slice(i, i + 5);
         const vecs = await backfillBatcher.embed(batch.map(m => m.description));
         for (let j = 0; j < batch.length; j++) {
           if (vecs[j]) {
@@ -42,12 +42,14 @@ if (unembedded.length > 0) {
             db.update(memories).set({ embedding: buffer }).where(eq(memories.id, batch[j].id)).run();
           }
         }
+        // Breathe between batches to avoid DB contention
+        await new Promise(r => setTimeout(r, 500));
       }
       console.log(`Backfilled ${unembedded.length} embeddings`);
     } catch (err) {
-      console.warn('Embedding backfill failed (Ollama may be unavailable):', (err as Error).message);
+      console.warn('Embedding backfill failed:', (err as Error).message);
     }
-  })();
+  }, 30000);
 }
 
 // Initialize planning system

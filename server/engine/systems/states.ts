@@ -534,7 +534,7 @@ function evaluateTriggers(
     ];
     const lowNeedsCount = needValues.filter((v) => v < 35).length;
     const lastRemoved = stressRemovedAtTick.get(agent.id) ?? -9999;
-    if (lowNeedsCount >= 3 && currentTick - lastRemoved > 30) {
+    if (lowNeedsCount >= 3 && currentTick - lastRemoved > 120) { // 2 game hours hysteresis to prevent oscillation
       const severity = clamp(0.3 + (lowNeedsCount / 5) * 0.5, 0.3, 0.8);
       db.insert(agentStates)
         .values({
