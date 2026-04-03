@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { agents, needs, locations } from '../../db/schema';
+import { agents, needs, locations, economy } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../constants';
@@ -88,6 +88,8 @@ export class PlanDecomposer {
 
     const currentNeeds = needsRow ?? { hunger: 50, energy: 50, social: 50 };
 
+    const agentEcon = db.select({ money: economy.money }).from(economy).where(eq(economy.agent_id, agentId)).get();
+
     // 5. Get all location names + id map for resolution later
     const locationRows = db
       .select({ id: locations.id, name: locations.name })
@@ -130,6 +132,7 @@ export class PlanDecomposer {
       blockAction: block.broad_action,
       locationHint: block.location_hint,
       needs: currentNeeds,
+      money: agentEcon?.money,
       startHour: block.start_hour,
       endHour: block.end_hour,
       validLocations,

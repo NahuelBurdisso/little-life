@@ -1,6 +1,14 @@
 import { buildPersonalityDescription } from '../personality';
 import type { PersonalityProfile } from '../personality';
 
+function describeMoneyLevel(money: number): string {
+  if (money < 10) return 'CRITICAL — nearly broke, avoid spending';
+  if (money < 25) return 'LOW — watch your spending';
+  if (money < 50) return 'MODERATE';
+  if (money < 100) return 'COMFORTABLE';
+  return 'WEALTHY — you have savings';
+}
+
 export interface DailyPlanPromptParams {
   name: string;
   age: number;
@@ -18,6 +26,7 @@ export interface DailyPlanPromptParams {
   yesterdayPlan: string | null;
   dayNumber: number;
   validLocations: string[];
+  economy?: { money: number; job?: string; jobTitle?: string; salary?: number };
 }
 
 export interface DecompositionPromptParams {
@@ -27,6 +36,7 @@ export interface DecompositionPromptParams {
   blockAction: string;
   locationHint: string;
   needs: { hunger: number; energy: number; social: number };
+  money?: number;
   startHour: number;
   endHour: number;
   validLocations: string[];
@@ -115,7 +125,10 @@ Recent reflections:
 ${reflectionsList}
 
 ${yesterdaySection}
-
+${params.economy ? `
+Your finances:
+- Money: $${Math.round(params.economy.money)} (${describeMoneyLevel(params.economy.money)})
+- ${params.economy.jobTitle ? `Job: ${params.economy.jobTitle}, salary $${params.economy.salary}/day` : 'Unemployed'}` : ''}
 Available locations: ${locationsList}
 
 Plan your day in 5-8 time blocks from ${wakeTime}:00 to ${sleepTime}:00. Each block should be a meaningful chunk of time. Account for meals, work if applicable, social time, and personal needs based on your current state.
@@ -167,7 +180,7 @@ You have a ${durationMinutes}-minute block from ${startHour}:00 to ${endHour}:00
 Primary location: ${locationHint}
 
 Current needs: ${needsDesc}
-
+${params.money != null ? `Your money: $${Math.round(params.money)} (${describeMoneyLevel(params.money)})` : ''}
 People you know who may be around: ${agentsList}
 Available locations: ${locationsList}
 

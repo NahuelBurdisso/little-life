@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { agents, needs, locations } from '../../db/schema';
+import { agents, needs, locations, economy } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../constants';
@@ -137,6 +137,8 @@ export class PlanGenerator {
 
     const currentNeeds = needsRow ?? { hunger: 50, energy: 50, social: 50, mood: 50, stress: 50 };
 
+    const agentEcon = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
+
     const personality = agentRow.personality as PersonalityProfile | null;
     const traits = agentRow.traits as string[];
     const schedule = agentRow.schedule as AgentSchedule;
@@ -205,6 +207,7 @@ export class PlanGenerator {
       yesterdayPlan,
       dayNumber: currentDay,
       validLocations,
+      economy: agentEcon ? { money: agentEcon.money, job: agentEcon.job, jobTitle: agentEcon.job_title, salary: agentEcon.salary } : undefined,
     });
 
     // 9. Call LLM
