@@ -15,7 +15,7 @@ import { gossipTick } from './systems/gossipEngine';
 import { goalsTick } from './systems/goals';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
-import { reflectionTrigger, reflectionRunner } from '../lib/memory/instance';
+import { reflectionTrigger, reflectionRunner, memoryConsolidator } from '../lib/memory/instance';
 import crypto from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -202,6 +202,12 @@ async function gameTick(): Promise<void> {
   const agentsToReflect = reflectionTrigger.check(worldWithNewTime.time.totalTicks);
   for (const agentId of agentsToReflect) {
     reflectionRunner.queueReflection(agentId);
+  }
+
+  // On day change: run memory archival (tiered retention + summaries)
+  const dayChanged = transitions.some(t => t.type === 'day_changed');
+  if (dayChanged) {
+    memoryConsolidator.consolidate(newTime.day, newTime.totalTicks);
   }
 
   // 8. Finalize tick

@@ -284,6 +284,13 @@ export class MemoryService {
     return this.store.getRecentByAgent(agentId, limit);
   }
 
+  /**
+   * Expose the underlying store so consolidators can perform batch operations.
+   */
+  getStore(): MemoryStore {
+    return this.store;
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
   /**

@@ -12,6 +12,8 @@ type InsertItem = {
   embedding: Buffer | null;
   metadata: Record<string, unknown>;
   currentTick: number;
+  depth?: number;
+  parentIds?: number[];
 };
 
 type MemoryRow = typeof memories.$inferSelect;
@@ -53,13 +55,13 @@ export class MemoryStore {
             description: item.description,
             importance: item.importance,
             emotional_valence: item.emotional_valence,
-            depth: 0,
+            depth: item.depth ?? 0,
             created_at: item.currentTick,
             last_accessed: item.currentTick,
             embedding: item.embedding,
             metadata: item.metadata,
             is_active: 1,
-            parent_ids: [],
+            parent_ids: item.parentIds ?? [],
           })
           .returning()
           .get();
@@ -165,6 +167,14 @@ export class MemoryStore {
    */
   deactivate(id: number): void {
     db.update(memories).set({ is_active: 0 }).where(eq(memories.id, id)).run();
+  }
+
+  /**
+   * Deactivate multiple memories in a single query (batch soft delete).
+   */
+  deactivateBatch(ids: number[]): void {
+    if (ids.length === 0) return;
+    db.update(memories).set({ is_active: 0 }).where(inArray(memories.id, ids)).run();
   }
 
   /**
