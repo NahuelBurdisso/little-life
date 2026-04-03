@@ -171,4 +171,10 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     const templateKey = direction === 'up' ? 'economy_milestone_up' : 'economy_milestone_down';
     memoryService.record(agentId, 'observation', describeEvent(templateKey, { amount: String(amount) }), { subtype: 'economy' }, direction === 'up' ? 0.3 : -0.3, 5);
   });
+
+  simEvents.on('perception:observed', ({ agentId, targetName, templateKey }: { agentId: number; targetName: string; templateKey: string }) => {
+    memoryService.record(agentId, 'observation',
+      describeEvent(templateKey, { target: targetName }),
+      { subtype: 'perception', targetName });
+  });
 }

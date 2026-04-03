@@ -92,6 +92,32 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I ${ctx.action} with ${ctx.other}.`,
     (ctx) => `${ctx.other} and I had an interaction — ${ctx.action}.`,
   ],
+  perception_friend_distressed: [
+    (ctx) => `I noticed ${ctx.target} looking really down today.`,
+    (ctx) => `I saw ${ctx.target} seemed upset, so I went to check on them.`,
+  ],
+  perception_enemy: [
+    (ctx) => `I spotted ${ctx.target} nearby. We don't get along.`,
+  ],
+  perception_crush: [
+    (ctx) => `I saw ${ctx.target} and my heart skipped a beat.`,
+    (ctx) => `I noticed ${ctx.target} nearby and felt nervous.`,
+  ],
+  perception_partner: [
+    (ctx) => `I saw ${ctx.target} and went over to say hello.`,
+  ],
+  perception_someone_needs_help: [
+    (ctx) => `I noticed ${ctx.target} wasn't doing well and offered to help.`,
+  ],
+  perception_witnessed_crime: [
+    (ctx) => `I witnessed ${ctx.target} doing something they shouldn't.`,
+  ],
+  perception_casual: [
+    (ctx) => `I noticed ${ctx.target} nearby and struck up a conversation.`,
+  ],
+  perception_jealousy: [
+    (ctx) => `I saw ${ctx.target} and felt a surge of jealousy.`,
+  ],
 };
 
 /**

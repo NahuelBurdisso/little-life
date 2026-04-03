@@ -16,6 +16,7 @@ import { goalsTick } from './systems/goals';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
 import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
+import { perceptionSystem } from '../lib/perception/instance';
 import crypto from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -193,6 +194,11 @@ async function gameTick(): Promise<void> {
       .set({ current_tick_phase: phaseNumber })
       .where(eq(worldState.id, world.id))
       .run();
+  }
+
+  // Perception scan every 10 ticks: agents observe and react to nearby agents
+  if (worldWithNewTime.time.totalTicks % 10 === 0) {
+    perceptionSystem.scan(worldWithNewTime);
   }
 
   // Discard the tick-level cache before returning so stale data never leaks.

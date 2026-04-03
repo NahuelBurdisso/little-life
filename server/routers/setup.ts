@@ -36,6 +36,7 @@ import { taskRunner } from '../ai/taskRunner';
 import { memoryService, reflectionTrigger, reflectionRunner, selfDescriptionGenerator } from '../lib/memory/instance';
 import { planCache, planLLMQueue, replanEvaluator } from '../lib/planning/instance';
 import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
+import { perceptionSystem } from '../lib/perception/instance';
 import { emitter } from '../engine/emitter';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
@@ -546,6 +547,7 @@ export const setupRouter = router({
     planCache.clear();
     planLLMQueue.clear();
     replanEvaluator.clear();
+    perceptionSystem.clear();
     startTickLoop();
     emitter.markAllDirty();
     emitter.flush();
@@ -607,6 +609,7 @@ export const setupRouter = router({
     planCache.clear();
     planLLMQueue.clear();
     replanEvaluator.clear();
+    perceptionSystem.clear();
 
     // Do NOT restart tick loop — leave paused for wizard
     emitter.markAllDirty();
