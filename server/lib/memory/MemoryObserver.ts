@@ -146,4 +146,29 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       memoryService.record(agentId, 'observation', description, { subtype: 'interaction', otherName, action });
     },
   );
+
+  simEvents.on('economy:purchase', ({ agentId, item, price, locationName }: { agentId: number; item: string; price: number; locationName: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('economy_purchase', { item, price: String(Math.round(price)), location: locationName }), { subtype: 'economy' });
+  });
+
+  simEvents.on('economy:production', ({ agentId, item, quantity }: { agentId: number; item: string; quantity: number }) => {
+    memoryService.record(agentId, 'observation', describeEvent('economy_production', { item, quantity: String(quantity) }), { subtype: 'economy' });
+  });
+
+  simEvents.on('economy:blackmail_paid', ({ agentId, amount }: { agentId: number; amount: number }) => {
+    memoryService.record(agentId, 'observation', describeEvent('economy_blackmail', { amount: String(Math.round(amount)) }), { subtype: 'economy' }, -0.5, 6);
+  });
+
+  simEvents.on('economy:theft_success', ({ agentId, item, locationName }: { agentId: number; item: string; locationName: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('economy_theft_success', { item, location: locationName }), { subtype: 'economy' }, -0.3, 7);
+  });
+
+  simEvents.on('economy:theft_caught', ({ agentId, item, locationName }: { agentId: number; item: string; locationName: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('economy_theft_caught', { item, location: locationName }), { subtype: 'economy' }, -0.7, 8);
+  });
+
+  simEvents.on('economy:milestone', ({ agentId, amount, direction }: { agentId: number; amount: number; direction: 'up' | 'down' }) => {
+    const templateKey = direction === 'up' ? 'economy_milestone_up' : 'economy_milestone_down';
+    memoryService.record(agentId, 'observation', describeEvent(templateKey, { amount: String(amount) }), { subtype: 'economy' }, direction === 'up' ? 0.3 : -0.3, 5);
+  });
 }

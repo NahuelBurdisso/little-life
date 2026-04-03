@@ -10,6 +10,24 @@ import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, rem
 import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { simEvents } from '../../lib/simEvents';
 
+// --- Module-level state for batching and milestones ---
+
+const productionThisTick = new Map<number, { item: string; qty: number }>();
+
+const lastMilestoneLevel = new Map<number, number>();
+const MILESTONES = [10, 25, 50, 100];
+
+function checkMilestone(agentId: number, money: number): void {
+  const currentLevel = MILESTONES.filter(m => money >= m).length;
+  const lastLevel = lastMilestoneLevel.get(agentId);
+  if (lastLevel !== undefined && currentLevel !== lastLevel) {
+    const crossedUp = currentLevel > lastLevel;
+    const threshold = crossedUp ? MILESTONES[currentLevel - 1] : MILESTONES[lastLevel - 1];
+    simEvents.emit('economy:milestone', { agentId, amount: threshold, direction: crossedUp ? 'up' : 'down' });
+  }
+  lastMilestoneLevel.set(agentId, currentLevel);
+}
+
 // --- Helpers ---
 
 type EconRecord = typeof economy.$inferSelect;
@@ -95,6 +113,10 @@ export function economyTick(): void {
       inv = addToInventory(inv, recipe.output, recipe.outputQuantity, now);
       db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
       econ.inventory = inv;
+
+      const prevProc = productionThisTick.get(agent.id) ?? { item: recipe.output, qty: 0 };
+      prevProc.qty += recipe.outputQuantity;
+      productionThisTick.set(agent.id, prevProc);
     } else {
       // Raw production: rate-based with seasonal modifier and remainder
       const seasonMult = recipe.seasonal ? (SEASON_PRODUCTION_MODIFIERS[season] ?? 1.0) : 1.0;
@@ -106,9 +128,14 @@ export function economyTick(): void {
       econ.production_remainder = remainder;
 
       if (wholeUnits > 0) {
-        const newInv = addToInventory(econ.inventory as any[], recipe.output, wholeUnits * recipe.outputQuantity, now);
+        const outputQuantity = wholeUnits * recipe.outputQuantity;
+        const newInv = addToInventory(econ.inventory as any[], recipe.output, outputQuantity, now);
         db.update(economy).set({ inventory: newInv }).where(eq(economy.id, econ.id)).run();
         econ.inventory = newInv;
+
+        const prev = productionThisTick.get(agent.id) ?? { item: recipe.output, qty: 0 };
+        prev.qty += outputQuantity;
+        productionThisTick.set(agent.id, prev);
       }
     }
   }
@@ -218,6 +245,7 @@ export function economyTick(): void {
       timestamp: now,
     }).run();
     simEvents.emit('economy:transaction', { agentId: agent.id, amount: effectiveSalary });
+    checkMilestone(agent.id, newMoney);
 
     // Process blackmail payments (victim pays 10% of salary to blackmailer)
     const blackmailFacts = db.select().from(shared_knowledge)
@@ -242,6 +270,8 @@ export function economyTick(): void {
             location_id: null,
             timestamp: now,
           }).run();
+          simEvents.emit('economy:blackmail_paid', { agentId: agent.id, amount: paymentAmount });
+          checkMilestone(agent.id, econ.money);
         }
       }
     }
@@ -338,6 +368,8 @@ export function economyTick(): void {
             target: eatLocation.owner,
             templateData: { agent: agent.name, item: itemToBuy, amount: price },
           });
+          simEvents.emit('economy:purchase', { agentId: agent.id, item: itemToBuy, price, locationName: eatLocation.name });
+          checkMilestone(agent.id, buyerEcon.money);
         }
       }
       continue;
@@ -424,6 +456,8 @@ export function economyTick(): void {
         target: shopLocation.owner,
         templateData: { agent: agent.name, item, amount: price },
       });
+      simEvents.emit('economy:purchase', { agentId: agent.id, item, price, locationName: shopLocation.name });
+      checkMilestone(agent.id, buyerEcon.money);
     }
   }
 
@@ -436,6 +470,7 @@ export function economyTick(): void {
         db.update(economy).set({ money: newMoney, daily_expenses: cost.amount })
           .where(eq(economy.id, econ.id)).run();
         econ.money = newMoney;
+        checkMilestone(econ.agent_id, newMoney);
 
         if (newMoney < 10) {
           createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
@@ -464,6 +499,12 @@ export function economyTick(): void {
       });
     }
   }
+
+  // Emit production events (batched per agent per tick)
+  for (const [agentId, prod] of productionThisTick) {
+    if (prod.qty > 0) simEvents.emit('economy:production', { agentId, item: prod.item, quantity: prod.qty });
+  }
+  productionThisTick.clear();
 
   emitter.markDirty('agents.all');
 }

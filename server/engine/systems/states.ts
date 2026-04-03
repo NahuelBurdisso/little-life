@@ -1789,7 +1789,12 @@ function processStateEffects(
           db.update(economyTable).set({ inventory: newThiefInv }).where(eq(economyTable.agent_id, agent.id)).run();
         }
 
+        if (!caught) {
+          simEvents.emit('economy:theft_success', { agentId: agent.id, item: targetItem.itemId, locationName: loc.name });
+        }
+
         if (caught) {
+          simEvents.emit('economy:theft_caught', { agentId: agent.id, item: targetItem.itemId, locationName: loc.name });
           const witnessIds = witnesses.map((w) => w.id);
           createFact('theft', agent.id, loc.owner, 2, [agent.id, loc.owner, ...witnessIds], 'witnessed', {
             item: targetItem.itemId, location: loc.name,

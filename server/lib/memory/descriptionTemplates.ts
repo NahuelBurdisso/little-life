@@ -60,6 +60,30 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     () => `I'm almost out of money.`,
     () => `I'm struggling financially.`,
   ],
+  economy_purchase: [
+    (ctx) => `I bought ${ctx.item} for $${ctx.price} at ${ctx.location}.`,
+    (ctx) => `I spent $${ctx.price} on ${ctx.item}.`,
+  ],
+  economy_production: [
+    (ctx) => `I produced ${ctx.quantity} ${ctx.item} at work today.`,
+  ],
+  economy_blackmail: [
+    (ctx) => `I had to pay $${ctx.amount} in blackmail money again.`,
+    (ctx) => `Another $${ctx.amount} gone to my blackmailer.`,
+  ],
+  economy_theft_success: [
+    (ctx) => `I stole ${ctx.item} from ${ctx.location} — I had no choice.`,
+    (ctx) => `Desperate times. I took ${ctx.item} from ${ctx.location}.`,
+  ],
+  economy_theft_caught: [
+    (ctx) => `I got caught stealing ${ctx.item} from ${ctx.location}. Humiliating.`,
+  ],
+  economy_milestone_up: [
+    (ctx) => `I've saved up to $${ctx.amount}. Things are looking up.`,
+  ],
+  economy_milestone_down: [
+    (ctx) => `My money dropped below $${ctx.amount}. Things are getting tight.`,
+  ],
   world_event: [
     (ctx) => `There's ${ctx.event} happening in town.`,
     (ctx) => `I noticed ${ctx.event} going on.`,
