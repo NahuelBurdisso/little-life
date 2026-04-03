@@ -161,6 +161,15 @@ function evaluateTriggers(agent: any, currentTick: number): void {
     .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
     .all();
 
+  // Also load recently abandoned/completed goals to prevent create→abandon spam.
+  // Without this, a persistent trigger (e.g., infatuated state) creates a goal every tick
+  // that gets immediately abandoned, flooding the activity log.
+  const COOLDOWN_TICKS = 120; // ~2 game hours
+  const recentGoals = db.select().from(goals)
+    .where(eq(goals.agent_id, agent.id))
+    .all()
+    .filter(g => g.status !== 'active' && (currentTick - g.created_at) < COOLDOWN_TICKS);
+
   for (const trigger of GOAL_TRIGGER_REGISTRY) {
     if (activeGoals.length >= MAX_GOALS_PER_AGENT) break;
 
@@ -170,7 +179,9 @@ function evaluateTriggers(agent: any, currentTick: number): void {
     if (targetId === false) continue;
 
     // Don't duplicate: skip if agent already has this goal type targeting the same agent
-    const duplicate = activeGoals.find(g =>
+    // (active OR recently abandoned/completed — prevents create→abandon loops)
+    const allRelevant = [...activeGoals, ...recentGoals];
+    const duplicate = allRelevant.find(g =>
       g.type === trigger.generates &&
       (targetId === null ? true : g.target_id === targetId),
     );
