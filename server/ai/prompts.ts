@@ -17,6 +17,7 @@ export interface AgentRow {
   id: number;
   name: string;
   bio: string;
+  self_description?: string | null;
   traits: string[];
   age: number;
   gender: string;
@@ -264,6 +265,10 @@ export function buildAgentSystemPrompt(
     ? generateVoiceDirective(agent.id, resolvedPersonality as PersonalityProfile)
     : '';
 
+  // Self-description: use evolving self-concept if available, fall back to static bio
+  const agentDescription = agent.self_description || agent.bio || '';
+  const descriptionLine = agentDescription ? `About you: ${agentDescription}` : '';
+
   // Mood
   const moodLine = buildMoodLine(needs.mood);
 
@@ -278,7 +283,7 @@ export function buildAgentSystemPrompt(
 
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ');
-  const middle = [moodLine, stateLines, criticalNeedsLine, econLine].filter(Boolean).join('\n');
+  const middle = [descriptionLine, moodLine, stateLines, criticalNeedsLine, econLine].filter(Boolean).join('\n');
   const instruction = "Reply in 1-2 sentences. Natural speech, not prose. You can be rude, evasive, flirty, or dismissive — whatever fits.";
 
   const sections = [header, middle, instruction].filter(Boolean);

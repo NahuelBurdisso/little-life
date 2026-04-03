@@ -112,6 +112,7 @@ export class PlanGenerator {
         home: agents.home,
         workplace: agents.workplace,
         schedule: agents.schedule,
+        self_description: agents.self_description,
       })
       .from(agents)
       .where(eq(agents.id, agentId))
@@ -208,6 +209,7 @@ export class PlanGenerator {
       dayNumber: currentDay,
       validLocations,
       economy: agentEcon ? { money: agentEcon.money, job: agentEcon.job, jobTitle: agentEcon.job_title, salary: agentEcon.salary } : undefined,
+      selfDescription: agentRow.self_description ?? undefined,
     });
 
     // 9. Call LLM

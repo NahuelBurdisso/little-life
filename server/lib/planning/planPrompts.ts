@@ -27,6 +27,7 @@ export interface DailyPlanPromptParams {
   dayNumber: number;
   validLocations: string[];
   economy?: { money: number; job?: string; jobTitle?: string; salary?: number };
+  selfDescription?: string;
 }
 
 export interface DecompositionPromptParams {
@@ -109,7 +110,7 @@ export function buildDailyPlanPrompt(params: DailyPlanPromptParams): { system: s
   const locationsList = validLocations.join(', ');
 
   const system = `You are ${name}, a ${age}-year-old on day ${dayNumber} of your life. ${personalityDesc}
-
+${params.selfDescription ? `\nAbout yourself: ${params.selfDescription}` : ''}
 Current needs:
 ${needsDesc}
 

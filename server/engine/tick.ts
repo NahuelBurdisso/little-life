@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { worldState } from '../db/schema';
+import { worldState, agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 import { emitter } from './emitter';
@@ -15,7 +15,7 @@ import { gossipTick } from './systems/gossipEngine';
 import { goalsTick } from './systems/goals';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
-import { reflectionTrigger, reflectionRunner, memoryConsolidator } from '../lib/memory/instance';
+import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
 import crypto from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -208,6 +208,11 @@ async function gameTick(): Promise<void> {
   const dayChanged = transitions.some(t => t.type === 'day_changed');
   if (dayChanged) {
     memoryConsolidator.consolidate(newTime.day, newTime.totalTicks);
+    // Regenerate self-descriptions for all agents (async, non-blocking)
+    const allAgentIds = db.select({ id: agents.id }).from(agents).all();
+    for (const { id } of allAgentIds) {
+      void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
+    }
   }
 
   // 8. Finalize tick

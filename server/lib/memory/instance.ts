@@ -3,6 +3,7 @@ import { ContextBuilder } from './ContextBuilder';
 import { ReflectionTrigger } from './ReflectionTrigger';
 import { ReflectionRunner } from './ReflectionRunner';
 import { MemoryConsolidator } from './MemoryConsolidator';
+import { SelfDescriptionGenerator } from './SelfDescriptionGenerator';
 import { db } from '../../db';
 import { agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
@@ -11,6 +12,7 @@ import type { PersonalityProfile } from '../personality';
 export const memoryService = new MemoryService();
 export const contextBuilder = new ContextBuilder(memoryService);
 export const memoryConsolidator = new MemoryConsolidator(memoryService, memoryService.getStore());
+export const selfDescriptionGenerator = new SelfDescriptionGenerator(memoryService);
 
 // Personality-gated reflection threshold
 function getReflectionThreshold(agentId: number): number {

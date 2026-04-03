@@ -33,7 +33,7 @@ import { z } from 'zod';
 import { logActivity } from '../lib/activityLogger';
 import { startTickLoop, stopTickLoopAndWait } from '../engine/tick';
 import { taskRunner } from '../ai/taskRunner';
-import { memoryService, reflectionTrigger, reflectionRunner } from '../lib/memory/instance';
+import { memoryService, reflectionTrigger, reflectionRunner, selfDescriptionGenerator } from '../lib/memory/instance';
 import { planCache, planLLMQueue, replanEvaluator } from '../lib/planning/instance';
 import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
 import { emitter } from '../engine/emitter';
@@ -542,6 +542,7 @@ export const setupRouter = router({
     reloadMemoryService();
     reflectionTrigger.clear();
     reflectionRunner.clearQueue();
+    selfDescriptionGenerator.clear();
     planCache.clear();
     planLLMQueue.clear();
     replanEvaluator.clear();
@@ -602,6 +603,7 @@ export const setupRouter = router({
     memoryService.clear();
     reflectionTrigger.clear();
     reflectionRunner.clearQueue();
+    selfDescriptionGenerator.clear();
     planCache.clear();
     planLLMQueue.clear();
     replanEvaluator.clear();
