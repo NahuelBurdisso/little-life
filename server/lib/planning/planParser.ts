@@ -130,6 +130,17 @@ function findAgentMatch(description: string, validAgents: string[]): string | un
   return validAgents.find(agent => lower.includes(agent.toLowerCase()));
 }
 
+/** Extract a topic from a socializing action description. E.g., "Chat with Rosa about her research" → "her research" */
+function extractTopic(description: string): string | undefined {
+  // Match "about ..." patterns
+  const aboutMatch = description.match(/\babout\s+(.+?)(?:\s*\||\s*$)/i);
+  if (aboutMatch) return aboutMatch[1].trim();
+  // Match "discuss ..." patterns
+  const discussMatch = description.match(/\bdiscuss(?:ing)?\s+(.+?)(?:\s*\||\s*$)/i);
+  if (discussMatch) return discussMatch[1].trim();
+  return undefined;
+}
+
 export function parseDecomposedActions(
   raw: string,
   validLocations: string[],
@@ -164,11 +175,15 @@ export function parseDecomposedActions(
     const targetLocation = fuzzyMatchLocation(locationRaw, validLocations);
     const targetAgent = findAgentMatch(description, validAgents);
 
+    const actionType = inferActionType(description);
+    const topic = actionType === 'socializing' ? extractTopic(description) : undefined;
+
     actions.push({
       description,
-      action_type: inferActionType(description),
+      action_type: actionType,
       target_location: targetLocation,
       target_agent: targetAgent,
+      topic,
       duration_minutes: duration,
     });
   }

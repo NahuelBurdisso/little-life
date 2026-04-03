@@ -22,6 +22,7 @@ export interface DecomposedAction {
   resolved_location_id?: number;
   target_agent?: string;
   resolved_agent_id?: number;
+  topic?: string;
   duration_minutes: number;
 }
 

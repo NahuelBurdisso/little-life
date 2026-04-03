@@ -173,6 +173,8 @@ Available locations: ${locationsList}
 
 Break this block into 2-4 specific actions you will actually perform. Consider your personality, current needs, and who might be nearby.
 
+If you plan to socialize, name the specific person (e.g., "Chat with Rosa Chen about her research"). Use full names from the people list above.
+
 Format each action exactly as:
 action description | location | duration in minutes
 

@@ -21,6 +21,7 @@ export interface ScoredAction {
   score: number;
   targetLocationId?: number;
   targetAgentId?: number;
+  topic?: string;
   source?: string;
 }
 
@@ -178,6 +179,7 @@ export class PlanExecutor {
       score: PLAN_SCORE,
       targetLocationId: action.resolved_location_id,
       targetAgentId: action.resolved_agent_id,
+      topic: action.topic,
       source: `plan:decomposed`,
     };
   }

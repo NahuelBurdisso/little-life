@@ -47,6 +47,8 @@ interface ScoredAction {
   score: number;
   targetLocationId?: number;
   targetAgentId?: number;
+  topic?: string;
+  source?: string;
 }
 
 // Tracks consecutive work skips per agent to detect work_issue pattern
@@ -845,10 +847,10 @@ export function tick(world: WorldRow): void {
       const friendship = rel?.friendship ?? 0;
       const romance = rel?.romance ?? 0;
 
-      // Personality-driven topic selection
+      // Topic selection: use plan-provided topic if available, else personality-driven
       const agentPersonality = agent.personality as PersonalityProfile | null;
-      let topic: string | null = null;
-      if (agentPersonality) {
+      let topic: string | null = decision.topic ?? null;
+      if (!topic && agentPersonality) {
         const otherActiveAgents = activeAgents.filter(a => a.id !== agent.id && a.id !== targetId);
         topic = selectPersonalityTopic(
           agentPersonality,
