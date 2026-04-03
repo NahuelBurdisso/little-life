@@ -17,6 +17,39 @@ const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 initMemoryObserver(memoryService);
 console.log('Memory service initialized');
 
+// Backfill embeddings for memories that don't have them (e.g., seed/backstory data)
+import { db } from './db';
+import { memories } from './db/schema';
+import { sql, eq } from 'drizzle-orm';
+import { EmbeddingBatcher } from './lib/memory/EmbeddingBatcher';
+
+const unembedded = db.select({ id: memories.id, description: memories.description })
+  .from(memories)
+  .where(sql`${memories.embedding} IS NULL AND ${memories.is_active} = 1`)
+  .all();
+if (unembedded.length > 0) {
+  console.log(`Backfilling embeddings for ${unembedded.length} memories...`);
+  const backfillBatcher = new EmbeddingBatcher();
+  (async () => {
+    try {
+      // Process in batches of 10 to avoid overwhelming Ollama
+      for (let i = 0; i < unembedded.length; i += 10) {
+        const batch = unembedded.slice(i, i + 10);
+        const vecs = await backfillBatcher.embed(batch.map(m => m.description));
+        for (let j = 0; j < batch.length; j++) {
+          if (vecs[j]) {
+            const buffer = Buffer.from(vecs[j].buffer, vecs[j].byteOffset, vecs[j].byteLength);
+            db.update(memories).set({ embedding: buffer }).where(eq(memories.id, batch[j].id)).run();
+          }
+        }
+      }
+      console.log(`Backfilled ${unembedded.length} embeddings`);
+    } catch (err) {
+      console.warn('Embedding backfill failed (Ollama may be unavailable):', (err as Error).message);
+    }
+  })();
+}
+
 // Initialize planning system
 initPlanEventAdapter();
 console.log('Planning system initialized');

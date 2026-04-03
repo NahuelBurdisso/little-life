@@ -86,9 +86,13 @@ function matchesRule(
 
 // ─── PerceptionSystem ─────────────────────────────────────────────────────────
 
+const GLOBAL_PAIR_COOLDOWN = 30; // minimum ticks between ANY perception for the same observer→target pair
+
 export class PerceptionSystem {
   /** "agentId-targetId-ruleId" → lastTick when this perception fired */
   private cooldowns: Map<string, number> = new Map();
+  /** "agentId-targetId" → lastTick when ANY perception fired for this pair */
+  private pairCooldowns: Map<string, number> = new Map();
 
   scan(world: { time: { totalTicks: number } }): void {
     const currentTick = world.time.totalTicks;
@@ -235,6 +239,11 @@ export class PerceptionSystem {
 
         const observerRelation = { friendship, romance };
 
+        // Global pair cooldown: skip if ANY perception fired recently for this pair
+        const pairKey = `${observer.id}-${target.id}`;
+        const lastPairFired = this.pairCooldowns.get(pairKey) ?? -Infinity;
+        if (currentTick - lastPairFired < GLOBAL_PAIR_COOLDOWN) continue;
+
         // Evaluate all rules, collect matches with scores
         let bestScore = 30; // threshold
         let bestRule: PerceptionRule | null = null;
@@ -272,6 +281,7 @@ export class PerceptionSystem {
         // Fire the best rule
         const cooldownKey = `${observer.id}-${target.id}-${bestRule.id}`;
         this.cooldowns.set(cooldownKey, currentTick);
+        this.pairCooldowns.set(pairKey, currentTick);
 
         const reaction = REACTION_TYPES[bestRule.reaction];
         if (!reaction) continue;
@@ -322,5 +332,6 @@ export class PerceptionSystem {
 
   clear(): void {
     this.cooldowns.clear();
+    this.pairCooldowns.clear();
   }
 }
