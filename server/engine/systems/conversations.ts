@@ -38,6 +38,7 @@ import { calculateCompatibility, PersonalityProfile } from '../../lib/personalit
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
 import { getAgentStates } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
+import { evaluateConversation } from '../../lib/conversationEvaluator';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -389,6 +390,11 @@ async function processCompletedConversation(
     return;
   }
 
+  // Accumulate relationship deltas across all pairs for quality evaluation
+  let totalFriendshipDelta = 0;
+  let totalRomanceDelta = 0;
+  let totalTrustDelta = 0;
+
   // Create relationship events for each pair
   for (let i = 0; i < participants.length; i++) {
     for (let j = i + 1; j < participants.length; j++) {
@@ -430,6 +436,10 @@ async function processCompletedConversation(
       const { friendshipAB: friendshipDeltaAB, friendshipBA: friendshipDeltaBA } = deltas;
       const { romanceAB: romanceDeltaAB, romanceBA: romanceDeltaBA } = deltas;
       const { trustAB: trustDeltaAB, trustBA: trustDeltaBA } = deltas;
+
+      totalFriendshipDelta += friendshipDeltaAB + friendshipDeltaBA;
+      totalRomanceDelta += romanceDeltaAB + romanceDeltaBA;
+      totalTrustDelta += trustDeltaAB + trustDeltaBA;
 
       // Derive event type from deltas
       let eventType = 'conversation';
@@ -922,12 +932,27 @@ async function processCompletedConversation(
     }
   }
 
+  // --- Conversation Quality Evaluation ---
+  const evaluation = evaluateConversation({
+    messages: messages.map(m => ({ text: m.text || '', sentiment: m.sentiment || 0 })),
+    injectedMemories: [], // TODO: pass actual memories if available in scope
+    topic: (fresh.topic as string) || null,
+    maxTurns: fresh.max_turns || 6,
+    relationshipDeltas: {
+      friendship: totalFriendshipDelta,
+      romance: totalRomanceDelta,
+      trust: totalTrustDelta,
+    },
+  });
+
   // Mark conversation as ended
   db.update(conversations)
     .set({
       status: 'ended',
       ended_at: now,
       sentiment: overallSentiment,
+      quality_score: evaluation.quality_score,
+      quality_breakdown: evaluation.quality_breakdown,
     })
     .where(eq(conversations.id, fresh.id))
     .run();

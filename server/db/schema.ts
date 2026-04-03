@@ -247,6 +247,8 @@ export const conversations = sqliteTable(
     ended_at: integer('ended_at'),
     sentiment: real('sentiment').notNull(),
     max_turns: integer('max_turns').notNull(),
+    quality_score: real('quality_score'),
+    quality_breakdown: text('quality_breakdown', { mode: 'json' }).$type<Record<string, number> | null>(),
   },
   (table) => [index('idx_conversations_status').on(table.status)]
 );
