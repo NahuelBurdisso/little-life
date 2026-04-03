@@ -290,7 +290,7 @@ function checkSchedule(
 function scoreFreeTimeActions(
   agent: AgentRow,
   agentNeeds: NeedsRow,
-  _agentEcon: EconRow | null,
+  agentEcon: EconRow | null,
   allLocations: LocationRow[],
   allRelationships: RelRow[],
   otherAgents: AgentRow[],
@@ -545,6 +545,23 @@ function scoreFreeTimeActions(
         for (const s of scores) {
           if (s.targetLocationId === tavern.id) s.score *= 1.2;
         }
+      }
+    }
+  }
+
+  // Economic behavior modifiers
+  if (agentEcon) {
+    if (agentEcon.money < 15) {
+      for (const s of scores) {
+        if (s.action === 'eating' && s.targetLocationId !== agent.home) s.score *= 0.5;
+        if (s.action === 'shopping') s.score *= 0.3;
+        if (tavern && s.targetLocationId === tavern.id) s.score *= 0.4;
+      }
+    }
+    if (agentEcon.money > 80) {
+      for (const s of scores) {
+        if (tavern && s.targetLocationId === tavern.id) s.score *= 1.2;
+        if (s.action === 'shopping') s.score *= 1.3;
       }
     }
   }
@@ -867,6 +884,15 @@ export function tick(world: WorldRow): void {
         if (gossipFacts.length > 0) {
           const subjectName = getAgentName((gossipFacts[0] as any).subject_id);
           topic = `gossip about ${subjectName}`;
+        }
+      }
+
+      // Economic topic override
+      if (!topic && agentEcon) {
+        if (agentEcon.money < 15 && Math.random() < 0.3) {
+          topic = 'financial struggles';
+        } else if (agentEcon.money > 80 && friendship > 40 && Math.random() < 0.15) {
+          topic = 'the town economy';
         }
       }
 

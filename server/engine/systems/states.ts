@@ -47,6 +47,8 @@ let previouslyActiveAgents = new Set<number>();
 // Track ticks where an agent had stressed state removed (to avoid re-triggering immediately)
 const stressRemovedAtTick = new Map<number, number>();
 
+const gamblingCooldowns = new Map<string, number>();
+
 // Track tick when mood first dropped below 15 (for depressed trigger duration check)
 const lowMoodSince = new Map<number, number>(); // agentId → tick when mood first dropped below 15
 
@@ -2009,61 +2011,66 @@ function processStateEffects(
         );
         if (nearbyAgents.length > 0) {
           const opponent = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
-          const opponentPersonality = opponent.personality as PersonalityProfile | null;
-          const betAmount = Math.floor(agentEcon.money * (0.1 + Math.random() * 0.2));
+          const pairKey = [agent.id, opponent.id].sort().join('-');
+          const lastGamble = gamblingCooldowns.get(pairKey) ?? 0;
+          if (currentTick - lastGamble >= 120) {
+            const opponentPersonality = opponent.personality as PersonalityProfile | null;
+            const betAmount = Math.floor(agentEcon.money * (0.1 + Math.random() * 0.2));
 
-          const agentCuriosity = personality.curiosity ?? 50;
-          const opponentCuriosity = opponentPersonality?.curiosity ?? 50;
-          const winChance = clamp(0.5 + (agentCuriosity - opponentCuriosity) * 0.002, 0.4, 0.6);
-          const agentWins = Math.random() < winChance;
+            const agentCuriosity = personality.curiosity ?? 50;
+            const opponentCuriosity = opponentPersonality?.curiosity ?? 50;
+            const winChance = clamp(0.5 + (agentCuriosity - opponentCuriosity) * 0.002, 0.4, 0.6);
+            const agentWins = Math.random() < winChance;
 
-          const opponentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, opponent.id)).get();
-          if (opponentEcon && opponentEcon.money >= betAmount) {
-            if (agentWins) {
-              db.update(economyTable).set({ money: agentEcon.money + betAmount }).where(eq(economyTable.agent_id, agent.id)).run();
-              db.update(economyTable).set({ money: opponentEcon.money - betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
-            } else {
-              db.update(economyTable).set({ money: agentEcon.money - betAmount }).where(eq(economyTable.agent_id, agent.id)).run();
-              db.update(economyTable).set({ money: opponentEcon.money + betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
+            const opponentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, opponent.id)).get();
+            if (opponentEcon && opponentEcon.money >= betAmount) {
+              if (agentWins) {
+                db.update(economyTable).set({ money: agentEcon.money + betAmount }).where(eq(economyTable.agent_id, agent.id)).run();
+                db.update(economyTable).set({ money: opponentEcon.money - betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
+              } else {
+                db.update(economyTable).set({ money: agentEcon.money - betAmount }).where(eq(economyTable.agent_id, agent.id)).run();
+                db.update(economyTable).set({ money: opponentEcon.money + betAmount }).where(eq(economyTable.agent_id, opponent.id)).run();
 
-              if (agentEcon.money - betAmount < 5) {
-                createFact('gambling_loss', agent.id, null, 1, [agent.id, opponent.id], 'witnessed', {
-                  detail: `$${betAmount} to ${opponent.name}`,
-                });
+                if (agentEcon.money - betAmount < 5) {
+                  createFact('gambling_loss', agent.id, null, 1, [agent.id, opponent.id], 'witnessed', {
+                    detail: `$${betAmount} to ${opponent.name}`,
+                  });
+                }
               }
+
+              db.insert(economyTransactions).values({
+                from_agent: agentWins ? opponent.id : agent.id,
+                to_agent: agentWins ? agent.id : opponent.id,
+                amount: betAmount,
+                reason: 'gambling',
+                items_exchanged: null,
+                location_id: agent.current_location,
+                timestamp: Date.now(),
+              }).run();
+
+              const [ordA, ordB] = [Math.min(agent.id, opponent.id), Math.max(agent.id, opponent.id)];
+              db.insert(relationshipEvents).values({
+                agent_a: ordA,
+                agent_b: ordB,
+                event_type: 'gambling',
+                description: `Gambling at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}`,
+                friendship_delta_ab: agentWins === (agent.id === ordA) ? 2 : -3,
+                friendship_delta_ba: agentWins === (agent.id === ordA) ? -3 : 2,
+                romance_delta_ab: 0, romance_delta_ba: 0,
+                trust_delta_ab: -1, trust_delta_ba: -1,
+                sentiment: 0,
+                processed: false,
+                timestamp: Date.now(),
+              }).run();
+
+              logActivity({
+                type: 'drama',
+                initiator: agent.id,
+                target: opponent.id,
+                templateData: { description: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}` },
+              });
+              gamblingCooldowns.set(pairKey, currentTick);
             }
-
-            db.insert(economyTransactions).values({
-              from_agent: agentWins ? opponent.id : agent.id,
-              to_agent: agentWins ? agent.id : opponent.id,
-              amount: betAmount,
-              reason: 'gambling',
-              items_exchanged: null,
-              location_id: agent.current_location,
-              timestamp: Date.now(),
-            }).run();
-
-            const [ordA, ordB] = [Math.min(agent.id, opponent.id), Math.max(agent.id, opponent.id)];
-            db.insert(relationshipEvents).values({
-              agent_a: ordA,
-              agent_b: ordB,
-              event_type: 'gambling',
-              description: `Gambling at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}`,
-              friendship_delta_ab: agentWins === (agent.id === ordA) ? 2 : -3,
-              friendship_delta_ba: agentWins === (agent.id === ordA) ? -3 : 2,
-              romance_delta_ab: 0, romance_delta_ba: 0,
-              trust_delta_ab: -1, trust_delta_ba: -1,
-              sentiment: 0,
-              processed: false,
-              timestamp: Date.now(),
-            }).run();
-
-            logActivity({
-              type: 'drama',
-              initiator: agent.id,
-              target: opponent.id,
-              templateData: { description: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}` },
-            });
           }
         }
       }

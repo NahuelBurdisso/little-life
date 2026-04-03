@@ -468,6 +468,47 @@ async function processCompletedConversation(
     }
   }
 
+  // --- Proactive Financial Help ---
+  if (overallSentiment > 0 && participants.length >= 2) {
+    const speaker = participants[0];
+    const otherParticipants = participants.slice(1);
+    const speakerId = speaker.id;
+    const otherId = otherParticipants[0].id;
+
+    const rel = db.select().from(relationships).where(
+      and(
+        eq(relationships.agent_a, Math.min(speakerId, otherId)),
+        eq(relationships.agent_b, Math.max(speakerId, otherId)),
+      )
+    ).get();
+    const friendship = rel ? (speakerId < otherId ? rel.friendship_ab : rel.friendship_ba) : 0;
+
+    if (friendship > 50) {
+      const speakerEcon = db.select().from(economy).where(eq(economy.agent_id, speakerId)).get();
+      const otherEcon = db.select().from(economy).where(eq(economy.agent_id, otherId)).get();
+      if (speakerEcon && otherEcon) {
+        let giverId: number | null = null;
+        let receiverId: number | null = null;
+        let giverMoney = 0;
+        if (speakerEcon.money > 60 && otherEcon.money < 15) { giverId = speakerId; receiverId = otherId; giverMoney = speakerEcon.money; }
+        else if (otherEcon.money > 60 && speakerEcon.money < 15) { giverId = otherId; receiverId = speakerId; giverMoney = otherEcon.money; }
+
+        if (giverId && receiverId) {
+          const giverAgent = giverId === speakerId ? speaker : otherParticipants[0];
+          const warmth = (giverAgent?.personality as any)?.warmth ?? 50;
+          if (warmth > 55) {
+            const gift = Math.min(10, Math.round(giverMoney * 0.1));
+            if (gift >= 2) {
+              db.update(economy).set({ money: giverMoney - gift }).where(eq(economy.agent_id, giverId)).run();
+              const recvEcon = db.select().from(economy).where(eq(economy.agent_id, receiverId)).get();
+              if (recvEcon) db.update(economy).set({ money: recvEcon.money + gift }).where(eq(economy.agent_id, receiverId)).run();
+            }
+          }
+        }
+      }
+    }
+  }
+
   // --- Fact Creation ---
 
   // Drunk incident: drunk participant in a negative conversation

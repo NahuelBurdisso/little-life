@@ -14,6 +14,12 @@ import { simEvents } from '../../lib/simEvents';
 
 const productionThisTick = new Map<number, { item: string; qty: number }>();
 
+let dailyLivingCostMultiplier = 1.0;
+let dailyTaxRateMultiplier = 1.0;
+
+export function getDailyTaxMultiplier(): number { return dailyTaxRateMultiplier; }
+export function getDailyLivingCostMultiplier(): number { return dailyLivingCostMultiplier; }
+
 const lastMilestoneLevel = new Map<number, number>();
 const MILESTONES = [10, 25, 50, 100];
 
@@ -330,7 +336,7 @@ export function economyTick(): void {
           // Transfer item
           const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], itemToBuy, 1);
           const newBuyerInv = addToInventory(buyerEcon.inventory as any[], itemToBuy, 1, now);
-          const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE);
+          const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
           const sellerReceives = price - tax;
 
           db.update(economy).set({
@@ -413,7 +419,7 @@ export function economyTick(): void {
       const newBuyerInv = addToInventory(buyerEcon.inventory as any[], item, 1, now);
 
       // Calculate tax
-      const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE);
+      const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
       const sellerReceives = price - tax;
 
       // Update shop owner
@@ -466,7 +472,7 @@ export function economyTick(): void {
     for (const cost of LIVING_COSTS) {
       if (cost.frequency !== 'per_day') continue;
       for (const econ of allEcon) {
-        const newMoney = Math.max(0, econ.money - cost.amount);
+        const newMoney = Math.max(0, econ.money - cost.amount * dailyLivingCostMultiplier);
         db.update(economy).set({ money: newMoney, daily_expenses: cost.amount })
           .where(eq(economy.id, econ.id)).run();
         econ.money = newMoney;
@@ -486,6 +492,17 @@ export function economyTick(): void {
     const targetTotal =
       activeAgents.length * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
     const ratio = targetTotal > 0 ? totalMoney / targetTotal : 1;
+
+    if (ratio > 1.5) {
+      dailyLivingCostMultiplier = 1.0 + (ratio - 1.5) * 0.4;
+      dailyTaxRateMultiplier = 1.0 + (ratio - 1.5) * 0.6;
+    } else if (ratio < 0.5) {
+      dailyLivingCostMultiplier = Math.max(0.3, ratio);
+      dailyTaxRateMultiplier = 0.5;
+    } else {
+      dailyLivingCostMultiplier = 1.0;
+      dailyTaxRateMultiplier = 1.0;
+    }
 
     if (ratio > CONFIG.ECONOMY.INFLATION_THRESHOLD) {
       logActivity({

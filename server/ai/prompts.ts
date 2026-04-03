@@ -100,6 +100,13 @@ export interface LocationRow {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+function describeFinancialStatus(money: number): string {
+  if (money < 10) return 'desperate';
+  if (money < 25) return 'struggling';
+  if (money < 50) return 'getting by';
+  return 'comfortable';
+}
+
 function formatTimeOfDay(hour: number): string {
   if (hour >= 5 && hour < 7) return 'Dawn';
   if (hour >= 7 && hour < 12) return 'Morning';
@@ -266,9 +273,12 @@ export function buildAgentSystemPrompt(
   // Critical needs
   const criticalNeedsLine = buildCriticalNeedsLine(needs, economy.money);
 
+  // Financial status
+  const econLine = `Your financial situation: ${describeFinancialStatus(economy.money)} ($${Math.round(economy.money)}).`;
+
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ');
-  const middle = [moodLine, stateLines, criticalNeedsLine].filter(Boolean).join('\n');
+  const middle = [moodLine, stateLines, criticalNeedsLine, econLine].filter(Boolean).join('\n');
   const instruction = "Reply in 1-2 sentences. Natural speech, not prose. You can be rude, evasive, flirty, or dismissive — whatever fits.";
 
   const sections = [header, middle, instruction].filter(Boolean);
