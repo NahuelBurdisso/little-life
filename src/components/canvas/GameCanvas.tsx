@@ -10,6 +10,8 @@ import { WeatherEffects } from "./WeatherEffects";
 import { SpritePool } from "./SpritePool";
 import { BubbleSystem } from "./BubbleSystem";
 import { InteractionLayer } from "./InteractionLayer";
+import { ParticleEngine } from "./particles/ParticleEngine";
+import type { ParticleContext } from "./particles/types";
 
 interface GameCanvasProps {
   agents: any[];
@@ -49,6 +51,7 @@ export function GameCanvas({
   const relationshipLinesRef = useRef<Graphics | null>(null);
   const tensionLinesRef = useRef<Graphics | null>(null);
   const pathTrailRef = useRef<Graphics | null>(null);
+  const particleEngineRef = useRef<ParticleEngine | null>(null);
 
   // Layer containers
   const worldContainerRef = useRef<Container | null>(null);
@@ -60,15 +63,17 @@ export function GameCanvas({
   const locationsRef = useRef(locations);
   locationsRef.current = locations;
 
-  // Stable data refs so the per-frame ticker can access latest conversations/agents
+  // Stable data refs so the per-frame ticker can access latest conversations/agents/world
   const conversationsRef = useRef(conversations);
   const agentsRef = useRef(agents);
+  const worldRef = useRef(world);
 
   // Update refs when data changes
   useEffect(() => {
     conversationsRef.current = conversations;
     agentsRef.current = agents;
-  }, [conversations, agents]);
+    worldRef.current = world;
+  }, [conversations, agents, world]);
 
   // Stable callback refs so the interaction layer doesn't go stale
   const callbacksRef = useRef({ onAgentSelect, onAgentContextMenu, onAgentHover });
@@ -130,6 +135,11 @@ export function GameCanvas({
     const bubbleSystem = new BubbleSystem(worldContainer);
     bubbleSystemRef.current = bubbleSystem;
 
+    // Particle engine — data-driven visual effects above sprites
+    const particleEngine = new ParticleEngine(worldContainer, 500);
+    particleEngine.initTextures(app.renderer as any);
+    particleEngineRef.current = particleEngine;
+
     // Camera — set actual map dimensions from tilemap
     const camera = new CameraController(app, worldContainer);
     const mapSize = tilemap.getMapSize();
@@ -171,6 +181,7 @@ export function GameCanvas({
       tensionLines.destroy();
       pathTrail.destroy();
       bubbleSystem.destroy();
+      particleEngine.destroy();
       worldContainer.destroy({ children: true });
     };
   }, [app, assetsLoaded.loaded, stableOnSelect, stableOnHover, stableOnContext]);
@@ -238,6 +249,35 @@ export function GameCanvas({
           delta / 60, // convert PIXI ticker delta to seconds
           spritePoolRef.current
         );
+      }
+
+      // Update particle engine per-frame
+      if (particleEngineRef.current && spritePoolRef.current) {
+        const agentData = (agentsRef.current ?? []).map((a: any) => {
+          const sprite = spritePoolRef.current!.getSprite(String(a.id));
+          return {
+            id: String(a.id),
+            x: sprite?.container.x ?? 0,
+            y: sprite?.container.y ?? 0,
+            states: (a.activeStates ?? []).map((s: any) => s.type ?? s),
+            action: (typeof a.current_action === 'string' ? a.current_action : a.current_action?.type) ?? 'idle',
+          };
+        });
+
+        const ctx: ParticleContext = {
+          agents: agentData,
+          weather: (worldRef.current as any)?.weather ?? 'sunny',
+          dayPhase: (worldRef.current as any)?.day_phase ?? 'morning',
+          season: (worldRef.current as any)?.time?.season ?? 'spring',
+          locations: [], // TODO: pass location data if location-type triggers are used
+        };
+
+        // Camera center for world-space emitters
+        const wc = worldContainerRef.current;
+        const cameraX = wc ? -wc.x / wc.scale.x + (app.renderer.width / 2) / wc.scale.x : 0;
+        const cameraY = wc ? -wc.y / wc.scale.y + (app.renderer.height / 2) / wc.scale.y : 0;
+
+        particleEngineRef.current.update(delta / 60, ctx, cameraX, cameraY);
       }
     };
 
