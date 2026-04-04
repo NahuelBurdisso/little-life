@@ -53,6 +53,9 @@ export function GameCanvas({
   // Layer containers
   const worldContainerRef = useRef<Container | null>(null);
 
+  // Track previous agent actions to detect changes for thought bubbles
+  const prevActionsRef = useRef<Map<string, string>>(new Map());
+
   // Stable locations ref so the init effect can read the latest value without re-running
   const locationsRef = useRef(locations);
   locationsRef.current = locations;
@@ -185,6 +188,21 @@ export function GameCanvas({
     const spritePool = spritePoolRef.current;
     // Set target positions on all sprites (they'll lerp toward these per-frame)
     spritePool.update(agents, 1, selectedAgentId);
+
+    // Show thought bubble when an agent's action changes
+    for (const agent of agents) {
+      const agentId = String(agent.id);
+      const actionDesc = (agent.current_action as any)?.taskDescription;
+      const prevAction = prevActionsRef.current.get(agentId);
+
+      if (actionDesc && actionDesc !== prevAction && bubbleSystemRef.current) {
+        const sprite = spritePool.getSprite(agentId);
+        if (sprite) {
+          bubbleSystemRef.current.showTextThought(agentId, actionDesc, { x: sprite.container.x, y: sprite.container.y });
+        }
+      }
+      prevActionsRef.current.set(agentId, actionDesc || '');
+    }
 
     // Rebind interaction events for any new sprites
     interactionRef.current?.updateBindings(spritePool.getAllIds());

@@ -235,10 +235,14 @@ function buildTurnInstruction(
   otherName: string,
   topic: string | null,
 ): string {
-  if (messageCount === 0 && topic) return `Start talking to ${otherName} about ${topic}.`;
-  if (messageCount === 0) return `Start talking to ${otherName}.`;
-  if (messageCount >= maxTurns - 2) return 'Wrap up the conversation.';
-  return `Respond to ${otherName}.`;
+  if (messageCount === 0 && topic) {
+    return `Start talking to ${otherName} about ${topic}. If you have shared memories or past conversations with them, reference them naturally — "I was thinking about what you said last time..." or "Remember when we...". Be authentic to your personality.`;
+  }
+  if (messageCount === 0) {
+    return `Start talking to ${otherName}. If you have memories of past interactions, bring them up naturally. Be authentic to your personality.`;
+  }
+  if (messageCount >= maxTurns - 2) return 'Wrap up the conversation naturally.';
+  return `Respond to ${otherName}. Stay true to your personality and current mood.`;
 }
 
 // ---------------------------------------------------------------------------

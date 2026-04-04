@@ -1,6 +1,6 @@
 import { db } from '../../db';
 import { agents, needs, locations, economy } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, ne } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
@@ -8,6 +8,7 @@ import { buildDailyPlanPrompt, buildReplanPrompt } from './planPrompts';
 import { parsePlanBlocks } from './planParser';
 import type { DailyPlan, PlanBlock, PlanExecutionState, ReplanEvent } from './types';
 import { logActivity } from '../activityLogger';
+import { describeEvent } from '../memory/descriptionTemplates';
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for injected singletons
@@ -252,6 +253,32 @@ export class PlanGenerator {
       0,
       4,
     );
+
+    // 14. Generate anticipation memories for blocks involving other agents
+    const allAgentRows = db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(ne(agents.id, agentId))
+      .all();
+    const allAgentNames = allAgentRows.map((r) => r.name);
+
+    for (const block of plan.blocks) {
+      const mentionedAgent = allAgentNames.find((name) =>
+        block.broad_action.toLowerCase().includes(name.toLowerCase()),
+      );
+      if (mentionedAgent) {
+        const hour = block.start_hour;
+        const timeDesc = hour < 12 ? 'this morning' : hour < 17 ? 'this afternoon' : 'this evening';
+        this.memoryService.record(
+          agentId,
+          'observation',
+          describeEvent('anticipation', { agent: mentionedAgent, time: timeDesc, action: block.broad_action }),
+          { subtype: 'anticipation' },
+          0.2,
+          3,
+        );
+      }
+    }
 
     console.log(
       `[PlanGenerator] Agent ${agentRow.name} planned day ${currentDay}: ${blocks.length} blocks`,

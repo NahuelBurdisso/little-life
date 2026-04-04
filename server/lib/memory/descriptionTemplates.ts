@@ -153,6 +153,11 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
   perception_investigate: [
     (ctx) => `I decided to check on ${ctx.target} — something seemed suspicious.`,
   ],
+  anticipation: [
+    (ctx) => `I'm looking forward to ${ctx.action} ${ctx.time}.`,
+    (ctx) => `I'm thinking about seeing ${ctx.agent} ${ctx.time}.`,
+    (ctx) => `I have plans to ${ctx.action} ${ctx.time} — feeling good about it.`,
+  ],
 };
 
 /**

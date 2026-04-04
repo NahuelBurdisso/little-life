@@ -132,6 +132,54 @@ export class BubbleSystem {
     });
   }
 
+  /** Show a text thought bubble (italic, translucent) above the agent. Auto-dismisses after 4s. */
+  showTextThought(agentId: string, text: string, position: { x: number; y: number }) {
+    // Don't replace speech bubbles with thoughts
+    const existing = this.bubbles.get(agentId);
+    if (existing?.type === 'speech') return;
+
+    this.removeBubble(agentId);
+
+    const truncated = text.length > 40 ? text.slice(0, 39) + '…' : text;
+
+    const bubbleContainer = new PIXI.Container();
+
+    const textStyle = new PIXI.TextStyle({
+      fontFamily: 'monospace',
+      fontSize: 7,
+      fill: 0xc4b5fd, // light purple — thought color
+      fontStyle: 'italic',
+      wordWrap: true,
+      wordWrapWidth: 100,
+    });
+
+    const textObj = new PIXI.Text({ text: `💭 ${truncated}`, style: textStyle });
+    const padX = 5;
+    const padY = 3;
+    const bgW = textObj.width + padX * 2;
+    const bgH = textObj.height + padY * 2;
+
+    const bg = new PIXI.Graphics();
+    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: 0x1e1b4b, alpha: 0.85 }); // dark indigo bg
+    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: 0x6366f1, width: 1, alpha: 0.4 });
+
+    textObj.x = padX;
+    textObj.y = padY;
+
+    bubbleContainer.addChild(bg, textObj);
+    bubbleContainer.x = position.x - bgW / 2;
+    bubbleContainer.y = position.y - 30 - bgH; // above agent, above speech area
+
+    this.container.addChild(bubbleContainer);
+    this.bubbles.set(agentId, {
+      container: bubbleContainer,
+      agentId,
+      type: 'thought',
+      createdAt: Date.now(),
+      duration: 4000, // 4 seconds
+    });
+  }
+
   /** Show a small emote that floats up and fades out. */
   showEmote(agentId: string, emoteType: string, position: { x: number; y: number }) {
     // Emotes use a separate key so they don't replace speech bubbles
