@@ -53,11 +53,12 @@ export class ParticleEngine {
     }
   }
 
-  /** Call once after PixiJS renderer is ready to pre-render shape textures. */
-  initTextures(renderer: PIXI.Renderer): void {
+  /** Call once after PixiJS renderer is ready to load/render shape textures. */
+  async initTextures(renderer: PIXI.Renderer): Promise<void> {
     if (this.initialized) return;
-    this.textures = createShapeTextures(renderer);
+    this.textures = await createShapeTextures(renderer);
     this.initialized = true;
+    console.log(`[ParticleEngine] Loaded ${this.textures.size} shape textures`);
   }
 
   /**

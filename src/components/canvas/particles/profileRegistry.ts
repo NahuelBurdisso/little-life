@@ -20,7 +20,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xfbbf24, 0xf59e0b, 0xfcd34d],
-      sizeRange: [0.3, 0.6],
+      sizeRange: [0.02, 0.05],
       alpha: 0.6,
     },
     motion: {
@@ -41,7 +41,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'heart',
       colors: [0xec4899, 0xf472b6, 0xfb7185],
-      sizeRange: [0.5, 0.9],
+      sizeRange: [0.03, 0.06],
       alpha: 0.7,
     },
     motion: {
@@ -62,7 +62,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'spark',
       colors: [0xef4444, 0xf97316, 0xfbbf24],
-      sizeRange: [0.3, 0.7],
+      sizeRange: [0.02, 0.04],
       alpha: 0.8,
     },
     motion: {
@@ -83,7 +83,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'raindrop',
       colors: [0x60a5fa, 0x93c5fd, 0x3b82f6],
-      sizeRange: [0.3, 0.5],
+      sizeRange: [0.02, 0.04],
       alpha: 0.5,
     },
     motion: {
@@ -104,7 +104,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0x6366f1, 0x818cf8, 0x4f46e5],
-      sizeRange: [0.4, 0.8],
+      sizeRange: [0.03, 0.06],
       alpha: 0.3,
     },
     motion: {
@@ -125,7 +125,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'star',
       colors: [0xfbbf24, 0xfde68a, 0xfef3c7],
-      sizeRange: [0.3, 0.6],
+      sizeRange: [0.02, 0.05],
       alpha: 0.7,
     },
     motion: {
@@ -146,7 +146,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xa3e635, 0x84cc16, 0x65a30d],
-      sizeRange: [0.2, 0.5],
+      sizeRange: [0.015, 0.035],
       alpha: 0.35,
     },
     motion: {
@@ -169,7 +169,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xa78bfa, 0xc4b5fd, 0x8b5cf6],
-      sizeRange: [0.2, 0.4],
+      sizeRange: [0.015, 0.03],
       alpha: 0.4,
     },
     motion: {
@@ -192,7 +192,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xffffff, 0xe2e8f0, 0xf1f5f9],
-      sizeRange: [0.2, 0.5],
+      sizeRange: [0.015, 0.035],
       alpha: 0.6,
     },
     motion: {
@@ -215,7 +215,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xfde68a, 0xfbbf24, 0xa3e635],
-      sizeRange: [0.2, 0.4],
+      sizeRange: [0.015, 0.03],
       alpha: 0.6,
     },
     motion: {
@@ -236,7 +236,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xfbbf24, 0xfca5a5, 0xfde68a],
-      sizeRange: [0.2, 0.5],
+      sizeRange: [0.015, 0.035],
       alpha: 0.35,
     },
     motion: {
