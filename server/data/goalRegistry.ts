@@ -398,4 +398,11 @@ export const GOAL_TRIGGER_REGISTRY: GoalTriggerDef[] = [
     personality_gate: { warmth: '> 40' },
     trigger_on: 'observers',
   },
+  {
+    condition: { type: 'fact_learned', fact_type: 'theft', is_victim: false },
+    generates: 'investigate',
+    target: 'fact.subject_id',
+    priority_base: 0.6,
+    personality_gate: { morality: '> 55' },
+  },
 ];

@@ -938,6 +938,45 @@ async function processCompletedConversation(
     }
   }
 
+  // Blackmail report: if victim talks to constable with positive sentiment, share blackmail knowledge
+  if (overallSentiment > 0 && participants.length >= 2) {
+    const speaker = participants[0];
+    const speakerId = speaker.id;
+    const otherParticipants = participants.slice(1);
+    const otherId = otherParticipants[0]?.id;
+
+    if (otherId != null) {
+      const speakerJobRow = db.select({ job: economy.job }).from(economy).where(eq(economy.agent_id, speakerId)).get();
+      const otherJobRow = db.select({ job: economy.job }).from(economy).where(eq(economy.agent_id, otherId)).get();
+      const speakerJob = speakerJobRow?.job ?? '';
+      const otherJob = otherJobRow?.job ?? '';
+
+      const constableId = speakerJob === 'constable' ? speakerId : otherJob === 'constable' ? otherId : null;
+      const nonConstableId = constableId === speakerId ? otherId : speakerId;
+
+      if (constableId !== null) {
+        // Check if non-constable is a blackmail victim
+        const blackmailFacts = db.select().from(shared_knowledge)
+          .where(and(
+            eq(shared_knowledge.type, 'blackmail'),
+            eq(shared_knowledge.is_active, true),
+            eq(shared_knowledge.target_id, nonConstableId),
+          )).all();
+
+        for (const fact of blackmailFacts) {
+          const knownBy = fact.known_by as number[];
+          if (!knownBy.includes(constableId)) {
+            // Constable learns about blackmail
+            const updatedKnownBy = [...knownBy, constableId];
+            db.update(shared_knowledge).set({ known_by: updatedKnownBy }).where(eq(shared_knowledge.id, fact.id)).run();
+            const victimName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, nonConstableId)).get()?.name ?? `Agent#${nonConstableId}`;
+            logActivity({ type: 'drama', initiator: nonConstableId, templateData: { description: `${victimName} reported blackmail to the constable.` } });
+          }
+        }
+      }
+    }
+  }
+
   // --- Conversation Quality Evaluation ---
   const evaluation = evaluateConversation({
     messages: messages.map(m => ({ text: m.text || '', sentiment: m.sentiment || 0 })),

@@ -201,4 +201,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   simEvents.on('social:seduction', ({ agentId, targetName }: { agentId: number; targetName: string }) => {
     memoryService.record(agentId, 'observation', describeEvent('social_seduction', { target: targetName }), { subtype: 'social' }, 0.2, 5);
   });
+
+  // Crime: arrested
+  simEvents.on('crime:arrested', ({ agentId, constableName }: { agentId: number; constableName: string }) => {
+    memoryService.record(agentId, 'observation',
+      describeEvent('crime_arrested', { constable: constableName }),
+      { subtype: 'crime' }, -0.8, 8);
+  });
 }

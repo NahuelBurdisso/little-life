@@ -67,6 +67,9 @@ const alcoholRecoveredAtTick = new Map<number, number>();
 // Track how long an agent has been broke (for in_debt trigger)
 const brokeSince = new Map<number, number>();
 
+// Track ticks when each agent gambled (for addiction detection)
+const gamblingHistory = new Map<number, number[]>(); // agentId → array of ticks when gambled
+
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 export function statesTick() {
@@ -177,6 +180,26 @@ export function statesTick() {
       .where(eq(agentStates.agent_id, agent.id))
       .all();
     processStateEffects(agent, states, allAgents, currentTick);
+  }
+
+  // ── Blackmail self-expose: honest victims have a small daily chance to expose ──
+  if (currentTick % 1440 < 2) {
+    const blackmailFacts = db.select().from(shared_knowledge)
+      .where(and(eq(shared_knowledge.type, 'blackmail'), eq(shared_knowledge.is_active, true)))
+      .all();
+    for (const fact of blackmailFacts) {
+      const victimId = fact.target_id;
+      if (!victimId) continue;
+      const victim = db.select({ personality: agents.personality, name: agents.name }).from(agents).where(eq(agents.id, victimId)).get();
+      if (!victim?.personality) continue;
+      const honesty = (victim.personality as any).honesty ?? 50;
+      if (honesty > 60 && Math.random() < 0.05) {
+        // Self-expose: make the secret public, deactivate blackmail
+        db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, fact.id)).run();
+        simEvents.emit('state:triggered', { agentId: victimId, state: 'relieved', cause: 'exposed blackmail secret publicly' });
+        logActivity({ type: 'drama', initiator: victimId, templateData: { description: `${victim.name} publicly exposed their blackmailer's leverage, ending the blackmail.` } });
+      }
+    }
   }
 
   spreadPublicKnowledge();
@@ -2071,6 +2094,31 @@ function processStateEffects(
               });
               simEvents.emit('economy:gambling', { agentId: agent.id, amount: betAmount, won: agentWins, opponentName: opponent.name });
               gamblingCooldowns.set(pairKey, currentTick);
+
+              // Track gambling frequency for addiction detection
+              const gambHistory = gamblingHistory.get(agent.id) ?? [];
+              gambHistory.push(currentTick);
+              // Keep only last 3 game days (4320 ticks)
+              const recentGambles = gambHistory.filter(t => currentTick - t < 4320);
+              gamblingHistory.set(agent.id, recentGambles);
+
+              // Trigger gambling_addict state if 5+ gambles in 3 days
+              const agentActiveTypes = new Set(
+                db.select({ type: agentStates.type }).from(agentStates).where(eq(agentStates.agent_id, agent.id)).all().map(s => s.type)
+              );
+              if (recentGambles.length >= 5 && !agentActiveTypes.has('gambling_addict')) {
+                db.insert(agentStates).values({
+                  agent_id: agent.id,
+                  type: 'gambling_addict',
+                  severity: 0.5,
+                  started_at: currentTick,
+                  duration: 999999,
+                  source: 'gambling:frequency',
+                  metadata: null,
+                }).run();
+                simEvents.emit('state:triggered', { agentId: agent.id, state: 'gambling_addict', cause: 'frequent gambling' });
+                logActivity({ type: 'state_gained', initiator: agent.id, templateData: { agent: agent.name, state: 'gambling_addict' } });
+              }
             }
           }
         }

@@ -171,6 +171,14 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
     personality_weights: { curiosity: 0.4, morality: 0.2 },
     cooldown: 120,
   },
+  {
+    id: 'constable_sees_criminal',
+    observes: { target_states: ['in_debt'] },
+    reaction: 'approach_investigate',
+    base_score: 35,
+    personality_weights: { morality: 0.5 },
+    cooldown: 180,
+  },
 ];
 
 export const REACTION_TYPES: Record<string, ReactionDef> = {
@@ -230,5 +238,12 @@ export const REACTION_TYPES: Record<string, ReactionDef> = {
     action: 'none',
     memory_template: 'perception_general_observation',
     trigger_reason: 'perception:observe',
+  },
+  approach_investigate: {
+    action: 'approach',
+    conversation_topic: 'checking on {target}',
+    conversation_tier: 'llm_standard',
+    memory_template: 'perception_investigate',
+    trigger_reason: 'perception:investigate',
   },
 };

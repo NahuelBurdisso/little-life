@@ -146,6 +146,13 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I charmed ${ctx.target} with some flirtatious talk.`,
     (ctx) => `I turned on the charm with ${ctx.target}.`,
   ],
+  crime_arrested: [
+    (ctx) => `I was arrested by ${ctx.constable}. A terrible day.`,
+    (ctx) => `${ctx.constable} arrested me. I feel ashamed.`,
+  ],
+  perception_investigate: [
+    (ctx) => `I decided to check on ${ctx.target} — something seemed suspicious.`,
+  ],
 };
 
 /**

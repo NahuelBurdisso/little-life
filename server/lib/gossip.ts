@@ -73,6 +73,9 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   death: (s, _t, ctx) =>
     ctx?.detail ? `${s} has died — ${ctx.detail}` :
     `${s} has passed away`,
+  arrest: (s, _t, ctx) =>
+    ctx?.detail ? `${s} was arrested: ${ctx.detail}` :
+    `${s} was arrested`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────

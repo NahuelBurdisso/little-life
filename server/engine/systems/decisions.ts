@@ -8,6 +8,7 @@ import {
   conversationQueue,
   conversations,
   relationshipEvents,
+  shared_knowledge,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { INTERIOR_ZONES } from '../../data/interiors';
@@ -1065,10 +1066,24 @@ export function tick(world: WorldRow): void {
       }
 
       const negFacts = getNegativeFactCount(other.id);
-      if (negFacts < 8) continue;
 
-      // 10% chance per tick to arrest (not every tick)
-      if (Math.random() > 0.1) continue;
+      // Check if constable has direct knowledge of crimes by this target
+      const allKnowledgeFacts = db.select().from(shared_knowledge)
+        .where(eq(shared_knowledge.is_active, true))
+        .all()
+        .filter(f => {
+          const knownBy = f.known_by as number[];
+          return knownBy.includes(agent.id) && // constable knows
+            f.subject_id === other.id && // about this target
+            ['theft', 'blackmail', 'seduction'].includes(f.type);
+        });
+
+      const arrestThreshold = allKnowledgeFacts.length > 0 ? 4 : 8;
+      if (negFacts < arrestThreshold) continue;
+
+      // 25% chance when constable has direct crime knowledge, 10% otherwise
+      const arrestChance = allKnowledgeFacts.length > 0 ? 0.25 : 0.1;
+      if (Math.random() > arrestChance) continue;
 
       // Find the prison
       const prison = allLocations.find(l => l.type === 'prison');
@@ -1107,6 +1122,10 @@ export function tick(world: WorldRow): void {
         target: other.id,
         templateData: { description: `${agent.name} arrested ${other.name}!` },
       });
+
+      // Create arrest gossip fact
+      createFact('arrest', other.id, agent.id, 2, [agent.id, other.id], 'witnessed', { detail: `arrested by ${agent.name}` });
+      simEvents.emit('crime:arrested', { agentId: other.id, constableName: agent.name });
 
       // Arrest memories
       simEvents.emit('interaction:completed', {
