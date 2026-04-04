@@ -155,6 +155,22 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
     },
     cooldown: 20,
   },
+  {
+    id: 'someone_in_debt',
+    observes: { target_states: ['in_debt'], min_friendship: 20 },
+    reaction: 'offer_help',
+    base_score: 35,
+    personality_weights: { warmth: 0.5, morality: 0.3 },
+    cooldown: 180,
+  },
+  {
+    id: 'someone_arrested',
+    observes: { target_states: ['arrested'] },
+    reaction: 'observe_only',
+    base_score: 40,
+    personality_weights: { curiosity: 0.4, morality: 0.2 },
+    cooldown: 120,
+  },
 ];
 
 export const REACTION_TYPES: Record<string, ReactionDef> = {
@@ -209,5 +225,10 @@ export const REACTION_TYPES: Record<string, ReactionDef> = {
     conversation_tier: 'llm_deep',
     memory_template: 'perception_jealousy',
     trigger_reason: 'perception_jealousy',
+  },
+  observe_only: {
+    action: 'none',
+    memory_template: 'perception_general_observation',
+    trigger_reason: 'perception:observe',
   },
 };

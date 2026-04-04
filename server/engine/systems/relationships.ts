@@ -360,6 +360,18 @@ export function tick(
       simEvents.emit('relationship:changed', { agentId: b, otherName: nameA, status: newStatus });
     }
 
+    // Emit sentiment event if friendship or romance shift is significant
+    if (Math.abs(fDeltaAB) > 10 || Math.abs(rDeltaAB) > 10 || Math.abs(fDeltaBA) > 10 || Math.abs(rDeltaBA) > 10) {
+      const nameA = db.select({ name: agents.name }).from(agents).where(eq(agents.id, a)).get()?.name ?? `Agent#${a}`;
+      const nameB = db.select({ name: agents.name }).from(agents).where(eq(agents.id, b)).get()?.name ?? `Agent#${b}`;
+      const friendshipDeltaFromA = fDeltaAB;
+      const friendshipDeltaFromB = fDeltaBA;
+      const sentimentFromA = friendshipDeltaFromA > 0 ? 'closer to' : 'more distant from';
+      const sentimentFromB = friendshipDeltaFromB > 0 ? 'closer to' : 'more distant from';
+      simEvents.emit('relationship:sentiment', { agentId: a, otherName: nameB, sentiment: sentimentFromA });
+      simEvents.emit('relationship:sentiment', { agentId: b, otherName: nameA, sentiment: sentimentFromB });
+    }
+
     // Mark event as processed
     db.update(relationshipEvents)
       .set({ processed: true })

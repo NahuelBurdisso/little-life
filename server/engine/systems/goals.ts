@@ -15,6 +15,7 @@ import { MAX_GOALS_PER_AGENT } from '../../lib/interactionConstants';
 import { getEffectivePersonality } from '../../lib/states';
 import { logActivity } from '../../lib/activityLogger';
 import type { GoalTriggerDef } from '../../lib/interactionConstants';
+import { simEvents } from '../../lib/simEvents';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -201,6 +202,8 @@ function evaluateTriggers(agent: any, currentTick: number): void {
 
     activeGoals.push({ type: trigger.generates, target_id: targetId } as any);
 
+    simEvents.emit('goal:created', { agentId: agent.id, goalType: trigger.generates, targetId: targetId });
+
     logActivity({
       type: 'system',
       initiator: agent.id,
@@ -279,6 +282,12 @@ function evaluateAbandonment(agent: any, goal: any, currentTick: number): void {
       db.update(goals).set({ status: newStatus }).where(eq(goals.id, goal.id)).run();
       goal.status = newStatus;
 
+      if (newStatus === 'completed') {
+        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type });
+      } else {
+        simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type });
+      }
+
       logActivity({
         type: newStatus === 'completed' ? 'goal_completed' : 'goal_abandoned',
         initiator: agent.id,
@@ -317,6 +326,7 @@ function evaluatePassiveProgress(agent: any, goal: any, _currentTick: number): v
           .set({ progress: newProgress, status: 'completed' })
           .where(eq(goals.id, goal.id))
           .run();
+        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type });
         logActivity({
           type: 'goal_completed',
           initiator: agent.id,

@@ -284,6 +284,12 @@ export async function conversationsTick(): Promise<void> {
           .run();
       }
 
+      // Emit conversation:started for both participants
+      if (firstParticipant && secondParticipant) {
+        simEvents.emit('conversation:started', { agentId: firstParticipant.id, otherName: secondParticipant.name });
+        simEvents.emit('conversation:started', { agentId: secondParticipant.id, otherName: firstParticipant.name });
+      }
+
       // Collect dispatch — actual startConversation() call goes outside transaction
       dispatches.push({
         conversationId,

@@ -118,6 +118,34 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
   perception_jealousy: [
     (ctx) => `I saw ${ctx.target} and felt a surge of jealousy.`,
   ],
+  perception_general_observation: [
+    (ctx) => `I noticed something going on with ${ctx.target}.`,
+    (ctx) => `I observed ${ctx.target} nearby — something seemed off.`,
+  ],
+  goal_created: [
+    (ctx) => `I set a new goal: ${ctx.goal}.`,
+    (ctx) => `I've decided to pursue ${ctx.goal}.`,
+  ],
+  goal_completed: [
+    (ctx) => `I accomplished my goal: ${ctx.goal}!`,
+    (ctx) => `I finally achieved ${ctx.goal}.`,
+  ],
+  goal_abandoned: [
+    (ctx) => `I gave up on my goal to ${ctx.goal}.`,
+    (ctx) => `I decided to let go of ${ctx.goal}.`,
+  ],
+  economy_gambling_won: [
+    (ctx) => `I won $${ctx.amount} gambling against ${ctx.opponent}!`,
+    (ctx) => `Lady luck smiled on me — won $${ctx.amount} from ${ctx.opponent}.`,
+  ],
+  economy_gambling_lost: [
+    (ctx) => `I lost $${ctx.amount} gambling to ${ctx.opponent}.`,
+    (ctx) => `Bad luck gambling — lost $${ctx.amount} to ${ctx.opponent}.`,
+  ],
+  social_seduction: [
+    (ctx) => `I charmed ${ctx.target} with some flirtatious talk.`,
+    (ctx) => `I turned on the charm with ${ctx.target}.`,
+  ],
 };
 
 /**

@@ -1,10 +1,11 @@
 import { db } from '../../db';
-import { worldState, worldEvents } from '../../db/schema';
+import { worldState, worldEvents, agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
+import { simEvents } from '../../lib/simEvents';
 
 // Season-based weather weights
 const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
@@ -187,6 +188,13 @@ export function eventsTick(): void {
     type: 'world_event',
     templateData: { description: `${chosen.name}: ${chosen.description}` },
   });
+
+  // Emit world event for all active agents
+  const activeAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
+  const eventDescription = `${chosen.name}: ${chosen.description}`;
+  for (const agent of activeAgents) {
+    simEvents.emit('event:world', { agentId: agent.id, event: eventDescription });
+  }
 
   eventsChanged = true;
 

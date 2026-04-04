@@ -177,4 +177,28 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       describeEvent(templateKey, { target: targetName }),
       { subtype: 'perception', targetName });
   });
+
+  // Goals
+  simEvents.on('goal:created', ({ agentId, goalType }: { agentId: number; goalType: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('goal_created', { goal: goalType }), { subtype: 'goal' }, 0, 5);
+  });
+
+  simEvents.on('goal:completed', ({ agentId, goalType }: { agentId: number; goalType: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('goal_completed', { goal: goalType }), { subtype: 'goal' }, 0.5, 7);
+  });
+
+  simEvents.on('goal:abandoned', ({ agentId, goalType }: { agentId: number; goalType: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('goal_abandoned', { goal: goalType }), { subtype: 'goal' }, -0.2, 4);
+  });
+
+  // Gambling
+  simEvents.on('economy:gambling', ({ agentId, amount, won, opponentName }: { agentId: number; amount: number; won: boolean; opponentName: string }) => {
+    const template = won ? 'economy_gambling_won' : 'economy_gambling_lost';
+    memoryService.record(agentId, 'observation', describeEvent(template, { amount: String(Math.round(amount)), opponent: opponentName }), { subtype: 'economy' }, won ? 0.3 : -0.4, 5);
+  });
+
+  // Seduction
+  simEvents.on('social:seduction', ({ agentId, targetName }: { agentId: number; targetName: string }) => {
+    memoryService.record(agentId, 'observation', describeEvent('social_seduction', { target: targetName }), { subtype: 'social' }, 0.2, 5);
+  });
 }

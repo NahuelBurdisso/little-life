@@ -2069,6 +2069,7 @@ function processStateEffects(
                 target: opponent.id,
                 templateData: { description: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}` },
               });
+              simEvents.emit('economy:gambling', { agentId: agent.id, amount: betAmount, won: agentWins, opponentName: opponent.name });
               gamblingCooldowns.set(pairKey, currentTick);
             }
           }
@@ -2101,6 +2102,8 @@ function processStateEffects(
           trust_delta_ab: 0, trust_delta_ba: 0,
           sentiment: 0.3, processed: false, timestamp: Date.now(),
         }).run();
+
+        simEvents.emit('social:seduction', { agentId: agent.id, targetName: target.name });
 
         // Create seduction fact if witnesses present
         const witnesses = allAgents.filter(a =>
