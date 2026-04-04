@@ -50,14 +50,8 @@ export class SpritePool {
         this.container.addChild(sprite.container);
       }
 
-      const actionType =
-        typeof agent.current_action === "string"
-          ? agent.current_action
-          : agent.current_action?.type ?? "idle";
-
       sprite.update(px, py, deltaTime);
       sprite.setSelected(id === selectedAgentId);
-      sprite.updateStatus(actionType, agent.needs ?? null, deltaTime);
       sprite.updateStates(agent.activeStates ?? []);
     }
 

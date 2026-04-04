@@ -3,18 +3,6 @@ import { getAgentColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 
 const LERP_SPEED = 0.12;
 
-/** Map action types to display emojis. */
-const ACTION_EMOJIS: Record<string, string> = {
-  sleeping: "\u{1F4A4}",
-  eating: "\u{1F37D}\uFE0F",
-  working: "\u{1F528}",
-  talking: "\u{1F4AC}",
-  walking: "\u{1F6B6}",
-  shopping: "\u{1F6D2}",
-  socializing: "\u{1F44B}",
-  idle: "\u23F8\uFE0F",
-};
-
 /** Priority-ordered state ring colors. First match wins. */
 const STATE_RING_COLORS: Record<string, number> = {
   angry: 0xef4444,
@@ -41,32 +29,6 @@ const STATE_PRIORITY: string[] = [
   'euphoric', 'confident', 'grieving',
 ];
 
-/** Dramatic state emojis override action emojis when active. */
-const STATE_EMOJIS: Record<string, string> = {
-  in_debt: '\u{1F4B0}',       // 💰
-  alcoholic: '\u{1F37A}',     // 🍺
-  heartbroken: '\u{1F494}',   // 💔
-  jealous: '\u{1F612}',       // 😒
-  angry: '\u{1F621}',         // 😡
-  infatuated: '\u{1F60D}',    // 😍
-  depressed: '\u{1F61E}',     // 😞
-  lonely: '\u{1F614}',        // 😔
-  sick: '\u{1F912}',          // 🤒
-  drunk: '\u{1F974}',         // 🥴
-  euphoric: '\u{1F604}',      // 😄
-  confident: '\u{1F60E}',     // 😎
-};
-
-interface AgentNeeds {
-  mood?: number;
-  hunger?: number;
-  energy?: number;
-  social?: number;
-  comfort?: number;
-  fun?: number;
-  thresholds?: { critical?: number };
-}
-
 /** Represents a single agent's visual on the canvas as a colored circle with a letter. */
 export class AgentSprite {
   container: PIXI.Container;
@@ -75,15 +37,7 @@ export class AgentSprite {
   private circle: PIXI.Graphics;
   private letter: PIXI.Text;
   private nameLabel: PIXI.Text;
-
-  // Status indicator elements
-  private statusContainer: PIXI.Container;
-  private actionLabel: PIXI.Text;
-  private moodDot: PIXI.Graphics;
-  private needAlert: PIXI.Text;
-  private pulseTimer = 0;
   private stateRing: PIXI.Graphics;
-  private hasDramaticState = false;
 
   private targetPos = { x: 0, y: 0 };
 
@@ -137,45 +91,6 @@ export class AgentSprite {
     this.nameLabel.anchor.set(0.5, 0);
     this.nameLabel.position.set(0, AGENT_RADIUS + 4);
     this.container.addChild(this.nameLabel);
-
-    // --- Status container (above circle) ---
-    this.statusContainer = new PIXI.Container();
-    this.statusContainer.position.set(0, -AGENT_RADIUS - 14);
-    this.container.addChild(this.statusContainer);
-
-    this.actionLabel = new PIXI.Text({
-      text: "\u23F8\uFE0F",
-      style: {
-        fontFamily: "monospace",
-        fontSize: 10,
-        fill: 0xffffff,
-        stroke: { color: 0x000000, width: 2 },
-        align: "center",
-      },
-    });
-    this.actionLabel.anchor.set(0.5, 0.5);
-    this.actionLabel.position.set(-10, 0);
-    this.statusContainer.addChild(this.actionLabel);
-
-    this.moodDot = new PIXI.Graphics();
-    this.moodDot.circle(0, 0, 4).fill({ color: 0x44cc44 });
-    this.moodDot.position.set(2, 0);
-    this.statusContainer.addChild(this.moodDot);
-
-    this.needAlert = new PIXI.Text({
-      text: "\u26A0\uFE0F",
-      style: {
-        fontFamily: "monospace",
-        fontSize: 10,
-        fill: 0xff3333,
-        stroke: { color: 0x000000, width: 2 },
-        align: "center",
-      },
-    });
-    this.needAlert.anchor.set(0.5, 0.5);
-    this.needAlert.position.set(14, 0);
-    this.needAlert.visible = false;
-    this.statusContainer.addChild(this.needAlert);
   }
 
   /** Set target and lerp toward it. */
@@ -207,43 +122,7 @@ export class AgentSprite {
     this.selectionRing.visible = selected;
   }
 
-  /** Update emoji, mood dot color, and critical need alert. */
-  updateStatus(actionType: string, needs: AgentNeeds | null | undefined, deltaTime: number) {
-    // Don't overwrite if a dramatic state emoji is shown
-    if (!this.hasDramaticState) {
-      const emoji = ACTION_EMOJIS[actionType] ?? ACTION_EMOJIS["idle"];
-      this.actionLabel.text = emoji;
-    }
-
-    // Mood dot color
-    const mood = needs?.mood ?? 100;
-    let moodColor: number;
-    if (mood > 70) {
-      moodColor = 0x44cc44; // green
-    } else if (mood >= 40) {
-      moodColor = 0xcccc44; // yellow
-    } else {
-      moodColor = 0xcc4444; // red
-    }
-    this.moodDot.clear();
-    this.moodDot.circle(0, 0, 4).fill({ color: moodColor });
-
-    // Critical need alert
-    const threshold = needs?.thresholds?.critical ?? 20;
-    let hasCritical = false;
-    if (needs) {
-      const needValues = [needs.hunger, needs.energy, needs.social, needs.comfort, needs.fun, needs.mood];
-      hasCritical = needValues.some((v) => v !== undefined && v < threshold);
-    }
-
-    this.needAlert.visible = hasCritical;
-    if (hasCritical) {
-      this.pulseTimer += deltaTime * 4;
-      this.needAlert.alpha = 0.4 + 0.6 * Math.abs(Math.sin(this.pulseTimer));
-    }
-  }
-
-  /** Update state ring color and override action emoji for dramatic states. */
+  /** Update state ring color based on active states. */
   updateStates(activeStates: Array<{ type: string; metadata?: any }>) {
     const topState = STATE_PRIORITY.find(s => activeStates.some(as => as.type === s));
 
@@ -253,17 +132,8 @@ export class AgentSprite {
       this.stateRing.circle(0, 0, AGENT_RADIUS + 3);
       this.stateRing.stroke({ width: 2, color, alpha: 0.8 });
       this.stateRing.visible = true;
-
-      // Override action emoji with state emoji
-      if (STATE_EMOJIS[topState]) {
-        this.actionLabel.text = STATE_EMOJIS[topState];
-        this.hasDramaticState = true;
-      } else {
-        this.hasDramaticState = false;
-      }
     } else {
       this.stateRing.visible = false;
-      this.hasDramaticState = false;
     }
   }
 
