@@ -66,10 +66,11 @@ export class PivotEvaluator {
 
   private async attemptPivot(goal: any, agent: any, currentTick: number): Promise<void> {
     const recentMems = db.select({ description: memories.description }).from(memories)
-      .where(and(eq(memories.agent_id, agent.id), eq(memories.is_active, true)))
+      .where(and(eq(memories.agent_id, agent.id), eq(memories.is_active, 1)))
       .orderBy(desc(memories.created_at)).limit(10).all();
 
     const personality = getEffectivePersonality(agent.id);
+    if (!personality) return;
     const daysActive = Math.max(1, Math.floor((currentTick - goal.created_at) / 1440));
 
     const prompt = buildPivotPrompt({
@@ -121,6 +122,7 @@ export class PivotEvaluator {
 
     if (goal.pivot_count > 0) {
       const personality = getEffectivePersonality(agentId);
+      if (!personality) return;
       const daysActive = Math.max(1, Math.floor((currentTick - goal.created_at) / 1440));
       const importance = computeEmotionalImportance(goal.priority, daysActive, personality);
       if (importance > 0.6) {
