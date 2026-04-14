@@ -355,27 +355,6 @@ export const GOAL_TRIGGER_REGISTRY: GoalTriggerDef[] = [
     personality_gate: null,
   },
   {
-    condition: { type: 'aspiration_pressure', aspiration: 'wealth', money_below: 10 },
-    generates: 'steal_from',
-    target: 'wealthiest_known_agent',
-    priority_base: 0.4,
-    personality_gate: { morality: '< 45' },
-  },
-  {
-    condition: { type: 'relationship_threshold', field: 'friendship', op: '<', value: -60 },
-    generates: 'undermine',
-    target: 'relationship.other_agent',
-    priority_base: 0.4,
-    personality_gate: { aggression: '> 40', morality: '< 50' },
-  },
-  {
-    condition: { type: 'relationship_threshold', field: 'romance', op: '>', value: 50 },
-    generates: 'seduce',
-    target: 'relationship.other_agent',
-    priority_base: 0.4,
-    personality_gate: { sensuality: '> 40' },
-  },
-  {
     condition: { type: 'state_gained', state: 'grieving', has_target: false },
     generates: 'comfort_grieving',
     target: 'grieving_agent',
