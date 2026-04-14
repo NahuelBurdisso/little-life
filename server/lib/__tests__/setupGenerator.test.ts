@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateFromSliders, type SliderConfig } from '../setupGenerator';
+import { generateFromSliders } from '../setupGenerator';
 
 // ─── Inline mock agents (no cross-boundary imports from src/) ─────────────────
 

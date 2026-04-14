@@ -26,7 +26,7 @@ import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
-import { eq, and, or, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 
 const ALL_TABLES = [

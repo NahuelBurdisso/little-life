@@ -40,7 +40,7 @@ describe('SECRETS_POOL', () => {
     for (const template of SECRETS_POOL) {
       countByCategory[template.category] = (countByCategory[template.category] ?? 0) + 1;
     }
-    for (const [category, count] of Object.entries(countByCategory)) {
+    for (const [, count] of Object.entries(countByCategory)) {
       expect(count).toBeGreaterThanOrEqual(3);
     }
   });
