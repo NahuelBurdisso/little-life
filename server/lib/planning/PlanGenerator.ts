@@ -1,6 +1,6 @@
 import { db } from '../../db';
-import { agents, needs, locations, economy } from '../../db/schema';
-import { eq, ne } from 'drizzle-orm';
+import { agents, needs, locations, economy, goals } from '../../db/schema';
+import { eq, ne, and } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
@@ -180,7 +180,12 @@ export class PlanGenerator {
     const planMemories = await this.memoryService.retrieveByType(agentId, 'plan', 1);
     const yesterdayPlan = planMemories.length > 0 ? planMemories[0].description : null;
 
-    // 8. Build prompt
+    // 8. Load active goals
+    const activeGoals = db.select().from(goals)
+      .where(and(eq(goals.agent_id, agentId), eq(goals.status, 'active')))
+      .all();
+
+    // 9. Build prompt
     const prompt = buildDailyPlanPrompt({
       name: agentRow.name,
       age: agentRow.age,
@@ -204,7 +209,10 @@ export class PlanGenerator {
       workEnd: schedule.workEnd,
       wakeTime: schedule.wakeTime,
       sleepTime: schedule.sleepTime,
-      goals: [],
+      goals: activeGoals.map(g => {
+        const desc = (g as any).description ?? g.type;
+        return (g as any).strategy ? `${desc} (strategy: ${(g as any).strategy})` : desc;
+      }),
       reflections,
       yesterdayPlan,
       dayNumber: currentDay,
@@ -213,7 +221,7 @@ export class PlanGenerator {
       selfDescription: agentRow.self_description ?? undefined,
     });
 
-    // 9. Call LLM
+    // 10. Call LLM
     const response = await callOllamaChat({
       model: CONFIG.AI.CHAT_MODEL,
       system: prompt.system,
@@ -221,15 +229,15 @@ export class PlanGenerator {
       options: { temperature: 0.7, num_predict: 512 },
     });
 
-    // 10. Parse blocks
+    // 11. Parse blocks
     let blocks = parsePlanBlocks(response.text, validLocations);
 
-    // 11. Fallback if parse fails
+    // 12. Fallback if parse fails
     if (blocks.length === 0) {
       blocks = this.generateFallbackBlocks(schedule, workplaceName);
     }
 
-    // 12. Create DailyPlan and cache it
+    // 13. Create DailyPlan and cache it
     const plan: DailyPlan = {
       day: currentDay,
       generated_at: Date.now(),
@@ -243,7 +251,7 @@ export class PlanGenerator {
 
     this.cache.set(agentId, plan);
 
-    // 13. Record plan memory
+    // 14. Record plan memory
     const summary = `Day ${currentDay} plan: ${blocks.map((b) => b.broad_action).join(', ')}`;
     this.memoryService.record(
       agentId,
@@ -254,7 +262,7 @@ export class PlanGenerator {
       4,
     );
 
-    // 14. Generate anticipation memories for blocks involving other agents
+    // 15. Generate anticipation memories for blocks involving other agents
     const allAgentRows = db
       .select({ name: agents.name })
       .from(agents)
