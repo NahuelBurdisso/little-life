@@ -16,6 +16,7 @@ import { getEffectivePersonality } from '../../lib/states';
 import { logActivity } from '../../lib/activityLogger';
 import type { GoalTriggerDef } from '../../lib/interactionConstants';
 import { simEvents } from '../../lib/simEvents';
+import { goalReviewer, pivotEvaluator } from '../../lib/goals/instance';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -344,29 +345,37 @@ function evaluatePassiveProgress(agent: any, goal: any, _currentTick: number): v
 export function goalsTick(): void {
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const currentTick = getCurrentTick();
+  const world = db.select().from(worldState).limit(1).all()[0];
+  const isDayChange = world?.pending_transitions?.some(
+    (t: any) => t.type === 'day_changed'
+  ) ?? false;
 
   for (const agent of activeAgents) {
     const agentGoals = db.select().from(goals)
       .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
       .all();
 
-    // 1. Evaluate abandonment on existing goals
+    // 1. Morning LLM review (on day change only, async fire-and-forget)
+    if (isDayChange) {
+      void goalReviewer.review(agent.id, currentTick, world?.time?.day ?? 1);
+    }
+
+    // 2. Evaluate abandonment on existing goals (rule-based)
     for (const goal of agentGoals) {
       evaluateAbandonment(agent, goal, currentTick);
     }
 
-    // 2. Evaluate passive goal progress
+    // 3. Evaluate passive goal progress
     for (const goal of agentGoals) {
-      if (goal.status !== 'active') continue; // may have been abandoned in step 1
-      evaluatePassiveProgress(agent, goal, currentTick);
+      if (goal.status === 'active') {
+        evaluatePassiveProgress(agent, goal, currentTick);
+      }
     }
 
-    // 3. Check triggers for new goals (only if room)
-    const activeCount = db.select().from(goals)
-      .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
-      .all().length;
-    if (activeCount < MAX_GOALS_PER_AGENT) {
-      evaluateTriggers(agent, currentTick);
-    }
+    // 4. Check reactive triggers for new goals (2-arg signature: agent, currentTick)
+    evaluateTriggers(agent, currentTick);
+
+    // 5. Pivot evaluation (async fire-and-forget)
+    void pivotEvaluator.evaluate(agent.id, currentTick);
   }
 }
