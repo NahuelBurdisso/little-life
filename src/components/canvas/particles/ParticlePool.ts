@@ -28,6 +28,7 @@ export class ParticlePool {
       const sprite = new PIXI.Sprite();
       sprite.anchor.set(0.5);
       sprite.visible = false;
+      sprite.blendMode = 'add';
       this.container.addChild(sprite);
       this.sprites[i] = sprite;
 
