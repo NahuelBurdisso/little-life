@@ -1,7 +1,7 @@
 import * as PIXI from 'pixi.js';
 import type { Particle } from './types';
 
-const DEFAULT_MAX_PARTICLES = 500;
+const DEFAULT_MAX_PARTICLES = 1000;
 
 /**
  * Fixed-size object pool for particles.
@@ -13,6 +13,7 @@ export class ParticlePool {
   private sprites: PIXI.Sprite[];
   readonly container: PIXI.Container;
   private readonly maxParticles: number;
+  private freeHead = 0;
 
   constructor(maxParticles = DEFAULT_MAX_PARTICLES) {
     this.maxParticles = maxParticles;
@@ -50,8 +51,17 @@ export class ParticlePool {
    * Returns the index, or -1 if pool is exhausted.
    */
   acquire(): number {
-    for (let i = 0; i < this.maxParticles; i++) {
-      if (!this.particles[i].alive) return i;
+    for (let i = this.freeHead; i < this.maxParticles; i++) {
+      if (!this.particles[i].alive) {
+        this.freeHead = i + 1;
+        return i;
+      }
+    }
+    for (let i = 0; i < this.freeHead; i++) {
+      if (!this.particles[i].alive) {
+        this.freeHead = i + 1;
+        return i;
+      }
     }
     return -1; // pool exhausted
   }
@@ -115,6 +125,7 @@ export class ParticlePool {
   kill(index: number): void {
     this.particles[index].alive = false;
     this.sprites[index].visible = false;
+    this.freeHead = Math.min(this.freeHead, index);
   }
 
   /**

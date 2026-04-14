@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 import { Container, Graphics } from "pixi.js";
 import { useGameCanvas } from "../../hooks/useGameCanvas";
 import { useAssetLoader } from "../../hooks/useAssetLoader";
@@ -25,7 +25,7 @@ interface GameCanvasProps {
   selectedAgentId: string | null;
 }
 
-export function GameCanvas({
+export const GameCanvas = React.memo(function GameCanvas({
   agents,
   world,
   conversations,
@@ -131,14 +131,16 @@ export function GameCanvas({
     worldContainer.addChild(relLines);
     relationshipLinesRef.current = relLines;
 
+    // Particle engine — data-driven visual effects below speech bubbles
+    const particleEngine = new ParticleEngine(worldContainer, 1000);
+    particleEngine.initTextures(app.renderer as any).catch(err =>
+      console.warn('[ParticleEngine] Texture init failed:', err)
+    );
+    particleEngineRef.current = particleEngine;
+
     // Bubble system — also inside world container so bubbles track agents
     const bubbleSystem = new BubbleSystem(worldContainer);
     bubbleSystemRef.current = bubbleSystem;
-
-    // Particle engine — data-driven visual effects above sprites
-    const particleEngine = new ParticleEngine(worldContainer, 500);
-    particleEngine.initTextures(app.renderer as any);
-    particleEngineRef.current = particleEngine;
 
     // Camera — set actual map dimensions from tilemap
     const camera = new CameraController(app, worldContainer);
@@ -231,7 +233,7 @@ export function GameCanvas({
       }
       buildingRendererRef.current.update(agentLocations);
     }
-  }, [agents, selectedAgentId, conversations, locations, app]);
+  }, [agents, selectedAgentId, locations, app]);
 
   // Per-frame rendering loop — lerps sprites toward targets, no data dependency
   useEffect(() => {
@@ -418,4 +420,4 @@ export function GameCanvas({
       style={{ imageRendering: "pixelated" }}
     />
   );
-}
+});

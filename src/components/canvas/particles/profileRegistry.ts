@@ -20,19 +20,19 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xfbbf24, 0xf59e0b, 0xfcd34d],
-      sizeRange: [0.02, 0.05],
-      alpha: 0.6,
+      sizeRange: [0.05, 0.10],
+      alpha: 0.7,
     },
     motion: {
-      speedRange: [5, 12],
-      directionRange: [-Math.PI * 0.8, -Math.PI * 0.2], // upward-ish
-      gravity: -3, // float up
-      spread: 6,
-      rotationSpeed: 0,
+      speedRange: [8, 18],
+      directionRange: [-Math.PI * 0.8, -Math.PI * 0.2],
+      gravity: -3,
+      spread: 8,
+      rotationSpeed: 1.5,
     },
-    emission: { rate: 2, burst: 0, maxAlive: 6 },
+    emission: { rate: 2, burst: 3, maxAlive: 8 },
     lifecycle: { lifetimeRange: [1.5, 3], fadeIn: 0.3, fadeOut: 0.5 },
-    offset: { x: 0, y: -8 },
+    offset: { x: 0, y: -10 },
   },
 
   {
@@ -41,19 +41,19 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'heart',
       colors: [0xec4899, 0xf472b6, 0xfb7185],
-      sizeRange: [0.03, 0.06],
-      alpha: 0.7,
+      sizeRange: [0.05, 0.09],
+      alpha: 0.85,
     },
     motion: {
-      speedRange: [8, 15],
+      speedRange: [10, 20],
       directionRange: [-Math.PI * 0.8, -Math.PI * 0.2],
       gravity: -5,
-      spread: 8,
-      rotationSpeed: 0.5,
+      spread: 10,
+      rotationSpeed: 1.0,
     },
-    emission: { rate: 1.5, burst: 0, maxAlive: 5 },
+    emission: { rate: 1.5, burst: 5, maxAlive: 8 },
     lifecycle: { lifetimeRange: [2, 3.5], fadeIn: 0.4, fadeOut: 0.8 },
-    offset: { x: 0, y: -10 },
+    offset: { x: 0, y: -12 },
   },
 
   {
@@ -62,19 +62,19 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'spark',
       colors: [0xef4444, 0xf97316, 0xfbbf24],
-      sizeRange: [0.02, 0.04],
-      alpha: 0.8,
+      sizeRange: [0.04, 0.08],
+      alpha: 0.9,
     },
     motion: {
-      speedRange: [15, 30],
-      directionRange: [-Math.PI, Math.PI], // all directions
+      speedRange: [20, 45],
+      directionRange: [-Math.PI, Math.PI],
       gravity: 0,
-      spread: 5,
-      rotationSpeed: 3,
+      spread: 6,
+      rotationSpeed: 4,
     },
-    emission: { rate: 3, burst: 0, maxAlive: 8 },
-    lifecycle: { lifetimeRange: [0.5, 1.2], fadeIn: 0, fadeOut: 0.3 },
-    offset: { x: 0, y: -6 },
+    emission: { rate: 4, burst: 8, maxAlive: 14 },
+    lifecycle: { lifetimeRange: [0.4, 1.0], fadeIn: 0, fadeOut: 0.3 },
+    offset: { x: 0, y: -8 },
   },
 
   {
@@ -83,19 +83,19 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'raindrop',
       colors: [0x60a5fa, 0x93c5fd, 0x3b82f6],
-      sizeRange: [0.02, 0.04],
-      alpha: 0.5,
+      sizeRange: [0.03, 0.06],
+      alpha: 0.65,
     },
     motion: {
-      speedRange: [3, 8],
-      directionRange: [Math.PI * 0.3, Math.PI * 0.7], // downward
-      gravity: 15,
-      spread: 4,
+      speedRange: [5, 12],
+      directionRange: [Math.PI * 0.3, Math.PI * 0.7],
+      gravity: 20,
+      spread: 5,
       rotationSpeed: 0,
     },
-    emission: { rate: 1, burst: 0, maxAlive: 4 },
-    lifecycle: { lifetimeRange: [1, 2], fadeIn: 0.2, fadeOut: 0.3 },
-    offset: { x: 0, y: -2 },
+    emission: { rate: 2.5, burst: 4, maxAlive: 8 },
+    lifecycle: { lifetimeRange: [0.8, 1.8], fadeIn: 0.1, fadeOut: 0.3 },
+    offset: { x: 0, y: -4 },
   },
 
   {
@@ -104,19 +104,19 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0x6366f1, 0x818cf8, 0x4f46e5],
-      sizeRange: [0.03, 0.06],
-      alpha: 0.3,
+      sizeRange: [0.05, 0.09],
+      alpha: 0.35,
     },
     motion: {
       speedRange: [2, 5],
-      directionRange: [-Math.PI, Math.PI],
-      gravity: -1,
+      directionRange: [Math.PI * 0.3, Math.PI * 0.7],
+      gravity: 2,
       spread: 10,
       rotationSpeed: 0,
     },
-    emission: { rate: 1, burst: 0, maxAlive: 5 },
+    emission: { rate: 1, burst: 0, maxAlive: 6 },
     lifecycle: { lifetimeRange: [2, 4], fadeIn: 0.5, fadeOut: 1 },
-    offset: { x: 0, y: -12 },
+    offset: { x: 0, y: -14 },
   },
 
   {
@@ -125,19 +125,19 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'star',
       colors: [0xfbbf24, 0xfde68a, 0xfef3c7],
-      sizeRange: [0.02, 0.05],
-      alpha: 0.7,
+      sizeRange: [0.04, 0.08],
+      alpha: 0.85,
     },
     motion: {
-      speedRange: [5, 12],
+      speedRange: [8, 18],
       directionRange: [-Math.PI, Math.PI],
       gravity: -2,
-      spread: 8,
-      rotationSpeed: 2,
+      spread: 10,
+      rotationSpeed: 2.5,
     },
-    emission: { rate: 1.5, burst: 0, maxAlive: 5 },
+    emission: { rate: 2, burst: 4, maxAlive: 8 },
     lifecycle: { lifetimeRange: [1, 2], fadeIn: 0.2, fadeOut: 0.5 },
-    offset: { x: 0, y: -8 },
+    offset: { x: 0, y: -10 },
   },
 
   {
@@ -146,19 +146,40 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xa3e635, 0x84cc16, 0x65a30d],
-      sizeRange: [0.015, 0.035],
-      alpha: 0.35,
+      sizeRange: [0.03, 0.07],
+      alpha: 0.4,
     },
     motion: {
-      speedRange: [2, 6],
+      speedRange: [3, 8],
       directionRange: [-Math.PI, Math.PI],
       gravity: -1,
-      spread: 7,
-      rotationSpeed: 0,
+      spread: 8,
+      rotationSpeed: 0.5,
     },
-    emission: { rate: 1.5, burst: 0, maxAlive: 5 },
+    emission: { rate: 1.5, burst: 0, maxAlive: 7 },
     lifecycle: { lifetimeRange: [1.5, 3], fadeIn: 0.4, fadeOut: 0.6 },
-    offset: { x: 0, y: -4 },
+    offset: { x: 0, y: -6 },
+  },
+
+  {
+    id: 'stressed_bolts',
+    trigger: { type: 'agent_state', state: 'stressed' },
+    appearance: {
+      shape: 'spark',
+      colors: [0xfbbf24, 0xf59e0b, 0xffffff],
+      sizeRange: [0.03, 0.07],
+      alpha: 0.8,
+    },
+    motion: {
+      speedRange: [12, 25],
+      directionRange: [-Math.PI, Math.PI],
+      gravity: 0,
+      spread: 7,
+      rotationSpeed: 5,
+    },
+    emission: { rate: 2.5, burst: 3, maxAlive: 8 },
+    lifecycle: { lifetimeRange: [0.3, 0.8], fadeIn: 0, fadeOut: 0.2 },
+    offset: { x: 0, y: -8 },
   },
 
   // ── Agent Actions ─────────────────────────────────────────────────────────
@@ -169,22 +190,22 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xa78bfa, 0xc4b5fd, 0x8b5cf6],
-      sizeRange: [0.015, 0.03],
-      alpha: 0.4,
+      sizeRange: [0.03, 0.06],
+      alpha: 0.5,
     },
     motion: {
-      speedRange: [3, 6],
+      speedRange: [4, 8],
       directionRange: [-Math.PI * 0.7, -Math.PI * 0.3],
       gravity: -2,
-      spread: 4,
-      rotationSpeed: 0,
+      spread: 5,
+      rotationSpeed: 0.3,
     },
-    emission: { rate: 0.8, burst: 0, maxAlive: 3 },
+    emission: { rate: 0.8, burst: 0, maxAlive: 4 },
     lifecycle: { lifetimeRange: [2, 3.5], fadeIn: 0.5, fadeOut: 0.8 },
-    offset: { x: 4, y: -8 },
+    offset: { x: 4, y: -10 },
   },
 
-  // ── Weather ───────────────────────────────────────────────────────────────
+  // ── Season ────────────────────────────────────────────────────────────────
 
   {
     id: 'weather_snow',
@@ -192,19 +213,61 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xffffff, 0xe2e8f0, 0xf1f5f9],
-      sizeRange: [0.015, 0.035],
-      alpha: 0.6,
+      sizeRange: [0.03, 0.06],
+      alpha: 0.7,
     },
     motion: {
       speedRange: [5, 15],
       directionRange: [Math.PI * 0.35, Math.PI * 0.65],
       gravity: 8,
-      spread: 400, // wide spread — covers the viewport
+      spread: 400,
       rotationSpeed: 1,
     },
-    emission: { rate: 8, burst: 0, maxAlive: 60 },
+    emission: { rate: 8, burst: 0, maxAlive: 80 },
     lifecycle: { lifetimeRange: [4, 8], fadeIn: 0.5, fadeOut: 1 },
-    offset: { x: 0, y: -200 }, // spawn above viewport
+    offset: { x: 0, y: -200 },
+  },
+
+  {
+    id: 'autumn_leaves',
+    trigger: { type: 'season', season: 'autumn' },
+    appearance: {
+      shape: 'leaf',
+      colors: [0xf97316, 0xef4444, 0xfbbf24, 0xa3540a],
+      sizeRange: [0.04, 0.08],
+      alpha: 0.75,
+    },
+    motion: {
+      speedRange: [8, 20],
+      directionRange: [Math.PI * 0.2, Math.PI * 0.8],
+      gravity: 6,
+      spread: 350,
+      rotationSpeed: 2,
+    },
+    emission: { rate: 5, burst: 0, maxAlive: 50 },
+    lifecycle: { lifetimeRange: [4, 7], fadeIn: 0.3, fadeOut: 1 },
+    offset: { x: 0, y: -180 },
+  },
+
+  {
+    id: 'spring_petals',
+    trigger: { type: 'season', season: 'spring' },
+    appearance: {
+      shape: 'circle',
+      colors: [0xfb7185, 0xf9a8d4, 0xfce7f3, 0xffffff],
+      sizeRange: [0.03, 0.06],
+      alpha: 0.6,
+    },
+    motion: {
+      speedRange: [4, 12],
+      directionRange: [Math.PI * 0.1, Math.PI * 0.9],
+      gravity: 3,
+      spread: 300,
+      rotationSpeed: 1.5,
+    },
+    emission: { rate: 4, burst: 0, maxAlive: 40 },
+    lifecycle: { lifetimeRange: [5, 9], fadeIn: 0.5, fadeOut: 1.5 },
+    offset: { x: 0, y: -160 },
   },
 
   // ── Time of Day ───────────────────────────────────────────────────────────
@@ -215,8 +278,8 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xfde68a, 0xfbbf24, 0xa3e635],
-      sizeRange: [0.015, 0.03],
-      alpha: 0.6,
+      sizeRange: [0.03, 0.06],
+      alpha: 0.7,
     },
     motion: {
       speedRange: [3, 8],
@@ -225,7 +288,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
       spread: 300,
       rotationSpeed: 0,
     },
-    emission: { rate: 3, burst: 0, maxAlive: 25 },
+    emission: { rate: 3, burst: 0, maxAlive: 30 },
     lifecycle: { lifetimeRange: [3, 6], fadeIn: 1, fadeOut: 1.5 },
     offset: { x: 0, y: 0 },
   },
@@ -236,8 +299,8 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     appearance: {
       shape: 'circle',
       colors: [0xfbbf24, 0xfca5a5, 0xfde68a],
-      sizeRange: [0.015, 0.035],
-      alpha: 0.35,
+      sizeRange: [0.03, 0.06],
+      alpha: 0.4,
     },
     motion: {
       speedRange: [2, 5],
@@ -246,7 +309,7 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
       spread: 250,
       rotationSpeed: 0,
     },
-    emission: { rate: 4, burst: 0, maxAlive: 20 },
+    emission: { rate: 4, burst: 0, maxAlive: 25 },
     lifecycle: { lifetimeRange: [3, 5], fadeIn: 1, fadeOut: 1 },
     offset: { x: 0, y: 0 },
   },
