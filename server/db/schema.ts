@@ -532,6 +532,12 @@ export const goals = sqliteTable(
     status: text('status').notNull().default('active'),
     created_at: integer('created_at').notNull(),
     expires_at: integer('expires_at'),
+    // NEW columns for LLM-driven goals
+    description: text('description'),
+    strategy: text('strategy'),
+    mapped_interactions: text('mapped_interactions'),
+    pivot_count: integer('pivot_count').notNull().default(0),
+    source: text('source').notNull().default('reactive'),
   },
   (table) => [
     index('idx_goals_agent_status').on(table.agent_id, table.status),
@@ -553,6 +559,9 @@ export const aspirations = sqliteTable(
     shifted_at: integer('shifted_at'),
     trigger: text('trigger').notNull(),
     shifted_to: text('shifted_to'),
+    // NEW columns for LLM-driven ambitions
+    description: text('description'),
+    shifted_reason: text('shifted_reason'),
   },
   (table) => [
     index('idx_aspirations_agent_status').on(table.agent_id, table.status),

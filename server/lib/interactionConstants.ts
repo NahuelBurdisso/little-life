@@ -244,5 +244,5 @@ export const RELIABILITY_SPREAD_RATE: Record<FactReliability, number> = {
 };
 
 export const MAX_ESCALATION_DEPTH = 3;
-export const MAX_GOALS_PER_AGENT = 3;
+export const MAX_GOALS_PER_AGENT = 4;
 export const INTERACTION_CHANCE_PER_TICK = 0.05;
