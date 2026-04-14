@@ -708,7 +708,11 @@ export function tick(world: WorldRow): void {
         const agentGoals = goalsMap.get(agent.id) ?? [];
         for (const goal of agentGoals) {
           if (!goal.mapped_interactions) continue;
-          const mapped = JSON.parse(goal.mapped_interactions) as string[];
+          let mapped: string[];
+          try {
+            const raw = goal.mapped_interactions;
+            mapped = raw.startsWith('[') ? JSON.parse(raw) : raw.split(',').map((s: string) => s.trim());
+          } catch { continue; }
           if (goal.target_id && mapped.length > 0) {
             const target = activeAgents.find(a => a.id === goal.target_id);
             if (target && agent.current_location === target.current_location) {

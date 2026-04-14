@@ -209,7 +209,7 @@ export class GoalReviewer {
           created_at: currentTick,
           description: ng.description,
           strategy: ng.strategy,
-          mapped_interactions: mapped.mapped_interactions.join(','),
+          mapped_interactions: JSON.stringify(mapped.mapped_interactions),
           pivot_count: 0,
           source: 'llm',
         }).returning({ id: goals.id }).get();
