@@ -1,14 +1,19 @@
 import { useState } from 'react';
-import type { AgentConfig, RelationshipConfig } from './types';
+import type { AgentConfig, RelationshipConfig, SliderConfig } from './types';
 import { DEFAULT_WORLD, DEFAULT_RULES } from './types';
 import { AgentEditor } from './AgentEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { WorldSettings } from './WorldSettings';
 import { RulesSettings } from './RulesSettings';
+import { PresetSelector } from './PresetSelector';
+import { DramaSliders } from './DramaSliders';
+import { SimulationPreview } from './SimulationPreview';
 import { getDefaultAgents, getDefaultRelationships } from './defaults';
 import { trpc } from '../../lib/trpc';
 
 const STEPS = [
+  { id: 'scenario', label: 'Scenario', icon: 'S' },
+  { id: 'preview', label: 'Preview', icon: 'P' },
   { id: 'agents', label: 'Agents', icon: 'A' },
   { id: 'relationships', label: 'Relationships', icon: 'R' },
   { id: 'world', label: 'World', icon: 'W' },
@@ -22,12 +27,14 @@ interface SetupWizardProps {
 }
 
 export function SetupWizard({ onStart }: SetupWizardProps) {
-  const [step, setStep] = useState<StepId>('agents');
+  const [step, setStep] = useState<StepId>('scenario');
   const [agents, setAgents] = useState<AgentConfig[]>(getDefaultAgents());
   const [relationships, setRelationships] = useState<RelationshipConfig[]>(getDefaultRelationships());
   const [world, setWorld] = useState(DEFAULT_WORLD);
   const [rules, setRules] = useState(DEFAULT_RULES);
   const [starting, setStarting] = useState(false);
+  const [sliders, setSliders] = useState<SliderConfig>({ drama: 7, romance: 6, crime: 5, trust: 5 });
+  const [selectedPreset, setSelectedPreset] = useState<string | null>('classic');
   const initMutation = trpc.setup.initialize.useMutation();
 
   const stepIndex = STEPS.findIndex(s => s.id === step);
@@ -41,6 +48,11 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
       console.error('Failed to start simulation:', err);
       setStarting(false);
     }
+  };
+
+  const handlePresetSelect = (preset: string, presetSliders: SliderConfig) => {
+    setSelectedPreset(preset);
+    setSliders(presetSliders);
   };
 
   const goNext = () => {
@@ -80,6 +92,21 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
+          {step === 'scenario' && (
+            <div className="space-y-6">
+              <h2 className="text-lg font-semibold text-white">Choose Your Drama</h2>
+              <PresetSelector selectedId={selectedPreset} onSelect={handlePresetSelect} />
+              <div className="border-t border-gray-700 pt-4">
+                <DramaSliders values={sliders} onChange={(s) => { setSliders(s); setSelectedPreset(null); }} />
+              </div>
+            </div>
+          )}
+          {step === 'preview' && (
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-white">Drama Preview</h2>
+              <SimulationPreview sliders={sliders} agents={agents} />
+            </div>
+          )}
           {step === 'agents' && (
             <AgentEditor agents={agents} onChange={setAgents} />
           )}
