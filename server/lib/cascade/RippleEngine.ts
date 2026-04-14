@@ -3,6 +3,11 @@ import type { RippleRule, RippleContext, CascadeMetadata } from './cascadeTypes'
 import type { PersonalityProfile } from '../personality';
 import { rippleRules as RIPPLE_RULES } from './rippleRules';
 import { simEvents } from '../simEvents';
+import { db } from '../../db';
+import { agents, agentStates, needs, economy, relationships, worldState, goals, locations } from '../../db/schema';
+import { eq, and } from 'drizzle-orm';
+import { createFact } from '../gossip';
+import crypto from 'crypto';
 
 interface QueueItem {
   rule: RippleRule;
@@ -168,26 +173,50 @@ export class RippleEngine {
     }
 
     if (requires.needBelow !== undefined) {
-      const needs = ctx.getAgentNeeds(agentId);
-      const needValue = needs[requires.needBelow.need as keyof typeof needs];
+      const agentNeeds = ctx.getAgentNeeds(agentId);
+      const needValue = agentNeeds[requires.needBelow.need as keyof typeof agentNeeds];
       if (typeof needValue !== 'number' || needValue >= requires.needBelow.value) return false;
     }
 
     if (requires.moneyBelow !== undefined) {
-      const economy = ctx.getAgentEconomy(agentId);
-      if (economy.money >= requires.moneyBelow) return false;
+      const agentEconomy = ctx.getAgentEconomy(agentId);
+      if (agentEconomy.money >= requires.moneyBelow) return false;
     }
 
     if (requires.relationshipMin !== undefined) {
-      // Stub: skip detailed relationship check without perpetrator info in payload
-      // Real implementation done in Task 4
+      const targetId = payload?.perpetratorId ?? payload?.victimId ?? payload?.targetId ?? null;
+      if (targetId != null) {
+        const rel = ctx.getRelationship(agentId, targetId);
+        if (!rel) return false;
+        const a = Math.min(agentId, targetId);
+        const isA = agentId === a;
+        const fieldValue = this.getRelField(rel, requires.relationshipMin.field, isA);
+        if (fieldValue < requires.relationshipMin.value) return false;
+      }
     }
 
     if (requires.relationshipMax !== undefined) {
-      // Stub
+      const targetId = payload?.perpetratorId ?? payload?.victimId ?? payload?.targetId ?? null;
+      if (targetId != null) {
+        const rel = ctx.getRelationship(agentId, targetId);
+        if (!rel) return false;
+        const a = Math.min(agentId, targetId);
+        const isA = agentId === a;
+        const fieldValue = this.getRelField(rel, requires.relationshipMax.field, isA);
+        if (fieldValue > requires.relationshipMax.value) return false;
+      }
     }
 
     return true;
+  }
+
+  private getRelField(rel: any, field: string, isA: boolean): number {
+    switch (field) {
+      case 'friendship': return isA ? rel.friendship_ab : rel.friendship_ba;
+      case 'romance': return isA ? rel.romance_ab : rel.romance_ba;
+      case 'trust': return isA ? rel.trust_ab : rel.trust_ba;
+      default: return 0;
+    }
   }
 
   private checkRequirements(
@@ -211,50 +240,336 @@ export class RippleEngine {
     }
   }
 
-  // ─── Private stubs ───────────────────────────────────────────────────────────
+  // ─── Listener registration ────────────────────────────────────────────────────
 
   private registerListeners(): void {
-    // Registers simEvents listeners — implemented in Task 4
-    // No-op placeholder
+    // Collect all unique source event names from rules
+    const sourceEvents = new Set<string>();
+    for (const rule of this.rules) {
+      sourceEvents.add(rule.source);
+    }
+
+    for (const source of sourceEvents) {
+      simEvents.on(source, (payload: any) => {
+        this.handleEvent(source, payload);
+      });
+    }
   }
 
+  // ─── Main event handler ────────────────────────────────────────────────────────
+
   private handleEvent(source: string, payload: any): void {
-    // Main event handler — implemented in Task 4
+    // Deduplication: skip state:triggered events that came from cascade itself
+    if (this.shouldSkipForDedup(source, payload)) return;
+
+    const currentTick = this.getCurrentTick();
+
+    // Find all rules matching this source
+    for (const rule of this.rules) {
+      if (rule.source !== source) continue;
+
+      // Apply source filter if present
+      if (rule.sourceFilter) {
+        const ctx = this.buildContext(payload);
+        if (!rule.sourceFilter(payload, ctx)) continue;
+      }
+
+      // Determine target agent ID
+      const agentId = this.resolveTargetAgent(rule, payload);
+      if (agentId == null) continue;
+
+      // Check cooldown
+      if (this.isOnCooldown(rule.id, agentId, currentTick)) continue;
+
+      // Generate chain metadata
+      const chainId = payload?._cascade?.chainId ?? crypto.randomBytes(6).toString('hex');
+      const parentDepth = payload?._cascade?.chainDepth ?? 0;
+
+      // Queue for evaluation
+      this.eventQueue.push({
+        rule,
+        payload: { ...payload, _resolvedAgentId: agentId },
+        metadata: {
+          chainId,
+          chainDepth: parentDepth + 1,
+          parentRuleId: payload?._cascade?.parentRuleId,
+          locationId: payload?.locationId ?? this.getAgentLocation(agentId),
+          perpetratorId: payload?.perpetratorId ?? payload?.agentId,
+          victimId: payload?.victimId,
+        },
+      });
+    }
+
+    // Process the queue immediately for depth-1 events
+    this.processQueue();
   }
+
+  private resolveTargetAgent(rule: RippleRule, payload: any): number | null {
+    switch (rule.target) {
+      case 'self':
+        return payload?.agentId ?? null;
+      case 'perpetrator':
+        return payload?.perpetratorId ?? payload?.agentId ?? null;
+      case 'victim':
+        return payload?.victimId ?? null;
+      case 'witness': {
+        // Pick a random co-located agent that is NOT the main agents
+        const locationId = payload?.locationId ?? (payload?.agentId ? this.getAgentLocation(payload.agentId) : null);
+        if (locationId == null) return null;
+        const coLocated = this.getAgentsAtLocation(locationId);
+        const excluded = new Set([payload?.agentId, payload?.perpetratorId, payload?.victimId].filter(Boolean));
+        const witnesses = coLocated.filter(id => !excluded.has(id));
+        if (witnesses.length === 0) return null;
+        return witnesses[Math.floor(Math.random() * witnesses.length)];
+      }
+      case 'random_present': {
+        const locId = payload?.locationId ?? (payload?.agentId ? this.getAgentLocation(payload.agentId) : null);
+        if (locId == null) return null;
+        const atLoc = this.getAgentsAtLocation(locId);
+        const excludeSelf = new Set([payload?.agentId].filter(Boolean));
+        const others = atLoc.filter(id => !excludeSelf.has(id));
+        if (others.length === 0) return null;
+        return others[Math.floor(Math.random() * others.length)];
+      }
+      default:
+        return null;
+    }
+  }
+
+  private getAgentsAtLocation(locationId: number): number[] {
+    const rows = db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.current_location, locationId), eq(agents.is_active, true)))
+      .all();
+    return rows.map(r => r.id);
+  }
+
+  // ─── Evaluate and fire ────────────────────────────────────────────────────────
 
   private evaluateAndFire(
     rule: RippleRule,
     payload: any,
     chainId: string,
-    parentDepth: number,
+    depth: number,
   ): void {
-    // Evaluate and fire rule — implemented in Task 4
+    // Chain depth limit
+    if (this.isChainDepthExceeded(depth)) return;
+
+    // Per-tick cap (depth 1 exempt)
+    if (this.isTickCapReached() && !this.isExemptFromCap(depth)) return;
+
+    const agentId: number = payload._resolvedAgentId;
+    const currentTick = this.getCurrentTick();
+
+    // Get personality for probability calculation
+    const personality = this.getAgentPersonality(agentId);
+    if (!personality) return;
+
+    // Build context for requirements check
+    const ctx = this.buildContext(payload);
+
+    // Check requirements
+    if (!this.checkRequirements(rule, agentId, payload, ctx)) return;
+
+    // Probability roll
+    const prob = this.calculateProbability(rule, personality);
+    if (Math.random() >= prob) return;
+
+    // Record cooldown
+    this.recordCooldown(rule.id, agentId, currentTick);
+
+    // Increment tick counter
+    this.incrementTickCounter(depth);
+
+    // Build cascade metadata
+    const metadata: CascadeMetadata = {
+      chainId,
+      chainDepth: depth,
+      parentRuleId: rule.id,
+      locationId: payload?.locationId ?? this.getAgentLocation(agentId) ?? undefined,
+      perpetratorId: payload?.perpetratorId ?? payload?.agentId,
+      victimId: payload?.victimId,
+    };
+
+    // Execute effects
+    this.executeEffects(rule, agentId, metadata, payload);
+
+    // Witness amplification: if there's a location, notify witnesses
+    if (metadata.locationId != null && this.witnessAmplifier) {
+      const coLocated = this.getAgentsAtLocation(metadata.locationId);
+      const excluded = new Set([agentId, metadata.perpetratorId, metadata.victimId].filter(Boolean) as number[]);
+
+      for (const witnessId of coLocated) {
+        if (excluded.has(witnessId)) continue;
+
+        const witnessPers = this.getAgentPersonality(witnessId);
+        if (!witnessPers) continue;
+
+        // Check if witness is friends with the victim
+        let isVictimFriend = false;
+        if (metadata.victimId != null) {
+          const a = Math.min(witnessId, metadata.victimId);
+          const b = Math.max(witnessId, metadata.victimId);
+          const rel = db.select({ friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })
+            .from(relationships)
+            .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
+            .get();
+          if (rel) {
+            const friendship = witnessId === a ? rel.friendship_ab : rel.friendship_ba;
+            isVictimFriend = friendship > 50;
+          }
+        }
+
+        // Determine event sensitivity from rule effects
+        const eventSensitivity =
+          rule.effects.createFact ? 2 :
+          rule.effects.emitEvent ? 2 :
+          rule.effects.createState ? 1 : 0;
+
+        const behaviors = this.witnessAmplifier.getWitnessBehaviors(witnessPers, {
+          isVictimFriend,
+          eventSensitivity,
+        });
+
+        if (behaviors.length > 0) {
+          this.witnessAmplifier.applyBehaviors(
+            witnessId,
+            behaviors,
+            metadata.victimId ?? null,
+            metadata.perpetratorId ?? null,
+            { ruleId: rule.id, chainId, locationId: metadata.locationId },
+          );
+        }
+      }
+    }
   }
 
+  // ─── DB helper methods ────────────────────────────────────────────────────────
+
   private buildContext(payload: any): RippleContext {
-    // Returns an empty context stub — wired in Task 4
+    const agentId = payload?._resolvedAgentId ?? payload?.agentId ?? 0;
+    const currentTick = this.getCurrentTick();
+
+    // Get target agent info
+    const agentRow = agentId ? db.select({ id: agents.id, current_location: agents.current_location, personality: agents.personality })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .get() : null;
+
+    const locationId = agentRow?.current_location ?? null;
+
+    // Get agents at same location
+    const coLocatedRows = locationId != null
+      ? db.select({ id: agents.id, personality: agents.personality })
+          .from(agents)
+          .where(and(eq(agents.current_location, locationId), eq(agents.is_active, true)))
+          .all()
+      : [];
+
+    // Build perpetrator info if available
+    const perpetratorId = payload?.perpetratorId ?? payload?.agentId;
+    let perpetratorAgent: RippleContext['perpetratorAgent'] | undefined;
+    if (perpetratorId && perpetratorId !== agentId) {
+      const perpRow = db.select({ id: agents.id, current_location: agents.current_location })
+        .from(agents)
+        .where(eq(agents.id, perpetratorId))
+        .get();
+      if (perpRow) {
+        perpetratorAgent = { id: perpRow.id, current_location: perpRow.current_location };
+      }
+    }
+
     return {
-      targetAgent: { id: 0, current_location: null, personality: null },
-      agentsAtLocation: [],
-      getRelationship: () => null,
-      getAgentStates: () => [],
-      getAgentNeeds: () => ({ mood: 50, stress: 50, hunger: 50, energy: 50, social: 50 }),
-      getAgentEconomy: () => ({ money: 0, work_performance: 0 }),
-      currentTick: 0,
+      targetAgent: {
+        id: agentRow?.id ?? agentId,
+        current_location: agentRow?.current_location ?? null,
+        personality: agentRow?.personality as PersonalityProfile | null ?? null,
+      },
+      perpetratorAgent,
+      agentsAtLocation: coLocatedRows.map(r => ({
+        id: r.id,
+        personality: r.personality as PersonalityProfile | null,
+      })),
+      getRelationship: (a: number, b: number) => {
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        const row = db.select({
+          friendship_ab: relationships.friendship_ab,
+          friendship_ba: relationships.friendship_ba,
+          romance_ab: relationships.romance_ab,
+          romance_ba: relationships.romance_ba,
+          trust_ab: relationships.trust_ab,
+          trust_ba: relationships.trust_ba,
+          tags: relationships.tags,
+        }).from(relationships)
+          .where(and(eq(relationships.agent_a, lo), eq(relationships.agent_b, hi)))
+          .get();
+        if (!row) return null;
+        return {
+          friendship_ab: row.friendship_ab,
+          friendship_ba: row.friendship_ba,
+          romance_ab: row.romance_ab,
+          romance_ba: row.romance_ba,
+          trust_ab: row.trust_ab,
+          trust_ba: row.trust_ba,
+          tags: row.tags as string[],
+        };
+      },
+      getAgentStates: (id: number) => {
+        const rows = db.select({ type: agentStates.type })
+          .from(agentStates)
+          .where(eq(agentStates.agent_id, id))
+          .all();
+        return rows.map(r => r.type);
+      },
+      getAgentNeeds: (id: number) => {
+        const row = db.select({
+          mood: needs.mood,
+          stress: needs.stress,
+          hunger: needs.hunger,
+          energy: needs.energy,
+          social: needs.social,
+        }).from(needs)
+          .where(eq(needs.agent_id, id))
+          .get();
+        return row ?? { mood: 50, stress: 50, hunger: 50, energy: 50, social: 50 };
+      },
+      getAgentEconomy: (id: number) => {
+        const row = db.select({
+          money: economy.money,
+          work_performance: economy.work_performance,
+        }).from(economy)
+          .where(eq(economy.agent_id, id))
+          .get();
+        return row ?? { money: 0, work_performance: 0 };
+      },
+      currentTick,
     };
   }
 
   private getCurrentTick(): number {
-    return 0; // Stub — wired in Task 4
+    const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
+    return (world?.time as any)?.totalTicks ?? 0;
   }
 
   private getAgentPersonality(id: number): PersonalityProfile | null {
-    return null; // Stub — wired in Task 4
+    const row = db.select({ personality: agents.personality })
+      .from(agents)
+      .where(eq(agents.id, id))
+      .get();
+    return (row?.personality as PersonalityProfile | null) ?? null;
   }
 
   private getAgentLocation(id: number): number | null {
-    return null; // Stub — wired in Task 4
+    const row = db.select({ current_location: agents.current_location })
+      .from(agents)
+      .where(eq(agents.id, id))
+      .get();
+    return row?.current_location ?? null;
   }
+
+  // ─── Execute effects ────────────────────────────────────────────────────────
 
   private executeEffects(
     rule: RippleRule,
@@ -262,6 +577,214 @@ export class RippleEngine {
     metadata: CascadeMetadata,
     payload: any,
   ): void {
-    // No-op stub — wired in Task 4
+    const fx = rule.effects;
+    const currentTick = this.getCurrentTick();
+
+    // createState
+    if (fx.createState) {
+      // Check if state already exists
+      const existing = db.select({ id: agentStates.id })
+        .from(agentStates)
+        .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, fx.createState)))
+        .get();
+
+      if (!existing) {
+        db.insert(agentStates).values({
+          agent_id: agentId,
+          type: fx.createState,
+          severity: 0.5,
+          started_at: currentTick,
+          duration: 120,
+          source: `cascade:${rule.id}`,
+          metadata: { _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, ruleId: rule.id } },
+        }).run();
+
+        simEvents.emit('state:triggered', {
+          agentId,
+          state: fx.createState,
+          cause: `cascade:${rule.id}`,
+          _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, parentRuleId: rule.id },
+        });
+      }
+    }
+
+    // clearState
+    if (fx.clearState) {
+      db.delete(agentStates)
+        .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, fx.clearState)))
+        .run();
+    }
+
+    // createFact
+    if (fx.createFact) {
+      const targetId = metadata.perpetratorId ?? metadata.victimId ?? null;
+      createFact(
+        fx.createFact,
+        agentId,
+        targetId ?? null,
+        2,
+        [agentId, ...(targetId != null ? [targetId] : [])],
+        `cascade:${rule.id}`,
+      );
+    }
+
+    // emitEvent
+    if (fx.emitEvent) {
+      const emitPayload = {
+        ...(fx.emitPayload ?? {}),
+        agentId,
+        perpetratorId: metadata.perpetratorId,
+        victimId: metadata.victimId,
+        locationId: metadata.locationId,
+        _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, parentRuleId: rule.id },
+      };
+      simEvents.emit(fx.emitEvent, emitPayload);
+    }
+
+    // moodDelta
+    if (fx.moodDelta) {
+      const row = db.select({ mood: needs.mood }).from(needs).where(eq(needs.agent_id, agentId)).get();
+      if (row) {
+        const newMood = Math.max(0, Math.min(100, row.mood + fx.moodDelta));
+        db.update(needs).set({ mood: newMood }).where(eq(needs.agent_id, agentId)).run();
+      }
+    }
+
+    // stressDelta
+    if (fx.stressDelta) {
+      const row = db.select({ stress: needs.stress }).from(needs).where(eq(needs.agent_id, agentId)).get();
+      if (row) {
+        const newStress = Math.max(0, Math.min(100, row.stress + fx.stressDelta));
+        db.update(needs).set({ stress: newStress }).where(eq(needs.agent_id, agentId)).run();
+      }
+    }
+
+    // relationshipDelta
+    if (fx.relationshipDelta) {
+      const targetId = metadata.perpetratorId ?? metadata.victimId;
+      if (targetId != null && targetId !== agentId) {
+        const a = Math.min(agentId, targetId);
+        const b = Math.max(agentId, targetId);
+        const isA = agentId === a;
+
+        const rel = db.select().from(relationships)
+          .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
+          .get();
+
+        if (rel) {
+          const field = fx.relationshipDelta.field;
+          const delta = fx.relationshipDelta.value;
+
+          // Apply delta from agentId's perspective toward targetId
+          const updateData: Record<string, number> = {};
+          if (field === 'friendship') {
+            const col = isA ? 'friendship_ab' : 'friendship_ba';
+            const current = isA ? rel.friendship_ab : rel.friendship_ba;
+            updateData[col] = Math.max(-100, Math.min(100, current + delta));
+          } else if (field === 'romance') {
+            const col = isA ? 'romance_ab' : 'romance_ba';
+            const current = isA ? rel.romance_ab : rel.romance_ba;
+            updateData[col] = Math.max(-100, Math.min(100, current + delta));
+          } else if (field === 'trust') {
+            const col = isA ? 'trust_ab' : 'trust_ba';
+            const current = isA ? rel.trust_ab : rel.trust_ba;
+            updateData[col] = Math.max(-100, Math.min(100, current + delta));
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            db.update(relationships)
+              .set(updateData)
+              .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
+              .run();
+          }
+        }
+      }
+    }
+
+    // economyEffect
+    if (fx.economyEffect) {
+      const row = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
+      if (row) {
+        const field = fx.economyEffect.field;
+        const delta = fx.economyEffect.delta;
+        const current = (row as any)[field] as number;
+        const newValue = Math.max(0, current + delta);
+        db.update(economy)
+          .set({ [field]: newValue })
+          .where(eq(economy.agent_id, agentId))
+          .run();
+      }
+    }
+
+    // setDestination
+    if (fx.setDestination) {
+      if (fx.setDestination === 'home') {
+        const agentRow = db.select({ home: agents.home }).from(agents).where(eq(agents.id, agentId)).get();
+        if (agentRow) {
+          // Set destination to home location
+          // We need the location's entry point
+          const loc = db.select({ entry_point: locations.entry_point }).from(locations).where(eq(locations.id, agentRow.home)).get();
+          if (loc) {
+            const entryPoint = loc.entry_point as { x: number; y: number };
+            db.update(agents)
+              .set({ current_destination: { x: entryPoint.x, y: entryPoint.y, locationId: agentRow.home } })
+              .where(eq(agents.id, agentId))
+              .run();
+          }
+        }
+      }
+      // 'away_from_trigger' — just clear destination, movement system will handle idle behavior
+      if (fx.setDestination === 'away_from_trigger') {
+        db.update(agents)
+          .set({ current_destination: null })
+          .where(eq(agents.id, agentId))
+          .run();
+      }
+    }
+
+    // createGoal
+    if (fx.createGoal) {
+      let targetId: number | undefined;
+      if (fx.createGoal.targetAgent === 'perpetrator') {
+        targetId = metadata.perpetratorId;
+      } else if (fx.createGoal.targetAgent === 'victim') {
+        targetId = metadata.victimId;
+      } else if (fx.createGoal.targetAgent === 'random') {
+        // Random agent at location
+        const locId = metadata.locationId;
+        if (locId != null) {
+          const atLoc = this.getAgentsAtLocation(locId).filter(id => id !== agentId);
+          if (atLoc.length > 0) {
+            targetId = atLoc[Math.floor(Math.random() * atLoc.length)];
+          }
+        }
+      }
+
+      db.insert(goals).values({
+        agent_id: agentId,
+        type: fx.createGoal.type,
+        target_id: targetId,
+        motivation: `cascade:${rule.id}`,
+        priority: 0.6,
+        progress: 0,
+        status: 'active',
+        created_at: currentTick,
+      }).run();
+
+      simEvents.emit('goal:created', {
+        agentId,
+        goalType: fx.createGoal.type,
+        targetId: targetId ?? null,
+      });
+    }
+
+    // tensionDelta
+    if (fx.tensionDelta && this.tensionTracker) {
+      this.tensionTracker.addTension(agentId, fx.tensionDelta, {
+        event: rule.source,
+        description: `${rule.id} triggered`,
+        tick: currentTick,
+      });
+    }
   }
 }

@@ -13,6 +13,7 @@ import { tick as movementTick } from './systems/movement';
 import { eventsTick } from './systems/events';
 import { gossipTick } from './systems/gossipEngine';
 import { goalsTick } from './systems/goals';
+import { cascadeTick } from '../lib/cascade';
 import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
 import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
@@ -112,6 +113,7 @@ const SYSTEM_PHASES: Array<{
   { name: 'movement',      run: (w) => movementTick(w) },
   { name: 'events',        run: () => eventsTick() },
   { name: 'gossip',        run: (w) => gossipTick(w.time.totalTicks) },
+  { name: 'cascade',       run: () => cascadeTick() },
 ];
 
 // ─── Main gameTick ────────────────────────────────────────────────────────────

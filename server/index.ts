@@ -10,6 +10,7 @@ import { sqlite } from './db';
 import { memoryService } from './lib/memory/instance';
 import { initMemoryObserver } from './lib/memory/MemoryObserver';
 import { initPlanEventAdapter } from './lib/planning/PlanEventAdapter';
+import { initCascade } from './lib/cascade';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
@@ -55,6 +56,9 @@ if (unembedded.length > 0) {
 // Initialize planning system
 initPlanEventAdapter();
 console.log('Planning system initialized');
+
+// Initialize cascade system (ripple effects, tension, snap resolution)
+initCascade();
 
 // Express for health check
 const app = express();
