@@ -446,6 +446,7 @@ export const activityLog = sqliteTable(
     source_type: text('source_type'),
     source_id: integer('source_id'),
     severity: real('severity'),
+    metadata: text('metadata', { mode: 'json' }).$type<{ chainId?: string; chainDepth?: number; ruleId?: string } | null>(),
     timestamp: integer('timestamp').notNull(),
     real_timestamp: integer('real_timestamp').notNull(),
   },

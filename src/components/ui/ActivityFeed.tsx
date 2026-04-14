@@ -14,6 +14,7 @@ const EVENT_CATEGORIES = {
   world_event: { icon: '🌍', color: '#22c55e', label: 'World' },
   system: { icon: '⚙️', color: '#6b7280', label: 'System' },
   planning: { icon: '🧭', color: '#f59e0b', label: 'Plans' },
+  cascade: { icon: '⛓', color: '#f97316', label: 'Cascade' },
 } as const;
 
 type EventCategory = keyof typeof EVENT_CATEGORIES;
@@ -55,10 +56,22 @@ interface ActivityEntry {
   id?: number;
   type: string;
   template_data?: Record<string, string | number>;
+  metadata?: { chainId?: string; chainDepth?: number; ruleId?: string } | null;
   timestamp: number;
   real_timestamp?: number;
   agent_ids?: number[];
 }
+
+interface ChainGroup {
+  _chain: true;
+  chainId: string;
+  events: ActivityEntry[];
+}
+
+type DisplayItem =
+  | ActivityEntry
+  | { _summary: true; count: number; timestamp: number }
+  | ChainGroup;
 
 export function ActivityFeed() {
   const { activities } = useActivityFeed();
@@ -72,42 +85,94 @@ export function ActivityFeed() {
     world_event: true,
     system: true,
     planning: true,
+    cascade: true,
   });
+  const [expandedChains, setExpandedChains] = useState<Set<string>>(new Set());
 
   const toggleFilter = (cat: EventCategory) => {
     setFilters(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
-  // Filter activities
-  const filtered = (activities as unknown as ActivityEntry[]).filter(a => filters[getCategory(a.type)]);
+  const toggleChain = (chainId: string) => {
+    setExpandedChains(prev => {
+      const next = new Set(prev);
+      if (next.has(chainId)) {
+        next.delete(chainId);
+      } else {
+        next.add(chainId);
+      }
+      return next;
+    });
+  };
 
-  // Collapse consecutive conversations into summaries
-  type DisplayItem = ActivityEntry | { _summary: true; count: number; timestamp: number };
-  const displayItems: DisplayItem[] = [];
+  // Separate cascade (chained) events from regular events
+  const allEntries = activities as unknown as ActivityEntry[];
+
+  // Build chainId → [entries] map
+  const chainMap = new Map<string, ActivityEntry[]>();
+  const chainedIds = new Set<number>();
+
+  for (const entry of allEntries) {
+    const chainId = entry.metadata?.chainId;
+    if (chainId) {
+      if (!chainMap.has(chainId)) chainMap.set(chainId, []);
+      chainMap.get(chainId)!.push(entry);
+      if (entry.id != null) chainedIds.add(entry.id);
+    }
+  }
+
+  // Filter: if cascade filter is off, exclude chained events entirely
+  // Otherwise, apply normal category filters to unchained events, cascade groups count as one item
+  const processedChainIds = new Set<string>();
+
+  const filtered: DisplayItem[] = [];
   let convoBatch = 0;
   let lastConvoTimestamp = 0;
 
-  for (const entry of filtered) {
+  const flushConvoBatch = () => {
+    if (convoBatch > 0) {
+      filtered.push({ _summary: true, count: convoBatch, timestamp: lastConvoTimestamp });
+      convoBatch = 0;
+    }
+  };
+
+  for (const entry of allEntries) {
+    const chainId = entry.metadata?.chainId;
+
+    // Handle chained event — emit the group once when we first see this chainId
+    if (chainId && !processedChainIds.has(chainId)) {
+      processedChainIds.add(chainId);
+      if (filters.cascade) {
+        const chainEvents = chainMap.get(chainId) ?? [entry];
+        flushConvoBatch();
+        filtered.push({ _chain: true, chainId, events: chainEvents });
+      }
+      continue;
+    }
+
+    // Skip duplicate chained entries (already handled above via group)
+    if (chainId && processedChainIds.has(chainId)) {
+      continue;
+    }
+
+    // Regular (unchained) entry
     const cat = getCategory(entry.type);
+    if (!filters[cat]) continue;
+
     if (cat === 'conversation') {
       convoBatch++;
       lastConvoTimestamp = entry.timestamp;
     } else {
-      if (convoBatch > 0) {
-        displayItems.push({ _summary: true, count: convoBatch, timestamp: lastConvoTimestamp });
-        convoBatch = 0;
-      }
-      displayItems.push(entry);
+      flushConvoBatch();
+      filtered.push(entry);
     }
   }
-  if (convoBatch > 0) {
-    displayItems.push({ _summary: true, count: convoBatch, timestamp: lastConvoTimestamp });
-  }
+  flushConvoBatch();
 
   return (
     <div className="h-full bg-gray-800 border-t border-gray-700 flex flex-col">
       {/* Filter bar */}
-      <div className="flex gap-1 px-2 py-1 border-b border-gray-700 shrink-0">
+      <div className="flex flex-wrap gap-1 px-2 py-1 border-b border-gray-700 shrink-0">
         {(Object.entries(EVENT_CATEGORIES) as [EventCategory, (typeof EVENT_CATEGORIES)[EventCategory]][]).map(
           ([key, { icon, color, label }]) => (
             <button
@@ -131,11 +196,12 @@ export function ActivityFeed() {
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
-        {displayItems.length === 0 ? (
+        {filtered.length === 0 ? (
           <p className="text-gray-500 text-xs">No activity yet...</p>
         ) : (
           <div className="space-y-0.5">
-            {displayItems.map((item, i) => {
+            {filtered.map((item, i) => {
+              // Conversation summary
               if ('_summary' in item) {
                 return (
                   <div key={`summary-${i}`} className="text-[11px] text-gray-500 italic pl-1">
@@ -144,6 +210,68 @@ export function ActivityFeed() {
                 );
               }
 
+              // Chain group
+              if ('_chain' in item) {
+                const { chainId, events } = item;
+                const isExpanded = expandedChains.has(chainId);
+                const firstEvent = events[0];
+                const consequenceCount = events.length - 1;
+                const autoCollapse = events.length >= 3;
+
+                return (
+                  <div key={`chain-${chainId}`}>
+                    {/* Chain header */}
+                    <button
+                      onClick={() => toggleChain(chainId)}
+                      className="w-full text-left text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5 hover:bg-gray-700/40 transition-colors rounded-r"
+                      style={{ borderLeftColor: '#f97316', borderLeftWidth: 2 }}
+                    >
+                      <span className="shrink-0">⛓</span>
+                      <span className="text-gray-500 shrink-0 w-12 text-right">
+                        {world
+                          ? timeAgo(firstEvent.timestamp, world.time.totalTicks, world.tick_speed)
+                          : ''}
+                      </span>
+                      <span className="text-orange-300 flex-1">
+                        {renderMessage(firstEvent)}
+                      </span>
+                      {consequenceCount > 0 && (
+                        <span
+                          className="shrink-0 text-[10px] px-1 rounded-full font-semibold"
+                          style={{ backgroundColor: '#f9731620', color: '#f97316', border: '1px solid #f9731640' }}
+                        >
+                          → {consequenceCount} consequence{consequenceCount !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-gray-500">
+                        {(!autoCollapse || isExpanded) && consequenceCount > 0 ? '▲' : consequenceCount > 0 ? '▼' : ''}
+                      </span>
+                    </button>
+
+                    {/* Expanded chain children */}
+                    {(!autoCollapse || isExpanded) && consequenceCount > 0 && (
+                      <div className="ml-3 border-l-2 border-orange-900/60 pl-1.5 space-y-0.5 mt-0.5">
+                        {events.slice(1).map((child, ci) => (
+                          <div
+                            key={child.id ?? `chain-child-${chainId}-${ci}`}
+                            className="text-[11px] flex gap-1.5 py-0.5"
+                          >
+                            <span className="shrink-0 text-orange-600/70">↳</span>
+                            <span className="text-gray-500 shrink-0 w-12 text-right">
+                              {world
+                                ? timeAgo(child.timestamp, world.time.totalTicks, world.tick_speed)
+                                : ''}
+                            </span>
+                            <span className="text-gray-400">{renderMessage(child)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // Regular event
               const cat = getCategory(item.type);
               const { icon, color } = EVENT_CATEGORIES[cat];
               const isDrama = cat === 'drama';

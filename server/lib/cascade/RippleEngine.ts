@@ -7,6 +7,7 @@ import { db } from '../../db';
 import { agents, agentStates, needs, economy, relationships, worldState, goals, locations } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { createFact } from '../gossip';
+import { logActivity } from '../activityLogger';
 import crypto from 'crypto';
 
 interface QueueItem {
@@ -598,6 +599,16 @@ export class RippleEngine {
           source: `cascade:${rule.id}`,
           metadata: { _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, ruleId: rule.id } },
         }).run();
+
+        // Log cascade-triggered state to activity feed with chainId
+        const agentRow = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get();
+        const agentName = agentRow?.name ?? `Agent#${agentId}`;
+        logActivity({
+          type: 'state_gained',
+          initiator: agentId,
+          templateData: { agent: agentName, state: fx.createState },
+          metadata: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, ruleId: rule.id },
+        });
 
         simEvents.emit('state:triggered', {
           agentId,

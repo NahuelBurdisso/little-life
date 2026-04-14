@@ -13,6 +13,7 @@ interface LogActivityParams {
   sourceId?: number;
   severity?: number;
   templateData: Record<string, string | number>;
+  metadata?: { chainId?: string; chainDepth?: number; ruleId?: string } | null;
 }
 
 export function logActivity(params: LogActivityParams): void {
@@ -41,6 +42,7 @@ export function logActivity(params: LogActivityParams): void {
     source_type: params.sourceType ?? null,
     source_id: params.sourceId ?? null,
     severity: params.severity ?? null,
+    metadata: params.metadata ?? null,
     timestamp: currentTick,
     real_timestamp: Date.now(),
   }).run();
