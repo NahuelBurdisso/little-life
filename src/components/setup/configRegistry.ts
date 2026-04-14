@@ -66,7 +66,7 @@ export const CONFIG_REGISTRY: ConfigParam[] = [
   {
     key: 'llmModel', label: 'LLM Model',
     description: 'Ollama model name for agent conversations',
-    type: 'text', default: 'huihui_ai/gemma-4-abliterated:26b', category: 'llm',
+    type: 'text', default: 'huihui_ai/gemma-4-abliterated:e4b', category: 'llm',
   },
   {
     key: 'llmTemperature', label: 'Temperature',

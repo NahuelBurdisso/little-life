@@ -60,7 +60,7 @@ export const CONFIG = {
 
   // AI / Ollama
   AI: {
-    CHAT_MODEL: "dolphin3:8b",
+    CHAT_MODEL: "huihui_ai/gemma-4-abliterated:e4b",
     EMBEDDING_MODEL: "mxbai-embed-large",
     CHAT_TEMPERATURE: 0.8,
     CHAT_TOP_P: 0.9,
@@ -74,7 +74,7 @@ export const CONFIG = {
     MEMORY_ACCESS_PENALTY_MAX: 0.2,
     REFLECTION_IMPORTANCE: 7,
     RETRY_ATTEMPTS: 2,
-    TIMEOUT_MS: 15000,
+    TIMEOUT_MS: 60000,
   },
 
   // Decision Engine

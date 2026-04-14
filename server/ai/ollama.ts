@@ -44,6 +44,7 @@ export async function callOllamaChat(
         ...request.messages,
       ],
       stream: false,
+      think: false,
       options: request.options,
     };
 
@@ -63,11 +64,13 @@ export async function callOllamaChat(
 
     const data = await response.json();
 
-    if (!data.message?.content) {
+    const content = data.message?.content ?? '';
+    if (!content && !data.message?.thinking) {
       throw new Error("Ollama response missing message content");
     }
 
-    return { text: data.message.content };
+    // Some models (e.g., Gemma 4) return thinking + content; use content if available, else extract from thinking
+    return { text: content || '' };
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`Ollama request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
