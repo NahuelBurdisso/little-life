@@ -26,7 +26,7 @@ import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
-import { eq } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 
 const ALL_TABLES = [
@@ -393,6 +393,216 @@ function seed() {
       sensitivity: 3, known_by: [rayId, agentMap.get('Marco Rivera')!],
       created_at: now, is_active: true, source: 'backstory',
     }).run();
+  }
+
+  // Additional conflict web secrets
+  const marcoId = agentMap.get('Marco Rivera');
+  const rosaId = agentMap.get('Rosa Chen');
+  const sofiaId = agentMap.get('Dr. Sofia Petrov');
+  const omarId = agentMap.get('Omar Hassan');
+  const elenaId = agentMap.get('Elena Voss');
+  const jamesId = agentMap.get("James O'Brien");
+  const yukiId = agentMap.get('Yuki Tanaka');
+  const thomasId = agentMap.get('Thomas Park');
+  const priyaId = agentMap.get('Priya Sharma');
+
+  // 1. Sofia prescribing Thomas anxiety meds off-books
+  if (sofiaId && thomasId) {
+    db.insert(shared_knowledge).values({
+      type: 'secret_medical', subject_id: sofiaId, target_id: thomasId,
+      content: 'Dr. Sofia Petrov has been prescribing Thomas Park anxiety medication without formal records',
+      sensitivity: 3, known_by: [sofiaId, thomasId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 2. Sofia treating Diego's hand off-books
+  if (sofiaId && diegoId) {
+    db.insert(shared_knowledge).values({
+      type: 'secret_medical', subject_id: sofiaId, target_id: diegoId,
+      content: 'Dr. Sofia Petrov treated Diego Santos for a hand injury without filing an official report',
+      sensitivity: 2, known_by: [sofiaId, diegoId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 3. Omar witnessed Ray shove Carlos
+  if (omarId && rayId && carlosId) {
+    db.insert(shared_knowledge).values({
+      type: 'witnessed_event', subject_id: rayId, target_id: carlosId,
+      content: 'Omar Hassan witnessed Ray Kowalski shove Carlos Mendez during a heated argument near the town jail',
+      sensitivity: 3, known_by: [omarId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 4. James was drinking the night Margaret fell
+  if (jamesId && elenaId) {
+    db.insert(shared_knowledge).values({
+      type: 'secret_told', subject_id: jamesId, target_id: null,
+      content: "James O'Brien was heavily drinking the night old Margaret fell — he may have been nearby and done nothing",
+      sensitivity: 3, known_by: [jamesId, elenaId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 5. James told Marco something while blacked out
+  if (jamesId && marcoId) {
+    db.insert(shared_knowledge).values({
+      type: 'secret_told', subject_id: jamesId, target_id: marcoId,
+      content: "James O'Brien revealed something compromising to Marco Rivera while blackout drunk — he doesn't remember what he said",
+      sensitivity: 2, known_by: [jamesId, marcoId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 6. Yuki caught Thomas getting meds at odd hours
+  if (yukiId && thomasId) {
+    db.insert(shared_knowledge).values({
+      type: 'witnessed_event', subject_id: thomasId, target_id: null,
+      content: 'Yuki Tanaka saw Thomas Park collecting medication packages from Dr. Petrov\'s clinic at an unusual hour',
+      sensitivity: 2, known_by: [yukiId, thomasId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 7. Thomas skimming from town funds
+  if (thomasId) {
+    db.insert(shared_knowledge).values({
+      type: 'financial', subject_id: thomasId, target_id: null,
+      content: 'Thomas Park has been quietly skimming small amounts from town maintenance funds for personal use',
+      sensitivity: 2, known_by: [thomasId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 8. Rosa noticed ledger discrepancies
+  if (rosaId) {
+    db.insert(shared_knowledge).values({
+      type: 'financial', subject_id: rosaId, target_id: null,
+      content: "Rosa Chen has noticed unexplained discrepancies in her own shop ledger that she hasn't fully investigated",
+      sensitivity: 1, known_by: [rosaId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 9. Rosa extending Carlos credit and forging receipts
+  if (rosaId && carlosId) {
+    db.insert(shared_knowledge).values({
+      type: 'financial', subject_id: rosaId, target_id: carlosId,
+      content: 'Rosa Chen has been extending Carlos Mendez unofficial credit and falsifying receipts to cover the shortfall',
+      sensitivity: 2, known_by: [rosaId, carlosId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 10. Diego flirted with Priya at the tavern
+  if (diegoId && priyaId && luciaId && marcoId) {
+    db.insert(shared_knowledge).values({
+      type: 'romantic', subject_id: diegoId, target_id: priyaId,
+      content: 'Diego Santos openly flirted with Priya Sharma at The Rusty Lantern — Marco and Lucia both witnessed it',
+      sensitivity: 1, known_by: [diegoId, priyaId, luciaId, marcoId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 11. Lucia found discrepancies in Rosa's shop ledger
+  if (luciaId && rosaId) {
+    db.insert(shared_knowledge).values({
+      type: 'financial', subject_id: rosaId, target_id: null,
+      content: "Lucia Fernandez noticed discrepancies in Rosa Chen's shop ledger while helping out one afternoon",
+      sensitivity: 1, known_by: [luciaId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  // 12. Carlos suspects Ray planted evidence
+  if (carlosId && rayId) {
+    db.insert(shared_knowledge).values({
+      type: 'suspicion', subject_id: carlosId, target_id: rayId,
+      content: 'Carlos Mendez privately suspects Ray Kowalski planted evidence to frame him during a past dispute',
+      sensitivity: 1, known_by: [carlosId],
+      created_at: now, is_active: true, source: 'backstory',
+    }).run();
+  }
+
+  console.log('[seed] Seeding initial relationship adjustments...');
+
+  // Helper: given two agent IDs, returns [agentA, agentB] with agentA < agentB
+  function orderedPair(id1: number, id2: number): [number, number] {
+    return id1 < id2 ? [id1, id2] : [id2, id1];
+  }
+
+  // 1. Sofia & Omar: romance values (Sofia→Omar: 15, Omar→Sofia: 10)
+  if (sofiaId && omarId) {
+    const [a, b] = orderedPair(sofiaId, omarId);
+    const sofiaIsA = sofiaId === a;
+    db.update(relationships).set({
+      romance_ab: sofiaIsA ? 15 : 10,
+      romance_ba: sofiaIsA ? 10 : 15,
+    }).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+  }
+
+  // 2. Elena & Rosa: lower Elena's trust toward Rosa to 30
+  if (elenaId && rosaId) {
+    const [a, b] = orderedPair(elenaId, rosaId);
+    const elenaIsA = elenaId === a;
+    db.update(relationships).set(
+      elenaIsA ? { trust_ab: 30 } : { trust_ba: 30 }
+    ).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+  }
+
+  // 3. James & Marco: lower James's trust toward Marco to 25
+  if (jamesId && marcoId) {
+    const [a, b] = orderedPair(jamesId, marcoId);
+    const jamesIsA = jamesId === a;
+    db.update(relationships).set(
+      jamesIsA ? { trust_ab: 25 } : { trust_ba: 25 }
+    ).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+  }
+
+  // 4. Yuki & Thomas: add "watching" to tags
+  if (yukiId && thomasId) {
+    const [a, b] = orderedPair(yukiId, thomasId);
+    const existingRel = db.select({ tags: relationships.tags })
+      .from(relationships)
+      .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
+      .get();
+    if (existingRel) {
+      const updatedTags = [...(existingRel.tags ?? []), 'watching'];
+      db.update(relationships).set({ tags: updatedTags })
+        .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+    }
+  }
+
+  // 5. Diego & Priya: romance (Diego→Priya: 15, Priya→Diego: 20)
+  if (diegoId && priyaId) {
+    const [a, b] = orderedPair(diegoId, priyaId);
+    const diegoIsA = diegoId === a;
+    db.update(relationships).set({
+      romance_ab: diegoIsA ? 15 : 20,
+      romance_ba: diegoIsA ? 20 : 15,
+    }).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+  }
+
+  // 6. Lucia & Priya: lower Lucia's friendship to 25, trust to 20
+  if (luciaId && priyaId) {
+    const [a, b] = orderedPair(luciaId, priyaId);
+    const luciaIsA = luciaId === a;
+    db.update(relationships).set(
+      luciaIsA
+        ? { friendship_ab: 25, trust_ab: 20 }
+        : { friendship_ba: 25, trust_ba: 20 }
+    ).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+  }
+
+  // 7. Lucia & Diego: lower Lucia's trust toward Diego to 35
+  if (luciaId && diegoId) {
+    const [a, b] = orderedPair(luciaId, diegoId);
+    const luciaIsA = luciaId === a;
+    db.update(relationships).set(
+      luciaIsA ? { trust_ab: 35 } : { trust_ba: 35 }
+    ).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
   }
 
   console.log('[seed] Seeding complete!');
