@@ -21,6 +21,7 @@ sqlite.pragma('mmap_size = 30000000');
 // Performance indexes not covered by Drizzle schema
 sqlite.exec('CREATE INDEX IF NOT EXISTS idx_memories_agent_created ON memories (agent_id, created_at DESC)');
 sqlite.exec('CREATE INDEX IF NOT EXISTS idx_conversations_status_ended ON conversations (status, ended_at DESC)');
+sqlite.exec('CREATE INDEX IF NOT EXISTS idx_shared_knowledge_type_active ON shared_knowledge (type, is_active)');
 
 // ─── Schema migrations (additive columns) ─────────────────────────────────
 function migrateSchema() {

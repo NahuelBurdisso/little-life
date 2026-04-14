@@ -52,6 +52,15 @@ export interface GenerationResult {
   rivalPairs: Array<[number, number]>;
 }
 
+// ─── Configuration ─────────────────────────────────────────────────────────────
+const DRAMA_SECRET_MULTIPLIER = 1.2;
+const ROMANCE_THREAD_MULTIPLIER = 0.4;
+const SENSITIVITY_BREAKPOINTS = { low: 3, medium: 6 } as const;
+const ECONOMY_PERCENTILES = { rich: 0.25, poor: 0.75 } as const;
+const TRUST_DELTA_MULTIPLIER = 6;
+const RIVAL_PAIR_MULTIPLIER = 0.8;
+const MOOD_LOW_AGENT_RATIO = 0.4;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function shuffle<T>(arr: T[]): T[] {
@@ -93,14 +102,14 @@ export function generateFromSliders(
   const { drama, romance, crime, trust } = sliders;
 
   // ── 1. Secrets ──────────────────────────────────────────────────────────────
-  const targetSecrets = Math.round(drama * 1.2);
+  const targetSecrets = Math.round(drama * DRAMA_SECRET_MULTIPLIER);
   const secrets: GeneratedSecret[] = [];
 
   if (targetSecrets > 0) {
     // The real secretsPool uses {subject}/{target} placeholders (no min_drama_level field).
     // We map sensitivity as a proxy for drama intensity: at low drama only sensitivity=1,
     // at higher drama include sensitivity=2 and 3.
-    const maxSensitivity = drama <= 3 ? 1 : drama <= 6 ? 2 : 3;
+    const maxSensitivity = drama <= SENSITIVITY_BREAKPOINTS.low ? 1 : drama <= SENSITIVITY_BREAKPOINTS.medium ? 2 : 3;
     const eligiblePool = SECRETS_POOL.filter(t => t.sensitivity <= maxSensitivity);
     const shuffledPool = shuffle(eligiblePool);
 
@@ -148,7 +157,7 @@ export function generateFromSliders(
   }
 
   // ── 2. Romance threads ───────────────────────────────────────────────────────
-  const targetRomance = Math.round(romance * 0.4);
+  const targetRomance = Math.round(romance * ROMANCE_THREAD_MULTIPLIER);
   const romanceThreads: RomanceThread[] = [];
   const shuffledRomance = shuffle(ROMANCE_POOL);
   const usedRomanceAgents = new Set<number>();
@@ -250,9 +259,9 @@ export function generateFromSliders(
     } else if (crime >= 7) {
       // Amplify gaps — strong inequality
       const rank = i / baseMoney.length;
-      if (rank < 0.25) {
+      if (rank < ECONOMY_PERCENTILES.rich) {
         economyAdjustments[index] = 100 + Math.round(Math.random() * 50);
-      } else if (rank > 0.75) {
+      } else if (rank > ECONOMY_PERCENTILES.poor) {
         economyAdjustments[index] = 10 + Math.round(Math.random() * 15);
       } else {
         economyAdjustments[index] = 40 + Math.round(Math.random() * 30);
@@ -267,11 +276,11 @@ export function generateFromSliders(
   }
 
   // ── 4. Trust calibration ──────────────────────────────────────────────────────
-  const trustDelta = (trust - 5) * 6; // trust=0 → -30, trust=5 → 0, trust=10 → +30
+  const trustDelta = (trust - 5) * TRUST_DELTA_MULTIPLIER; // trust=0 → -30, trust=5 → 0, trust=10 → +30
   const rivalPairs: Array<[number, number]> = [];
 
   if (trust <= 3) {
-    const numRivals = Math.round((4 - trust) * 0.8);
+    const numRivals = Math.round((4 - trust) * RIVAL_PAIR_MULTIPLIER);
     const agentIndices = shuffle(agents.map((_, i) => i));
     for (let i = 0; i < numRivals * 2 && i + 1 < agentIndices.length; i += 2) {
       rivalPairs.push([agentIndices[i], agentIndices[i + 1]]);
@@ -280,7 +289,7 @@ export function generateFromSliders(
 
   // ── 5. Mood adjustments ───────────────────────────────────────────────────────
   const moodAdjustments: Record<number, { mood: number; stress: number }> = {};
-  const numLowMood = Math.round(drama * 0.4);
+  const numLowMood = Math.round(drama * MOOD_LOW_AGENT_RATIO);
   const moodTargets = new Set(shuffle(agents.map((_, i) => i)).slice(0, numLowMood));
 
   for (let i = 0; i < agents.length; i++) {

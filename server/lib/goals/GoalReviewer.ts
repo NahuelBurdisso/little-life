@@ -18,6 +18,16 @@ const TICKS_PER_DAY = 1440;
 
 export class GoalReviewer {
   private mapper = new GoalMapper();
+  private agentCache: { data: { id: number; name: string }[]; tick: number } | null = null;
+
+  private getAllAgents(currentTick: number): { id: number; name: string }[] {
+    if (this.agentCache && currentTick - this.agentCache.tick < 100) {
+      return this.agentCache.data;
+    }
+    const data = db.select({ id: agents.id, name: agents.name }).from(agents).all();
+    this.agentCache = { data, tick: currentTick };
+    return data;
+  }
 
   // ─── Main entry point ───────────────────────────────────────────────────────
 
@@ -72,7 +82,7 @@ export class GoalReviewer {
         )
         .all();
 
-      const allAgents = db.select({ id: agents.id, name: agents.name }).from(agents).all();
+      const allAgents = this.getAllAgents(currentTick);
       const agentNameMap = new Map(allAgents.map(a => [a.id, a.name]));
 
       const relationshipHighlights = rels
@@ -303,7 +313,7 @@ export class GoalReviewer {
       .where(or(eq(relationships.agent_a, agentId), eq(relationships.agent_b, agentId)))
       .all();
 
-    const allAgents = db.select({ id: agents.id, name: agents.name }).from(agents).all();
+    const allAgents = this.getAllAgents(currentTick);
     const agentNameMap = new Map(allAgents.map(a => [a.id, a.name]));
 
     const relationshipHighlights = rels

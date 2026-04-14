@@ -73,6 +73,8 @@ function checkTriggerCondition(
   trigger: GoalTriggerDef,
   agent: any,
   _currentTick: number,
+  cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
+  cachedRelationships: (typeof relationships.$inferSelect)[],
 ): number | null | false {
   const cond = trigger.condition;
 
@@ -90,23 +92,16 @@ function checkTriggerCondition(
     }
 
     case 'fact_learned': {
-      const relevantFacts = db.select().from(shared_knowledge)
-        .where(and(
-          eq(shared_knowledge.type, cond.fact_type!),
-          eq(shared_knowledge.is_active, true),
-        ))
-        .all()
+      const relevantFacts = cachedKnowledge
         .filter(f => {
+          if (f.type !== cond.fact_type!) return false;
           const knownBy = f.known_by as number[];
           if (!knownBy.includes(agent.id)) return false;
           if (cond.is_victim && f.target_id !== agent.id) return false;
           if (cond.involves_partner) {
-            const rel = db.select().from(relationships)
-              .where(and(
-                eq(relationships.agent_a, Math.min(agent.id, f.subject_id)),
-                eq(relationships.agent_b, Math.max(agent.id, f.subject_id)),
-              ))
-              .get();
+            const a = Math.min(agent.id, f.subject_id);
+            const b = Math.max(agent.id, f.subject_id);
+            const rel = cachedRelationships.find(r => r.agent_a === a && r.agent_b === b);
             if (!rel || !(rel.tags as string[])?.includes('partner')) return false;
           }
           return true;
@@ -132,15 +127,10 @@ function checkTriggerCondition(
     }
 
     case 'relationship_threshold': {
-      const rels = db.select().from(relationships)
-        .where(eq(relationships.agent_a, agent.id))
-        .all();
-      const relsB = db.select().from(relationships)
-        .where(eq(relationships.agent_b, agent.id))
-        .all();
-
-      for (const rel of [...rels, ...relsB]) {
+      for (const rel of cachedRelationships) {
         const isA = rel.agent_a === agent.id;
+        const isB = rel.agent_b === agent.id;
+        if (!isA && !isB) continue;
         const otherId = isA ? rel.agent_b : rel.agent_a;
         const fieldValue = getRelField(rel, cond.field!, isA);
         if (compareOp(fieldValue, cond.op!, cond.value!)) {
@@ -157,7 +147,12 @@ function checkTriggerCondition(
 
 // ─── evaluateTriggers ─────────────────────────────────────────────────────────
 
-function evaluateTriggers(agent: any, currentTick: number): void {
+function evaluateTriggers(
+  agent: any,
+  currentTick: number,
+  cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
+  cachedRelationships: (typeof relationships.$inferSelect)[],
+): void {
   const personality = getEffectivePersonality(agent.id);
   const activeGoals = db.select().from(goals)
     .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
@@ -177,7 +172,7 @@ function evaluateTriggers(agent: any, currentTick: number): void {
 
     if (trigger.personality_gate && !checkPersonalityGate(personality, trigger.personality_gate)) continue;
 
-    const targetId = checkTriggerCondition(trigger, agent, currentTick);
+    const targetId = checkTriggerCondition(trigger, agent, currentTick, cachedKnowledge, cachedRelationships);
     if (targetId === false) continue;
 
     // Don't duplicate: skip if agent already has this goal type targeting the same agent
@@ -215,7 +210,12 @@ function evaluateTriggers(agent: any, currentTick: number): void {
 
 // ─── evaluateAbandonment ──────────────────────────────────────────────────────
 
-function evaluateAbandonment(agent: any, goal: any, currentTick: number): void {
+function evaluateAbandonment(
+  agent: any,
+  goal: any,
+  currentTick: number,
+  allAgentStates: (typeof agentStates.$inferSelect)[],
+): void {
   const def = GOAL_REGISTRY[goal.type];
   if (!def) return;
 
@@ -224,9 +224,9 @@ function evaluateAbandonment(agent: any, goal: any, currentTick: number): void {
 
     if (rule.condition.startsWith('state_expired:')) {
       const stateType = rule.condition.split(':')[1];
-      const hasState = db.select().from(agentStates)
-        .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, stateType)))
-        .all();
+      const hasState = allAgentStates.filter(
+        s => s.agent_id === agent.id && s.type === stateType,
+      );
       if (hasState.length === 0) {
         shouldAbandon = rule.auto === true || (rule.chance != null && Math.random() < rule.chance);
       }
@@ -263,19 +263,17 @@ function evaluateAbandonment(agent: any, goal: any, currentTick: number): void {
       }
     } else if (rule.condition === 'target_recovered') {
       if (goal.target_id) {
-        const targetStates = db.select().from(agentStates)
-          .where(eq(agentStates.agent_id, goal.target_id))
-          .all();
-        const needsCare = targetStates.some(s =>
+        const needsCare = allAgentStates.some(s =>
+          s.agent_id === goal.target_id &&
           ['sick', 'grieving', 'heartbroken', 'lonely', 'depressed'].includes(s.type),
         );
         if (!needsCare) shouldAbandon = true;
       }
     } else if (rule.condition === 'relapsed') {
-      const hasAlcoholic = db.select().from(agentStates)
-        .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'alcoholic')))
-        .all();
-      if (hasAlcoholic.length > 0) shouldAbandon = true;
+      const hasAlcoholic = allAgentStates.some(
+        s => s.agent_id === agent.id && s.type === 'alcoholic',
+      );
+      if (hasAlcoholic) shouldAbandon = true;
     }
 
     if (shouldAbandon) {
@@ -350,6 +348,13 @@ export function goalsTick(): void {
     (t: any) => t.type === 'day_changed'
   ) ?? false;
 
+  // Pre-load shared tables once per tick to avoid per-agent/per-trigger queries
+  const allActiveKnowledge = db.select().from(shared_knowledge)
+    .where(eq(shared_knowledge.is_active, 1 as any))
+    .all();
+  const allRelationships = db.select().from(relationships).all();
+  const allAgentStates = db.select().from(agentStates).all();
+
   for (const agent of activeAgents) {
     const agentGoals = db.select().from(goals)
       .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
@@ -362,7 +367,7 @@ export function goalsTick(): void {
 
     // 2. Evaluate abandonment on existing goals (rule-based)
     for (const goal of agentGoals) {
-      evaluateAbandonment(agent, goal, currentTick);
+      evaluateAbandonment(agent, goal, currentTick, allAgentStates);
     }
 
     // 3. Evaluate passive goal progress
@@ -372,8 +377,8 @@ export function goalsTick(): void {
       }
     }
 
-    // 4. Check reactive triggers for new goals (2-arg signature: agent, currentTick)
-    evaluateTriggers(agent, currentTick);
+    // 4. Check reactive triggers for new goals
+    evaluateTriggers(agent, currentTick, allActiveKnowledge, allRelationships);
 
     // 5. Pivot evaluation (async fire-and-forget)
     void pivotEvaluator.evaluate(agent.id, currentTick);
