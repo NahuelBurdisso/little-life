@@ -21,7 +21,8 @@ const KENNEY_TEXTURES = [
 ];
 
 // Fallback: programmatic textures if images fail to load
-const FALLBACK_SIZE = 16;
+// Match Kenney texture size (512x512) so scale values produce consistent visual sizes
+const FALLBACK_SIZE = 128;
 
 function createFallbackTexture(renderer: PIXI.Renderer, drawFn: (g: PIXI.Graphics) => void): PIXI.Texture {
   const g = new PIXI.Graphics();
@@ -58,23 +59,25 @@ export async function createShapeTextures(renderer: PIXI.Renderer): Promise<Map<
   textures.set('leaf', kenneyTextures[3] ?? createCircleFallback(renderer));     // medium = leaf
   textures.set('square', kenneyTextures[2] ?? createCircleFallback(renderer));   // large soft = ambient
 
-  // Specialty shapes: programmatic (heart, star, note need distinct silhouettes)
+  // Specialty shapes: programmatic at FALLBACK_SIZE resolution
+  // These need to match the visual weight of Kenney 512px textures when scaled
   textures.set('heart', createFallbackTexture(renderer, (g) => {
     const s = FALLBACK_SIZE;
     const cx = s / 2;
-    g.circle(cx - 2, s * 0.35, 3);
-    g.circle(cx + 2, s * 0.35, 3);
+    const r = s * 0.22;
+    g.circle(cx - r * 0.7, s * 0.35, r);
+    g.circle(cx + r * 0.7, s * 0.35, r);
     g.fill({ color: 0xffffff });
-    g.moveTo(cx - 5, s * 0.42);
-    g.lineTo(cx, s * 0.85);
-    g.lineTo(cx + 5, s * 0.42);
+    g.moveTo(cx - s * 0.35, s * 0.42);
+    g.lineTo(cx, s * 0.82);
+    g.lineTo(cx + s * 0.35, s * 0.42);
     g.fill({ color: 0xffffff });
   }));
 
   textures.set('star', createFallbackTexture(renderer, (g) => {
     const cx = FALLBACK_SIZE / 2;
     const cy = FALLBACK_SIZE / 2;
-    const outer = FALLBACK_SIZE / 2 - 1;
+    const outer = FALLBACK_SIZE * 0.42;
     const inner = outer * 0.4;
     const points: number[] = [];
     for (let i = 0; i < 5; i++) {
@@ -89,9 +92,10 @@ export async function createShapeTextures(renderer: PIXI.Renderer): Promise<Map<
 
   textures.set('note', createFallbackTexture(renderer, (g) => {
     const cx = FALLBACK_SIZE / 2;
-    g.circle(cx - 1.5, FALLBACK_SIZE * 0.7, 2.5);
+    const r = FALLBACK_SIZE * 0.15;
+    g.circle(cx - r * 0.5, FALLBACK_SIZE * 0.68, r);
     g.fill({ color: 0xffffff });
-    g.rect(cx + 0.8, FALLBACK_SIZE * 0.15, 1.2, FALLBACK_SIZE * 0.55);
+    g.rect(cx + r * 0.3, FALLBACK_SIZE * 0.18, r * 0.5, FALLBACK_SIZE * 0.52);
     g.fill({ color: 0xffffff });
   }));
 
@@ -100,7 +104,10 @@ export async function createShapeTextures(renderer: PIXI.Renderer): Promise<Map<
 
 function createCircleFallback(renderer: PIXI.Renderer): PIXI.Texture {
   return createFallbackTexture(renderer, (g) => {
-    g.circle(FALLBACK_SIZE / 2, FALLBACK_SIZE / 2, FALLBACK_SIZE / 2 - 1);
+    // Soft glow circle with gradient-like falloff
+    const cx = FALLBACK_SIZE / 2;
+    const r = FALLBACK_SIZE * 0.4;
+    g.circle(cx, cx, r);
     g.fill({ color: 0xffffff });
   });
 }
