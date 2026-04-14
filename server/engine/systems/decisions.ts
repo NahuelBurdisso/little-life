@@ -9,6 +9,7 @@ import {
   conversations,
   relationshipEvents,
   shared_knowledge,
+  goals,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { INTERIOR_ZONES } from '../../data/interiors';
@@ -296,6 +297,7 @@ function scoreFreeTimeActions(
   allRelationships: RelRow[],
   otherAgents: AgentRow[],
   world: WorldRow,
+  econMap?: Map<number, EconRow>,
 ): ScoredAction[] {
   const scores: ScoredAction[] = [];
   const evening = isEvening(world.time.hour);
@@ -394,7 +396,7 @@ function scoreFreeTimeActions(
       socScore += curiosityNoveltyBonus(personality!.curiosity, interactionCount);
       // Vanity: prefer high-status targets
       if (mods.socialTargetStatusBonus > 0) {
-        const otherEcon = db.select().from(economy).where(eq(economy.agent_id, other.id)).get();
+        const otherEcon = econMap?.get(other.id) ?? null;
         if (otherEcon && ['mayor', 'shopkeeper', 'doctor', 'constable'].includes(otherEcon.job)) {
           socScore += mods.socialTargetStatusBonus;
         }
@@ -604,6 +606,34 @@ export function tick(world: WorldRow): void {
   const allLocations = db.select().from(locations).all();
   const allRelationships = db.select().from(relationships).all();
 
+  // Pre-load per-agent data into Maps to avoid N queries in the loop
+  const allNeeds = db.select().from(needs).all();
+  const needsMap = new Map(allNeeds.map(n => [n.agent_id, n]));
+  const allEcon = db.select().from(economy).all();
+  const econMap = new Map(allEcon.map(e => [e.agent_id, e]));
+
+  // Pre-load active goals for goal alignment scoring
+  const allActiveGoals = db.select().from(goals).where(eq(goals.status, 'active')).all();
+  const goalsMap = new Map<number, (typeof allActiveGoals)>();
+  for (const g of allActiveGoals) {
+    const arr = goalsMap.get(g.agent_id) ?? [];
+    arr.push(g);
+    goalsMap.set(g.agent_id, arr);
+  }
+
+  // Cache conversation/queue data once per tick to avoid repeated full-table scans
+  const allQueuedConvos = db.select().from(conversationQueue).all();
+  const allActiveConvos = db.select().from(conversations).where(eq(conversations.status, 'active')).all();
+  const allEndedConvos = db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
+    .from(conversations)
+    .where(eq(conversations.status, 'ended'))
+    .all();
+
+  // Cache shared_knowledge for arrest mechanic
+  const allActiveKnowledge = db.select().from(shared_knowledge)
+    .where(eq(shared_knowledge.is_active, true))
+    .all();
+
   const totalTicks = world.time.totalTicks;
 
   for (const agent of activeAgents) {
@@ -628,19 +658,11 @@ export function tick(world: WorldRow): void {
       planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
     }
 
-    // Fetch per-agent data
-    const agentNeeds = db
-      .select()
-      .from(needs)
-      .where(eq(needs.agent_id, agent.id))
-      .get();
+    // Fetch per-agent data from pre-loaded Maps
+    const agentNeeds = needsMap.get(agent.id);
     if (!agentNeeds) continue;
 
-    const agentEcon = db
-      .select()
-      .from(economy)
-      .where(eq(economy.agent_id, agent.id))
-      .get() ?? null;
+    const agentEcon = econMap.get(agent.id) ?? null;
 
     let decision: ScoredAction | null = null;
 
@@ -679,8 +701,26 @@ export function tick(world: WorldRow): void {
         allRelationships,
         activeAgents,
         world,
+        econMap,
       );
       if (scored.length > 0) {
+        // Goal alignment bonus
+        const agentGoals = goalsMap.get(agent.id) ?? [];
+        for (const goal of agentGoals) {
+          if (!goal.mapped_interactions) continue;
+          const mapped = JSON.parse(goal.mapped_interactions) as string[];
+          if (goal.target_id && mapped.length > 0) {
+            const target = activeAgents.find(a => a.id === goal.target_id);
+            if (target && agent.current_location === target.current_location) {
+              for (const s of scored) {
+                if (s.action === 'socializing' && s.targetAgentId === goal.target_id) {
+                  s.score += Math.round(2500 * goal.priority);
+                }
+              }
+            }
+          }
+        }
+
         scored.sort((a, b) => b.score - a.score);
         decision = scored[0];
       }
@@ -827,29 +867,23 @@ export function tick(world: WorldRow): void {
         distance(agent.position, targetAgent.position) < 64; // within 2 tiles
       if (!sameLocation && !closeEnough) continue;
 
-      // Check if this pair already has a queued conversation
-      const existingQueue = db.select().from(conversationQueue).all()
-        .filter(q => {
-          const p = q.participants as number[];
-          return p.includes(agentId) && p.includes(targetId);
-        });
+      // Check if this pair already has a queued conversation (from cached data)
+      const existingQueue = allQueuedConvos.filter(q => {
+        const p = q.participants as number[];
+        return p.includes(agentId) && p.includes(targetId);
+      });
       if (existingQueue.length > 0) continue; // Already queued
 
-      // Check if this pair already has an active conversation
-      const existingActive = db.select().from(conversations)
-        .where(eq(conversations.status, 'active')).all()
-        .filter(c => {
-          const p = c.participants as number[];
-          return p.includes(agentId) && p.includes(targetId);
-        });
+      // Check if this pair already has an active conversation (from cached data)
+      const existingActive = allActiveConvos.filter(c => {
+        const p = c.participants as number[];
+        return p.includes(agentId) && p.includes(targetId);
+      });
       if (existingActive.length > 0) continue; // Already talking
 
       // Cooldown: skip if this pair talked recently (prevents pair domination)
       const cooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
-      const lastConvoForPair = db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
-        .from(conversations)
-        .where(eq(conversations.status, 'ended'))
-        .all()
+      const lastConvoForPair = allEndedConvos
         .filter(c => {
           const p = c.participants as number[];
           return p.includes(agentId) && p.includes(targetId);
@@ -975,34 +1009,28 @@ export function tick(world: WorldRow): void {
     const a = shuffled[0];
     const b = shuffled[1];
 
-    // Check if this pair already has a queued or active conversation
-    const existingQueue = db.select().from(conversationQueue).all()
-      .filter(q => {
-        const p = q.participants as number[];
-        return p.includes(a.id) && p.includes(b.id);
-      });
-    if (existingQueue.length > 0) continue;
+    // Check if this pair already has a queued or active conversation (from cached data)
+    const existingQueue2 = allQueuedConvos.filter(q => {
+      const p = q.participants as number[];
+      return p.includes(a.id) && p.includes(b.id);
+    });
+    if (existingQueue2.length > 0) continue;
 
-    const existingActive = db.select().from(conversations)
-      .where(eq(conversations.status, 'active')).all()
-      .filter(c => {
-        const p = c.participants as number[];
-        return p.includes(a.id) && p.includes(b.id);
-      });
-    if (existingActive.length > 0) continue;
+    const existingActive2 = allActiveConvos.filter(c => {
+      const p = c.participants as number[];
+      return p.includes(a.id) && p.includes(b.id);
+    });
+    if (existingActive2.length > 0) continue;
 
-    // Cooldown check
-    const cooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
-    const lastConvo = db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
-      .from(conversations)
-      .where(eq(conversations.status, 'ended'))
-      .all()
+    // Cooldown check (from cached data)
+    const cooldownMs2 = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
+    const lastConvo = allEndedConvos
       .filter(c => {
         const p = c.participants as number[];
         return p.includes(a.id) && p.includes(b.id);
       })
       .sort((x, y) => (y.ended_at ?? 0) - (x.ended_at ?? 0))[0];
-    if (lastConvo?.ended_at && Date.now() - lastConvo.ended_at < cooldownMs) continue;
+    if (lastConvo?.ended_at && Date.now() - lastConvo.ended_at < cooldownMs2) continue;
 
     const rel = getRelationshipValues(allRelationships, a.id, b.id);
     const friendship = rel?.friendship ?? 0;
@@ -1016,7 +1044,7 @@ export function tick(world: WorldRow): void {
     const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'drunk', 'infatuated'] as const;
     const hasDrama = dramaticStates.some(s => (aStates as string[]).includes(s) || (bStates as string[]).includes(s));
 
-    const aNeeds = db.select().from(needs).where(eq(needs.agent_id, a.id)).get();
+    const aNeeds = needsMap.get(a.id);
     const aMood = aNeeds?.mood ?? 50;
 
     let tier: string;
@@ -1051,7 +1079,7 @@ export function tick(world: WorldRow): void {
   // --- Constable Arrest Mechanic ---
   // If the constable is at the same location as an agent with 8+ negative facts, arrest them
   for (const agent of activeAgents) {
-    const agentEconRow = db.select().from(economy).where(eq(economy.agent_id, agent.id)).get();
+    const agentEconRow = econMap.get(agent.id);
     if (!agentEconRow || agentEconRow.job !== 'constable') continue;
     if (agent.current_location == null) continue;
     if ((agent.current_action as any)?.type === 'sleeping') continue;
@@ -1067,10 +1095,8 @@ export function tick(world: WorldRow): void {
 
       const negFacts = getNegativeFactCount(other.id);
 
-      // Check if constable has direct knowledge of crimes by this target
-      const allKnowledgeFacts = db.select().from(shared_knowledge)
-        .where(eq(shared_knowledge.is_active, true))
-        .all()
+      // Check if constable has direct knowledge of crimes by this target (from cached data)
+      const allKnowledgeFacts = allActiveKnowledge
         .filter(f => {
           const knownBy = f.known_by as number[];
           return knownBy.includes(agent.id) && // constable knows
