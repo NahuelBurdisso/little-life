@@ -1,5 +1,7 @@
 import { router, publicProcedure } from '../trpc';
 import { db, sqlite } from '../db';
+import { generateFromSliders } from '../lib/setupGenerator';
+import { AGENT_SEEDS } from '../data/agents';
 import {
   agents,
   needs,
@@ -554,6 +556,24 @@ export const setupRouter = router({
 
     return { ok: true };
   }),
+
+  generateDrama: publicProcedure
+    .input(z.object({
+      drama: z.number().min(0).max(10),
+      romance: z.number().min(0).max(10),
+      crime: z.number().min(0).max(10),
+      trust: z.number().min(0).max(10),
+    }))
+    .query(({ input }) => {
+      const agents = AGENT_SEEDS.map(seed => ({
+        name: seed.name,
+        age: seed.age,
+        personality: seed.personality as Record<string, number>,
+        salary: seed.salary,
+        job: seed.job,
+      }));
+      return generateFromSliders(input, agents);
+    }),
 
   resetToWizard: publicProcedure.mutation(async () => {
     await stopTickLoopAndWait();
