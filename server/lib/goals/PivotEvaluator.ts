@@ -32,8 +32,15 @@ export function computeEmotionalImportance(
 
 export class PivotEvaluator {
   private mapper = new GoalMapper();
+  private inFlight = new Set<number>(); // goal IDs currently being pivoted
+  private lastEvalTick = new Map<number, number>(); // agentId → last tick evaluated
+  private static EVAL_COOLDOWN = 60; // only evaluate once per 60 ticks (~1 game hour)
 
   async evaluate(agentId: number, currentTick: number): Promise<void> {
+    // Cooldown: don't re-evaluate same agent every tick
+    const lastTick = this.lastEvalTick.get(agentId) ?? 0;
+    if (currentTick - lastTick < PivotEvaluator.EVAL_COOLDOWN) return;
+    this.lastEvalTick.set(agentId, currentTick);
     const activeGoals = db.select().from(goals)
       .where(and(eq(goals.agent_id, agentId), eq(goals.status, 'active'))).all();
     const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
@@ -57,9 +64,10 @@ export class PivotEvaluator {
         continue;
       }
 
-      // Pivot (LLM goals only)
-      if (goal.source === 'llm' && shouldPivot(goal.progress, goal.pivot_count, ticksElapsed)) {
-        await this.attemptPivot(goal, agent, currentTick);
+      // Pivot (LLM goals only, skip if already in-flight)
+      if (goal.source === 'llm' && !this.inFlight.has(goal.id) && shouldPivot(goal.progress, goal.pivot_count, ticksElapsed)) {
+        this.inFlight.add(goal.id);
+        await this.attemptPivot(goal, agent, currentTick).finally(() => this.inFlight.delete(goal.id));
       }
     }
   }

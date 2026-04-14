@@ -19,6 +19,8 @@ const TICKS_PER_DAY = 1440;
 export class GoalReviewer {
   private mapper = new GoalMapper();
   private agentCache: { data: { id: number; name: string }[]; tick: number } | null = null;
+  private reviewedToday = new Set<number>(); // agent IDs already reviewed this day
+  private lastDay = -1;
 
   private getAllAgents(currentTick: number): { id: number; name: string }[] {
     if (this.agentCache && currentTick - this.agentCache.tick < 100) {
@@ -32,6 +34,14 @@ export class GoalReviewer {
   // ─── Main entry point ───────────────────────────────────────────────────────
 
   async review(agentId: number, currentTick: number, currentDay: number): Promise<void> {
+    // Only review each agent once per day
+    if (currentDay !== this.lastDay) {
+      this.reviewedToday.clear();
+      this.lastDay = currentDay;
+    }
+    if (this.reviewedToday.has(agentId)) return;
+    this.reviewedToday.add(agentId);
+
     try {
       const agent = db
         .select()
