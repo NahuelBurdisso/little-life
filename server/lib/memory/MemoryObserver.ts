@@ -179,16 +179,38 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   // Goals
-  simEvents.on('goal:created', ({ agentId, goalType }: { agentId: number; goalType: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('goal_created', { goal: goalType }), { subtype: 'goal' }, 0, 5);
+  simEvents.on('goal:created', ({ agentId, goalType, description }: { agentId: number; goalType: string; description?: string }) => {
+    const desc = description ?? goalType;
+    memoryService.record(agentId, 'observation', `I've decided to ${desc}.`, { subtype: 'goal' }, 0, 5);
   });
 
-  simEvents.on('goal:completed', ({ agentId, goalType }: { agentId: number; goalType: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('goal_completed', { goal: goalType }), { subtype: 'goal' }, 0.5, 7);
+  simEvents.on('goal:completed', ({ agentId, goalType, description }: { agentId: number; goalType: string; description?: string }) => {
+    const desc = description ?? goalType;
+    memoryService.record(agentId, 'observation', `I accomplished my goal: ${desc}.`, { subtype: 'goal' }, 0.5, 7);
   });
 
-  simEvents.on('goal:abandoned', ({ agentId, goalType }: { agentId: number; goalType: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('goal_abandoned', { goal: goalType }), { subtype: 'goal' }, -0.2, 4);
+  simEvents.on('goal:abandoned', ({ agentId, goalType, description, reason }: { agentId: number; goalType: string; description?: string; reason?: string }) => {
+    const desc = description ?? goalType;
+    const reasonText = reason ? ` ${reason}.` : '';
+    memoryService.record(agentId, 'observation', `I gave up on ${desc}.${reasonText}`, { subtype: 'goal' }, -0.2, 4);
+  });
+
+  simEvents.on('goal:pivoted', ({ agentId, description, newStrategy }: { agentId: number; description: string; newStrategy: string }) => {
+    memoryService.record(agentId, 'observation', `My approach to ${description} wasn't working. I'm going to try: ${newStrategy}.`, { subtype: 'goal' }, 0, 5);
+  });
+
+  simEvents.on('ambition:shifted', ({ agentId, oldDescription, newDescription, reason }: { agentId: number; oldDescription: string; newDescription: string; reason: string }) => {
+    memoryService.record(agentId, 'observation', `I used to want "${oldDescription}". Now I want "${newDescription}" because ${reason}.`, { subtype: 'ambition' }, 0.3, 8);
+  });
+
+  simEvents.on('goal:emotional_failure', ({ agentId, importance, personality }: { agentId: number; importance: number; personality: any }) => {
+    memoryService.record(agentId, 'observation', `I feel the weight of failure. My efforts didn't lead anywhere.`, { subtype: 'emotion' }, -0.5, 6);
+    // Trigger emotional states based on personality
+    if (personality.neuroticism > 60) {
+      simEvents.emit('state:apply', { agentId, state: importance > 0.8 ? 'depressed' : 'stressed' });
+    } else if (personality.aggression > 60) {
+      simEvents.emit('state:apply', { agentId, state: 'angry' });
+    }
   });
 
   // Gambling

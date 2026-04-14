@@ -1,6 +1,6 @@
 import { db } from '../db';
-import { agents, needs, economy, conversations, relationships, locations, worldState, agentStates, shared_knowledge } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { agents, needs, economy, conversations, relationships, locations, worldState, agentStates, shared_knowledge, goals } from '../db/schema';
+import { eq, and, inArray } from 'drizzle-orm';
 
 import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
 import { getShareableFacts, getAgentName } from '../lib/gossip';
@@ -9,21 +9,39 @@ import { contextBuilder, memoryService } from '../lib/memory/instance';
 import { generateSituationalPrompt } from '../lib/personality';
 
 export async function getConversationContext(conversationId: number, speakerId: number) {
+  // Load conversation and world state first (needed to derive otherId and currentTick)
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
   if (!conversation) return null;
-
-  const speaker = db.select().from(agents).where(eq(agents.id, speakerId)).get();
-  if (!speaker) return null;
-
-  const speakerNeeds = db.select().from(needs).where(eq(needs.agent_id, speakerId)).get();
-  const speakerEcon = db.select().from(economy).where(eq(economy.agent_id, speakerId)).get();
-  if (!speakerNeeds || !speakerEcon) return null;
 
   const otherId = (conversation.participants as number[]).find((p) => p !== speakerId);
   if (!otherId) return null;
 
-  const otherAgent = db.select().from(agents).where(eq(agents.id, otherId)).get();
-  if (!otherAgent) return null;
+  const world = db.select().from(worldState).get();
+  if (!world) return null;
+
+  const location = conversation.location
+    ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
+    : null;
+  if (!location) return null;
+
+  // Batch-load both agents in a single query
+  const agentRows = db.select().from(agents).where(inArray(agents.id, [speakerId, otherId])).all();
+  const speaker = agentRows.find((a) => a.id === speakerId);
+  const otherAgent = agentRows.find((a) => a.id === otherId);
+  if (!speaker || !otherAgent) return null;
+
+  // Batch-load needs and economy for the speaker
+  const speakerNeeds = db.select().from(needs).where(eq(needs.agent_id, speakerId)).get();
+  const speakerEcon = db.select().from(economy).where(eq(economy.agent_id, speakerId)).get();
+  if (!speakerNeeds || !speakerEcon) return null;
+
+  // Load speaker's active goals for conversation context
+  const speakerGoals = db.select().from(goals)
+    .where(and(eq(goals.agent_id, speakerId), eq(goals.status, 'active')))
+    .all()
+    .filter(g => (g as any).description)
+    .map(g => (g as any).description as string)
+    .slice(0, 3);
 
   const [a, b] = speakerId < otherId ? [speakerId, otherId] : [otherId, speakerId];
 
@@ -35,15 +53,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
 
   const otherAgentName = otherAgent.name ?? '';
   const topic = (conversation.topic as string) ?? '';
-  const world = db.select().from(worldState).get();
   const currentTick = world?.time?.totalTicks ?? 0;
-
-  const location = conversation.location
-    ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
-    : null;
-  if (!location) return null;
-
-  if (!world) return null;
 
   const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
   const statePrompts = getActiveStatePrompts(speaker.id, world?.time?.totalTicks);
@@ -134,6 +144,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     statePrompts,
     gossipFacts,
     situationalPrompt,
+    speakerGoals,
   };
 }
 

@@ -41,6 +41,7 @@ export async function generateResponse(
     statePrompts,
     gossipFacts,
     situationalPrompt,
+    speakerGoals,
   } = context;
 
   const hasSituationalPrompt = !!situationalPrompt;
@@ -62,7 +63,12 @@ export async function generateResponse(
     situationalPrompt,
   };
 
-  const { system, messages: promptMessages } = buildConversationPrompt(promptParams);
+  const { system: baseSystem, messages: promptMessages } = buildConversationPrompt(promptParams);
+
+  const goalsContext = speakerGoals?.length
+    ? `\nYour current goals: ${speakerGoals.join('; ')}`
+    : '';
+  const system = baseSystem + goalsContext;
 
   // 3. Call Ollama with retry
   let responseText: string | null = null;
