@@ -18,6 +18,7 @@ import {
   activityLog,
   shared_knowledge,
   agentStates,
+  aspirations,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
 import { LOCATIONS, MAP_WIDTH, MAP_HEIGHT, COLLISION_GRID } from '../data/maps';
@@ -214,7 +215,41 @@ function seed() {
     }).run();
   }
 
-  // 4. Set location owners
+  // 4. Seed initial life ambitions
+  console.log('[seed] Seeding initial life ambitions...');
+
+  // ─── Seed initial life ambitions ──────────────────────────────────────────
+  const AMBITION_SEEDS: Record<string, { type: string; description: string; trigger: string }> = {
+    'Elena Voss': { type: 'knowledge', description: 'Understand the world and share that knowledge with others', trigger: 'innate curiosity' },
+    'Marco Rivera': { type: 'power', description: 'Become the most influential person in town', trigger: 'desire for respect' },
+    'Priya Sharma': { type: 'love', description: 'Find a deep, meaningful romantic connection', trigger: 'longing for companionship' },
+    'Carlos Mendez': { type: 'wealth', description: 'Escape poverty and build financial security', trigger: 'years of hardship' },
+    'Yuki Tanaka': { type: 'legacy', description: 'Create something beautiful that outlasts me', trigger: 'artistic passion' },
+    'Omar Hassan': { type: 'justice', description: 'Make this town fair for everyone', trigger: 'witnessing inequality' },
+    'Lucia Fernandez': { type: 'freedom', description: 'Live life on my own terms without constraints', trigger: 'feeling trapped' },
+    'Thomas Park': { type: 'pleasure', description: 'Enjoy every day and not worry about tomorrow', trigger: 'life is short' },
+    'Rosa Chen': { type: 'love', description: 'Build a warm family and nurture those I care about', trigger: 'maternal instinct' },
+    "James O'Brien": { type: 'wealth', description: 'Build a successful business from nothing', trigger: 'entrepreneurial drive' },
+    'Diego Santos': { type: 'love', description: 'Win the heart of the person I admire', trigger: 'romantic longing' },
+    'Ray Kowalski': { type: 'knowledge', description: 'Discover the secrets and stories hidden in this town', trigger: 'insatiable curiosity' },
+  };
+
+  for (const [name, ambition] of Object.entries(AMBITION_SEEDS)) {
+    const id = agentMap.get(name);
+    if (!id) continue;
+    db.insert(aspirations).values({
+      agent_id: id,
+      type: ambition.type,
+      intensity: 1.0,
+      status: 'active',
+      adopted_at: 0,
+      trigger: ambition.trigger,
+      description: ambition.description,
+    }).run();
+  }
+  console.log(`[seed] Inserted ${Object.keys(AMBITION_SEEDS).length} life ambitions.`);
+
+  // 5. Set location owners
   console.log('[seed] Setting location owners...');
   const ownershipMap: [string, string][] = [
     ["Rosa's General Store", "Rosa Chen"],
@@ -238,7 +273,7 @@ function seed() {
     }
   }
 
-  // 5. Insert relationships
+  // 6. Insert relationships
   console.log('[seed] Inserting relationships...');
   const relSeeds = getRelationshipSeeds(agentMap);
   for (const rel of relSeeds) {
