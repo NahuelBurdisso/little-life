@@ -771,7 +771,7 @@ export function tick(world: WorldRow): void {
 
         const locType = loc.type as string;
         const zones = INTERIOR_ZONES[locType] ?? [];
-        const zone = zones.find((z) => z.action === decision!.action);
+        const zone = zones.find((z) => (z as any).allowedActions?.includes(decision!.action) ?? (z as any).action === decision!.action);
         if (zone) {
           const locPos = loc.position as { x: number; y: number; width: number; height: number };
           zoneTarget = {
