@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { INTERIOR_ZONES, INTERIOR_GRIDS, type ZoneDef } from '../data/interiors';
+import { gridToCollisionString, getInteriorGrid, ZoneOccupancy } from '../lib/interiorGrid';
 
 describe('Interior grid data', () => {
   it('every closed building type with zones has a grid', () => {
@@ -67,5 +68,158 @@ describe('Interior grid data', () => {
     expect(INTERIOR_ZONES.farm).toEqual([]);
     expect(INTERIOR_ZONES.town_square).toEqual([]);
     expect(INTERIOR_ZONES.park).toEqual([]);
+  });
+});
+
+describe('gridToCollisionString', () => {
+  it('converts mixed grid: 0,3 → walkable (0), 1,2 → blocked (1)', () => {
+    const grid = [
+      [1, 3, 1],
+      [0, 0, 2],
+      [1, 1, 1],
+    ];
+    expect(gridToCollisionString(grid)).toBe('101001111');
+  });
+
+  it('length matches grid dimensions (width * height)', () => {
+    const grid = INTERIOR_GRIDS.shop;
+    const result = gridToCollisionString(grid);
+    expect(result.length).toBe(5 * 4);
+  });
+
+  it('shop grid door tile (col=2, row=0) maps to walkable', () => {
+    const grid = INTERIOR_GRIDS.shop;
+    const result = gridToCollisionString(grid);
+    // row 0, col 2 → index 2
+    expect(result[2]).toBe('0');
+  });
+
+  it('shop grid wall tiles map to blocked', () => {
+    const grid = INTERIOR_GRIDS.shop;
+    const result = gridToCollisionString(grid);
+    // row 0, col 0 → index 0 (wall)
+    expect(result[0]).toBe('1');
+    // row 1, col 1 → index 6 (furniture)
+    expect(result[6]).toBe('1');
+  });
+});
+
+describe('getInteriorGrid', () => {
+  it('returns null for home (no grid)', () => {
+    expect(getInteriorGrid('home')).toBeNull();
+  });
+
+  it('returns null for farm (no grid)', () => {
+    expect(getInteriorGrid('farm')).toBeNull();
+  });
+
+  it('returns null for unknown building type', () => {
+    expect(getInteriorGrid('nonexistent')).toBeNull();
+  });
+
+  it('returns valid InteriorGridInfo for shop', () => {
+    const info = getInteriorGrid('shop');
+    expect(info).not.toBeNull();
+    expect(info!.width).toBe(5);
+    expect(info!.height).toBe(4);
+    expect(info!.doorTile).toBeInstanceOf(Array);
+    expect(info!.doorTile.length).toBe(2);
+    expect(info!.collisionString).toBeTypeOf('string');
+    expect(info!.collisionString.length).toBe(5 * 4);
+    expect(info!.raw).toBe(INTERIOR_GRIDS.shop);
+  });
+
+  it('shop doorTile is at [col=2, row=0]', () => {
+    const info = getInteriorGrid('shop')!;
+    expect(info.doorTile).toEqual([2, 0]);
+  });
+
+  it('caches results — same object reference on second call', () => {
+    const first = getInteriorGrid('shop');
+    const second = getInteriorGrid('shop');
+    expect(first).toBe(second);
+  });
+
+  it('returns valid info for town_hall (6w × 5h)', () => {
+    const info = getInteriorGrid('town_hall');
+    expect(info).not.toBeNull();
+    expect(info!.width).toBe(6);
+    expect(info!.height).toBe(5);
+  });
+});
+
+describe('ZoneOccupancy', () => {
+  let occupancy: ZoneOccupancy;
+
+  beforeEach(() => {
+    occupancy = new ZoneOccupancy();
+  });
+
+  it('findAgentZone returns null for unknown agent', () => {
+    expect(occupancy.findAgentZone(99)).toBeNull();
+  });
+
+  it('enter adds agent to zone and findAgentZone returns it', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    expect(occupancy.findAgentZone(1)).toEqual({ building: 'shop', zone: 'counter' });
+  });
+
+  it('getOccupants returns all agents in a zone', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    occupancy.enter(2, 'shop', 'counter');
+    const occ = occupancy.getOccupants('shop', 'counter');
+    expect(occ).toContain(1);
+    expect(occ).toContain(2);
+    expect(occ.length).toBe(2);
+  });
+
+  it('leave removes agent from zone', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    occupancy.leave(1);
+    expect(occupancy.findAgentZone(1)).toBeNull();
+    expect(occupancy.getOccupants('shop', 'counter')).not.toContain(1);
+  });
+
+  it('leave is a no-op for unknown agent', () => {
+    expect(() => occupancy.leave(999)).not.toThrow();
+  });
+
+  it('enter auto-removes agent from previous zone before adding to new one', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    occupancy.enter(1, 'shop', 'shelves');
+    expect(occupancy.getOccupants('shop', 'counter')).not.toContain(1);
+    expect(occupancy.getOccupants('shop', 'shelves')).toContain(1);
+    expect(occupancy.findAgentZone(1)).toEqual({ building: 'shop', zone: 'shelves' });
+  });
+
+  it('enter auto-removes agent when moving to different building', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    occupancy.enter(1, 'tavern', 'bar');
+    expect(occupancy.getOccupants('shop', 'counter')).not.toContain(1);
+    expect(occupancy.findAgentZone(1)).toEqual({ building: 'tavern', zone: 'bar' });
+  });
+
+  it('isFull returns false when under capacity', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    expect(occupancy.isFull('shop', 'counter', 2)).toBe(false);
+  });
+
+  it('isFull returns true when at capacity', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    occupancy.enter(2, 'shop', 'counter');
+    expect(occupancy.isFull('shop', 'counter', 2)).toBe(true);
+  });
+
+  it('isFull returns false for empty zone', () => {
+    expect(occupancy.isFull('shop', 'counter', 2)).toBe(false);
+  });
+
+  it('clear removes all tracking state', () => {
+    occupancy.enter(1, 'shop', 'counter');
+    occupancy.enter(2, 'tavern', 'bar');
+    occupancy.clear();
+    expect(occupancy.findAgentZone(1)).toBeNull();
+    expect(occupancy.findAgentZone(2)).toBeNull();
+    expect(occupancy.getOccupants('shop', 'counter')).toEqual([]);
   });
 });
