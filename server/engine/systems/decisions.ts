@@ -760,6 +760,8 @@ export function tick(world: WorldRow): void {
     // Build destination from the target location
     let destination: { x: number; y: number; locationId?: number } | null = null;
     let zoneTarget: { x: number; y: number } | null = null;
+    let matchedZoneId: string | undefined;
+    let matchedBuildingType: string | undefined;
     if (decision.targetLocationId) {
       const loc = allLocations.find((l) => l.id === decision!.targetLocationId);
       if (loc) {
@@ -778,6 +780,8 @@ export function tick(world: WorldRow): void {
             x: locPos.x + zone.relativePosition.x + zone.relativePosition.width / 2,
             y: locPos.y + zone.relativePosition.y + zone.relativePosition.height / 2,
           };
+          matchedZoneId = zone.id;
+          matchedBuildingType = locType;
         }
 
         destination = {
@@ -804,7 +808,7 @@ export function tick(world: WorldRow): void {
     // movement.ts can teleport the agent to the exact zone position on arrival.
     const baseAction = buildAction(decision);
     const finalAction = zoneTarget
-      ? { ...baseAction, zoneX: zoneTarget.x, zoneY: zoneTarget.y }
+      ? { ...baseAction, zoneX: zoneTarget.x, zoneY: zoneTarget.y, targetZone: matchedZoneId, targetBuildingType: matchedBuildingType }
       : baseAction;
 
     const needsToTravel =

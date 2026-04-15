@@ -4,10 +4,12 @@ import { eq } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
-import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
+import { computeAStarPath, pixelToTile, tileCenterToPixel } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { simEvents } from '../../lib/simEvents';
+import { getInteriorGrid, zoneOccupancy } from '../../lib/interiorGrid';
+import { INTERIOR_ZONES, type ZoneDef } from '../../data/interiors';
 
 // --- Types ---
 
@@ -89,11 +91,74 @@ function getMinDuration(actionType: string): number {
   return CONFIG.DECISIONS.ACTION_MIN_DURATIONS[actionType] ?? 10;
 }
 
+const OPEN_AREA_TYPES = new Set(['farm', 'town_square', 'park']);
+
+function isClosedBuilding(locType: string): boolean {
+  return !OPEN_AREA_TYPES.has(locType);
+}
+
+/**
+ * Compute an interior A* path from a relative pixel start to a zone center,
+ * then convert all waypoints back to world coordinates.
+ */
+function computeInteriorPath(
+  relStartX: number,
+  relStartY: number,
+  targetZoneCenter: [number, number],
+  interiorGrid: { collisionString: string; width: number; height: number },
+  buildingPosX: number,
+  buildingPosY: number,
+): number[][] | null {
+  const TILE_SIZE = CONFIG.MOVEMENT.TILE_SIZE;
+  const [zoneGridX, zoneGridY] = targetZoneCenter;
+  const relEndX = zoneGridX * TILE_SIZE + TILE_SIZE / 2;
+  const relEndY = zoneGridY * TILE_SIZE + TILE_SIZE / 2;
+
+  const interiorPath = computeAStarPath(
+    { x: relStartX, y: relStartY },
+    { x: relEndX, y: relEndY },
+    interiorGrid.collisionString,
+    interiorGrid.width,
+    interiorGrid.height,
+    TILE_SIZE,
+  );
+
+  if (!interiorPath || interiorPath.length === 0) return null;
+
+  // Convert interior-relative pixel coords to world coords
+  return interiorPath.map(([px, py]) => [px + buildingPosX, py + buildingPosY]);
+}
+
+/**
+ * Find which zone an agent is at by checking proximity to zone centers (world coords).
+ */
+function detectZoneAtPosition(
+  pos: { x: number; y: number },
+  buildingType: string,
+  buildingPos: { x: number; y: number },
+): ZoneDef | null {
+  const TILE_SIZE = CONFIG.MOVEMENT.TILE_SIZE;
+  const zones = INTERIOR_ZONES[buildingType];
+  if (!zones) return null;
+
+  const THRESHOLD = TILE_SIZE; // within 1 tile
+  for (const zone of zones) {
+    const [cx, cy] = zone.center;
+    const worldX = buildingPos.x + cx * TILE_SIZE + TILE_SIZE / 2;
+    const worldY = buildingPos.y + cy * TILE_SIZE + TILE_SIZE / 2;
+    if (Math.abs(pos.x - worldX) < THRESHOLD && Math.abs(pos.y - worldY) < THRESHOLD) {
+      return zone;
+    }
+  }
+  return null;
+}
+
 // --- Arrival Handler ---
 
 function handleArrival(
   agent: AgentRow,
   world: WorldRow,
+  allLocations: LocationRow[],
 ): void {
   const queue = [...agent.action_queue];
   const nextAction = queue.shift() ?? null;
@@ -102,12 +167,73 @@ function handleArrival(
   const minDuration = getMinDuration(actionType);
 
   // Two-phase interior movement: if the queued action carries zone coordinates,
-  // teleport the agent directly to the zone position inside the building.
-  // Interior movement doesn't need A* — the agent is already at the entry point.
+  // the agent needs to move to the zone position inside the building.
   const zoneX = (nextAction as any)?.zoneX as number | undefined;
   const zoneY = (nextAction as any)?.zoneY as number | undefined;
+  const targetZoneId = (nextAction as any)?.targetZone as string | undefined;
+  const targetBuildingType = (nextAction as any)?.targetBuildingType as string | undefined;
+
   if (zoneX !== undefined && zoneY !== undefined) {
-    // Smooth interior transition: lerp over 5 ticks instead of instant teleport
+    // Try interior A* for non-home buildings with interior grids
+    const interiorGrid = targetBuildingType ? getInteriorGrid(targetBuildingType) : null;
+
+    if (interiorGrid && targetBuildingType) {
+      // Find the building location to get its world position
+      const building = agent.current_location != null
+        ? allLocations.find(l => l.id === agent.current_location)
+        : null;
+      const buildingPos = building?.position;
+
+      if (buildingPos) {
+        // Agent is at the door (entry_point). Convert to interior-relative coords.
+        const relStartX = agent.position.x - buildingPos.x;
+        const relStartY = agent.position.y - buildingPos.y;
+
+        // Find the target zone definition to get its grid-coord center
+        const zones = INTERIOR_ZONES[targetBuildingType] ?? [];
+        const targetZoneDef = targetZoneId
+          ? zones.find(z => z.id === targetZoneId)
+          : zones.find(z => z.allowedActions?.includes(actionType));
+
+        if (targetZoneDef) {
+          const interiorPath = computeInteriorPath(
+            relStartX, relStartY,
+            targetZoneDef.center,
+            interiorGrid,
+            buildingPos.x, buildingPos.y,
+          );
+
+          if (interiorPath && interiorPath.length > 0) {
+            // Set the agent walking along the interior path to the zone center
+            // The destination is the last waypoint (zone center in world coords)
+            const finalWp = interiorPath[interiorPath.length - 1];
+            // Strip zone metadata from the action — it will be set as the queued action on inner arrival
+            const { zoneX: _zx, zoneY: _zy, targetZone: _tz, targetBuildingType: _tb, ...cleanAction } = nextAction as any;
+            const interiorAction = {
+              ...cleanAction,
+              _interiorArrivalZone: targetZoneDef.id,
+              _interiorArrivalBuilding: targetBuildingType,
+            };
+
+            db.update(agents)
+              .set({
+                current_destination: { x: finalWp[0], y: finalWp[1] },
+                current_path: interiorPath,
+                current_action: { type: 'walking', to: { x: finalWp[0], y: finalWp[1] } },
+                action_started: world.time.totalTicks,
+                action_duration: null,
+                action_queue: [interiorAction],
+              })
+              .where(eq(agents.id, agent.id))
+              .run();
+            return;
+          }
+        }
+      }
+    }
+
+    // Fallback for homes or buildings without interior grids:
+    // Smooth interior transition (lerp over 5 ticks)
     const transitionAction = {
       ...(nextAction ?? { type: 'idle' }),
       _transitioning: true,
@@ -129,17 +255,37 @@ function handleArrival(
       .where(eq(agents.id, agent.id))
       .run();
   } else {
-    db.update(agents)
-      .set({
-        current_destination: null,
-        current_path: null,
-        current_action: nextAction ?? { type: 'idle' },
-        action_started: world.time.totalTicks,
-        action_duration: minDuration > 0 ? minDuration : null,
-        action_queue: queue,
-      })
-      .where(eq(agents.id, agent.id))
-      .run();
+    // Check if this is an interior A* arrival (agent walked to zone center)
+    const interiorZoneId = (nextAction as any)?._interiorArrivalZone as string | undefined;
+    const interiorBuilding = (nextAction as any)?._interiorArrivalBuilding as string | undefined;
+    if (interiorZoneId && interiorBuilding) {
+      zoneOccupancy.enter(agent.id, interiorBuilding, interiorZoneId);
+      // Strip interior metadata from the action
+      const { _interiorArrivalZone, _interiorArrivalBuilding, ...cleanAction } = nextAction as any;
+      db.update(agents)
+        .set({
+          current_destination: null,
+          current_path: null,
+          current_action: cleanAction.type ? cleanAction : { type: 'idle' },
+          action_started: world.time.totalTicks,
+          action_duration: minDuration > 0 ? minDuration : null,
+          action_queue: queue,
+        })
+        .where(eq(agents.id, agent.id))
+        .run();
+    } else {
+      db.update(agents)
+        .set({
+          current_destination: null,
+          current_path: null,
+          current_action: nextAction ?? { type: 'idle' },
+          action_started: world.time.totalTicks,
+          action_duration: minDuration > 0 ? minDuration : null,
+          action_queue: queue,
+        })
+        .where(eq(agents.id, agent.id))
+        .run();
+    }
   }
 }
 
@@ -221,7 +367,7 @@ export function tick(world: WorldRow): void {
 
     // Check arrival
     if (distToDest < CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX) {
-      handleArrival(agent, world);
+      handleArrival(agent, world, allLocations);
 
       // Handle zone transition on arrival
       const oldLocationId = agent.current_location;
@@ -244,7 +390,10 @@ export function tick(world: WorldRow): void {
       }
 
       if (oldLocationId !== newLocationId) {
+        // Agent left a building — clear zone occupancy
         if (oldLocationId) {
+          zoneOccupancy.leave(agent.id);
+
           const oldLoc = allLocations.find((l) => l.id === oldLocationId);
           if (oldLoc) {
             const updatedOccupants = oldLoc.current_occupants.filter((id) => id !== agent.id);
@@ -300,21 +449,84 @@ export function tick(world: WorldRow): void {
           ? allLocations.find(l => l.id === agent.current_location)
           : null;
 
-        if (insideBuilding && insideBuilding.type !== 'farm' && insideBuilding.type !== 'town_square' && insideBuilding.type !== 'park') {
-          // Agent is inside a closed building — route from door, not current position
-          // First move directly to the door (interior movement, no collision)
-          const doorX = insideBuilding.entry_point.x;
-          const doorY = insideBuilding.entry_point.y;
-          const outerPath = computeAStarPath(
-            { x: doorX, y: doorY },
-            destPoint,
-            world.collision_grid,
-            world.map_width,
-            world.map_height,
-            CONFIG.MOVEMENT.TILE_SIZE,
-          );
-          // Prepend the door as first waypoint so agent exits building first
-          path = [[doorX, doorY], ...(outerPath ?? [[destPoint.x, destPoint.y]])];
+        if (insideBuilding && isClosedBuilding(insideBuilding.type)) {
+          const interiorGrid = getInteriorGrid(insideBuilding.type);
+          const buildingPos = insideBuilding.position;
+
+          // Check if destination is inside the same building (interior-to-interior)
+          const destInsideSameBuilding = isInsideLocation(destPoint, insideBuilding);
+
+          if (destInsideSameBuilding && interiorGrid) {
+            // Interior-to-interior: A* on interior grid
+            const relStartX = agent.position.x - buildingPos.x;
+            const relStartY = agent.position.y - buildingPos.y;
+            const relEndX = destPoint.x - buildingPos.x;
+            const relEndY = destPoint.y - buildingPos.y;
+
+            const interiorPath = computeAStarPath(
+              { x: relStartX, y: relStartY },
+              { x: relEndX, y: relEndY },
+              interiorGrid.collisionString,
+              interiorGrid.width,
+              interiorGrid.height,
+              CONFIG.MOVEMENT.TILE_SIZE,
+            );
+
+            if (interiorPath && interiorPath.length > 0) {
+              path = interiorPath.map(([px, py]) => [px + buildingPos.x, py + buildingPos.y]);
+            } else {
+              path = [[destPoint.x, destPoint.y]];
+            }
+          } else if (interiorGrid) {
+            // Agent is inside a closed building, destination is outside.
+            // First: interior A* from current position to door tile, then world A* from door to destination.
+            const relStartX = agent.position.x - buildingPos.x;
+            const relStartY = agent.position.y - buildingPos.y;
+            const [doorGridX, doorGridY] = interiorGrid.doorTile;
+            const doorRelX = doorGridX * CONFIG.MOVEMENT.TILE_SIZE + CONFIG.MOVEMENT.TILE_SIZE / 2;
+            const doorRelY = doorGridY * CONFIG.MOVEMENT.TILE_SIZE + CONFIG.MOVEMENT.TILE_SIZE / 2;
+
+            const exitPath = computeAStarPath(
+              { x: relStartX, y: relStartY },
+              { x: doorRelX, y: doorRelY },
+              interiorGrid.collisionString,
+              interiorGrid.width,
+              interiorGrid.height,
+              CONFIG.MOVEMENT.TILE_SIZE,
+            );
+
+            const exitWorldPath = (exitPath && exitPath.length > 0)
+              ? exitPath.map(([px, py]) => [px + buildingPos.x, py + buildingPos.y])
+              : [[insideBuilding.entry_point.x, insideBuilding.entry_point.y]];
+
+            // World A* from door to destination
+            const doorX = insideBuilding.entry_point.x;
+            const doorY = insideBuilding.entry_point.y;
+            const outerPath = computeAStarPath(
+              { x: doorX, y: doorY },
+              destPoint,
+              world.collision_grid,
+              world.map_width,
+              world.map_height,
+              CONFIG.MOVEMENT.TILE_SIZE,
+            );
+
+            path = [...exitWorldPath, ...(outerPath ?? [[destPoint.x, destPoint.y]])];
+          } else {
+            // No interior grid (e.g. home) — use old behavior: route from door
+            const doorX = insideBuilding.entry_point.x;
+            const doorY = insideBuilding.entry_point.y;
+            const outerPath = computeAStarPath(
+              { x: doorX, y: doorY },
+              destPoint,
+              world.collision_grid,
+              world.map_width,
+              world.map_height,
+              CONFIG.MOVEMENT.TILE_SIZE,
+            );
+            // Prepend the door as first waypoint so agent exits building first
+            path = [[doorX, doorY], ...(outerPath ?? [[destPoint.x, destPoint.y]])];
+          }
         } else {
           path = computeAStarPath(
             pathStart,
@@ -374,7 +586,10 @@ export function tick(world: WorldRow): void {
 
     // Handle zone transitions
     if (oldLocationId !== newLocationId) {
+      // Agent left a building — clear zone occupancy
       if (oldLocationId) {
+        zoneOccupancy.leave(agent.id);
+
         const oldLoc = allLocations.find((l) => l.id === oldLocationId);
         if (oldLoc) {
           const updatedOccupants = oldLoc.current_occupants.filter((id) => id !== agent.id);
