@@ -131,6 +131,67 @@ export class ZoneOccupancy {
 export const zoneOccupancy = new ZoneOccupancy();
 
 // ---------------------------------------------------------------------------
+// Startup reconstruction
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-populate the ZoneOccupancy singleton from agent positions on server start.
+ * The singleton is in-memory only, so a restart loses zone tracking. Each active
+ * agent is mapped to the closest zone center within their current building (if
+ * within 1.5 tiles). Home buildings (no zone grid) are skipped.
+ */
+export function reconstructZoneOccupancy(
+  activeAgents: Array<{
+    id: number;
+    current_location: number | null;
+    position: { x: number; y: number };
+  }>,
+  allLocations: Array<{
+    id: number;
+    type: string;
+    position: { x: number; y: number; width: number; height: number };
+  }>,
+): void {
+  const TILE_SIZE = 32;
+  const MAX_SNAP_DISTANCE = 48; // 1.5 tiles
+
+  zoneOccupancy.clear();
+
+  const locIndex = new Map<number, { type: string; position: { x: number; y: number; width: number; height: number } }>();
+  for (const loc of allLocations) {
+    locIndex.set(loc.id, { type: loc.type, position: loc.position });
+  }
+
+  for (const agent of activeAgents) {
+    if (agent.current_location == null) continue;
+    const loc = locIndex.get(agent.current_location);
+    if (!loc) continue;
+    const zones = INTERIOR_ZONES[loc.type] as ZoneDef[] | undefined;
+    if (!zones || zones.length === 0) continue;
+
+    // Find the closest zone center
+    let bestZone: ZoneDef | null = null;
+    let bestDist = Infinity;
+    for (const zone of zones) {
+      const [cx, cy] = zone.center;
+      const worldCx = loc.position.x + cx * TILE_SIZE + TILE_SIZE / 2;
+      const worldCy = loc.position.y + cy * TILE_SIZE + TILE_SIZE / 2;
+      const dx = agent.position.x - worldCx;
+      const dy = agent.position.y - worldCy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestZone = zone;
+      }
+    }
+
+    if (bestZone && bestDist <= MAX_SNAP_DISTANCE) {
+      zoneOccupancy.enter(agent.id, loc.type, bestZone.id);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Zone capacity helpers
 // ---------------------------------------------------------------------------
 

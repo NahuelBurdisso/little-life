@@ -11,6 +11,7 @@ import { memoryService } from './lib/memory/instance';
 import { initMemoryObserver } from './lib/memory/MemoryObserver';
 import { initPlanEventAdapter } from './lib/planning/PlanEventAdapter';
 import { initCascade } from './lib/cascade';
+import { reconstructZoneOccupancy } from './lib/interiorGrid';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
@@ -20,7 +21,7 @@ console.log('Memory service initialized');
 
 // Backfill embeddings for memories that don't have them (e.g., seed/backstory data)
 import { db } from './db';
-import { memories } from './db/schema';
+import { agents as agentsTable, locations as locationsTable, memories } from './db/schema';
 import { sql, eq } from 'drizzle-orm';
 import { EmbeddingBatcher } from './lib/memory/EmbeddingBatcher';
 
@@ -59,6 +60,30 @@ console.log('Planning system initialized');
 
 // Initialize cascade system (ripple effects, tension, snap resolution)
 initCascade();
+
+// Reconstruct zone occupancy from agent positions (singleton is in-memory only)
+try {
+  const activeAgents = db
+    .select({
+      id: agentsTable.id,
+      current_location: agentsTable.current_location,
+      position: agentsTable.position,
+    })
+    .from(agentsTable)
+    .all();
+  const allLocations = db
+    .select({
+      id: locationsTable.id,
+      type: locationsTable.type,
+      position: locationsTable.position,
+    })
+    .from(locationsTable)
+    .all();
+  reconstructZoneOccupancy(activeAgents, allLocations);
+  console.log(`Zone occupancy reconstructed (${activeAgents.length} agents, ${allLocations.length} locations)`);
+} catch (err) {
+  console.warn('Zone occupancy reconstruction failed:', (err as Error).message);
+}
 
 // Express for health check
 const app = express();
