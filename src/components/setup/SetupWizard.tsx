@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { AgentConfig, RelationshipConfig, SliderConfig } from './types';
-import { DEFAULT_WORLD, DEFAULT_RULES } from './types';
+import type { AgentConfig, RelationshipConfig, SliderConfig, WorldGenConfig } from './types';
+import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN } from './types';
+import { WorldLayout } from './WorldLayout';
 import { AgentEditor } from './AgentEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { WorldSettings } from './WorldSettings';
@@ -14,6 +15,7 @@ import { trpc } from '../../lib/trpc';
 const STEPS = [
   { id: 'scenario', label: 'Scenario', icon: 'S' },
   { id: 'preview', label: 'Preview', icon: 'P' },
+  { id: 'worldlayout', label: 'World Layout', icon: 'L' },
   { id: 'agents', label: 'Agents', icon: 'A' },
   { id: 'relationships', label: 'Relationships', icon: 'R' },
   { id: 'world', label: 'World', icon: 'W' },
@@ -35,6 +37,7 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
   const [starting, setStarting] = useState(false);
   const [sliders, setSliders] = useState<SliderConfig>({ drama: 7, romance: 6, crime: 5, trust: 5 });
   const [selectedPreset, setSelectedPreset] = useState<string | null>('classic');
+  const [worldgen, setWorldgen] = useState<WorldGenConfig>(DEFAULT_WORLDGEN);
   const initMutation = trpc.setup.initialize.useMutation();
 
   const stepIndex = STEPS.findIndex(s => s.id === step);
@@ -42,7 +45,7 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
   const handleStart = async () => {
     setStarting(true);
     try {
-      await initMutation.mutateAsync({ agents, relationships, world, rules });
+      await initMutation.mutateAsync({ agents, relationships, world, rules, worldgen });
       onStart();
     } catch (err) {
       console.error('Failed to start simulation:', err);
@@ -106,6 +109,9 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
               <h2 className="text-lg font-semibold text-white">Drama Preview</h2>
               <SimulationPreview sliders={sliders} agents={agents} />
             </div>
+          )}
+          {step === 'worldlayout' && (
+            <WorldLayout config={worldgen} onChange={setWorldgen} agents={agents} />
           )}
           {step === 'agents' && (
             <AgentEditor agents={agents} onChange={setAgents} />
