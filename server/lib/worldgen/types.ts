@@ -1,0 +1,76 @@
+import type { LocationSeed } from '../../data/maps';
+import type { AgentConfig } from '../../../src/components/setup/types';
+import type { RNG } from './rng';
+
+/** Phase 3 may extend. Placeholder for Phase 1. */
+export interface TerrainTile {
+  x: number;
+  y: number;
+  kind: string;
+}
+
+/** Phase 4 may extend. Placeholder for Phase 1. */
+export interface InteriorData {
+  /** Cell codes per INTERIOR_GRIDS convention (1=wall, 2=furniture, 3=door, 0=floor),
+   *  or null for buildings without an interior grid (homes, open areas). */
+  grid: number[][] | null;
+}
+
+/** Mutable during pipeline execution; fields are filled in by each stage. */
+export interface WorldContext {
+  dimensions: { width: number; height: number } | null;
+  terrainTiles: TerrainTile[] | null;
+  publicBuildings: LocationSeed[] | null;
+  homes: LocationSeed[] | null;
+  interiors: Record<number, InteriorData> | null;
+  names: Record<string, string> | null;
+}
+
+/** Data passed to stages beyond ctx/rng/cfg/agentCount. The framework owns
+ *  what goes in here; stages opt in via Stage.needsAgents etc. */
+export interface StageExtras {
+  /** Agent configs from the wizard. The homes stage (§7.4 of spec) only
+   *  reads .homeName, so a narrowed Array<{ homeName: string }> is acceptable. */
+  agents?: Array<{ homeName: string } & Partial<AgentConfig>>;
+  /** Framework-internal auto-expand pin. Injected by runStages ONLY when
+   *  forwarding to the `dimensions` stage. Overrides all priority rules. */
+  expandPin?: { width: number; height: number };
+}
+
+export interface Stage<Output extends Partial<WorldContext>> {
+  name: string;
+  /** Sanity check at pipeline boot: listed fields must be populated by earlier stages. */
+  dependsOn: (keyof WorldContext)[];
+  /** When true, runStages injects extras.agents from GenerateOptions.agents. */
+  needsAgents?: boolean;
+  run(
+    ctx: Readonly<WorldContext>,
+    rng: RNG,
+    cfg: import('./config').WorldGenConfig,
+    agentCount: number,
+    extras: StageExtras,
+  ): Output;
+}
+
+/** Thrown when spatial constraints cannot be met. Pipeline catches this
+ *  to trigger expand-on-fail. Any other error propagates as a bug. */
+export class FitError extends Error {
+  constructor(public stage: string, public reason: string) {
+    super(`[${stage}] ${reason}`);
+    this.name = 'FitError';
+  }
+}
+
+export interface GenResult {
+  /** Master seed used (user-provided or framework-generated). */
+  seed: string;
+  dimensions: { width: number; height: number };
+  /** publicBuildings ∪ homes, in that order. */
+  locations: LocationSeed[];
+  /** Row-major '0'/'1' string computed post-pipeline from `locations`. */
+  collisionGrid: string;
+}
+
+export interface GenerateOptions {
+  agents?: StageExtras['agents'];
+}
