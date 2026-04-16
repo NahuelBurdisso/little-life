@@ -586,6 +586,23 @@ export const setupRouter = router({
       return generateFromSliders(input, agents);
     }),
 
+  previewWorld: publicProcedure
+    .input(
+      WorldGenConfigObjectSchema.extend({
+        agentCount: z.number().int().min(1),
+        previewAgentHomes: z
+          .array(z.object({ homeName: z.string() }))
+          .optional(),
+      }).refine(
+        (cfg) => cfg.sizeTier !== 'custom' || !!cfg.customDimensions,
+        { message: "sizeTier='custom' requires customDimensions" },
+      ),
+    )
+    .mutation(({ input }) => {
+      const { agentCount, previewAgentHomes, ...cfg } = input;
+      return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
+    }),
+
   resetToWizard: publicProcedure.mutation(async () => {
     await stopTickLoopAndWait();
     await Promise.race([
