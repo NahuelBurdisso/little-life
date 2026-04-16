@@ -131,6 +131,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'crime',
     visibility: 0.2,
     duration: 5,
+    requiredZone: { shop: ['shelves'], town_square: ['market_north', 'market_south'] },
     prerequisites: [
       { type: 'co_located' },
       { type: 'personality', field: 'morality', op: '<', value: 50, agent: 'initiator' },
@@ -166,6 +167,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'crime',
     visibility: 0.1,
     duration: 20,
+    requiredZone: { shop: ['storage'] },
     prerequisites: [
       { type: 'personality', field: 'morality', op: '<', value: 40, agent: 'initiator' },
     ],
@@ -266,6 +268,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'romance',
     visibility: 0.5,
     duration: 10,
+    requiredZone: { tavern: ['booth'], park: ['grove_west', 'grove_east'] },
     prerequisites: [
       { type: 'co_located' },
       { type: 'personality', field: 'sensuality', op: '>', value: 40, agent: 'initiator' },
@@ -301,6 +304,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'romance',
     visibility: 0.6,
     duration: 30,
+    requiredZone: { tavern: ['booth'], park: ['grove_west', 'grove_east'] },
     prerequisites: [
       { type: 'co_located' },
       { type: 'relationship', field: 'romance', op: '>', value: 30, agent: 'either' },
@@ -442,6 +446,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'manipulation',
     visibility: 0.1,
     duration: 15,
+    requiredZone: { tavern: ['booth'], shop: ['storage'] },
     prerequisites: [
       { type: 'co_located' },
       { type: 'knows_fact', filter: { sensitivity: 3 }, agent: 'initiator' },
@@ -577,6 +582,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'manipulation',
     visibility: 0.15,
     duration: 10,
+    requiredZone: { tavern: ['bar'] },
     prerequisites: [
       { type: 'co_located' },
       { type: 'personality', field: 'curiosity', op: '>', value: 50, agent: 'initiator' },
@@ -813,6 +819,7 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
     category: 'substance',
     visibility: 0.7,
     duration: 10,
+    requiredZone: { tavern: ['bar'] },
     prerequisites: [
       { type: 'location_type', value: 'tavern' },
       { type: 'economy', field: 'money', op: '>', value: 10, agent: 'initiator' },
@@ -906,6 +913,321 @@ export const INTERACTION_REGISTRY: Record<string, InteractionDef> = {
       ],
     },
     cooldown: { ticks: 720, scope: 'pair' },
+  },
+
+  // ─── TIER 3: DRAMA ─────────────────────────────────────────────────────────
+
+  scheme: {
+    category: 'crime',
+    visibility: 0.3,
+    duration: 20,
+    requiredZone: { tavern: ['booth'] },
+    prerequisites: [
+      { type: 'co_located' },
+      { type: 'personality', field: 'morality', op: '<', value: 40, agent: 'initiator' },
+      { type: 'relationship', field: 'friendship', op: '>', value: 10, agent: 'initiator' },
+    ],
+    effects_success: [
+      { system: 'fact', type: 'conspiracy', sensitivity: 3, subject: 'initiator' },
+      { system: 'relationship', field: 'trust', delta: 5, target: 'both' },
+      { system: 'goal', advance: 0.4 },
+    ],
+    effects_failure: [
+      { system: 'relationship', field: 'trust', delta: -10, target: 'both' },
+    ],
+    outcomeFactors: [
+      { stat: 'honesty', weight: -0.3 },
+      { stat: 'curiosity', weight: 0.3 },
+    ],
+    narration: {
+      strategy: 'if_witnessed',
+      token_budget: 60,
+      prompt_tone: 'tense',
+      templates: [
+        '{initiator} and {target} huddled in a booth, whispering plans.',
+        '{initiator} leaned close to {target}, scheming something at {location}.',
+      ],
+    },
+    cooldown: { ticks: 1440, scope: 'pair' },
+  },
+
+  secret_meeting: {
+    category: 'manipulation',
+    visibility: 0.2,
+    duration: 20,
+    requiredZone: { park: ['grove_west', 'grove_east'] },
+    prerequisites: [
+      { type: 'co_located' },
+      { type: 'relationship', field: 'trust', op: '>', value: 20, agent: 'either' },
+    ],
+    effects_success: [
+      { system: 'relationship', field: 'trust', delta: 5, target: 'both' },
+      { system: 'fact', type: 'secret_told', sensitivity: 2, subject: 'initiator' },
+    ],
+    effects_failure: [
+      { system: 'relationship', field: 'trust', delta: -5, target: 'both' },
+    ],
+    outcomeFactors: [
+      { stat: 'loyalty', weight: 0.3 },
+      { stat: 'curiosity', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'if_witnessed',
+      token_budget: 60,
+      prompt_tone: 'tense',
+      templates: [
+        '{initiator} and {target} met quietly in the grove.',
+        '{initiator} pulled {target} aside for a private word.',
+      ],
+    },
+    cooldown: { ticks: 720, scope: 'pair' },
+  },
+
+  confide: {
+    category: 'caregiving',
+    visibility: 0.2,
+    duration: 25,
+    requiredZone: { clinic: ['exam_room'] },
+    prerequisites: [
+      { type: 'co_located' },
+      { type: 'agent_role', role: 'doctor', agent: 'target' },
+    ],
+    effects_success: [
+      { system: 'relationship', field: 'trust', delta: 5, target: 'both' },
+      { system: 'needs', field: 'mood', delta: 10, target: 'initiator' },
+      { system: 'needs', field: 'stress', delta: -10, target: 'initiator' },
+      { system: 'fact', type: 'secret_told', sensitivity: 2, subject: 'initiator' },
+    ],
+    effects_failure: [
+      { system: 'needs', field: 'mood', delta: -5, target: 'initiator' },
+    ],
+    outcomeFactors: [
+      { stat: 'warmth', weight: 0.3 },
+      { stat: 'neuroticism', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'if_severity',
+      severity_threshold: 0.4,
+      token_budget: 60,
+      prompt_tone: 'warm',
+      templates: [
+        '{initiator} opened up to {target} during a session.',
+        '{initiator} confided something personal to {target} at the clinic.',
+      ],
+    },
+    cooldown: { ticks: 1440, scope: 'pair' },
+  },
+
+  speech: {
+    category: 'authority',
+    visibility: 1.3,
+    duration: 20,
+    requiredZone: { town_square: ['podium'] },
+    prerequisites: [
+      { type: 'agent_role', role: 'mayor', agent: 'initiator' },
+      { type: 'location_type', value: 'town_square' },
+    ],
+    effects_success: [
+      { system: 'fact', type: 'speech', sensitivity: 1, subject: 'initiator' },
+      { system: 'needs', field: 'mood', delta: 5, target: 'both' },
+      { system: 'goal', advance: 0.3 },
+    ],
+    effects_failure: [
+      { system: 'needs', field: 'mood', delta: -5, target: 'initiator' },
+    ],
+    outcomeFactors: [
+      { stat: 'vanity', weight: 0.3 },
+      { stat: 'warmth', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'always',
+      token_budget: 80,
+      prompt_tone: 'neutral',
+      templates: [
+        '{initiator} addressed the crowd from the podium.',
+        '{initiator} gave a speech in the town square.',
+      ],
+    },
+    cooldown: { ticks: 1440, scope: 'initiator' },
+  },
+
+  protest: {
+    category: 'conflict',
+    visibility: 1.3,
+    duration: 20,
+    requiredZone: { town_square: ['podium'] },
+    prerequisites: [
+      { type: 'location_type', value: 'town_square' },
+      { type: 'personality', field: 'aggression', op: '>', value: 30, agent: 'initiator' },
+    ],
+    effects_success: [
+      { system: 'relationship', field: 'trust', delta: -15, target: 'target' },
+      { system: 'fact', type: 'political_dissent', sensitivity: 2, subject: 'initiator' },
+      { system: 'goal', advance: 0.4 },
+    ],
+    effects_failure: [
+      { system: 'relationship', field: 'trust', delta: -5, target: 'both' },
+      { system: 'needs', field: 'mood', delta: -5, target: 'initiator' },
+    ],
+    on_success: [
+      { trigger: 'fight', chance: 0.2, condition: 'target.aggression > 50' },
+    ],
+    outcomeFactors: [
+      { stat: 'aggression', weight: 0.3 },
+      { stat: 'morality', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'always',
+      token_budget: 80,
+      prompt_tone: 'visceral',
+      templates: [
+        '{initiator} stood on the podium and denounced {target}.',
+        '{initiator} rallied the crowd against {target} at {location}.',
+      ],
+    },
+    cooldown: { ticks: 2880, scope: 'initiator' },
+  },
+
+  announce: {
+    category: 'manipulation',
+    visibility: 1.3,
+    duration: 10,
+    requiredZone: { town_square: ['podium'] },
+    prerequisites: [
+      { type: 'location_type', value: 'town_square' },
+      { type: 'knows_fact', agent: 'initiator' },
+    ],
+    effects_success: [
+      { system: 'fact', type: 'rumor', sensitivity: 2, subject: 'initiator' },
+      { system: 'goal', advance: 0.3 },
+    ],
+    effects_failure: [
+      { system: 'relationship', field: 'trust', delta: -10, target: 'both' },
+    ],
+    outcomeFactors: [
+      { stat: 'vanity', weight: 0.3 },
+      { stat: 'honesty', weight: -0.2 },
+    ],
+    narration: {
+      strategy: 'always',
+      token_budget: 80,
+      prompt_tone: 'neutral',
+      templates: [
+        '{initiator} announced something from the podium about {target}.',
+        '{initiator} broadcast a secret to the crowd at {location}.',
+      ],
+    },
+    cooldown: { ticks: 1440, scope: 'initiator' },
+  },
+
+  escape_attempt: {
+    category: 'crime',
+    visibility: 0.5,
+    duration: 30,
+    requiredZone: { prison: ['cell_1', 'cell_2'] },
+    prerequisites: [
+      { type: 'state', state: 'arrested', agent: 'initiator' },
+      { type: 'location_type', value: 'prison' },
+    ],
+    effects_success: [
+      { system: 'fact', type: 'escape', sensitivity: 3, subject: 'initiator' },
+      { system: 'goal', advance: 0.8 },
+    ],
+    effects_failure: [
+      { system: 'needs', field: 'energy', delta: -20, target: 'initiator' },
+      { system: 'needs', field: 'mood', delta: -10, target: 'initiator' },
+      { system: 'fact', type: 'escape_failed', sensitivity: 2, subject: 'initiator' },
+    ],
+    outcomeFactors: [
+      { stat: 'impulsiveness', weight: 0.3 },
+      { stat: 'aggression', weight: 0.2 },
+      { stat: 'curiosity', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'always',
+      token_budget: 80,
+      prompt_tone: 'tense',
+      templates: [
+        '{initiator} tried to break out of jail.',
+        '{initiator} made a desperate escape attempt at {location}.',
+      ],
+    },
+    cooldown: { ticks: 4320, scope: 'initiator' },
+  },
+
+  smuggle: {
+    category: 'crime',
+    visibility: 0.3,
+    duration: 15,
+    requiredZone: { prison: ['hallway'] },
+    prerequisites: [
+      { type: 'co_located' },
+      { type: 'state', state: 'arrested', agent: 'target' },
+      { type: 'economy', field: 'inventory', op: '>', value: 0, agent: 'initiator' },
+    ],
+    effects_success: [
+      { system: 'relationship', field: 'trust', delta: 10, target: 'both' },
+      { system: 'relationship', field: 'friendship', delta: 5, target: 'both' },
+      { system: 'fact', type: 'contraband', sensitivity: 3, subject: 'initiator' },
+      { system: 'goal', advance: 0.4 },
+    ],
+    effects_failure: [
+      { system: 'fact', type: 'contraband', sensitivity: 2, subject: 'initiator' },
+      { system: 'state', type: 'arrested', target: 'initiator' },
+    ],
+    outcomeFactors: [
+      { stat: 'loyalty', weight: 0.3 },
+      { stat: 'impulsiveness', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'if_witnessed',
+      token_budget: 60,
+      prompt_tone: 'tense',
+      templates: [
+        '{initiator} slipped something to {target} through the bars.',
+        '{initiator} smuggled supplies to {target} at {location}.',
+      ],
+    },
+    cooldown: { ticks: 1440, scope: 'pair' },
+  },
+
+  lock_out: {
+    category: 'conflict',
+    visibility: 0.5,
+    duration: 10,
+    requiredZone: { home: ['living'] },
+    prerequisites: [
+      { type: 'co_located' },
+      { type: 'location_type', value: 'home' },
+      { type: 'state_or_personality', state_any: ['angry', 'jealous'], field: 'aggression', op: '>', value: 40, agent: 'initiator' },
+    ],
+    effects_success: [
+      { system: 'relationship', field: 'friendship', delta: -20, target: 'both' },
+      { system: 'relationship', field: 'trust', delta: -15, target: 'both' },
+      { system: 'state', type: 'homeless_temp', target: 'target' },
+      { system: 'needs', field: 'comfort', delta: -20, target: 'target' },
+    ],
+    effects_failure: [
+      { system: 'relationship', field: 'friendship', delta: -10, target: 'both' },
+      { system: 'state', type: 'angry', target: 'both' },
+    ],
+    on_success: [
+      { trigger: 'fight', chance: 0.3, condition: 'target.aggression > 50' },
+    ],
+    outcomeFactors: [
+      { stat: 'aggression', weight: 0.3 },
+      { stat: 'impulsiveness', weight: 0.2 },
+    ],
+    narration: {
+      strategy: 'always',
+      token_budget: 80,
+      prompt_tone: 'visceral',
+      templates: [
+        '{initiator} locked {target} out of the house.',
+        '{initiator} bolted the door and refused to let {target} back in.',
+      ],
+    },
+    cooldown: { ticks: 2880, scope: 'pair' },
   },
 
 };

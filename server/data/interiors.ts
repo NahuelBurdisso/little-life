@@ -557,3 +557,25 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
     { id: 'seating', name: 'Seating', label: 'Seats', tiles: [[3,5],[4,5],[5,5],[6,5],[7,5],[8,5]], center: [5, 5], maxOccupants: 6, color: 0x68d391, allowedActions: ['idle', 'eat', 'watch'], visibility: 0.9, relativePosition: { x: 96, y: 160, width: 184, height: 28 } },
   ],
 };
+
+// ---------------------------------------------------------------------------
+// ACTION_ZONE_REQUIREMENTS
+// Maps action types to required zones per building type.
+// If an action isn't in this map, it has no zone requirement.
+// ---------------------------------------------------------------------------
+
+export const ACTION_ZONE_REQUIREMENTS: Record<string, Record<string, string[]>> = {
+  sleeping: { home: ['bed'] },
+  eating: { home: ['kitchen'], tavern: ['tables'], bakery: ['display'] },
+  working: {
+    shop: ['counter', 'storage'],
+    tavern: ['bar', 'stage'],
+    bakery: ['oven', 'prep_table'],
+    clinic: ['reception', 'exam_room', 'medicine'],
+    workshop: ['workbench', 'forge'],
+    town_hall: ['mayors_desk'],
+    prison: ['guard_desk'],
+    farm: ['crops_north', 'crops_south'],
+  },
+  gambling: { tavern: ['tables'] },
+};

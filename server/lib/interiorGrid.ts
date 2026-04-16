@@ -1,4 +1,4 @@
-import { INTERIOR_GRIDS, INTERIOR_ZONES, type ZoneDef } from '../data/interiors';
+import { INTERIOR_GRIDS, INTERIOR_ZONES, ACTION_ZONE_REQUIREMENTS, type ZoneDef } from '../data/interiors';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -159,6 +159,20 @@ export function findAvailableZone(
 ): ZoneDef | null {
   const zones = INTERIOR_ZONES[buildingType] as ZoneDef[] | undefined;
   if (!zones || zones.length === 0) return null;
+
+  // Check ACTION_ZONE_REQUIREMENTS first for non-interaction actions
+  const requirements = ACTION_ZONE_REQUIREMENTS[actionType];
+  if (requirements) {
+    const allowedZoneIds = requirements[buildingType];
+    if (allowedZoneIds) {
+      for (const zoneId of allowedZoneIds) {
+        const zone = zones.find(z => z.id === zoneId);
+        if (zone && !zoneOccupancy.isFull(buildingType, zone.id, zone.maxOccupants)) {
+          return zone;
+        }
+      }
+    }
+  }
 
   // Zones that support the requested action
   const matching = zones.filter(z => z.allowedActions.includes(actionType));

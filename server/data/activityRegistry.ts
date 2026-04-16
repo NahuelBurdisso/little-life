@@ -30,4 +30,16 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   player_remove: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
   plan_generated: { category: 'planning', base_importance: 0.3, retention: 'short', template: '{agentName} planned their day: {summary}' },
   plan_changed: { category: 'planning', base_importance: 0.5, retention: 'medium', template: '{agentName} changed plans: {reason}. Now: {summary}' },
+
+  // ─── Zone Actions ───────────────────────────────────────────────────────────
+  cook:        { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} cooked a meal' },
+  rest:        { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} rested' },
+  contemplate: { category: 'state', base_importance: 0.2, retention: 'short', template: '{agent} sat by the river, lost in thought' },
+  fish:        { category: 'state', base_importance: 0.2, retention: 'short', template: '{agent} went fishing' },
+  garden:      { category: 'state', base_importance: 0.2, retention: 'short', template: '{agent} tended the garden' },
+  forage:      { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} foraged for food' },
+  perform:     { category: 'social', base_importance: 0.4, retention: 'medium', template: '{agent} performed for the crowd' },
+  watch:       { category: 'social', base_importance: 0.1, retention: 'short', template: '{agent} watched a performance' },
+  browse:      { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} browsed the shelves' },
+  jog:         { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} went for a jog' },
 };

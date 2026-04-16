@@ -90,6 +90,7 @@ export interface InteractionDef {
   outcomeFactors: OutcomeFactor[];
   narration: NarrationConfig;
   cooldown: CooldownConfig;
+  requiredZone?: Record<string, string[]>; // building_type → zone IDs
 }
 
 export interface AspirationDef {

@@ -76,6 +76,22 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   arrest: (s, _t, ctx) =>
     ctx?.detail ? `${s} was arrested: ${ctx.detail}` :
     `${s} was arrested`,
+  conspiracy: (s, t, ctx) =>
+    ctx?.detail ? `${s} and ${t ?? 'someone'} are plotting something — ${ctx.detail}` :
+    `${s} and ${t ?? 'someone'} were seen scheming together`,
+  political_dissent: (s, _t, ctx) =>
+    ctx?.detail ? `${s} publicly protested — ${ctx.detail}` :
+    `${s} spoke out against the authorities`,
+  speech: (s, _t, ctx) =>
+    ctx?.detail ? `${s} gave a public speech: ${ctx.detail}` :
+    `${s} addressed the town from the podium`,
+  escape: (s) =>
+    `${s} escaped from prison`,
+  escape_failed: (s) =>
+    `${s} tried to escape prison but failed`,
+  contraband: (s, t, ctx) =>
+    ctx?.detail ? `${s} was caught smuggling ${ctx.detail} to ${t ?? 'a prisoner'}` :
+    `${s} smuggled something to ${t ?? 'a prisoner'}`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────
