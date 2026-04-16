@@ -550,4 +550,177 @@ export const rippleRules: RippleRule[] = [
       tensionDelta: 15,
     },
   },
+
+  // ─── Tier 3 Drama Cascades ───────────────────────────────────────────────────
+
+  // Speech from podium — witnesses get mood bump + opinion drift
+  {
+    id: 'speech_crowd_mood',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('speech'),
+    target: 'witness',
+    probability: 0.6,
+    cooldownTicks: 480,
+    effects: {
+      moodDelta: 5,
+      relationshipDelta: { field: 'trust', value: 3 },
+    },
+  },
+
+  // Protest — authority relationships damaged, political fact spread
+  {
+    id: 'protest_authority_damage',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('protest'),
+    target: 'self',
+    secondaryTarget: 'perpetrator',
+    probability: 0.9,
+    cooldownTicks: 720,
+    effects: {
+      relationshipDelta: { field: 'trust', value: -8 },
+      createFact: 'political_dissent',
+      tensionDelta: 20,
+    },
+  },
+
+  // Protest — witnesses become agitated
+  {
+    id: 'protest_witness_stress',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('protest'),
+    target: 'witness',
+    probability: 0.35,
+    personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
+    cooldownTicks: 240,
+    effects: {
+      createState: 'stressed',
+      tensionDelta: 10,
+    },
+  },
+
+  // Escape attempt (succeeded or not) — constables hear about it, grudge forms
+  {
+    id: 'escape_authority_grudge',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('escape'),
+    target: 'self',
+    probability: 0.9,
+    cooldownTicks: 1440,
+    effects: {
+      createFact: 'escape',
+      tensionDelta: 25,
+      relationshipDelta: { field: 'trust', value: -15 },
+    },
+  },
+
+  // Scheme — initiator gains tension, fact leaks faintly
+  {
+    id: 'scheme_tension',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('scheme'),
+    target: 'self',
+    probability: 0.8,
+    personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.1 }],
+    cooldownTicks: 360,
+    effects: {
+      createFact: 'conspiracy',
+      tensionDelta: 15,
+    },
+  },
+
+  // Secret meeting — trust spike between parties, faint rumor
+  {
+    id: 'secret_meeting_bond',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('secret_meeting'),
+    target: 'self',
+    probability: 0.6,
+    cooldownTicks: 720,
+    effects: {
+      relationshipDelta: { field: 'trust', value: 8 },
+      createFact: 'conspiracy',
+    },
+  },
+
+  // Confide — trust spike, possible leak to witness
+  {
+    id: 'confide_trust_gain',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('confide'),
+    target: 'self',
+    probability: 0.85,
+    cooldownTicks: 240,
+    effects: {
+      relationshipDelta: { field: 'trust', value: 12 },
+    },
+  },
+
+  // Announce — rumor propagates, vanity boost for announcer
+  {
+    id: 'announce_rumor_spread',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('announce'),
+    target: 'self',
+    probability: 0.9,
+    cooldownTicks: 720,
+    effects: {
+      createFact: 'rumor',
+      moodDelta: 5,
+    },
+  },
+
+  // Smuggle — bond between parties, contraband fact spreads
+  {
+    id: 'smuggle_bond',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('smuggle'),
+    target: 'self',
+    probability: 0.8,
+    cooldownTicks: 480,
+    effects: {
+      relationshipDelta: { field: 'friendship', value: 5 },
+      createFact: 'contraband',
+    },
+  },
+
+  // Lock out — target becomes homeless_temp, grudge forms
+  {
+    id: 'lock_out_grudge',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('lock_out'),
+    target: 'victim',
+    probability: 0.9,
+    cooldownTicks: 1440,
+    effects: {
+      createState: 'stressed',
+      createFact: 'grudge',
+      tensionDelta: 30,
+      relationshipDelta: { field: 'trust', value: -25 },
+    },
+  },
+
+  // Lock out — initiator gains anger-driven tension
+  {
+    id: 'lock_out_initiator_stress',
+    source: 'interaction:completed',
+    sourceFilter: (payload) =>
+      typeof payload?.action === 'string' && payload.action.includes('lock_out'),
+    target: 'self',
+    probability: 0.4,
+    personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
+    cooldownTicks: 720,
+    effects: {
+      tensionDelta: 15,
+    },
+  },
 ];

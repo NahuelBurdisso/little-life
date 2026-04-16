@@ -39,6 +39,8 @@ const VALID_FACTS = new Set([
   'crush', 'heartbreak', 'drunk_incident', 'grudge', 'affair', 'financial',
   'secret_told', 'work_issue', 'sickness', 'reputation', 'theft', 'blackmail',
   'gambling_loss', 'rumor', 'seduction', 'confession', 'alcoholic', 'death', 'arrest',
+  // Tier 3 drama facts
+  'political_dissent', 'escape', 'conspiracy', 'contraband', 'speech',
 ]);
 
 const VALID_GOALS = new Set([
@@ -139,8 +141,8 @@ describe('rippleRules', () => {
     }
   });
 
-  it('contains exactly 35 rules', () => {
-    expect(rippleRules.length).toBe(35);
+  it('contains exactly 46 rules', () => {
+    expect(rippleRules.length).toBe(46);
   });
 
   it('has all expected rule IDs present', () => {
@@ -164,6 +166,11 @@ describe('rippleRules', () => {
       // Goal-driven
       'revenge_escalation', 'goal_failure_drinking', 'goal_completed_euphoria',
       'ambition_shift_crisis',
+      // Tier 3 drama
+      'speech_crowd_mood', 'protest_authority_damage', 'protest_witness_stress',
+      'escape_authority_grudge', 'scheme_tension', 'secret_meeting_bond',
+      'confide_trust_gain', 'announce_rumor_spread', 'smuggle_bond',
+      'lock_out_grudge', 'lock_out_initiator_stress',
     ];
     for (const id of expectedIds) {
       expect(ruleIds.has(id), `Missing expected rule: "${id}"`).toBe(true);
