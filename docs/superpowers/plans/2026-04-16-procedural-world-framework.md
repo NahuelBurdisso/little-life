@@ -2038,6 +2038,8 @@ Inside `setupRouter` (router construction), add:
 ```ts
 // Note: extend() must be called on the ZodObject form. WorldGenConfigSchema
 // is a ZodEffects (refine-wrapped) and does not expose .extend().
+// Re-apply the refinement after extending so invalid inputs fail at the
+// tRPC boundary with a clear Zod message instead of at the pipeline.
 previewWorld: publicProcedure
   .input(
     WorldGenConfigObjectSchema.extend({
@@ -2045,7 +2047,10 @@ previewWorld: publicProcedure
       previewAgentHomes: z
         .array(z.object({ homeName: z.string() }))
         .optional(),
-    }),
+    }).refine(
+      (cfg) => cfg.sizeTier !== 'custom' || !!cfg.customDimensions,
+      { message: "sizeTier='custom' requires customDimensions" },
+    ),
   )
   .mutation(({ input }) => {
     const { agentCount, previewAgentHomes, ...cfg } = input;
