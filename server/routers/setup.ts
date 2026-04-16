@@ -27,7 +27,7 @@ import {
   aspirations,
   interactionCooldowns,
 } from '../db/schema';
-import { DEFAULT_MAP_WIDTH, DEFAULT_MAP_HEIGHT, generateLocationsForAgentCount, generateHomes, getPublicBuildings, generateCollisionGridForLocations } from '../data/maps';
+import { DEFAULT_MAP_WIDTH, DEFAULT_MAP_HEIGHT } from '../data/maps';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
@@ -177,17 +177,16 @@ function clearAllTables() {
 function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: number; locationCount: number } {
   const now = Date.now();
 
-  // 2. Generate locations dynamically — enough homes for all agent assignments
-  let homesNeeded = Math.ceil(config.agents.length / 2);
-  for (const agent of config.agents) {
-    const match = agent.homeName.match(/Home (\d+)/);
-    if (match) homesNeeded = Math.max(homesNeeded, Number(match[1]));
-  }
-  const dynamicLocations = generateLocationsForAgentCount(config.agents.length, homesNeeded);
-  const homesRaw = generateHomes(homesNeeded);
-  const publicRaw = getPublicBuildings();
-  const allRawBuildings = [...homesRaw, ...publicRaw];
-  const dynamicCollisionGrid = generateCollisionGridForLocations(allRawBuildings);
+  // 2. Generate locations dynamically via the seeded worldgen pipeline.
+  // Phase 1 worldgen: delegate location generation to the seeded pipeline.
+  const genResult = generateWorld(config.worldgen, config.agents.length, {
+    agents: config.agents,
+  });
+  // Writeback the resolved seed so worldState.setup_config is deterministic for restart.
+  config.worldgen = { ...config.worldgen, seed: genResult.seed };
+
+  const dynamicLocations = genResult.locations;
+  const dynamicCollisionGrid = genResult.collisionGrid;
 
   const locationMap = new Map<string, number>();
   for (const loc of dynamicLocations) {
@@ -484,8 +483,8 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
     tick_id: 'init',
     pending_transitions: [],
     tax_pool: 0,
-    map_width: DEFAULT_MAP_WIDTH,
-    map_height: DEFAULT_MAP_HEIGHT,
+    map_width: genResult.dimensions.width,
+    map_height: genResult.dimensions.height,
     collision_grid: dynamicCollisionGrid,
     setup_config: config as any,
   }).run();
