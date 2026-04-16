@@ -6,7 +6,7 @@ const TILE = 32;
 const HOME_TILES = 3;           // 3×3 tile footprint
 const HOME_PX = HOME_TILES * TILE;
 const PUBLIC_BUFFER = 2;        // tiles of buffer around public buildings
-const HOME_SPACING = 4;         // min Chebyshev distance between home footprints
+const HOME_SPACING = 2;         // min Chebyshev distance between home footprints
 
 /**
  * Home services — matches what getDefaultServices('home') in maps.ts returns.

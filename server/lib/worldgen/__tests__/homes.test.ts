@@ -80,11 +80,28 @@ describe('homes stage', () => {
     }
   });
 
-  it('throws FitError when the map is too small for the requested count', () => {
-    const ctx = ctxWith(48, 37); // minimum map
+  it('throws FitError when the map cannot fit the requested count', () => {
+    // Minimum 48×37 map with giant public buildings consuming most of it.
+    // Together with the 1-tile border and 2-tile buffer + spacing rule, this
+    // leaves too few candidates for the requested homeCount=40.
+    const bigBlockers: LocationSeed[] = [
+      {
+        name: 'Blocker1', type: 'town_square',
+        position: { x: 32, y: 32, width: 32 * 20, height: 32 * 15 },
+        entry_point: { x: 32, y: 32 },
+        capacity: 0, current_occupants: [], operating_hours: null,
+        services: [], description: '', owner: null,
+      },
+      {
+        name: 'Blocker2', type: 'farm',
+        position: { x: 32 * 25, y: 32, width: 32 * 20, height: 32 * 30 },
+        entry_point: { x: 32 * 25, y: 32 },
+        capacity: 0, current_occupants: [], operating_hours: null,
+        services: [], description: '', owner: null,
+      },
+    ];
+    const ctx = ctxWith(48, 37, bigBlockers);
     const rng = forkRng('test', 'homes');
-    // With ~20 agents → 10 homes, on a 48×37 map there likely aren't enough
-    // non-overlapping 3×3 + 2-tile-spacing slots.
     expect(() => homesStage.run(ctx, rng, CFG, 80, {}).homes).toThrowError(FitError);
   });
 
