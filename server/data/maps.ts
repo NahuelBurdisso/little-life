@@ -424,11 +424,15 @@ export function generateLocationsForAgentCount(agentCount: number, homeCountOver
   }));
 }
 
-export function generateCollisionGridForLocations(locs: MapLocationRaw[]): string {
+export function generateCollisionGridForLocations(
+  locs: MapLocationRaw[],
+  mapWidth: number = MAP_WIDTH,
+  mapHeight: number = MAP_HEIGHT,
+): string {
   const grid: number[][] = [];
-  for (let y = 0; y < MAP_HEIGHT; y++) {
+  for (let y = 0; y < mapHeight; y++) {
     grid[y] = [];
-    for (let x = 0; x < MAP_WIDTH; x++) {
+    for (let x = 0; x < mapWidth; x++) {
       grid[y][x] = 0;
     }
   }
@@ -444,25 +448,25 @@ export function generateCollisionGridForLocations(locs: MapLocationRaw[]): strin
     if (BUILDING_TYPES.has(loc.type)) {
       for (let x = tileX; x < tileX + tileW; x++) {
         for (let y = tileY; y < tileY + tileH; y++) {
-          if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
+          if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) continue;
           grid[y][x] = 1;
         }
       }
       const doorTileX = Math.floor(loc.entryX / TILE_SIZE);
       const doorTileY = Math.floor(loc.entryY / TILE_SIZE);
-      if (doorTileX >= 0 && doorTileX < MAP_WIDTH && doorTileY >= 0 && doorTileY < MAP_HEIGHT) {
+      if (doorTileX >= 0 && doorTileX < mapWidth && doorTileY >= 0 && doorTileY < mapHeight) {
         grid[doorTileY][doorTileX] = 0;
       }
       const outsideDoorY = doorTileY + 1;
-      if (outsideDoorY >= 0 && outsideDoorY < MAP_HEIGHT) {
+      if (outsideDoorY >= 0 && outsideDoorY < mapHeight) {
         grid[outsideDoorY][doorTileX] = 0;
       }
     }
   }
 
   let result = "";
-  for (let y = 0; y < MAP_HEIGHT; y++) {
-    for (let x = 0; x < MAP_WIDTH; x++) {
+  for (let y = 0; y < mapHeight; y++) {
+    for (let x = 0; x < mapWidth; x++) {
       result += grid[y][x].toString();
     }
   }
