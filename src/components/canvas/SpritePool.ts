@@ -54,6 +54,7 @@ export class SpritePool {
       sprite.update(px, py, deltaTime);
       sprite.setSelected(id === selectedAgentId);
       sprite.updateStates(agent.activeStates ?? []);
+      sprite.updateMood(agent.needs?.mood ?? 50);
       sprite.setInsideBuilding(agent.current_location != null);
     }
 

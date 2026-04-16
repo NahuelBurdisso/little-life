@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { getAgentColor, AGENT_RADIUS } from "../../lib/spriteConfig";
+import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 
 const LERP_SPEED = 0.12;
 
@@ -57,14 +57,15 @@ export class AgentSprite {
     this.selectionRing = new PIXI.Graphics();
     this.selectionRing
       .ellipse(0, AGENT_RADIUS, 14, 5)
-      .stroke({ color: 0xffdd44, width: 2, alpha: 0.8 });
+      .stroke({ color: 0xc8a84b, width: 2, alpha: 0.8 });
     this.selectionRing.visible = false;
     this.container.addChild(this.selectionRing);
 
     // --- Colored circle ---
     this.circle = new PIXI.Graphics();
     this.circle.circle(0, 0, AGENT_RADIUS);
-    this.circle.fill({ color: getAgentColor(name) });
+    this.circle.fill({ color: 0x2a2520 });
+    this.circle.stroke({ width: 1.5, color: 0x7a6f5a });
     this.container.addChild(this.circle);
 
     // --- State ring (colored ring showing active state) ---
@@ -78,7 +79,7 @@ export class AgentSprite {
       style: {
         fontSize: 10,
         fontWeight: "bold",
-        fill: 0xffffff,
+        fill: 0xd4c9a8,
         fontFamily: "monospace",
       },
     });
@@ -92,7 +93,7 @@ export class AgentSprite {
       style: {
         fontFamily: "monospace",
         fontSize: 7,
-        fill: 0xffffff,
+        fill: 0xa09070,
         stroke: { color: 0x000000, width: 2 },
         align: "center",
       },
@@ -144,6 +145,14 @@ export class AgentSprite {
     } else {
       this.stateRing.visible = false;
     }
+  }
+
+  /** Update the mood-based outline color on the circle. */
+  updateMood(mood: number): void {
+    this.circle.clear();
+    this.circle.circle(0, 0, AGENT_RADIUS);
+    this.circle.fill({ color: 0x2a2520 });
+    this.circle.stroke({ width: 1.5, color: getMoodColor(mood) });
   }
 
   /** Show or hide the interior glow effect. */

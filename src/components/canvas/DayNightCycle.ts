@@ -19,16 +19,11 @@ export class DayNightCycle {
 
   private getPhaseStyle(phase: string): { color: number; alpha: number } {
     switch (phase) {
-      case "dawn":
-        return { color: 0xffa050, alpha: 0.15 };
-      case "morning":
-        return { color: 0x000000, alpha: 0 };
-      case "afternoon":
-        return { color: 0x000000, alpha: 0 };
-      case "evening":
-        return { color: 0xff8c00, alpha: 0.2 };
-      case "night":
-        return { color: 0x1a1a4e, alpha: 0.4 };
+      case "dawn":      return { color: 0xFFB347, alpha: 0.08 };
+      case "morning":   return { color: 0x000000, alpha: 0 };
+      case "afternoon": return { color: 0xFFF5CC, alpha: 0.05 };
+      case "evening":   return { color: 0xFF8C42, alpha: 0.12 };
+      case "night":     return { color: 0x1A1F3C, alpha: 0.55 };
       default:
         return { color: 0x000000, alpha: 0 };
     }
