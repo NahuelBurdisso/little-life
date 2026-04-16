@@ -196,6 +196,32 @@ export function parseDecomposedActions(
 export function inferActionType(description: string): string {
   const lower = description.toLowerCase();
 
+  // ── Tier 3: drama actions (check first — phrases may overlap generic verbs) ──
+  if (/\b(sneak\s+out|break\s+out|escape|flee|bolt)\b/.test(lower)) return 'escape_attempt';
+  if (/\b(smuggle|smuggling|slip\s+(?:in|past)|sneak\s+in)\b/.test(lower)) return 'smuggle';
+  if (/\b(lock\s+(?:out|the\s+door)|bar\s+the\s+door|shut\s+out)\b/.test(lower)) return 'lock_out';
+  if (/\b(scheme|scheming|plot|plotting|conspire|conspiring)\b/.test(lower)) return 'scheme';
+  if (/\b(secret\s+meeting|clandestine\s+meeting|covert\s+meeting)\b/.test(lower)) return 'secret_meeting';
+  if (/\b(confide|confiding|open\s+up\s+to|share\s+a\s+secret)\b/.test(lower)) return 'confide';
+  if (/\b(give\s+a\s+speech|speech|deliver\s+remarks|oration|rally)\b/.test(lower)) return 'speech';
+  if (/\b(protest|protesting|demonstration|demonstrate\s+against)\b/.test(lower)) return 'protest';
+  if (/\b(announce|announcing|announcement|proclaim)\b/.test(lower)) return 'announce';
+
+  // Eating mentions take priority over cook (e.g., "cook dinner" is eating intent)
+  if (/\b(lunch|breakfast|dinner|meal|snack|food)\b/.test(lower)) return 'eating';
+
+  // ── Tier 2: zone-bound activities ──
+  if (/\b(cook|cooking|prepare\s+(?:a\s+)?meal|bake|baking)\b/.test(lower)) return 'cook';
+  if (/\b(contemplate|contemplating|reflect|reflecting|meditate|meditating|think\s+quietly)\b/.test(lower)) return 'contemplate';
+  if (/\b(fish|fishing|go\s+fishing|cast\s+(?:a\s+)?line)\b/.test(lower)) return 'fish';
+  if (/\b(garden|gardening|tend\s+(?:the\s+)?garden|plant(?:ing)?\s+flowers)\b/.test(lower)) return 'garden';
+  if (/\b(forage|foraging|gather\s+(?:herbs|berries|mushrooms)|pick\s+herbs)\b/.test(lower)) return 'forage';
+  if (/\b(perform|performing|play\s+music|sing|singing|put\s+on\s+a\s+show)\b/.test(lower)) return 'perform';
+  if (/\b(watch|watching|spectate|spectating|observe\s+(?:the\s+)?crowd)\b/.test(lower)) return 'watch';
+  if (/\b(browse|browsing|peruse|window\s+shop)\b/.test(lower)) return 'browse';
+  if (/\b(jog|jogging|run\s+(?:laps|around)|go\s+for\s+a\s+run)\b/.test(lower)) return 'jog';
+
+  // ── Generic verbs ──
   if (/\b(eat|eating|lunch|breakfast|dinner|food|meal|snack)\b/.test(lower)) return 'eating';
   if (/\b(work|working|task|shift|job|labor)\b/.test(lower)) return 'working';
   if (/\b(talk|talking|chat|chatting|visit|visiting|socialize|socializ|meet|meeting)\b/.test(lower)) return 'socializing';
