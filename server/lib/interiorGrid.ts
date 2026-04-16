@@ -1,4 +1,4 @@
-import { INTERIOR_GRIDS } from '../data/interiors';
+import { INTERIOR_GRIDS, INTERIOR_ZONES, type ZoneDef } from '../data/interiors';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,3 +129,76 @@ export class ZoneOccupancy {
 
 // Singleton instance for use across the server
 export const zoneOccupancy = new ZoneOccupancy();
+
+// ---------------------------------------------------------------------------
+// Zone capacity helpers
+// ---------------------------------------------------------------------------
+
+/** How many ticks an agent waits before giving up on a full zone */
+export const ZONE_WAIT_TIMEOUT_TICKS = 20;
+
+/**
+ * Fallback zone map: when a primary zone is full, try these alternates.
+ * Key format: "buildingType:zoneId"
+ */
+const ZONE_FALLBACKS: Record<string, string[]> = {
+  'tavern:tables': ['bar'],          // tables full → try bar
+  'tavern:booth': ['tables'],        // booth full → try tables
+  'shop:shelves': ['display'],       // shelves full → try display
+  'clinic:exam_room': ['patient_bed'], // exam room full → try patient bed
+};
+
+/**
+ * Find the best available zone for the given action inside a building.
+ * Returns the first non-full zone that allows the action, trying fallbacks
+ * when all primary matches are full. Returns null when no zone is available.
+ */
+export function findAvailableZone(
+  buildingType: string,
+  actionType: string,
+): ZoneDef | null {
+  const zones = INTERIOR_ZONES[buildingType] as ZoneDef[] | undefined;
+  if (!zones || zones.length === 0) return null;
+
+  // Zones that support the requested action
+  const matching = zones.filter(z => z.allowedActions.includes(actionType));
+  if (matching.length === 0) return null;
+
+  // Try primary matches first (prefer non-full zones)
+  for (const zone of matching) {
+    if (!zoneOccupancy.isFull(buildingType, zone.id, zone.maxOccupants)) {
+      return zone;
+    }
+  }
+
+  // All primary matches are full — try fallback zones
+  for (const zone of matching) {
+    const key = `${buildingType}:${zone.id}`;
+    const fallbacks = ZONE_FALLBACKS[key];
+    if (fallbacks) {
+      for (const fallbackId of fallbacks) {
+        const fallbackZone = zones.find(z => z.id === fallbackId);
+        if (
+          fallbackZone &&
+          !zoneOccupancy.isFull(buildingType, fallbackZone.id, fallbackZone.maxOccupants)
+        ) {
+          return fallbackZone;
+        }
+      }
+    }
+  }
+
+  // Everything is full
+  return null;
+}
+
+/**
+ * Convenience wrapper matching the (actionType, buildingType) argument order
+ * used in some call sites.
+ */
+export function resolveZoneForAction(
+  actionType: string,
+  buildingType: string,
+): ZoneDef | null {
+  return findAvailableZone(buildingType, actionType);
+}

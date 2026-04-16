@@ -12,7 +12,7 @@ import {
   goals,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
-import { INTERIOR_ZONES } from '../../data/interiors';
+import { findAvailableZone } from '../../lib/interiorGrid';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
@@ -772,16 +772,12 @@ export function tick(world: WorldRow): void {
         const destY = loc.entry_point.y;
 
         const locType = loc.type as string;
-        const zones = INTERIOR_ZONES[locType] ?? [];
-        const zone = zones.find((z) => {
-          if ((z as any).allowedActions?.length) return (z as any).allowedActions.includes(decision!.action);
-          return (z as any).action === decision!.action;
-        });
+        const zone = findAvailableZone(locType, decision!.action);
         if (zone) {
           const locPos = loc.position as { x: number; y: number; width: number; height: number };
           zoneTarget = {
-            x: locPos.x + zone.relativePosition.x + zone.relativePosition.width / 2,
-            y: locPos.y + zone.relativePosition.y + zone.relativePosition.height / 2,
+            x: locPos.x + zone.center[0] * 32 + 16,
+            y: locPos.y + zone.center[1] * 32 + 16,
           };
           matchedZoneId = zone.id;
           matchedBuildingType = locType;
