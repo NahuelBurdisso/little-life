@@ -65,6 +65,7 @@ export interface SetupConfig {
   relationships: RelationshipConfig[];
   world: WorldConfig;
   rules: RulesConfig;
+  worldgen: WorldGenConfig;
 }
 
 export const DEFAULT_WORLD: WorldConfig = {
@@ -150,3 +151,28 @@ export const PRESETS: DramaPreset[] = [
     values: { drama: 45, romance: 45, crime: 35, trust: 50 },
   },
 ];
+
+// ─── Worldgen ────────────────────────────────────────────────────────────────
+
+export interface WorldGenOverrides {
+  dimensions?: { width: number; height: number };
+  homePositions?: Array<{ x: number; y: number }>;
+}
+
+export interface WorldGenConfig {
+  seed?: string;
+  sizeTier: 'medium' | 'large' | 'auto' | 'custom';
+  customDimensions?: { width: number; height: number };
+  overrides: WorldGenOverrides;
+}
+
+export const DEFAULT_WORLDGEN: WorldGenConfig = {
+  sizeTier: 'auto',
+  overrides: {},
+};
+
+// Size bounds — keep in sync with server/lib/worldgen/config.ts
+export const WORLDGEN_MIN_WIDTH = 48;
+export const WORLDGEN_MAX_WIDTH = 90;
+export const WORLDGEN_MIN_HEIGHT = 37;
+export const WORLDGEN_MAX_HEIGHT = 70;
