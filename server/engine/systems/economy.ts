@@ -494,14 +494,99 @@ export function economyTick(): void {
     const ratio = targetTotal > 0 ? totalMoney / targetTotal : 1;
 
     if (ratio > 1.5) {
-      dailyLivingCostMultiplier = 1.0 + (ratio - 1.5) * 0.4;
-      dailyTaxRateMultiplier = 1.0 + (ratio - 1.5) * 0.6;
+      // Exponential scaling — punishes runaway inflation hard
+      const excess = ratio - 1.0;
+      dailyLivingCostMultiplier = 1.0 + excess * excess * 0.5;
+      dailyTaxRateMultiplier = 1.0 + excess * excess * 0.8;
     } else if (ratio < 0.5) {
       dailyLivingCostMultiplier = Math.max(0.3, ratio);
       dailyTaxRateMultiplier = 0.5;
     } else {
       dailyLivingCostMultiplier = 1.0;
       dailyTaxRateMultiplier = 1.0;
+    }
+
+    // ── ECONOMIC CRISIS EVENTS (ratio > 2.0) ──
+    if (ratio > 2.0) {
+      const sortedByWealth = [...allEcon].sort((a, b) => b.money - a.money);
+      const crisisRoll = Math.random();
+
+      if (crisisRoll < 0.25) {
+        // ROBBERY: poorest agent robs richest
+        const richest = sortedByWealth[0];
+        const poorest = sortedByWealth[sortedByWealth.length - 1];
+        if (richest && poorest && richest.agent_id !== poorest.agent_id && richest.money > 20) {
+          const stolen = Math.floor(richest.money * (0.1 + Math.random() * 0.2));
+          db.update(economy).set({ money: richest.money - stolen }).where(eq(economy.id, richest.id)).run();
+          db.update(economy).set({ money: poorest.money + stolen }).where(eq(economy.id, poorest.id)).run();
+          richest.money -= stolen;
+          poorest.money += stolen;
+          const richAgent = activeAgents.find(a => a.id === richest.agent_id);
+          const poorAgent = activeAgents.find(a => a.id === poorest.agent_id);
+          if (richAgent && poorAgent) {
+            createFact('theft', poorest.agent_id, richest.agent_id, 2, [poorest.agent_id], 'committed');
+            logActivity({ type: 'drama', initiator: poorest.agent_id, target: richest.agent_id,
+              templateData: { description: `${poorAgent.name} stole $${stolen} from ${richAgent.name} during the economic crisis` } });
+            simEvents.emit('economy:theft', { thief: poorest.agent_id, victim: richest.agent_id, amount: stolen });
+          }
+        }
+      } else if (crisisRoll < 0.45) {
+        // EMERGENCY TAX: government seizes % from everyone
+        const taxRate = 0.05 + Math.random() * 0.10; // 5-15%
+        let totalSeized = 0;
+        for (const econ of allEcon) {
+          const seized = Math.floor(econ.money * taxRate);
+          if (seized > 0) {
+            db.update(economy).set({ money: econ.money - seized }).where(eq(economy.id, econ.id)).run();
+            econ.money -= seized;
+            totalSeized += seized;
+          }
+        }
+        db.update(worldState).set({ tax_pool: world.tax_pool + totalSeized }).where(eq(worldState.id, world.id)).run();
+        logActivity({ type: 'system',
+          templateData: { message: `Emergency tax! Government seized ${Math.round(taxRate * 100)}% from all citizens ($${totalSeized} total) to combat inflation` } });
+      } else if (crisisRoll < 0.60) {
+        // SCAM: con artist targets top 3 wealthiest
+        const targets = sortedByWealth.slice(0, 3);
+        for (const target of targets) {
+          if (Math.random() < 0.5 && target.money > 15) {
+            const lost = Math.floor(target.money * (0.05 + Math.random() * 0.15));
+            db.update(economy).set({ money: target.money - lost }).where(eq(economy.id, target.id)).run();
+            target.money -= lost;
+            const agent = activeAgents.find(a => a.id === target.agent_id);
+            if (agent) {
+              logActivity({ type: 'drama', initiator: target.agent_id,
+                templateData: { description: `${agent.name} lost $${lost} to a traveling scammer` } });
+              simEvents.emit('economy:scam', { agentId: target.agent_id, amount: lost });
+            }
+          }
+        }
+      } else if (crisisRoll < 0.75) {
+        // PRICE GOUGING: random agent hoards and everyone pays more next day
+        dailyLivingCostMultiplier *= 1.5;
+        const hoarder = sortedByWealth[Math.floor(Math.random() * Math.min(3, sortedByWealth.length))];
+        const hoarderAgent = activeAgents.find(a => a.id === hoarder?.agent_id);
+        if (hoarderAgent) {
+          logActivity({ type: 'drama', initiator: hoarder.agent_id,
+            templateData: { description: `${hoarderAgent.name} is hoarding supplies — prices spike across town` } });
+          createFact('hoarding', hoarder.agent_id, null, 1, [hoarder.agent_id], 'observed');
+        }
+      }
+      // else: no crisis event this day (25% chance of reprieve)
+    }
+
+    // ── EXTREME INFLATION DRAIN (ratio > 3.0): money literally rots ──
+    if (ratio > 3.0) {
+      const rotRate = Math.min(0.15, (ratio - 3.0) * 0.05); // 5-15% wealth decay
+      for (const econ of allEcon) {
+        const lost = Math.floor(econ.money * rotRate);
+        if (lost > 0) {
+          db.update(economy).set({ money: econ.money - lost }).where(eq(economy.id, econ.id)).run();
+          econ.money -= lost;
+        }
+      }
+      logActivity({ type: 'system',
+        templateData: { message: `Hyperinflation! Currency devalued — everyone lost ${Math.round(rotRate * 100)}% purchasing power (ratio ${ratio.toFixed(2)})` } });
     }
 
     if (ratio > CONFIG.ECONOMY.INFLATION_THRESHOLD) {

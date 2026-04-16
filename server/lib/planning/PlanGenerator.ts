@@ -226,6 +226,7 @@ export class PlanGenerator {
       model: CONFIG.AI.CHAT_MODEL,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
+      priority: 'normal',
       options: { temperature: 0.7, num_predict: 512 },
     });
 
@@ -396,6 +397,7 @@ export class PlanGenerator {
       model: CONFIG.AI.CHAT_MODEL,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
+      priority: 'normal',
       options: { temperature: 0.7, num_predict: 512 },
     });
 

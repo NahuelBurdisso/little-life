@@ -41,8 +41,8 @@ export function combinedScore(
 }
 
 /**
- * Partial sort (selection sort variant) for top-K candidates.
- * O(n * k) — more efficient than a full sort when k << n.
+ * Partial sort for top-K candidates.
+ * Uses selection with a Set to avoid O(n) splice, giving O(n*k) with O(k) space.
  */
 export function partialSort<T>(
   items: T[],
@@ -50,21 +50,23 @@ export function partialSort<T>(
   compareFn: (a: T, b: T) => number,
 ): T[] {
   if (items.length === 0) return [];
-  const limit = Math.min(k, items.length);
+  if (items.length <= k) {
+    return items.sort((a, b) => compareFn(b, a));
+  }
   const result: T[] = [];
-  const remaining = items.slice();
-
-  for (let i = 0; i < limit; i++) {
-    let bestIdx = 0;
-    for (let j = 1; j < remaining.length; j++) {
-      if (compareFn(remaining[j], remaining[bestIdx]) > 0) {
+  const used = new Set<number>();
+  for (let i = 0; i < k; i++) {
+    let bestIdx = -1;
+    for (let j = 0; j < items.length; j++) {
+      if (used.has(j)) continue;
+      if (bestIdx === -1 || compareFn(items[j], items[bestIdx]) > 0) {
         bestIdx = j;
       }
     }
-    result.push(remaining[bestIdx]);
-    remaining.splice(bestIdx, 1);
+    if (bestIdx === -1) break;
+    result.push(items[bestIdx]);
+    used.add(bestIdx);
   }
-
   return result;
 }
 

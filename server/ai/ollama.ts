@@ -7,12 +7,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { CONFIG } from '../lib/constants';
+import { acquireLLMSlot, type LLMPriority } from './llmSemaphore';
 
 export interface OllamaChatRequest {
   model: string;
   system: string;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   baseUrl?: string;
+  priority?: LLMPriority;
   options?: {
     temperature?: number;
     top_p?: number;
@@ -32,6 +34,8 @@ export async function callOllamaChat(
   const baseUrl =
     request.baseUrl ?? process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   const url = `${baseUrl}/api/chat`;
+
+  const release = await acquireLLMSlot(request.priority ?? 'normal');
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
@@ -78,6 +82,7 @@ export async function callOllamaChat(
     throw error;
   } finally {
     clearTimeout(timeout);
+    release();
   }
 }
 
@@ -88,6 +93,10 @@ export async function callOllamaEmbedding(
   const url_base =
     baseUrl ?? process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   const url = `${url_base}/api/embeddings`;
+
+  // Embeddings use a different model so they can run concurrently with chat,
+  // but still count toward the global limit to avoid overwhelming Ollama.
+  const release = await acquireLLMSlot('low');
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
@@ -124,5 +133,6 @@ export async function callOllamaEmbedding(
     throw error;
   } finally {
     clearTimeout(timeout);
+    release();
   }
 }

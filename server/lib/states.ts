@@ -188,6 +188,10 @@ export function getActiveStatePrompts(agentId: number, currentTick?: number): st
     .where(eq(agentStates.agent_id, agentId))
     .all();
 
+  // Pre-load all agent names to avoid per-state N+1 queries
+  const allAgentNames = db.select({ id: agents.id, name: agents.name }).from(agents).all();
+  const nameMap = new Map(allAgentNames.map(a => [a.id, a.name]));
+
   return states
     .map((s) => {
       const def = STATE_DEFINITIONS[s.type as StateType];
@@ -196,11 +200,7 @@ export function getActiveStatePrompts(agentId: number, currentTick?: number): st
       if (typeof def.prompt === 'function') {
         let targetName: string | undefined;
         if (s.target_agent_id) {
-          targetName = db
-            .select({ name: agents.name })
-            .from(agents)
-            .where(eq(agents.id, s.target_agent_id))
-            .get()?.name;
+          targetName = nameMap.get(s.target_agent_id);
         }
         const elapsed = currentTick ? currentTick - s.started_at : 0;
         const phase = elapsed < 2880 ? 'early' : elapsed < 10080 ? 'mid' : 'late';

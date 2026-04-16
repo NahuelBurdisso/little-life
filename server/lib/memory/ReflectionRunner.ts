@@ -109,6 +109,7 @@ export class ReflectionRunner {
       model: CONFIG.AI.CHAT_MODEL,
       system: qSystem,
       messages: [{ role: 'user', content: qUser }],
+      priority: 'normal',
       options: { temperature: 0.7, num_predict: 256 },
     });
 
@@ -164,6 +165,7 @@ export class ReflectionRunner {
       model: CONFIG.AI.CHAT_MODEL,
       system: sSystem,
       messages: [{ role: 'user', content: sUser }],
+      priority: 'normal',
       options: { temperature: 0.7, num_predict: 512 },
     });
 

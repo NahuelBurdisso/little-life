@@ -1,7 +1,7 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
 import { conversations, relationshipEvents, agents, shared_knowledge } from '../db/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc, sql, and, gte, lte } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
 
@@ -111,11 +111,13 @@ export const conversationsRouter = router({
       const endedAt = convo.ended_at ?? Date.now();
 
       // Find relationship events between these participants around this time window
-      const relEvents = db.select().from(relationshipEvents).all()
-        .filter(e => {
-          if (!participantIds.includes(e.agent_a) || !participantIds.includes(e.agent_b)) return false;
-          return e.timestamp >= startedAt - 5000 && e.timestamp <= endedAt + 5000;
-        });
+      const relEvents = db.select().from(relationshipEvents)
+        .where(and(
+          gte(relationshipEvents.timestamp, startedAt - 5000),
+          lte(relationshipEvents.timestamp, endedAt + 5000)
+        ))
+        .all()
+        .filter(e => participantIds.includes(e.agent_a) && participantIds.includes(e.agent_b));
 
       // Get participant names
       const names: Record<number, string> = {};
@@ -125,11 +127,13 @@ export const conversationsRouter = router({
       }
 
       // Find shared_knowledge created during this conversation
-      const createdFacts = db.select().from(shared_knowledge).all()
-        .filter(f => {
-          return f.created_at >= startedAt - 5000 && f.created_at <= endedAt + 5000 &&
-            (participantIds.includes(f.subject_id) || (f.target_id != null && participantIds.includes(f.target_id)));
-        });
+      const createdFacts = db.select().from(shared_knowledge)
+        .where(and(
+          gte(shared_knowledge.created_at, startedAt - 5000),
+          lte(shared_knowledge.created_at, endedAt + 5000)
+        ))
+        .all()
+        .filter(f => participantIds.includes(f.subject_id) || (f.target_id != null && participantIds.includes(f.target_id)));
 
       // Compute total relationship deltas
       let totalFriendshipDelta = 0;

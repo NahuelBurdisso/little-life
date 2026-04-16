@@ -387,8 +387,8 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       name: 'Prep Table',
       label: 'Prep Table',
       tiles: [[3, 1]],
-      // [3,1] is furniture (2) — moved to adjacent walkable [2,1] (floor)
-      center: [2, 1],
+      // [3,1] is furniture (2) — moved to adjacent walkable [2,2] (floor)
+      center: [2, 2],
       maxOccupants: 2,
       color: 0xD2B48C,
       allowedActions: ['work', 'prepare', 'bake'],
@@ -442,8 +442,8 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       name: 'Tool Wall',
       label: 'Tool Wall',
       tiles: [[3, 1]],
-      // [3,1] is furniture (2) — moved to adjacent walkable [3,2] (floor)
-      center: [3, 2],
+      // [3,1] is furniture (2) — moved to adjacent walkable [2,2] (floor)
+      center: [2, 2],
       maxOccupants: 1,
       color: 0x3D5C5C,
       allowedActions: ['work', 'store'],
@@ -523,7 +523,7 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       name: 'Cell 2',
       label: 'Cell 2',
       tiles: [[3, 2]],
-      center: [3, 2],
+      center: [2, 2],
       maxOccupants: 2,
       color: 0x3A3A2E,
       allowedActions: ['idle', 'rest'],

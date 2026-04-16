@@ -75,6 +75,7 @@ export class SnapResolver {
         model: CONFIG.AI.CHAT_MODEL,
         system: 'You are roleplaying as a town resident who has reached their emotional breaking point. Respond with exactly one word from the provided list.',
         messages: [{ role: 'user', content: prompt }],
+        priority: 'critical',
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,

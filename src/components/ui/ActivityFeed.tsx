@@ -12,7 +12,10 @@ const EVENT_CATEGORIES = {
   state_change: { icon: '🧠', color: '#a855f7', label: 'States' },
   relationship: { icon: '🤝', color: '#60a5fa', label: 'Social' },
   world_event: { icon: '🌍', color: '#22c55e', label: 'World' },
+  goal: { icon: '🎯', color: '#14b8a6', label: 'Goals' },
+  aspiration: { icon: '✨', color: '#c084fc', label: 'Dreams' },
   system: { icon: '⚙️', color: '#6b7280', label: 'System' },
+  error: { icon: '⚠️', color: '#f87171', label: 'Errors' },
   planning: { icon: '🧭', color: '#f59e0b', label: 'Plans' },
   cascade: { icon: '⛓', color: '#f97316', label: 'Cascade' },
 } as const;
@@ -21,12 +24,15 @@ type EventCategory = keyof typeof EVENT_CATEGORIES;
 
 function getCategory(type: string): EventCategory {
   if (type === 'conversation_ended') return 'conversation';
-  if (type === 'economy') return 'economy';
-  if (type === 'state_change') return 'state_change';
+  if (type === 'economy' || type === 'salary_paid' || type === 'purchase') return 'economy';
+  if (type === 'state_gained' || type === 'state_lost' || type === 'state_change') return 'state_change';
   if (type === 'relationship' || type === 'relationship_status_change') return 'relationship';
-  if (type === 'drama' || type === 'theft_caught' || type === 'affair_discovery') return 'drama';
+  if (type === 'drama' || type === 'theft_caught' || type === 'affair_discovery' || type === 'interaction_resolved') return 'drama';
   if (type === 'world_event') return 'world_event';
+  if (type === 'goal_ambition_shifted' || type === 'goal_ambition_generated' || type.startsWith('aspiration')) return 'aspiration';
+  if (type.startsWith('goal_')) return 'goal';
   if (type === 'plan_generated' || type === 'plan_changed') return 'planning';
+  if (type === 'error') return 'error';
   return 'system';
 }
 
@@ -34,19 +40,42 @@ function getCategory(type: string): EventCategory {
 
 function renderMessage(entry: ActivityEntry): string {
   const d = entry.template_data ?? {};
-  if (d.message) return String(d.message);
   if (d.description) return String(d.description);
-  // Plan events
+  if (d.message) return String(d.message);
+
+  // Goals
+  if (entry.type === 'goal_created' && d.name && d.goal) return `${d.name} set a new goal: ${d.goal}`;
+  if (entry.type === 'goal_completed' && (d.agent || d.name)) return `${d.agent ?? d.name} accomplished: ${d.goal_description ?? d.goal ?? 'a goal'}`;
+  if (entry.type === 'goal_abandoned' && (d.agent || d.name)) return `${d.agent ?? d.name} gave up on: ${d.goal_description ?? d.goal ?? 'a goal'}`;
+
+  // Aspirations
+  if (entry.type === 'goal_ambition_shifted' && d.name) return `${d.name} had a change of heart — now driven by ${d.to}`;
+  if (entry.type === 'goal_ambition_generated' && d.name) return `${d.name} discovered their life ambition: ${d.ambition}`;
+
+  // Plans
   if (entry.type === 'plan_generated' && d.agentName) return `${d.agentName} planned their day.`;
-  if (entry.type === 'plan_changed' && d.agentName) return `${d.agentName} changed plans${d.reason ? ': ' + String(d.reason).substring(0, 50) : ''}.`;
+  if (entry.type === 'plan_changed' && d.agentName) return `${d.agentName} changed plans${d.reason ? ': ' + String(d.reason).substring(0, 80) + '.' : '.'}`;
+
+  // States
   if (d.agent && d.state) {
     if (entry.type === 'state_gained') return `${d.agent} became ${d.state}.`;
     if (entry.type === 'state_lost') return `${d.agent} is no longer ${d.state}.`;
   }
+
+  // Relationships
   if (d.agent1 && d.agent2 && d.status) return `${d.agent1} and ${d.agent2} are now ${d.status}.`;
   if (d.agent1 && d.agent2 && d.location !== undefined) return `${d.agent1} and ${d.agent2} finished talking.`;
-  if (d.agent && d.amount) return `${d.agent} earned ${d.amount} coins.`;
-  if (d.agent && d.item) return `${d.agent} bought ${d.item}.`;
+
+  // Economy
+  if (d.agent && d.amount && d.item) return `${d.agent} bought ${d.item} for $${d.amount}.`;
+  if (d.agent && d.amount) return `${d.agent} earned $${d.amount}.`;
+
+  // Interactions
+  if (d.initiator_name && d.verb && d.target_name) return `${d.initiator_name} ${d.verb} ${d.target_name}${d.location ? ' at ' + d.location : ''}`;
+
+  // Errors
+  if (entry.type === 'error' && d.system) return `[${d.system}] ${d.message ?? 'unknown error'}`;
+
   return entry.type;
 }
 
@@ -83,7 +112,10 @@ export function ActivityFeed() {
     state_change: true,
     relationship: true,
     world_event: true,
+    goal: true,
+    aspiration: true,
     system: true,
+    error: true,
     planning: true,
     cascade: true,
   });
@@ -276,16 +308,20 @@ export function ActivityFeed() {
               const { icon, color } = EVENT_CATEGORIES[cat];
               const isDrama = cat === 'drama';
               const isState = cat === 'state_change';
+              const isGoal = cat === 'goal';
+              const isAspiration = cat === 'aspiration';
+              const isError = cat === 'error';
+              const isBold = isDrama || isAspiration;
 
               return (
                 <div
                   key={item.id ?? `entry-${i}`}
                   className={`text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5 ${
-                    isDrama ? 'font-semibold' : ''
+                    isBold ? 'font-semibold' : ''
                   }`}
                   style={{
                     borderLeftColor: color,
-                    borderLeftWidth: isDrama ? 3 : isState ? 2 : 1,
+                    borderLeftWidth: isDrama || isAspiration ? 3 : isState || isGoal ? 2 : 1,
                   }}
                 >
                   <span className="shrink-0">{icon}</span>
@@ -294,7 +330,13 @@ export function ActivityFeed() {
                       ? timeAgo(item.timestamp, world.time.totalTicks, world.tick_speed)
                       : ''}
                   </span>
-                  <span className={isDrama ? 'text-red-300' : 'text-gray-300'}>
+                  <span className={
+                    isDrama ? 'text-red-300' :
+                    isAspiration ? 'text-purple-300' :
+                    isGoal ? 'text-teal-300' :
+                    isError ? 'text-red-400' :
+                    'text-gray-300'
+                  }>
                     {renderMessage(item)}
                   </span>
                 </div>

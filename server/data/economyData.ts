@@ -63,7 +63,9 @@ export interface LivingCost {
 }
 
 export const LIVING_COSTS: LivingCost[] = [
-  { type: 'housing', amount: 2, frequency: 'per_day' },
+  { type: 'housing', amount: 3, frequency: 'per_day' },
+  { type: 'food', amount: 4, frequency: 'per_day' },
+  { type: 'entertainment', amount: 2, frequency: 'per_day' },
 ];
 
 export const SEASON_PRICE_MODIFIERS: Record<string, number> = {

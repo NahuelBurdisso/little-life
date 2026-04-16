@@ -138,6 +138,7 @@ export class GoalReviewer {
         model: CONFIG.AI.CHAT_MODEL,
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
+        priority: 'low',
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,
@@ -352,6 +353,7 @@ export class GoalReviewer {
         model: CONFIG.AI.CHAT_MODEL,
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
+        priority: 'low',
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,

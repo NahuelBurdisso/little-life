@@ -92,6 +92,7 @@ export class PivotEvaluator {
       const response = await callOllamaChat({
         model: CONFIG.AI.CHAT_MODEL, system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
+        priority: 'low',
         options: { temperature: 0.7, num_predict: 200 },
       });
 
@@ -114,8 +115,9 @@ export class PivotEvaluator {
         description: goal.description ?? goal.type,
         newStrategy: result.new_strategy,
       });
-    } catch (error) {
-      logActivity({ type: 'error', templateData: { system: 'goals', message: `Pivot LLM failed for ${agent.name}: ${goal.description}` } });
+    } catch (error: any) {
+      const errMsg = error?.message ?? String(error);
+      logActivity({ type: 'error', templateData: { system: 'goals', message: `Pivot LLM failed for ${agent.name}: ${errMsg}` } });
       this.abandonGoal(goal, agent.id, 'failed to find alternative approach', currentTick);
     }
   }

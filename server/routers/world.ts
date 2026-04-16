@@ -3,10 +3,15 @@ import { db } from '../db';
 import { worldState, worldEvents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
+import { getLLMStats } from '../ai/llmSemaphore';
 
 export const worldRouter = router({
   getState: publicProcedure.query(() => {
     return db.select().from(worldState).get();
+  }),
+
+  getLLMStats: publicProcedure.query(() => {
+    return getLLMStats();
   }),
 
   getActiveEvents: publicProcedure.query(() => {

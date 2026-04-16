@@ -25,6 +25,7 @@ export default function App() {
   const { agents } = useAgents();
   const { conversations } = useConversations();
   const nudge = useNudge();
+  const utils = trpc.useUtils();
   const { data: locations } = trpc.locations.getAll.useQuery();
   const { data: allRelationships } = trpc.relationships.getGraph.useQuery();
 
@@ -139,7 +140,10 @@ export default function App() {
 
   // Show setup wizard if simulation hasn't started
   if (isNewSimulation && !setupComplete) {
-    return <SetupWizard onStart={() => setSetupComplete(true)} />;
+    return <SetupWizard onStart={() => {
+      utils.invalidate(); // refetch all queries after seed
+      setSetupComplete(true);
+    }} />;
   }
 
   if (worldLoading || !world) {

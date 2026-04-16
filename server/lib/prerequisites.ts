@@ -2,6 +2,7 @@
 // All data is passed in via parameters; no DB access occurs here.
 
 import type { Prerequisite } from './interactionConstants';
+import { zoneOccupancy } from './interiorGrid';
 
 // ─── Context Types ────────────────────────────────────────────────────────────
 
@@ -10,6 +11,8 @@ export interface AgentContext {
   name: string;
   current_action: any;
   current_location: number | null;
+  /** The building type the agent is currently in (e.g. 'tavern', 'shop'). */
+  locationType?: string | null;
   personality: Record<string, number> | null;
   activeStates: Array<{ type: string; target_agent_id: number | null }>;
   needs: Record<string, number>;
@@ -34,7 +37,16 @@ export function checkPrerequisites(
     tags: string[];
   } | null,
   isInitiatorA: boolean,
+  /** Optional requiredZone from InteractionDef — maps building type to allowed zone IDs. */
+  requiredZone?: Record<string, string[]>,
 ): boolean {
+  // Check requiredZone constraint if provided
+  if (requiredZone) {
+    if (!checkRequiredZone(requiredZone, initiator.id, initiator.locationType ?? null)) {
+      return false;
+    }
+  }
+
   return prereqs.every(p =>
     evaluatePrerequisite(p, initiator, target, world, relationship, isInitiatorA),
   );
@@ -290,4 +302,32 @@ function evaluatePrerequisite(
       return true;
     }
   }
+}
+
+// ─── Required Zone Check ─────────────────────────────────────────────────────
+
+/**
+ * Check if an agent satisfies the requiredZone constraint of an interaction.
+ * Returns true if the interaction has no requiredZone, or if the agent is in
+ * a matching zone. Returns false if the agent is not in any allowed zone.
+ *
+ * @param requiredZone  Maps building type → allowed zone IDs.
+ * @param agentId       The initiator agent ID.
+ * @param locationType  The building type the agent is currently in (e.g. 'tavern').
+ */
+export function checkRequiredZone(
+  requiredZone: Record<string, string[]> | undefined,
+  agentId: number,
+  locationType: string | null,
+): boolean {
+  if (!requiredZone) return true; // No zone requirement
+  if (!locationType) return false; // Agent isn't in a location
+
+  const allowedZones = requiredZone[locationType];
+  if (!allowedZones) return false; // Wrong location type entirely
+
+  const agentZone = zoneOccupancy.findAgentZone(agentId);
+  if (!agentZone) return false; // Agent is not in any zone
+
+  return allowedZones.includes(agentZone.zone);
 }

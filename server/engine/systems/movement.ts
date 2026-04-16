@@ -8,8 +8,9 @@ import { computeAStarPath, pixelToTile, tileCenterToPixel } from '../../lib/path
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { simEvents } from '../../lib/simEvents';
-import { getInteriorGrid, zoneOccupancy } from '../../lib/interiorGrid';
+import { getInteriorGrid, zoneOccupancy, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
 import { INTERIOR_ZONES, type ZoneDef } from '../../data/interiors';
+import { executeZoneAction } from './zoneActions';
 
 // --- Types ---
 
@@ -26,6 +27,28 @@ type WorldRow = {
 // Stuck detection: track positions for walking agents
 const stuckTracker = new Map<number, { x: number; y: number; ticks: number }>();
 const lastRecalcTick = new Map<number, number>();
+
+// Cached terrain cost map — rebuilt when season changes
+let cachedCostMap: Float32Array | null = null;
+let cachedSeason: string = '';
+
+function getWorldCostMap(world: WorldRow, allLocations: LocationRow[]): Float32Array {
+  const season = world.time.season;
+  if (cachedCostMap && cachedSeason === season) return cachedCostMap;
+
+  const map = new Float32Array(world.map_width * world.map_height).fill(1.0);
+  const openAreas = allLocations.filter(l => ['farm', 'park', 'town_square'].includes(l.type));
+  const entries = getOpenAreaTerrainCosts(season, openAreas, CONFIG.MOVEMENT.TILE_SIZE);
+  for (const entry of entries) {
+    const idx = entry.tileY * world.map_width + entry.tileX;
+    if (idx >= 0 && idx < map.length) {
+      map[idx] = entry.cost;
+    }
+  }
+  cachedCostMap = map;
+  cachedSeason = season;
+  return map;
+}
 
 // --- Helpers ---
 
@@ -262,11 +285,14 @@ function handleArrival(
       zoneOccupancy.enter(agent.id, interiorBuilding, interiorZoneId);
       // Strip interior metadata from the action
       const { _interiorArrivalZone, _interiorArrivalBuilding, ...cleanAction } = nextAction as any;
+      const resolvedAction = cleanAction.type ? cleanAction : { type: 'idle' };
+      // Execute zone-specific effects (need deltas, item production)
+      executeZoneAction(resolvedAction.type, agent.id);
       db.update(agents)
         .set({
           current_destination: null,
           current_path: null,
-          current_action: cleanAction.type ? cleanAction : { type: 'idle' },
+          current_action: resolvedAction,
           action_started: world.time.totalTicks,
           action_duration: minDuration > 0 ? minDuration : null,
           action_queue: queue,
@@ -314,6 +340,10 @@ export function tick(world: WorldRow): void {
       if (t >= 1) {
         // Transition complete — remove transition metadata
         const { _transitioning, _transitionTicks, _fromX, _fromY, _toX, _toY, ...cleanAction } = action;
+        // Execute zone-specific effects on transition completion
+        if (cleanAction.type) {
+          executeZoneAction(cleanAction.type, agent.id);
+        }
         db.update(agents).set({
           position: { x: action._toX, y: action._toY },
           current_action: cleanAction,
@@ -502,6 +532,7 @@ export function tick(world: WorldRow): void {
             // World A* from door to destination
             const doorX = insideBuilding.entry_point.x;
             const doorY = insideBuilding.entry_point.y;
+            const costMap = getWorldCostMap(world, allLocations);
             const outerPath = computeAStarPath(
               { x: doorX, y: doorY },
               destPoint,
@@ -509,6 +540,7 @@ export function tick(world: WorldRow): void {
               world.map_width,
               world.map_height,
               CONFIG.MOVEMENT.TILE_SIZE,
+              costMap,
             );
 
             path = [...exitWorldPath, ...(outerPath ?? [[destPoint.x, destPoint.y]])];
@@ -516,6 +548,7 @@ export function tick(world: WorldRow): void {
             // No interior grid (e.g. home) — use old behavior: route from door
             const doorX = insideBuilding.entry_point.x;
             const doorY = insideBuilding.entry_point.y;
+            const costMap = getWorldCostMap(world, allLocations);
             const outerPath = computeAStarPath(
               { x: doorX, y: doorY },
               destPoint,
@@ -523,11 +556,13 @@ export function tick(world: WorldRow): void {
               world.map_width,
               world.map_height,
               CONFIG.MOVEMENT.TILE_SIZE,
+              costMap,
             );
             // Prepend the door as first waypoint so agent exits building first
             path = [[doorX, doorY], ...(outerPath ?? [[destPoint.x, destPoint.y]])];
           }
         } else {
+          const costMap = getWorldCostMap(world, allLocations);
           path = computeAStarPath(
             pathStart,
             destPoint,
@@ -535,6 +570,7 @@ export function tick(world: WorldRow): void {
             world.map_width,
             world.map_height,
             CONFIG.MOVEMENT.TILE_SIZE,
+            costMap,
           );
         }
 
@@ -557,10 +593,12 @@ export function tick(world: WorldRow): void {
             world.collision_grid[tileIdx] === '1') {
           const lastRecalc = lastRecalcTick.get(agent.id) ?? 0;
           if (world.time.totalTicks - lastRecalc > 10) {
+            const costMap = getWorldCostMap(world, allLocations);
             path = computeAStarPath(
               agent.position, destPoint,
               world.collision_grid, world.map_width, world.map_height,
               CONFIG.MOVEMENT.TILE_SIZE,
+              costMap,
             );
             if (!path || path.length === 0) path = [[destPoint.x, destPoint.y]];
             db.update(agents).set({ current_path: path }).where(eq(agents.id, agent.id)).run();

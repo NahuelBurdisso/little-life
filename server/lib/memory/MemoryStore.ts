@@ -43,34 +43,28 @@ export class MemoryStore {
   insertBatch(items: InsertItem[]): MemoryRow[] {
     if (items.length === 0) return [];
 
-    const inserted: MemoryRow[] = [];
+    const rows = db
+      .insert(memories)
+      .values(
+        items.map((item) => ({
+          agent_id: item.agentId,
+          type: item.type,
+          description: item.description,
+          importance: item.importance,
+          emotional_valence: item.emotional_valence,
+          depth: item.depth ?? 0,
+          created_at: item.currentTick,
+          last_accessed: item.currentTick,
+          embedding: item.embedding,
+          metadata: item.metadata,
+          is_active: 1,
+          parent_ids: item.parentIds ?? [],
+        })),
+      )
+      .returning()
+      .all();
 
-    db.transaction((tx) => {
-      for (const item of items) {
-        const row = tx
-          .insert(memories)
-          .values({
-            agent_id: item.agentId,
-            type: item.type,
-            description: item.description,
-            importance: item.importance,
-            emotional_valence: item.emotional_valence,
-            depth: item.depth ?? 0,
-            created_at: item.currentTick,
-            last_accessed: item.currentTick,
-            embedding: item.embedding,
-            metadata: item.metadata,
-            is_active: 1,
-            parent_ids: item.parentIds ?? [],
-          })
-          .returning()
-          .get();
-
-        if (row) inserted.push(row);
-      }
-    });
-
-    return inserted;
+    return rows;
   }
 
   /**

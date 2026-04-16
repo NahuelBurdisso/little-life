@@ -80,6 +80,7 @@ export async function generateResponse(
         system,
         messages: promptMessages,
         baseUrl: process.env.OLLAMA_BASE_URL,
+        priority: 'critical',
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,

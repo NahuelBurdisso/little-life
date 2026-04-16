@@ -72,6 +72,13 @@ export function needsTick(): void {
     economyByAgent.set(e.agent_id, e);
   }
 
+  // Pre-load all locations into a Map to avoid per-agent queries
+  const allLocations = db.select().from(locations).all();
+  const locationsById = new Map<number, typeof allLocations[0]>();
+  for (const loc of allLocations) {
+    locationsById.set(loc.id, loc);
+  }
+
   const currentTime =
     world.time!.day * 24 * 60 + world.time!.hour * 60 + world.time!.minute;
 
@@ -105,7 +112,7 @@ export function needsTick(): void {
 
     // Step 7: Apply location service bonuses
     if (agent.current_location) {
-      const location = db.select().from(locations).where(eq(locations.id, agent.current_location)).get();
+      const location = locationsById.get(agent.current_location);
       if (location && location.services) {
         const agentEcon = economyByAgent.get(agent.id);
         const hasMoney = agentEcon ? agentEcon.money > 0 : false;

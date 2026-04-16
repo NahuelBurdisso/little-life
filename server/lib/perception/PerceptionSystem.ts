@@ -87,6 +87,7 @@ function matchesRule(
 // ─── PerceptionSystem ─────────────────────────────────────────────────────────
 
 const GLOBAL_PAIR_COOLDOWN = 30; // minimum ticks between ANY perception for the same observer→target pair
+const MAX_RULE_COOLDOWN = 180; // longest cooldown in the perception registry, used for pruning
 
 export class PerceptionSystem {
   /** "agentId-targetId-ruleId" → lastTick when this perception fired */
@@ -94,8 +95,26 @@ export class PerceptionSystem {
   /** "agentId-targetId" → lastTick when ANY perception fired for this pair */
   private pairCooldowns: Map<string, number> = new Map();
 
+  /**
+   * Remove expired cooldown entries to prevent unbounded Map growth.
+   */
+  private pruneExpiredCooldowns(currentTick: number): void {
+    for (const [key, lastFired] of this.cooldowns) {
+      if (currentTick - lastFired >= MAX_RULE_COOLDOWN) {
+        this.cooldowns.delete(key);
+      }
+    }
+    for (const [key, lastFired] of this.pairCooldowns) {
+      if (currentTick - lastFired >= GLOBAL_PAIR_COOLDOWN) {
+        this.pairCooldowns.delete(key);
+      }
+    }
+  }
+
   scan(world: { time: { totalTicks: number } }): void {
     const currentTick = world.time.totalTicks;
+
+    this.pruneExpiredCooldowns(currentTick);
 
     // ── 1. Batch-load all data ──────────────────────────────────────────────
 

@@ -1,6 +1,5 @@
 import type {
   Memory,
-  MemoryType,
   RetrievalResult,
   RetrievalStrategy,
   ScoredCandidate,
@@ -218,15 +217,16 @@ export class MemoryService {
     let candidates = Array.from(dedupedMap.values());
 
     // Optional type boost: boost similarity score for preferred types
-    // (we don't have type in ScoredCandidate — resolve from cache via DB hydrate first)
+    // Hydrate all candidates once; reuse for both type boosting and final results
+    const candidateIds = candidates.map((c) => c.memoryId);
+    const hydratedAll = this.store.hydrateByIds(candidateIds);
+    const hydratedMap = new Map<number, Memory>(hydratedAll.map((m) => [m.id, m]));
+
     if (strategy.boostTypes && strategy.boostTypes.length > 0) {
-      const candidateIds = candidates.map((c) => c.memoryId);
-      const rows = this.store.hydrateByIds(candidateIds);
-      const typeMap = new Map<number, MemoryType>(rows.map((r) => [r.id, r.type]));
       const boostSet = new Set<string>(strategy.boostTypes);
       candidates = candidates.map((c) => {
-        const memType = typeMap.get(c.memoryId);
-        if (memType && boostSet.has(memType)) {
+        const mem = hydratedMap.get(c.memoryId);
+        if (mem && boostSet.has(mem.type)) {
           return { ...c, similarity: Math.min(1, c.similarity + 0.15) };
         }
         return c;
@@ -237,14 +237,14 @@ export class MemoryService {
     if (ranked.length === 0) return [];
 
     const ids = ranked.map((r) => r.memoryId);
-    const hydrated = this.store.hydrateByIds(ids);
     this.store.touchMemories(ids, this.currentTick);
 
     for (const id of ids) {
       this.cache.updateLastAccessed(agentId, id, this.currentTick);
     }
 
-    const memMap = new Map<number, Memory>(hydrated.map((m) => [m.id, m]));
+    // Reuse already-hydrated memories instead of querying DB again
+    const memMap = hydratedMap;
 
     // Apply token budget truncation
     let tokensBudgeted = 0;

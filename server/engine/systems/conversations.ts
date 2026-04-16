@@ -567,9 +567,12 @@ async function processCompletedConversation(
 
   // Reputation: negative conversation + agent has 3+ recent negative conversations
   if (overallSentiment < -0.2) {
+    // Load ended conversations once for all participants in this check
+    const endedConvosForReputation = db.select().from(conversations)
+      .where(eq(conversations.status, 'ended')).all();
+
     for (const pid of participantIds) {
-      const recentConvos = db.select().from(conversations)
-        .where(eq(conversations.status, 'ended')).all()
+      const recentConvos = endedConvosForReputation
         .filter(c => {
           const cParticipants = c.participants as number[];
           return cParticipants.includes(pid) &&
