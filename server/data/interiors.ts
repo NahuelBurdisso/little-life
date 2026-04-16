@@ -532,7 +532,28 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
     },
   ],
 
-  farm: [],
-  town_square: [],
-  park: [],
+  farm: [
+    { id: 'crops_north', name: 'Crop Field', label: 'Crops', tiles: [[0,0],[1,0],[2,0],[3,0],[0,1],[1,1],[2,1],[3,1]], center: [2, 1], maxOccupants: 2, color: 0x4a7a2a, allowedActions: ['working', 'plant', 'harvest'], visibility: 1.0, relativePosition: { x: 8, y: 8, width: 120, height: 56 } },
+    { id: 'crops_south', name: 'Crop Field', label: 'Crops', tiles: [[4,0],[5,0],[6,0],[7,0],[4,1],[5,1],[6,1],[7,1]], center: [6, 1], maxOccupants: 2, color: 0x4a7a2a, allowedActions: ['working', 'plant', 'harvest'], visibility: 1.0, relativePosition: { x: 136, y: 8, width: 120, height: 56 } },
+    { id: 'coop', name: 'Chicken Coop', label: 'Coop', tiles: [[0,3],[1,3]], center: [1, 3], maxOccupants: 1, color: 0xd69e2e, allowedActions: ['collect_eggs', 'feed_animals'], visibility: 0.8, relativePosition: { x: 8, y: 96, width: 56, height: 28 } },
+    { id: 'barn', name: 'Barn', label: 'Barn', tiles: [[3,3],[4,3],[3,4],[4,4]], center: [4, 3], maxOccupants: 2, color: 0x8B6B3D, allowedActions: ['working', 'hide', 'hookup'], visibility: 0.4, relativePosition: { x: 96, y: 96, width: 56, height: 56 } },
+    { id: 'rest_spot', name: 'Rest Spot', label: 'Rest', tiles: [[7,4],[8,4]], center: [8, 4], maxOccupants: 2, color: 0xfbd38d, allowedActions: ['eat', 'idle', 'rest'], visibility: 0.8, relativePosition: { x: 224, y: 128, width: 56, height: 28 } },
+  ],
+
+  park: [
+    { id: 'riverside', name: 'Riverside', label: 'River', tiles: [[0,0],[1,0],[0,1],[1,1]], center: [1, 1], maxOccupants: 3, color: 0x4299e1, allowedActions: ['fish', 'contemplate'], visibility: 0.7, relativePosition: { x: 8, y: 8, width: 56, height: 56 } },
+    { id: 'grove_west', name: 'Grove', label: 'Grove', tiles: [[3,0],[4,0],[3,1],[4,1]], center: [4, 0], maxOccupants: 3, color: 0x48bb78, allowedActions: ['stroll', 'flirt', 'secret_meeting', 'forage'], visibility: 0.3, relativePosition: { x: 96, y: 8, width: 56, height: 56 } },
+    { id: 'grove_east', name: 'Grove', label: 'Grove', tiles: [[5,0],[6,0],[5,1],[6,1]], center: [6, 0], maxOccupants: 3, color: 0x48bb78, allowedActions: ['stroll', 'flirt', 'secret_meeting', 'forage'], visibility: 0.3, relativePosition: { x: 160, y: 8, width: 56, height: 56 } },
+    { id: 'benches', name: 'Benches', label: 'Bench', tiles: [[0,3],[1,3]], center: [1, 3], maxOccupants: 4, color: 0xd69e2e, allowedActions: ['socialize', 'idle', 'comfort', 'people_watch'], visibility: 0.9, relativePosition: { x: 8, y: 96, width: 56, height: 28 } },
+    { id: 'garden', name: 'Garden', label: 'Garden', tiles: [[3,3],[4,3]], center: [4, 3], maxOccupants: 2, color: 0xfbd38d, allowedActions: ['garden', 'pick_flowers'], visibility: 0.8, relativePosition: { x: 96, y: 96, width: 56, height: 28 } },
+  ],
+
+  town_square: [
+    { id: 'market_north', name: 'Market Stalls', label: 'Market', tiles: [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1]], center: [1, 1], maxOccupants: 4, color: 0xd69e2e, allowedActions: ['browse', 'shopping', 'pickpocket'], visibility: 1.0, relativePosition: { x: 8, y: 8, width: 88, height: 56 } },
+    { id: 'fountain', name: 'Fountain', label: 'Fountain', tiles: [[3,0],[4,0],[3,1],[4,1]], center: [4, 1], maxOccupants: 5, color: 0x63b3ed, allowedActions: ['socialize', 'perform'], visibility: 1.0, relativePosition: { x: 96, y: 8, width: 56, height: 56 } },
+    { id: 'market_south', name: 'Market Stalls', label: 'Market', tiles: [[6,0],[7,0],[8,0],[6,1],[7,1],[8,1]], center: [7, 1], maxOccupants: 4, color: 0xd69e2e, allowedActions: ['browse', 'shopping', 'pickpocket'], visibility: 1.0, relativePosition: { x: 192, y: 8, width: 88, height: 56 } },
+    { id: 'plaza', name: 'Open Plaza', label: 'Plaza', tiles: [[0,3],[1,3],[2,3],[3,3],[4,3],[5,3],[6,3],[7,3],[8,3]], center: [4, 3], maxOccupants: 10, color: 0xa0aec0, allowedActions: ['socialize', 'idle', 'fight'], visibility: 1.3, relativePosition: { x: 8, y: 96, width: 272, height: 28 } },
+    { id: 'podium', name: 'Podium', label: 'Podium', tiles: [[0,5],[1,5]], center: [1, 5], maxOccupants: 2, color: 0xf6ad55, allowedActions: ['speech', 'protest', 'announce'], visibility: 1.3, relativePosition: { x: 8, y: 160, width: 56, height: 28 } },
+    { id: 'seating', name: 'Seating', label: 'Seats', tiles: [[3,5],[4,5],[5,5],[6,5],[7,5],[8,5]], center: [5, 5], maxOccupants: 6, color: 0x68d391, allowedActions: ['idle', 'eat', 'watch'], visibility: 0.9, relativePosition: { x: 96, y: 160, width: 184, height: 28 } },
+  ],
 };

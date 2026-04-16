@@ -64,10 +64,10 @@ describe('Interior grid data', () => {
     expect(tavernZones[0].name).toBeTypeOf('string');
   });
 
-  it('open areas still have empty arrays', () => {
-    expect(INTERIOR_ZONES.farm).toEqual([]);
-    expect(INTERIOR_ZONES.town_square).toEqual([]);
-    expect(INTERIOR_ZONES.park).toEqual([]);
+  it('open areas have zone definitions', () => {
+    expect(INTERIOR_ZONES.farm.length).toBeGreaterThan(0);
+    expect(INTERIOR_ZONES.town_square.length).toBeGreaterThan(0);
+    expect(INTERIOR_ZONES.park.length).toBeGreaterThan(0);
   });
 });
 

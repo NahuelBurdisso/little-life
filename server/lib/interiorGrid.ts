@@ -202,3 +202,53 @@ export function resolveZoneForAction(
 ): ZoneDef | null {
   return findAvailableZone(buildingType, actionType);
 }
+
+// ---------------------------------------------------------------------------
+// Terrain cost helpers for open areas
+// ---------------------------------------------------------------------------
+
+export interface TerrainCostEntry {
+  tileX: number;
+  tileY: number;
+  cost: number; // movement cost multiplier (1.0 = normal, Infinity = blocked)
+}
+
+/**
+ * Build terrain cost overrides for open area locations.
+ * Returns entries that override the default 1.0 cost on the world grid.
+ */
+export function getOpenAreaTerrainCosts(
+  season: string,
+  locations: Array<{ type: string; position: { x: number; y: number; width: number; height: number } }>,
+  tileSize: number,
+): TerrainCostEntry[] {
+  const entries: TerrainCostEntry[] = [];
+
+  for (const loc of locations) {
+    const baseTileX = Math.floor(loc.position.x / tileSize);
+    const baseTileY = Math.floor(loc.position.y / tileSize);
+
+    if (loc.type === 'park') {
+      // River tiles (top-left 2x2) — always blocked
+      for (const [dx, dy] of [[0,0],[1,0],[0,1],[1,1]] as [number, number][]) {
+        entries.push({ tileX: baseTileX + dx, tileY: baseTileY + dy, cost: Infinity });
+      }
+      // Grove tiles — slight cost (bushes/trees)
+      for (const [dx, dy] of [[3,0],[4,0],[5,0],[6,0],[3,1],[4,1],[5,1],[6,1]] as [number, number][]) {
+        entries.push({ tileX: baseTileX + dx, tileY: baseTileY + dy, cost: 1.3 });
+      }
+    }
+
+    if (loc.type === 'farm') {
+      // Crop tiles — seasonal cost
+      const cropCost = season === 'winter' ? 1.0 : 1.5;
+      for (let dx = 0; dx < 8; dx++) {
+        for (const dy of [0, 1]) {
+          entries.push({ tileX: baseTileX + dx, tileY: baseTileY + dy, cost: cropCost });
+        }
+      }
+    }
+  }
+
+  return entries;
+}

@@ -51,7 +51,8 @@ export function computeAStarPath(
   collisionGrid: string,
   mapWidth: number,
   mapHeight: number,
-  tileSize: number
+  tileSize: number,
+  costMap?: Float32Array,
 ): number[][] {
   const [sx, sy] = pixelToTile(startPixel.x, startPixel.y, tileSize);
   const [ex, ey] = pixelToTile(endPixel.x, endPixel.y, tileSize);
@@ -78,6 +79,12 @@ export function computeAStarPath(
   function isBlocked(x: number, y: number): boolean {
     if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) return true;
     return collisionGrid[y * mapWidth + x] === "1";
+  }
+
+  function getTileCost(x: number, y: number): number {
+    if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) return Infinity;
+    if (collisionGrid[y * mapWidth + x] === '1') return Infinity;
+    return costMap ? costMap[y * mapWidth + x] : 1.0;
   }
 
   // A* search
@@ -128,7 +135,8 @@ export function computeAStarPath(
       const nx = current.x + dx;
       const ny = current.y + dy;
 
-      if (isBlocked(nx, ny)) continue;
+      const tileCost = getTileCost(nx, ny);
+      if (tileCost === Infinity) continue;
 
       // Diagonal constraint: both adjacent orthogonal tiles must be free
       const isDiagonal = dx !== 0 && dy !== 0;
@@ -140,7 +148,7 @@ export function computeAStarPath(
       const nk = key(nx, ny);
       if (closedSet.has(nk)) continue;
 
-      const tentativeG = current.g + cost;
+      const tentativeG = current.g + cost * tileCost;
       const existingG = bestG.get(nk);
 
       if (existingG !== undefined && tentativeG >= existingG) continue;
