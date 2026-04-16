@@ -130,6 +130,8 @@ export interface GoalDef {
   completion_at: number;
   abandonment: GoalAbandonmentRule[];
   priority_formula: string;
+  /** Optional zone hint for PlanDecomposer routing: building_type → zone IDs */
+  requiredZone?: Record<string, string[]>;
 }
 
 export interface GoalTriggerDef {

@@ -188,6 +188,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     ],
     priority_formula:
       'base(0.5) + personality.sensuality(0.15) + personality.impulsiveness(0.1)',
+    requiredZone: { tavern: ['booth'], park: ['grove_west', 'grove_east'] },
   },
 
   steal_from: {
@@ -206,6 +207,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
       { condition: 'ticks_elapsed > 2880', chance: 0.4 },
     ],
     priority_formula: 'base(0.4) + need_desperation(0.3) + personality.morality(-0.15)',
+    requiredZone: { shop: ['storage'] },
   },
 
   protect: {

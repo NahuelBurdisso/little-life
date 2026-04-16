@@ -29,6 +29,7 @@ import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../l
 import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
+import { zoneOccupancy } from '../../lib/interiorGrid';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1938,12 +1939,15 @@ function processStateEffects(
   if (agent.current_location != null) {
     const agentEconJob = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
     if (agentEconJob && (agentEconJob.job === 'doctor' || agentEconJob.job === 'medical_assistant')) {
+      // Zone gate: healer must be at clinic:exam_room
+      const healerZone = zoneOccupancy.findAgentZone(agent.id);
+      const inClinicExamRoom = healerZone?.building === 'clinic' && healerZone.zone === 'exam_room';
       const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
       const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
         (i: any) => i.itemId === 'medicine' && i.quantity > 0
       );
 
-      if (hasMedicine) {
+      if (inClinicExamRoom && hasMedicine) {
         const nearbyPatients = allAgents.filter(
           (a) => a.id !== agent.id && a.current_location === agent.current_location,
         );
@@ -2026,11 +2030,19 @@ function processStateEffects(
   // ── Gambling: impulsive agents at tavern gamble (not state-dependent) ──
   if (personality && personality.impulsiveness > 40 && agent.current_location != null) {
     const loc = db.select({ type: locations.type }).from(locations).where(eq(locations.id, agent.current_location)).get();
-    if (loc?.type === 'tavern' && Math.random() < 0.08) {
+    // Zone gate: gambling requires tavern:tables zone
+    const gamblerZone = zoneOccupancy.findAgentZone(agent.id);
+    const atTables = gamblerZone?.building === 'tavern' && gamblerZone.zone === 'tables';
+    if (loc?.type === 'tavern' && atTables && Math.random() < 0.08) {
       const agentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
       if (agentEcon && agentEcon.money > 10) {
         const nearbyAgents = allAgents.filter(
-          (a) => a.id !== agent.id && a.current_location === agent.current_location,
+          (a) => {
+            if (a.id === agent.id || a.current_location !== agent.current_location) return false;
+            // Opponent must also be at the tavern:tables zone
+            const oppZone = zoneOccupancy.findAgentZone(a.id);
+            return oppZone?.building === 'tavern' && oppZone.zone === 'tables';
+          },
         );
         if (nearbyAgents.length > 0) {
           const opponent = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
