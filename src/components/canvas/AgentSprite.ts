@@ -33,6 +33,7 @@ const STATE_PRIORITY: string[] = [
 export class AgentSprite {
   container: PIXI.Container;
 
+  private interiorGlow: PIXI.Graphics;
   private selectionRing: PIXI.Graphics;
   private circle: PIXI.Graphics;
   private letter: PIXI.Text;
@@ -43,6 +44,14 @@ export class AgentSprite {
 
   constructor(name: string) {
     this.container = new PIXI.Container();
+
+    // --- Interior glow (behind everything, visible when inside a building) ---
+    this.interiorGlow = new PIXI.Graphics();
+    this.interiorGlow.circle(0, 0, AGENT_RADIUS * 1.8);
+    this.interiorGlow.fill({ color: 0xffffff, alpha: 0.12 });
+    this.interiorGlow.blendMode = 'add';
+    this.interiorGlow.visible = false;
+    this.container.addChildAt(this.interiorGlow, 0);
 
     // --- Selection ring (yellow ellipse at feet) ---
     this.selectionRing = new PIXI.Graphics();
@@ -135,6 +144,11 @@ export class AgentSprite {
     } else {
       this.stateRing.visible = false;
     }
+  }
+
+  /** Show or hide the interior glow effect. */
+  setInsideBuilding(inside: boolean): void {
+    this.interiorGlow.visible = inside;
   }
 
   get x(): number {

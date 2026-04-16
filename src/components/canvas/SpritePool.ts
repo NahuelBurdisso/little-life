@@ -6,6 +6,7 @@ export interface AgentData {
   name: string;
   position: { x: number; y: number };
   current_action?: { type?: string } | string;
+  current_location?: number | null;
   needs?: {
     mood?: number;
     hunger?: number;
@@ -53,6 +54,7 @@ export class SpritePool {
       sprite.update(px, py, deltaTime);
       sprite.setSelected(id === selectedAgentId);
       sprite.updateStates(agent.activeStates ?? []);
+      sprite.setInsideBuilding(agent.current_location != null);
     }
 
     // Remove sprites for agents no longer present

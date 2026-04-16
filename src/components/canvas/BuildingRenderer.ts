@@ -2,6 +2,17 @@ import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 
+const FLOOR_MATERIALS: Record<string, number> = {
+  home: 0x5C4033,
+  tavern: 0x4A3525,
+  bakery: 0x6B5B4A,
+  shop: 0x5A4A3A,
+  clinic: 0x9A9A9A,
+  town_hall: 0x8A8A8A,
+  prison: 0x6A6A6A,
+  workshop: 0x7A6B5A,
+};
+
 export interface LocationData {
   id: number;
   name: string;
@@ -33,6 +44,14 @@ const ZONE_LABEL_STYLE = new PIXI.TextStyle({
   fontSize: 6,
   fill: 0xffffff,
   stroke: { color: 0x000000, width: 1.5 },
+  align: "center",
+});
+
+const FURNITURE_STYLE = new PIXI.TextStyle({
+  fontFamily: "monospace",
+  fontSize: 5,
+  fill: 0xcccccc,
+  stroke: { color: 0x000000, width: 1 },
   align: "center",
 });
 
@@ -97,10 +116,16 @@ export class BuildingRenderer {
   private addBuilding(loc: LocationData): void {
     const { x, y, width, height } = loc.position;
 
-    // Walls — fill then re-draw rect for stroke (PixiJS v8: fill() flushes the path)
+    // Floor — drawn first so zones render on top
+    const floorColor = FLOOR_MATERIALS[loc.type] ?? 0x5A4A3A;
     const walls = new PIXI.Graphics();
-    walls.rect(x, y, width, height).fill({ color: TERRAIN_COLORS.building });
-    walls.rect(x, y, width, height).stroke({ width: 2, color: 0x444444 });
+    walls.rect(x, y, width, height).fill({ color: floorColor, alpha: 1.0 });
+
+    // Outer wall stroke (2.5px, drawn after fill)
+    walls.rect(x, y, width, height).stroke({ width: 2.5, color: 0x444444 });
+
+    // Inner shadow — dark border just inside wall bounds
+    walls.rect(x + 2, y + 2, width - 4, height - 4).stroke({ color: 0x000000, width: 1, alpha: 0.2 });
 
     // Door — a small brown rectangle centered on the entry point edge
     const doorW = 12;
@@ -120,7 +145,7 @@ export class BuildingRenderer {
       const zx = x + zone.relativePosition.x;
       const zy = y + zone.relativePosition.y;
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
-      zg.fill({ color: zone.color, alpha: 0.85 });
+      zg.fill({ color: zone.color, alpha: 0.55 });
       // Subtle border to separate zones
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
       zg.stroke({ color: 0x000000, width: 0.5, alpha: 0.3 });
@@ -133,6 +158,20 @@ export class BuildingRenderer {
       zoneLabel.y = zy + zone.relativePosition.height / 2;
       interiorContainer.addChild(zoneLabel);
     }
+
+    // Furniture labels
+    for (const zone of zones) {
+      if ((zone as any).furniture) {
+        const furn = (zone as any).furniture as { label: string; tile: [number, number] };
+        const furnText = new PIXI.Text({ text: furn.label, style: FURNITURE_STYLE });
+        furnText.anchor.set(0.5, 0.5);
+        furnText.x = x + furn.tile[0] * 32 + 16;
+        furnText.y = y + furn.tile[1] * 32 + 16;
+        furnText.alpha = 0.6;
+        interiorContainer.addChild(furnText);
+      }
+    }
+
     this.buildingLayer.addChild(interiorContainer);
 
     // No roof overlay — interiors always visible
