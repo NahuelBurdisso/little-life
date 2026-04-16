@@ -1,5 +1,5 @@
-export const MAP_WIDTH = 60;
-export const MAP_HEIGHT = 45;
+export const DEFAULT_MAP_WIDTH = 60;
+export const DEFAULT_MAP_HEIGHT = 45;
 export const TILE_SIZE = 32;
 
 interface MapLocationRaw {
@@ -294,9 +294,9 @@ export const LOCATIONS: LocationSeed[] = MAP_LOCATIONS.map((loc) => ({
 
 function generateCollisionGrid(): string {
   const grid: number[][] = [];
-  for (let y = 0; y < MAP_HEIGHT; y++) {
+  for (let y = 0; y < DEFAULT_MAP_HEIGHT; y++) {
     grid[y] = [];
-    for (let x = 0; x < MAP_WIDTH; x++) {
+    for (let x = 0; x < DEFAULT_MAP_WIDTH; x++) {
       grid[y][x] = 0;
     }
   }
@@ -314,7 +314,7 @@ function generateCollisionGrid(): string {
       // Agents enter via the door → interior transition system, not A* through interiors
       for (let x = tileX; x < tileX + tileW; x++) {
         for (let y = tileY; y < tileY + tileH; y++) {
-          if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
+          if (x < 0 || x >= DEFAULT_MAP_WIDTH || y < 0 || y >= DEFAULT_MAP_HEIGHT) continue;
           grid[y][x] = 1;
         }
       }
@@ -322,20 +322,20 @@ function generateCollisionGrid(): string {
       // Door tile stays walkable — this is the only entry point for pathfinding
       const doorTileX = Math.floor(loc.entryX / TILE_SIZE);
       const doorTileY = Math.floor(loc.entryY / TILE_SIZE);
-      if (doorTileX >= 0 && doorTileX < MAP_WIDTH && doorTileY >= 0 && doorTileY < MAP_HEIGHT) {
+      if (doorTileX >= 0 && doorTileX < DEFAULT_MAP_WIDTH && doorTileY >= 0 && doorTileY < DEFAULT_MAP_HEIGHT) {
         grid[doorTileY][doorTileX] = 0;
       }
       // Also ensure the tile just outside the door is walkable (approach path)
       const outsideDoorY = doorTileY + 1;
-      if (outsideDoorY >= 0 && outsideDoorY < MAP_HEIGHT) {
+      if (outsideDoorY >= 0 && outsideDoorY < DEFAULT_MAP_HEIGHT) {
         grid[outsideDoorY][doorTileX] = 0;
       }
     }
   }
 
   let result = "";
-  for (let y = 0; y < MAP_HEIGHT; y++) {
-    for (let x = 0; x < MAP_WIDTH; x++) {
+  for (let y = 0; y < DEFAULT_MAP_HEIGHT; y++) {
+    for (let x = 0; x < DEFAULT_MAP_WIDTH; x++) {
       result += grid[y][x].toString();
     }
   }
@@ -426,8 +426,8 @@ export function generateLocationsForAgentCount(agentCount: number, homeCountOver
 
 export function generateCollisionGridForLocations(
   locs: MapLocationRaw[],
-  mapWidth: number = MAP_WIDTH,
-  mapHeight: number = MAP_HEIGHT,
+  mapWidth: number = DEFAULT_MAP_WIDTH,
+  mapHeight: number = DEFAULT_MAP_HEIGHT,
 ): string {
   const grid: number[][] = [];
   for (let y = 0; y < mapHeight; y++) {
@@ -473,3 +473,8 @@ export function generateCollisionGridForLocations(
   return result;
 }
 
+// ─── Backward-compat re-exports ───────────────────────────────────────────────
+/** @deprecated Use DEFAULT_MAP_WIDTH. Retained for one release for backward compatibility. */
+export const MAP_WIDTH = DEFAULT_MAP_WIDTH;
+/** @deprecated Use DEFAULT_MAP_HEIGHT. */
+export const MAP_HEIGHT = DEFAULT_MAP_HEIGHT;

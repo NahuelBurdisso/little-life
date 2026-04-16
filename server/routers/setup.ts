@@ -27,7 +27,7 @@ import {
   aspirations,
   interactionCooldowns,
 } from '../db/schema';
-import { MAP_WIDTH, MAP_HEIGHT, generateLocationsForAgentCount, generateHomes, getPublicBuildings, generateCollisionGridForLocations } from '../data/maps';
+import { DEFAULT_MAP_WIDTH, DEFAULT_MAP_HEIGHT, generateLocationsForAgentCount, generateHomes, getPublicBuildings, generateCollisionGridForLocations } from '../data/maps';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
@@ -484,8 +484,8 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
     tick_id: 'init',
     pending_transitions: [],
     tax_pool: 0,
-    map_width: MAP_WIDTH,
-    map_height: MAP_HEIGHT,
+    map_width: DEFAULT_MAP_WIDTH,
+    map_height: DEFAULT_MAP_HEIGHT,
     collision_grid: dynamicCollisionGrid,
     setup_config: config as any,
   }).run();
@@ -610,8 +610,8 @@ export const setupRouter = router({
       tick_id: 'reset',
       pending_transitions: [],
       tax_pool: 0,
-      map_width: MAP_WIDTH,
-      map_height: MAP_HEIGHT,
+      map_width: DEFAULT_MAP_WIDTH,
+      map_height: DEFAULT_MAP_HEIGHT,
       collision_grid: '',
       setup_config: null,
     }).run();

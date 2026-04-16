@@ -21,7 +21,7 @@ import {
   aspirations,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
-import { LOCATIONS, MAP_WIDTH, MAP_HEIGHT, COLLISION_GRID } from '../data/maps';
+import { LOCATIONS, DEFAULT_MAP_WIDTH, DEFAULT_MAP_HEIGHT, COLLISION_GRID } from '../data/maps';
 import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -322,8 +322,8 @@ function seed() {
     tick_id: "init",
     pending_transitions: [],
     tax_pool: 0,
-    map_width: MAP_WIDTH,
-    map_height: MAP_HEIGHT,
+    map_width: DEFAULT_MAP_WIDTH,
+    map_height: DEFAULT_MAP_HEIGHT,
     collision_grid: COLLISION_GRID,
   }).run();
 
