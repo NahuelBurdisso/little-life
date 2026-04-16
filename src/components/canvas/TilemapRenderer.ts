@@ -2,12 +2,23 @@ import * as PIXI from "pixi.js";
 import { TILE_SIZE } from "../../lib/spriteConfig";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
-
-const MAP_WIDTH_TILES = 60;
-const MAP_HEIGHT_TILES = 45;
+import { getTerrainTexture } from "./textures";
 
 /** Open-area location types whose interior zones should show as floor textures */
 const OPEN_AREA_TYPES = new Set(["farm", "park", "town_square"]);
+
+/** Map zone ids to terrain texture keys. Falls back to colored fill when unmapped. */
+const ZONE_TEXTURE: Record<string, string> = {
+  // Farm
+  crops_north: 'crops_summer',
+  crops_south: 'crops_summer',
+  // Park
+  riverside: 'water',
+  grove_west: 'grove',
+  grove_east: 'grove',
+  // Town square
+  plaza: 'stone_plaza',
+};
 
 export class TilemapRenderer {
   container: PIXI.Container;
@@ -16,25 +27,37 @@ export class TilemapRenderer {
   private occupancyContainer: PIXI.Container;
   private openAreaContainer: PIXI.Container;
 
-  private mapWidth: number;
-  private mapHeight: number;
+  private mapWidth = 0;
+  private mapHeight = 0;
+
+  /** Current background child. Null until first resize(). */
+  private bg: PIXI.Container | null = null;
+  /** Monotonic generation counter — async texture loads compare against this
+   *  to detect "I'm stale because resize() was called again". */
+  private bgGeneration = 0;
 
   constructor(_app: PIXI.Application) {
-    this.mapWidth = MAP_WIDTH_TILES * TILE_SIZE;
-    this.mapHeight = MAP_HEIGHT_TILES * TILE_SIZE;
-
     this.container = new PIXI.Container();
     this.labelContainer = new PIXI.Container();
     this.occupancyContainer = new PIXI.Container();
     this.openAreaContainer = new PIXI.Container();
     this.openAreaContainer.eventMode = 'none';
 
-    this.renderBackground();
-
     // Open-area zone patches sit above grass bg but below BuildingRenderer output
     this.container.addChild(this.openAreaContainer);
     this.container.addChild(this.labelContainer);
     this.container.addChild(this.occupancyContainer);
+    // Note: renderBackground() is NOT called here; it runs on first resize().
+  }
+
+  /** Called when worldState dimensions become available or change. Idempotent. */
+  resize(widthTiles: number, heightTiles: number): void {
+    const newW = widthTiles * TILE_SIZE;
+    const newH = heightTiles * TILE_SIZE;
+    if (newW === this.mapWidth && newH === this.mapHeight) return;
+    this.mapWidth = newW;
+    this.mapHeight = newH;
+    this.renderBackground();
   }
 
   getMapSize(): { width: number; height: number } {
@@ -62,13 +85,51 @@ export class TilemapRenderer {
 
       for (const zone of zones) {
         if (!zone.tiles || zone.tiles.length === 0) continue;
-        const g = new PIXI.Graphics();
-        for (const [tx, ty] of zone.tiles) {
-          const x = pos.x + tx * TILE_SIZE;
-          const y = pos.y + ty * TILE_SIZE;
-          g.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: 0.55 });
+
+        const textureKey = ZONE_TEXTURE[zone.id];
+        if (textureKey) {
+          // Textured zone: place a sprite per tile. Use a holder container that
+          // we can splice into on async load (sprites start invisible, fallback
+          // color fill under them).
+          const fallback = new PIXI.Graphics();
+          for (const [tx, ty] of zone.tiles) {
+            const x = pos.x + tx * TILE_SIZE;
+            const y = pos.y + ty * TILE_SIZE;
+            fallback.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: 0.55 });
+          }
+          this.openAreaContainer.addChild(fallback);
+
+          const container = this.openAreaContainer;
+          const tilesSnapshot = zone.tiles.slice();
+          getTerrainTexture(textureKey)
+            ?.then((texture) => {
+              if (container.destroyed) return;
+              container.removeChild(fallback);
+              fallback.destroy();
+              const tileGroup = new PIXI.Container();
+              for (const [tx, ty] of tilesSnapshot) {
+                const sprite = new PIXI.Sprite(texture);
+                sprite.x = pos.x + tx * TILE_SIZE;
+                sprite.y = pos.y + ty * TILE_SIZE;
+                sprite.width = TILE_SIZE;
+                sprite.height = TILE_SIZE;
+                tileGroup.addChild(sprite);
+              }
+              container.addChild(tileGroup);
+            })
+            .catch(() => {
+              // Fallback stays.
+            });
+        } else {
+          // Unmapped zone — keep color fill.
+          const g = new PIXI.Graphics();
+          for (const [tx, ty] of zone.tiles) {
+            const x = pos.x + tx * TILE_SIZE;
+            const y = pos.y + ty * TILE_SIZE;
+            g.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: 0.55 });
+          }
+          this.openAreaContainer.addChild(g);
         }
-        this.openAreaContainer.addChild(g);
       }
     }
   }
@@ -106,9 +167,49 @@ export class TilemapRenderer {
   // ---- Private ----
 
   private renderBackground(): void {
-    const bg = new PIXI.Graphics();
-    bg.rect(0, 0, this.mapWidth, this.mapHeight);
-    bg.fill({ color: TERRAIN_COLORS.grass });
-    this.container.addChild(bg);
+    this.bgGeneration++;
+    const myGeneration = this.bgGeneration;
+
+    // Remove previous background child.
+    if (this.bg) {
+      this.container.removeChild(this.bg);
+      this.bg.destroy();
+      this.bg = null;
+    }
+
+    if (this.mapWidth === 0 || this.mapHeight === 0) return;
+
+    // Immediate fallback — solid color fill so there's something visible before
+    // the grass texture finishes loading.
+    const fallback = new PIXI.Graphics();
+    fallback.rect(0, 0, this.mapWidth, this.mapHeight);
+    fallback.fill({ color: TERRAIN_COLORS.grass });
+    this.bg = fallback;
+    this.container.addChildAt(fallback, 0);
+
+    // Async swap: replace fallback with a TilingSprite once grass texture loads.
+    const grass = getTerrainTexture('grass');
+    if (!grass) return;
+    grass
+      .then((texture) => {
+        if (this.bgGeneration !== myGeneration) return;
+        if (this.container.destroyed) return;
+        if (this.bg) {
+          this.container.removeChild(this.bg);
+          this.bg.destroy();
+          this.bg = null;
+        }
+        const tiling = new PIXI.TilingSprite({
+          texture,
+          width: this.mapWidth,
+          height: this.mapHeight,
+        });
+        tiling.eventMode = 'none';
+        this.bg = tiling;
+        this.container.addChildAt(tiling, 0);
+      })
+      .catch(() => {
+        // Keep fallback — no-op on failure.
+      });
   }
 }

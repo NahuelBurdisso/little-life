@@ -142,10 +142,8 @@ export const GameCanvas = React.memo(function GameCanvas({
     const bubbleSystem = new BubbleSystem(worldContainer);
     bubbleSystemRef.current = bubbleSystem;
 
-    // Camera — set actual map dimensions from tilemap
+    // Camera — dimensions will be set by the resize effect below
     const camera = new CameraController(app, worldContainer);
-    const mapSize = tilemap.getMapSize();
-    camera.setMapSize(mapSize.width, mapSize.height);
     cameraRef.current = camera;
 
     // Day/night overlay (on stage, above world)
@@ -187,6 +185,17 @@ export const GameCanvas = React.memo(function GameCanvas({
       worldContainer.destroy({ children: true });
     };
   }, [app, assetsLoaded.loaded, stableOnSelect, stableOnHover, stableOnContext]);
+
+  // Drive tilemap + camera dimensions from world state
+  const mapW = (world as any)?.map_width ?? 0;
+  const mapH = (world as any)?.map_height ?? 0;
+  useEffect(() => {
+    if (!tilemapRef.current || !cameraRef.current) return;
+    if (mapW === 0 || mapH === 0) return;
+    tilemapRef.current.resize(mapW, mapH);
+    const size = tilemapRef.current.getMapSize();
+    cameraRef.current.setMapSize(size.width, size.height);
+  }, [mapW, mapH]);
 
   // Initialize BuildingRenderer with location data when locations are available
   useEffect(() => {
