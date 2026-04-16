@@ -3,14 +3,14 @@ import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 
 const FLOOR_MATERIALS: Record<string, number> = {
-  home: 0x5C4033,
-  tavern: 0x4A3525,
+  home: 0x6b5b45,
+  shop: 0x5a5040,
+  tavern: 0x7a4f35,
+  clinic: 0xd8e8e0,
+  town_hall: 0x7a6a4a,
   bakery: 0x6B5B4A,
-  shop: 0x5A4A3A,
-  clinic: 0x9A9A9A,
-  town_hall: 0x8A8A8A,
+  workshop: 0x4a4a42,
   prison: 0x6A6A6A,
-  workshop: 0x7A6B5A,
 };
 
 export interface LocationData {
@@ -26,9 +26,9 @@ export interface LocationData {
 const OPEN_AREA_TYPES = new Set(["farm", "town_square", "park"]);
 
 const OPEN_AREA_COLORS: Record<string, number> = {
-  farm: 0x7cba4a,
-  town_square: 0xd4b483,
-  park: 0x5a9c4f,
+  farm: 0x6b7c3a,
+  town_square: 0x8a7a5a,
+  park: 0x4a6b3a,
 };
 
 const LABEL_STYLE = new PIXI.TextStyle({
@@ -121,11 +121,11 @@ export class BuildingRenderer {
     const walls = new PIXI.Graphics();
     walls.rect(x, y, width, height).fill({ color: floorColor, alpha: 1.0 });
 
-    // Outer wall stroke (2.5px, drawn after fill)
-    walls.rect(x, y, width, height).stroke({ width: 2.5, color: 0x444444 });
+    // Outer wall stroke (3px, drawn after fill)
+    walls.rect(x, y, width, height).stroke({ width: 3, color: 0x4a3f2e });
 
     // Inner shadow — dark border just inside wall bounds
-    walls.rect(x + 2, y + 2, width - 4, height - 4).stroke({ color: 0x000000, width: 1, alpha: 0.2 });
+    walls.rect(x + 2, y + 2, width - 4, height - 4).stroke({ color: 0x1a1510, width: 1, alpha: 0.6 });
 
     // Door — a small brown rectangle centered on the entry point edge
     const doorW = 12;
@@ -145,10 +145,10 @@ export class BuildingRenderer {
       const zx = x + zone.relativePosition.x;
       const zy = y + zone.relativePosition.y;
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
-      zg.fill({ color: zone.color, alpha: 0.55 });
+      zg.fill({ color: zone.color, alpha: 0.40 });
       // Subtle border to separate zones
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
-      zg.stroke({ color: 0x000000, width: 0.5, alpha: 0.3 });
+      zg.stroke({ color: 0x3a3028, width: 0.5, alpha: 0.5 });
       interiorContainer.addChild(zg);
 
       // Zone label
@@ -199,8 +199,8 @@ export class BuildingRenderer {
     const color = OPEN_AREA_COLORS[loc.type] ?? 0x888888;
 
     const patch = new PIXI.Graphics();
-    patch.roundRect(x, y, width, height, 4).fill({ color, alpha: 0.45 });
-    patch.roundRect(x, y, width, height, 4).stroke({ width: 1, color, alpha: 0.7 });
+    patch.roundRect(x, y, width, height, 4).fill({ color, alpha: 0.30 });
+    patch.roundRect(x, y, width, height, 4).stroke({ width: 1, color, alpha: 0.4 });
     this.buildingLayer.addChild(patch);
 
     const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE });

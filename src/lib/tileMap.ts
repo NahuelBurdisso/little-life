@@ -1,9 +1,9 @@
 export const TERRAIN_COLORS = {
-  grass: 0x4a8c3f,
-  path: 0xc4a66a,
-  water: 0x4a7fb5,
-  bridge: 0x8B7355,
-  building: 0x555555,
-  buildingRoof: 0x666666,
-  door: 0x885533,
+  grass: 0x2d2a24,
+  path: 0x4a3d2c,
+  water: 0x1a2830,
+  bridge: 0x5a5040,
+  building: 0x3d3228,
+  buildingRoof: 0x2a2520,
+  door: 0x8b6914,
 } as const;
