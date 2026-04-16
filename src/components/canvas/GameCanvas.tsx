@@ -223,6 +223,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     // Update occupancy dots on tilemap
     if (tilemapRef.current && locations) {
       tilemapRef.current.updateOccupancy(agents, locations);
+      tilemapRef.current.setOpenAreaZones(locations);
     }
 
     // Update BuildingRenderer with current agent locations
