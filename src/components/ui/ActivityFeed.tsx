@@ -6,18 +6,18 @@ import { timeAgo } from "../../lib/formatters";
 // --- Event Categories ---
 
 const EVENT_CATEGORIES = {
-  conversation: { icon: '🗣️', color: '#9ca3af', label: 'Chat' },
-  economy: { icon: '💰', color: '#eab308', label: 'Econ' },
-  drama: { icon: '💔', color: '#ef4444', label: 'Drama' },
-  state_change: { icon: '🧠', color: '#a855f7', label: 'States' },
-  relationship: { icon: '🤝', color: '#60a5fa', label: 'Social' },
-  world_event: { icon: '🌍', color: '#22c55e', label: 'World' },
-  goal: { icon: '🎯', color: '#14b8a6', label: 'Goals' },
-  aspiration: { icon: '✨', color: '#c084fc', label: 'Dreams' },
-  system: { icon: '⚙️', color: '#6b7280', label: 'System' },
-  error: { icon: '⚠️', color: '#f87171', label: 'Errors' },
-  planning: { icon: '🧭', color: '#f59e0b', label: 'Plans' },
-  cascade: { icon: '⛓', color: '#f97316', label: 'Cascade' },
+  conversation: { icon: '💬', color: '#6080c0', label: 'Chat' },
+  economy:      { icon: '$',  color: '#c8a84b', label: 'Econ' },
+  drama:        { icon: '!',  color: '#a03028', label: 'Drama' },
+  state_change: { icon: '◆',  color: '#787060', label: 'States' },
+  relationship: { icon: '♦',  color: '#a0c060', label: 'Social' },
+  world_event:  { icon: '~',  color: '#4080a0', label: 'World' },
+  goal:         { icon: '▶',  color: '#c07840', label: 'Goals' },
+  aspiration:   { icon: '★',  color: '#9b7ab0', label: 'Dreams' },
+  system:       { icon: '⚙',  color: '#504838', label: 'System' },
+  error:        { icon: '✕',  color: '#a03028', label: 'Errors' },
+  planning:     { icon: '▷',  color: '#c8a84b', label: 'Plans' },
+  cascade:      { icon: '⛓',  color: '#c07840', label: 'Cascade' },
 } as const;
 
 type EventCategory = keyof typeof EVENT_CATEGORIES;
@@ -202,21 +202,21 @@ export function ActivityFeed() {
   flushConvoBatch();
 
   return (
-    <div className="h-full bg-gray-800 border-t border-gray-700 flex flex-col">
+    <div className="h-full bg-[#1a1814] border-t border-[#3a3028] flex flex-col">
       {/* Filter bar */}
-      <div className="flex flex-wrap gap-1 px-2 py-1 border-b border-gray-700 shrink-0">
+      <div className="flex flex-wrap gap-1 px-2 py-1 border-b border-[#3a3028] shrink-0">
         {(Object.entries(EVENT_CATEGORIES) as [EventCategory, (typeof EVENT_CATEGORIES)[EventCategory]][]).map(
           ([key, { icon, color, label }]) => (
             <button
               key={key}
               onClick={() => toggleFilter(key)}
-              className={`text-[10px] px-1.5 py-0.5 rounded-full border transition-colors ${
+              className={`text-[10px] px-1.5 py-0.5 border transition-colors ${
                 filters[key] ? '' : 'opacity-40'
               }`}
               style={
                 filters[key]
                   ? { color, borderColor: color, backgroundColor: color + '20' }
-                  : { borderColor: '#4b5563' }
+                  : { borderColor: '#3a3028' }
               }
               title={label}
             >
@@ -229,15 +229,15 @@ export function ActivityFeed() {
       {/* Event list */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
         {filtered.length === 0 ? (
-          <p className="text-gray-500 text-xs">No activity yet...</p>
+          <p className="text-[#504838] text-xs">No activity yet...</p>
         ) : (
           <div className="space-y-0.5">
             {filtered.map((item, i) => {
               // Conversation summary
               if ('_summary' in item) {
                 return (
-                  <div key={`summary-${i}`} className="text-[11px] text-gray-500 italic pl-1">
-                    🗣️ {item.count} conversation{item.count > 1 ? 's' : ''} ended
+                  <div key={`summary-${i}`} className="text-[11px] text-[#504838] italic pl-1">
+                    💬 {item.count} conversation{item.count > 1 ? 's' : ''} ended
                   </div>
                 );
               }
@@ -255,46 +255,46 @@ export function ActivityFeed() {
                     {/* Chain header */}
                     <button
                       onClick={() => toggleChain(chainId)}
-                      className="w-full text-left text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5 hover:bg-gray-700/40 transition-colors rounded-r"
-                      style={{ borderLeftColor: '#f97316', borderLeftWidth: 2 }}
+                      className="w-full text-left text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5 hover:bg-[#2e2b20] transition-colors"
+                      style={{ borderLeftColor: '#c07840', borderLeftWidth: 2 }}
                     >
                       <span className="shrink-0">⛓</span>
-                      <span className="text-gray-500 shrink-0 w-12 text-right">
+                      <span className="text-[#504838] shrink-0 w-12 text-right">
                         {world
                           ? timeAgo(firstEvent.timestamp, world.time.totalTicks, world.tick_speed)
                           : ''}
                       </span>
-                      <span className="text-orange-300 flex-1">
+                      <span className="text-[#c07840] flex-1">
                         {renderMessage(firstEvent)}
                       </span>
                       {consequenceCount > 0 && (
                         <span
-                          className="shrink-0 text-[10px] px-1 rounded-full font-semibold"
-                          style={{ backgroundColor: '#f9731620', color: '#f97316', border: '1px solid #f9731640' }}
+                          className="shrink-0 text-[10px] px-1 font-semibold"
+                          style={{ backgroundColor: '#c0784020', color: '#c07840', border: '1px solid #c0784040' }}
                         >
                           → {consequenceCount} consequence{consequenceCount !== 1 ? 's' : ''}
                         </span>
                       )}
-                      <span className="shrink-0 text-gray-500">
+                      <span className="shrink-0 text-[#504838]">
                         {(!autoCollapse || isExpanded) && consequenceCount > 0 ? '▲' : consequenceCount > 0 ? '▼' : ''}
                       </span>
                     </button>
 
                     {/* Expanded chain children */}
                     {(!autoCollapse || isExpanded) && consequenceCount > 0 && (
-                      <div className="ml-3 border-l-2 border-orange-900/60 pl-1.5 space-y-0.5 mt-0.5">
+                      <div className="ml-3 border-l-2 border-[#6b5c30] pl-1.5 space-y-0.5 mt-0.5">
                         {events.slice(1).map((child, ci) => (
                           <div
                             key={child.id ?? `chain-child-${chainId}-${ci}`}
                             className="text-[11px] flex gap-1.5 py-0.5"
                           >
-                            <span className="shrink-0 text-orange-600/70">↳</span>
-                            <span className="text-gray-500 shrink-0 w-12 text-right">
+                            <span className="shrink-0 text-[#c07840]">↳</span>
+                            <span className="text-[#504838] shrink-0 w-12 text-right">
                               {world
                                 ? timeAgo(child.timestamp, world.time.totalTicks, world.tick_speed)
                                 : ''}
                             </span>
-                            <span className="text-gray-400">{renderMessage(child)}</span>
+                            <span className="text-[#8a7f65]">{renderMessage(child)}</span>
                           </div>
                         ))}
                       </div>
@@ -325,17 +325,17 @@ export function ActivityFeed() {
                   }}
                 >
                   <span className="shrink-0">{icon}</span>
-                  <span className="text-gray-500 shrink-0 w-12 text-right">
+                  <span className="text-[#504838] shrink-0 w-12 text-right">
                     {world
                       ? timeAgo(item.timestamp, world.time.totalTicks, world.tick_speed)
                       : ''}
                   </span>
                   <span className={
-                    isDrama ? 'text-red-300' :
-                    isAspiration ? 'text-purple-300' :
-                    isGoal ? 'text-teal-300' :
-                    isError ? 'text-red-400' :
-                    'text-gray-300'
+                    isDrama ? 'text-[#a03028]' :
+                    isAspiration ? 'text-[#9b7ab0]' :
+                    isGoal ? 'text-[#c07840]' :
+                    isError ? 'text-[#a03028]' :
+                    'text-[#a09070]'
                   }>
                     {renderMessage(item)}
                   </span>

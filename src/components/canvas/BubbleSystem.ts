@@ -18,13 +18,13 @@ interface BubbleEntry {
 const THOUGHT_STYLE = new PIXI.TextStyle({
   fontFamily: "monospace",
   fontSize: 10,
-  fill: 0x666666,
+  fill: 0x8a7f65,
 });
 
 const SPEECH_STYLE = new PIXI.TextStyle({
   fontFamily: "monospace",
-  fontSize: 8,
-  fill: 0x222222,
+  fontSize: 7,
+  fill: 0xd4c9a8,
   wordWrap: true,
   wordWrapWidth: 100,
 });
@@ -67,18 +67,17 @@ export class BubbleSystem {
     const bgW = textObj.width + padX * 2;
     const bgH = textObj.height + padY * 2;
 
-    // Sentiment-based colors
-    const bgColor = sentiment > 0.2 ? 0x44cc44 : sentiment < -0.2 ? 0xcc4444 : 0xffffff;
-    const borderColor = sentiment > 0.2 ? 0x22c55e : sentiment < -0.2 ? 0xef4444 : 0xd1d5db;
-    const bgAlpha = 0.92;
+    // Sentiment-based border tint (background stays dark)
+    const borderColor = sentiment > 0.2 ? 0x4a7a3a : sentiment < -0.2 ? 0xa03028 : 0xc8a84b;
+    const bgAlpha = 0.9;
 
     // Background rounded rect
     const bg = new PIXI.Graphics();
-    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: bgColor, alpha: bgAlpha });
-    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: borderColor, width: 1, alpha: 0.25 });
+    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: 0x1a1814, alpha: bgAlpha });
+    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: borderColor, width: 1, alpha: 1 });
 
     // Small tail triangle
-    bg.poly([bgW / 2 - 4, bgH, bgW / 2, bgH + 5, bgW / 2 + 4, bgH]).fill({ color: bgColor, alpha: bgAlpha });
+    bg.poly([bgW / 2 - 4, bgH, bgW / 2, bgH + 5, bgW / 2 + 4, bgH]).fill({ color: 0x1a1814, alpha: bgAlpha });
 
     textObj.x = padX;
     textObj.y = padY;
@@ -110,8 +109,8 @@ export class BubbleSystem {
     const bubbleContainer = new PIXI.Container();
 
     const bg = new PIXI.Graphics();
-    bg.roundRect(0, 0, 28, 18, 4).fill({ color: 0xffffff, alpha: 0.85 });
-    bg.roundRect(0, 0, 28, 18, 4).stroke({ color: 0x000000, width: 1, alpha: 0.2 });
+    bg.roundRect(0, 0, 28, 18, 4).fill({ color: 0x1a1814, alpha: 0.9 });
+    bg.roundRect(0, 0, 28, 18, 4).stroke({ color: 0xc8a84b, width: 1, alpha: 1 });
 
     const dots = new PIXI.Text({ text: "...", style: THOUGHT_STYLE });
     dots.x = 5;
@@ -147,7 +146,7 @@ export class BubbleSystem {
     const textStyle = new PIXI.TextStyle({
       fontFamily: 'monospace',
       fontSize: 7,
-      fill: 0xc4b5fd, // light purple — thought color
+      fill: 0x8a7f65,
       fontStyle: 'italic',
       wordWrap: true,
       wordWrapWidth: 100,
@@ -160,8 +159,8 @@ export class BubbleSystem {
     const bgH = textObj.height + padY * 2;
 
     const bg = new PIXI.Graphics();
-    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: 0x1e1b4b, alpha: 0.85 }); // dark indigo bg
-    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: 0x6366f1, width: 1, alpha: 0.4 });
+    bg.roundRect(0, 0, bgW, bgH, 4).fill({ color: 0x1a1814, alpha: 0.9 });
+    bg.roundRect(0, 0, bgW, bgH, 4).stroke({ color: 0xc8a84b, width: 1, alpha: 0.6 });
 
     textObj.x = padX;
     textObj.y = padY;

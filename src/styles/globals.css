@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+:root {
+  --ui-bg-deep: #0f0e0b;
+  --ui-bg-panel: #1a1814;
+  --ui-bg-raised: #252219;
+  --ui-bg-hover: #2e2b20;
+  --ui-border: #3d3a2e;
+  --ui-border-accent: #6b5c30;
+  --ui-text-primary: #d4c9a8;
+  --ui-text-secondary: #8a7f65;
+  --ui-text-disabled: #4a4535;
+  --ui-accent-gold: #c8a84b;
+  --ui-accent-blue: #5a8fb0;
+  --ui-positive: #10b981;
+  --ui-negative: #ef4444;
+  --ui-warning: #f59e0b;
+}
+
+body {
+  background-color: var(--ui-bg-deep);
+  color: var(--ui-text-primary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
