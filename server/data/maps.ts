@@ -346,7 +346,7 @@ export const COLLISION_GRID = generateCollisionGrid();
 
 // --- Dynamic home generation for setup wizard ---
 
-const HOME_DESCRIPTIONS = [
+export const HOME_DESCRIPTIONS = [
   "A cozy farmhouse with a well-worn porch",
   "A warm house with flower boxes in every window",
   "A tidy house with an herb garden out back",
