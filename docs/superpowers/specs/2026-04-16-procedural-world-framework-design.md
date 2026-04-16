@@ -153,9 +153,8 @@ export interface GenerateOptions {
    *  the user is past the Agents wizard step (see §8.3). */
   agents?: StageExtras['agents'];
 }
-// Note: a lower-bound on homeCount for the agents-absent preview case is
-// carried on WorldGenConfig itself as `cfg.minHomeCountHint` (§6), not on
-// `GenerateOptions`. Single channel, no duplication.
+// When agents are absent, the homes stage falls back to halfAgents (§7.4).
+// No separate hint field exists — single channel via `opts.agents`.
 
 export function generateWorld(
   cfg: WorldGenConfig,
@@ -190,11 +189,32 @@ export function generateWorld(
 
 /** Evaluate the `dimensions` stage's priority chain (§7.1) WITHOUT any
  *  expand pin. Used by the expand loop to compute the first-attempt
- *  dimensions for cap comparison. Pure, no RNG. */
+ *  dimensions for cap comparison. Pure, no RNG.
+ *
+ *  This works because the `dimensions` stage has two hard invariants
+ *  (documented as rules in §7.1): it does not read ctx, and it does not
+ *  use rng. A breaking change to either invariant requires updating this
+ *  helper in lockstep. */
 function peekBaseDimensions(cfg: WorldGenConfig, agentCount: number) {
-  return dimensionsStage.run(
-    { /* empty ctx */ } as any, null as any, cfg, agentCount, {}
-  ).dimensions!;
+  const EMPTY_CTX: WorldContext = {
+    dimensions: null, terrainTiles: null, publicBuildings: null,
+    homes: null, interiors: null, names: null,
+  };
+  const NOOP_RNG: RNG = makeRng(0);  // unused by dimensions stage, see invariants
+  return dimensionsStage.run(EMPTY_CTX, NOOP_RNG, cfg, agentCount, {}).dimensions!;
+}
+
+/** Grow both dimensions by a factor and clamp to MAX. Returns { width, height }
+ *  identical to input when both axes are already at cap — the expand loop uses
+ *  that equality to detect a no-progress state and abort. */
+function expandDimensions(
+  dims: { width: number; height: number },
+  factor: number,
+): { width: number; height: number } {
+  return {
+    width:  Math.min(Math.ceil(dims.width  * factor), MAX_WIDTH),
+    height: Math.min(Math.ceil(dims.height * factor), MAX_HEIGHT),
+  };
 }
 
 /** Inside runStages, each stage call passes `extras = { agents: opts.agents }`
@@ -210,7 +230,7 @@ Notes:
 - Agents injection: for each stage, `runStages` builds `extras` per stage's opt-in flags. Concretely:
     - `extras.agents = opts.agents` iff `stage.needsAgents === true`.
     - `extras.expandPin = expandedDims` iff `stage.name === 'dimensions'` and `expandedDims !== null`. All other stages receive `extras.expandPin = undefined`.
-    - Lower-bound for home count when `extras.agents` is absent lives on `cfg.minHomeCountHint` (§6), not on `extras`, so it flows naturally through the normal `cfg` argument.
+    - When `extras.agents` is absent, the `homes` stage's count formula (§7.4) falls back to `halfAgents`. No separate hint channel.
 
 ### 4.4 FitError
 
@@ -316,12 +336,17 @@ New schema, layered into existing `SetupConfigSchema`:
 
 ```ts
 // config.ts
+export const MIN_WIDTH = 48;
+export const MAX_WIDTH = 90;
+export const MIN_HEIGHT = 37;
+export const MAX_HEIGHT = 70;
+
 export const WorldGenConfigSchema = z.object({
   seed: z.string().optional(),
-  sizeTier: z.enum(['small', 'medium', 'large', 'auto', 'custom']).default('auto'),
+  sizeTier: z.enum(['medium', 'large', 'auto', 'custom']).default('auto'),
   customDimensions: z.object({
-    width: z.number().int().min(20).max(200),
-    height: z.number().int().min(15).max(200),
+    width: z.number().int().min(MIN_WIDTH).max(MAX_WIDTH),
+    height: z.number().int().min(MIN_HEIGHT).max(MAX_HEIGHT),
   }).optional(),
   /** User-facing override channel. Framework-internal auto-expand does NOT
    *  write here; see §4.3. Users who want to pin dimensions should use
@@ -330,11 +355,6 @@ export const WorldGenConfigSchema = z.object({
     dimensions: z.object({ width: z.number(), height: z.number() }).optional(),
     homePositions: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
   }).default({}),
-  /** Wizard-provided hint to keep preview home count aligned with initialize
-   *  when the full agents[] list isn't threaded in (see §7.4 and §8.3).
-   *  Computed client-side from the draft agent list. Persisted through
-   *  worldgen config so restart preserves preview intent. */
-  minHomeCountHint: z.number().int().min(0).optional(),
 }).refine(
   (cfg) => cfg.sizeTier !== 'custom' || !!cfg.customDimensions,
   { message: "sizeTier='custom' requires customDimensions" }
@@ -345,13 +365,18 @@ export const WorldGenConfigSchema = z.object({
 
 | Tier    | Width × Height                                                                   |
 |---------|----------------------------------------------------------------------------------|
-| small   | 40 × 30                                                                          |
 | medium  | 60 × 45                                                                          |
 | large   | 80 × 60                                                                          |
 | auto    | `Math.min(Math.max(30 + Math.ceil(1.8 * N), MIN_WIDTH), MAX_WIDTH)` × `Math.min(Math.max(20 + Math.ceil(1.3 * N), MIN_HEIGHT), MAX_HEIGHT)` |
-| custom  | `customDimensions`                                                               |
+| custom  | `customDimensions` (schema-bounded to `[MIN_*, MAX_*]`)                          |
 
-`N` = `agentCount`. Exported constants: `MIN_WIDTH = 40`, `MAX_WIDTH = 90`, `MIN_HEIGHT = 30`, `MAX_HEIGHT = 70`. Used by the `dimensions` stage, the expand-on-fail clamp, and wizard UI controls.
+`N` = `agentCount`. Exported constants: `MIN_WIDTH = 48`, `MAX_WIDTH = 90`, `MIN_HEIGHT = 37`, `MAX_HEIGHT = 70`.
+
+**`MIN_WIDTH / MIN_HEIGHT` rationale**: the layout stub (§7.3) returns hardcoded public buildings from `MAP_LOCATIONS`. Their bounding box extends to tile (48, 37) — the Clinic's east edge and the Farm/Park's south edge respectively. Any dimensions below this bounding box immediately FitError on the layout stage. Setting MIN to exactly the bounding box ensures the smallest map still fits the public buildings.
+
+**`small` tier removed for Phase 1**: an `small` preset would have to be < MIN, which the layout stub cannot satisfy. Phase 2 (which replaces the layout stub with a real placement generator that can offset/scale public buildings) can add a `small` tier once buildings can fit smaller maps.
+
+Constants are used by the `dimensions` stage, the expand-on-fail clamp, the Zod `customDimensions` bounds, and wizard UI controls.
 
 ### 6.2 Integration with SetupConfigSchema
 
@@ -361,11 +386,11 @@ export const SetupConfigSchema = z.object({
   relationships: ...,
   world: WorldConfigSchema,
   rules: ...,
-  worldgen: WorldGenConfigSchema,   // NEW
+  worldgen: WorldGenConfigSchema.default({ sizeTier: 'auto', overrides: {} }), // NEW
 });
 ```
 
-Defaults to `{ sizeTier: 'auto', overrides: {} }` so pre-Phase-1 saved configs parse; see §5.5 for migration semantics.
+The `.default(...)` at this level is what makes pre-Phase-1 saved configs parse: when the saved `setup_config` has no `worldgen` key at all (true for any config stored before this phase ships), the default populates it. Inner-field defaults alone don't suffice because Zod only applies them when the parent object is present. See §5.5 for migration semantics.
 
 ---
 
@@ -378,10 +403,14 @@ Priority order, highest to lowest:
 1. `extras.expandPin` (framework-internal auto-expand state, injected by `runStages` only for this stage — §4.3).
 2. `cfg.overrides.dimensions` (user-pinned, persisted).
 3. `cfg.sizeTier === 'custom'` → `cfg.customDimensions` (schema guarantees present).
-4. `cfg.sizeTier` in `{ small, medium, large }` → preset from the §6.1 table.
+4. `cfg.sizeTier` in `{ medium, large }` → preset from the §6.1 table.
 5. `cfg.sizeTier === 'auto'` → formula from the §6.1 table.
 
-Pure, no RNG. Never throws FitError (always produces dimensions).
+**Hard invariants** (relied on by `peekBaseDimensions`, §4.3):
+- Does not read `ctx`.
+- Does not use `rng`.
+- Never throws `FitError` (always produces dimensions).
+- Pure function; referentially transparent for fixed `cfg` + `agentCount` + `extras.expandPin`.
 
 ### 7.2 `terrain` stage (stub)
 
@@ -395,45 +424,40 @@ If `ctx.dimensions` is smaller than the bounding box of the hardcoded positions 
 
 ### 7.4 `homes` stage (real — Phase 1 deliverable)
 
-**Inputs**: `ctx.dimensions`, `ctx.publicBuildings`, `agentCount`, `extras.agents` (injected via `needsAgents: true` — see §4.3), optional `cfg.overrides.homePositions`, optional `cfg.minHomeCountHint` (carried from `previewWorld` input — see §8.3).
+**Inputs**: `ctx.dimensions`, `ctx.publicBuildings`, `agentCount`, `extras.agents` (injected via `needsAgents: true` — see §4.3), optional `cfg.overrides.homePositions`.
 
-**Count formula** (preserves existing `seedWorld` contract for agent-to-home assignments):
+**Count formula** (preserves existing `seedWorld` contract for agent-to-home assignments — matches `server/routers/setup.ts:175-179` exactly):
 
 ```ts
 const halfAgents = Math.ceil(agentCount / 2);
 
-// Scan existing agent configs for references like "Home N" — preserve the
-// same rule seedWorld uses today (see server/routers/setup.ts lines 175-179).
-// If any agent's homeName field references a home number larger than
-// halfAgents, the count grows to fit the largest index.
+// Scan agent configs for references like "Home N" — if any agent's homeName
+// field references a home number larger than halfAgents, the count grows to
+// fit the largest index. Same rule as seedWorld uses today.
 let maxReferenced = 0;
 if (extras.agents) {
-  // initialize path: agents array fully known.
   maxReferenced = extras.agents.reduce((max, a) => {
     const match = a.homeName.match(/Home (\d+)/);
     return match ? Math.max(max, Number(match[1])) : max;
   }, 0);
-} else if (cfg.minHomeCountHint !== undefined) {
-  // previewWorld path: client precomputed the hint from its local agent
-  // list (if user has reached/past the Agents wizard step). Treat hint as
-  // a lower bound equivalent to `maxReferenced`.
-  maxReferenced = cfg.minHomeCountHint;
 }
-// Neither available (preview before Agents step): use halfAgents alone.
+// When extras.agents is absent (preview before Agents wizard step),
+// maxReferenced stays 0 — formula falls back to halfAgents. Preview-phase
+// users haven't defined their agents yet, so the count is necessarily
+// provisional. Once they reach the Agents step, subsequent previewWorld
+// calls include previewAgentHomes (§8.3) and count becomes accurate.
 
-const homeCount = Math.max(5, halfAgents, maxReferenced);
+const homeCount = Math.max(halfAgents, maxReferenced);
 ```
 
-**Preview/initialize consistency**: to guarantee the preview renders the same home count the eventual `initialize` will produce, the wizard computes `minHomeCountHint` client-side from the current draft agent list (same `Home N` regex) and includes it in the `previewWorld` tRPC input. See §8.3.
+**No minimum floor** — matches current `seedWorld` behavior. A 2-agent world produces 1 home, not 5. Existing tests depending on this behavior remain green.
+
+**Preview/initialize consistency**: to keep preview home count aligned with the eventual `initialize` run, the wizard passes `previewAgentHomes` (a minimal `{ homeName: string }[]` slice of draft agents) in the `previewWorld` tRPC input. See §8.3. Single channel — no separate `minHomeCountHint` field.
 
 **Algorithm**:
 1. Compute `homeCount` as above.
 2. Build blocked mask: all tiles covered by `publicBuildings` + 2-tile buffer + 1-tile map border on all sides.
-3. Enumerate candidate top-left tile positions `(tx, ty)` where:
-   - A 3×3 tile home footprint fits (no overlap with blocked mask).
-   - `tx + 2 ≤ width - 2` — east edge of footprint stays inside the 1-tile map border.
-   - `ty + 2 ≤ height - 2` — south edge of footprint stays inside the 1-tile map border.
-   - `ty + 3 ≤ height - 1` — south door-approach tile (at row `ty + 3`) is within map bounds (automatically satisfied by the border predicate above; stated for clarity).
+3. Enumerate candidate top-left tile positions `(tx, ty)` where the 3×3 footprint fits inside `[1, width - 1] × [1, height - 1]` (1-tile map border all sides) and does not overlap the blocked mask. The south door-approach tile at row `ty + 3` is automatically in range because `ty + 2 ≤ height - 2` implies `ty + 3 ≤ height - 1`.
 4. `rng.shuffle(candidates)` using `forkRng(seed, 'homes')`.
 5. Greedy select until `homeCount` reached, rejecting any candidate whose footprint is within 2 tiles (Chebyshev distance) of an already-selected home.
 6. If fewer than `homeCount` homes selected → `throw new FitError('homes', 'not enough spots for N homes')`. Orchestrator expands and retries.
@@ -462,11 +486,19 @@ const homeCount = Math.max(5, halfAgents, maxReferenced);
 
 #### 7.4.1 `homes` stage opt-ins
 
-Declares `needsAgents: true` in its Stage definition (§4.2). At call time the orchestrator supplies `extras.agents` when available; the count formula above handles the absent case via `cfg.minHomeCountHint`. No change to `Stage.run` signature — the `extras` parameter is already defined in §4.2.
+Declares `needsAgents: true` in its Stage definition (§4.2). At call time the orchestrator supplies `extras.agents` when available; the count formula above falls back to `halfAgents` when `extras.agents` is absent. No change to `Stage.run` signature — the `extras` parameter is already defined in §4.2.
 
 ### 7.5 `interiors` stage (stub)
 
-For each location in `publicBuildings ∪ homes`, returns `{ [locId]: { grid: INTERIOR_GRIDS[loc.type] ?? null } }`. Phase 4 replaces with per-building variation.
+Placeholder type defined inline for Phase 1:
+
+```ts
+export interface InteriorData {
+  grid: number[][] | null;   // cell codes per INTERIOR_GRIDS convention, or null for buildings without an interior grid (homes, open areas)
+}
+```
+
+For each location in `publicBuildings ∪ homes`, returns `{ [locId]: { grid: INTERIOR_GRIDS[loc.type] ?? null } }`. Phase 4 extends `InteriorData` with additional fields (zone overrides, per-building variation) and replaces this stub.
 
 ### 7.6 `names` stage (stub)
 
@@ -513,16 +545,20 @@ previewWorld: publicProcedure
   }))
   .mutation(({ input }) => {
     const { agentCount, previewAgentHomes, ...cfg } = input;
-    return generateWorld(cfg, agentCount, { agents: previewAgentHomes as any });
+    return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
   }),
 ```
+
+Type flows cleanly because `StageExtras.agents` is declared as `Array<{ homeName: string } & Partial<AgentConfig>>`, and `Array<{ homeName: string }>` is assignable to that (the `& Partial<AgentConfig>` intersection is satisfied by the empty case for every field).
 
 **Verb choice: `mutation`, not `query`.** Reasons:
 - Semantics are "compute and return"; idempotent w.r.t. inputs but not cached by React Query.
 - If a user leaves `seed` blank, the server generates a new seed each call. A `query` would be aggressively cached by TanStack Query (same input key ⇒ cached result), causing Regenerate to no-op on the client.
 - Using a mutation side-steps cache entirely. Standard tRPC pattern for "run a computation now, return result, no DB effect."
 
-**Agents injection alignment**: the wizard passes `previewAgentHomes` — a minimal slice of draft agents containing only the `homeName` field — so the `homes` stage's count formula (§7.4) computes `maxReferenced` identically in preview and initialize. When the wizard step order has the user on the World Layout step *before* the Agents step (the default), `previewAgentHomes` is absent; the count formula falls back to `max(5, halfAgents)`. The wizard can also persist `minHomeCountHint` into the config as a belt-and-suspenders (§6 schema).
+**Agents injection alignment**: the wizard passes `previewAgentHomes` — a minimal `{ homeName: string }[]` slice of draft agents — so the `homes` stage's count formula (§7.4) computes `maxReferenced` identically in preview and initialize. When the user is on the World Layout step before reaching Agents, `previewAgentHomes` is absent and the count formula falls back to `halfAgents` (provisional); after visiting Agents, every subsequent `previewWorld` call carries `previewAgentHomes` and the count becomes accurate.
+
+**Compute-cost guard**: `previewWorld` holds the server event loop for the duration of the call. Typical cost on a 90×70 map is sub-millisecond (≤ 6,300-candidate shuffle + ≤ 50-home greedy selection). The `customDimensions` Zod bounds (§6) cap width at `MAX_WIDTH = 90`, height at `MAX_HEIGHT = 70`, so a typo-triggered enormous map cannot exercise unbounded work. No per-call timing budget is enforced beyond the Zod bounds; if Phase 2 placement logic increases cost materially, re-evaluate.
 
 Called on wizard mount (with empty seed to get an initial preview) and on every Regenerate click.
 
@@ -581,7 +617,12 @@ All runtime reads of map dimensions go through `worldState.map_width` / `worldSt
 - `server/routers/setup.ts` (initialize + resetToWizard).
 - `server/data/maps.ts` (internal use in `generateCollisionGrid`).
 - `server/db/seed.ts` (lines ~24, ~325–326) — imports both constants. Must be updated to either read from `worldState` or take dimensions as parameters.
-- `src/components/canvas/TilemapRenderer.ts` — hardcodes `MAP_WIDTH_TILES = 60` / `MAP_HEIGHT_TILES = 45` locally (no import). Must be refactored to read from the loaded `worldState` (or receive dimensions via prop) so it does not render stale bounds on non-medium worlds.
+- `src/components/canvas/TilemapRenderer.ts` — hardcodes `MAP_WIDTH_TILES = 60` / `MAP_HEIGHT_TILES = 45` locally (no import). Refactor plan:
+    - Remove the module-level constants.
+    - Change the constructor to take no dimensions. Construct with `mapWidth = 0, mapHeight = 0` and render an empty container.
+    - Add a public `resize(widthTiles: number, heightTiles: number): void` method. It recomputes `this.mapWidth = widthTiles * TILE_SIZE`, `this.mapHeight = heightTiles * TILE_SIZE`, and calls `renderBackground()` (which already idempotently rebuilds the tiling sprite or fallback rect; see `renderBackground` in the same file).
+    - In `GameCanvas.tsx`, wrap the renderer's dimensions update in a `useEffect` keyed on `worldState.map_width / map_height` from the `world` tRPC query. The effect calls `tilemapRef.current?.resize(...)` after the query resolves. While `worldState` is undefined, the renderer shows an empty map — matches existing loading UX since nothing else depends on the tilemap before agents load.
+    - `getMapSize()` keeps its current signature; callers that needed viewport bounds (e.g., `CameraController.setMapSize` at `GameCanvas.tsx:148`) re-run inside the same effect after `resize(...)`.
 - Any test that references `MAP_WIDTH` / `MAP_HEIGHT`.
 
 Intentionally skipped during the audit: `scripts/generate-map-json.cjs` declares its own local constants (not imported from `maps.ts`); `data/maps/default.ts` is unreferenced dead code. The implementation plan must still include a grep pass to catch any additional importers before the rename lands.
@@ -618,7 +659,7 @@ All retries log at `warn`. Pipeline start/end log at `info` with seed, timing, f
 
 - **`rng.test.ts`** (~6 tests): `stringToSeed` stable across runs; `mulberry32` distribution sanity; `forkRng` produces distinct streams for distinct labels; `forkRng` produces identical stream for same `(seed, label)`.
 - **`dimensions.test.ts`** (~8 tests): each tier at agent counts 1/5/15/50; custom passes through; `overrides.dimensions` short-circuits; auto formula clamps at both MIN and MAX.
-- **`homes.test.ts`** (~10 tests): determinism (same seed → same positions over 100 runs); no overlaps with public buildings; no overlaps between homes; 2-tile spacing honored; override path validates & returns verbatim; FitError raised when candidates exhausted; expand-retry produces larger map; home count matches `max(5, ceil(agents/2), maxReferenced)`; `minHomeCountHint` substitutes for agents when `extras.agents` absent; map-border predicate rejects footprints at `ty + 2 > height - 2` or `tx + 2 > width - 2`.
+- **`homes.test.ts`** (~10 tests): determinism (same seed → same positions over 100 runs); no overlaps with public buildings; no overlaps between homes; 2-tile spacing honored; override path validates & returns verbatim; FitError raised when candidates exhausted; expand-retry produces larger map; home count matches `max(ceil(agents/2), maxReferenced)` with no floor; formula falls back to `halfAgents` when `extras.agents` absent (preview-before-Agents path); map-border predicate rejects footprints at `ty + 2 > height - 2` or `tx + 2 > width - 2`.
 - **`pipeline.test.ts`** (~10 tests): stage order verified against the pipeline array; `dependsOn` mismatch throws at boot; FitError triggers expand; non-FitError propagates unmodified; expansion cap hit → clear error on first no-change; custom tier does not expand; `previewWorld`-style invocation does not persist; final `GenResult` shape complete; logs emitted at each boundary; `expandedDims` never leaks into `cfg.overrides`.
 
 ### 11.2 Property-based tests
@@ -630,23 +671,27 @@ All retries log at `warn`. Pipeline start/end log at `info` with seed, timing, f
 Extend `server/__tests__/setup.test.ts` (or add `setupInitialize.test.ts`): calling `initialize` twice with same `worldgen.seed` produces identical **locations-table rows** (name, type, position, entry_point per row).
 
 **Caveats the test must acknowledge:**
-- Other tables (`needs`, `economy`) contain values derived from `Math.random()` in `seedWorld` (see setup.ts lines 289-320). Those rows remain non-deterministic by design and are excluded from the equality assertion.
-- `worldState.last_tick_completed = Date.now()` — also excluded.
-- The assertion scope is specifically `locations` and `worldState.{map_width, map_height, collision_grid, setup_config.worldgen.seed}`.
+- `needs` and `economy` tables contain values derived from `Math.random()` in `seedWorld` (see setup.ts lines 289-320). Those rows remain non-deterministic by design and are excluded.
+- `worldState.last_tick_completed = Date.now()` — excluded.
+- `activityLog` rows include a `created_at` timestamp from `Date.now()` via `logActivity` — excluded. Row content (templateData) is deterministic.
+- `homes` stage `description` is drawn via `rng.pick(HOME_DESCRIPTIONS)`. Deterministic per seed. Note: current code at `maps.ts:396` uses `HOME_DESCRIPTIONS[i % HOME_DESCRIPTIONS.length]` — spec's `rng.pick` can repeat descriptions across homes when `homeCount > HOME_DESCRIPTIONS.length` (15). Minor cosmetic drift; not tested.
+- **Assertion scope**: `locations` table (all fields including position, entry_point) and `worldState.{map_width, map_height, collision_grid, setup_config.worldgen.seed}`.
 
 ### 11.4 Existing tests
 
-Existing test suite remains green. Affected files verified unchanged:
-- `interiorGrid.test.ts` — unchanged (grids come from `INTERIOR_GRIDS` via stub stage).
-- `pathfindingCost.test.ts` — unchanged.
-- `setupGenerator.test.ts` — unchanged (drama generator independent).
+Existing test suite remains green. Verified (via Grep in `server/__tests__/` and `server/lib/__tests__/`):
+- `server/__tests__/interiorGrid.test.ts` — unchanged (grids come from `INTERIOR_GRIDS` via stub stage).
+- `server/__tests__/pathfindingCost.test.ts` — unchanged (dimensions pulled from `worldState` as before).
+- `server/lib/__tests__/setupGenerator.test.ts` — unchanged (drama generator independent).
+
+The implementation plan must run the full vitest suite after each milestone and halt if any pre-existing test breaks.
 
 ### 11.5 Manual QA
 
 1. Wizard → Size=Auto, seed blank → preview renders → Regenerate → layout changes.
 2. Type seed `hello` → Regenerate → specific layout. Full page refresh + same seed input → identical layout on next Regenerate.
 3. Size=Custom with 200×200 → preview renders large; auto-expand does not apply (verify by setting tiny `customDimensions` at a count that doesn't fit — should see hard abort with clear error).
-4. Size=Small + 30 agents → FitError auto-expand → succeeds at larger-than-small dimensions; warning in console.
+4. Size=Auto + 30 agents → formula produces ~84×59; layout stub fits without expand. Size=Auto + 50 agents → formula hits MAX cap; if homes stage can't fit, auto-expand no-ops (cap reached) → error surfaces. Size=Custom 48×37 + 30 agents → homes stage FitError → no expansion (custom) → hard abort with clear "dimensions cap reached" error.
 5. `initialize` → `restart` → identical world. `resetToWizard` → different world possible on next initialize.
 6. Load a pre-Phase-1 saved world → confirm one-time layout shift on first restart (§5.5).
 
