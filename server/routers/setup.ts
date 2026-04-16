@@ -40,6 +40,8 @@ import { planCache, planLLMQueue, replanEvaluator } from '../lib/planning/instan
 import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
 import { perceptionSystem } from '../lib/perception/instance';
 import { emitter } from '../engine/emitter';
+import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
+import { generateWorld } from '../lib/worldgen';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -115,6 +117,10 @@ const SetupConfigSchema = z.object({
   relationships: z.array(RelationshipConfigSchema),
   world: WorldConfigSchema,
   rules: RulesConfigSchema,
+  worldgen: WorldGenConfigObjectSchema.default({
+    sizeTier: 'auto',
+    overrides: {},
+  }),
 });
 
 // ─── Table reset order (reverse-dependency) ───────────────────────────────────
@@ -230,10 +236,16 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       ? { type: 'working', taskDescription: 'daily work' }
       : { type: 'idle' };
 
-    // Derive sprite names from agent name (fallback to generic)
-    const nameSlug = agentCfg.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const spriteSheet = `sprites/${nameSlug}.png`;
-    const portraitSprite = `portraits/${nameSlug}.png`;
+    // Prefer seed-defined sprite keys (match files in public/sprites/agents/).
+    // Fallback: bare slug from name (strip non-alphanum, collapse repeats).
+    const seedMatch = AGENT_SEEDS.find(s => s.name === agentCfg.name);
+    const fallbackSlug = agentCfg.name
+      .toLowerCase()
+      .replace(/^dr\.?\s+/, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    const spriteSheet = seedMatch?.spriteSheet ?? fallbackSlug;
+    const portraitSprite = seedMatch?.portraitSprite ?? `${fallbackSlug}_portrait`;
 
     const inserted = db
       .insert(agents)
