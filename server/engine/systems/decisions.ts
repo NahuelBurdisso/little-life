@@ -71,8 +71,19 @@ function isActionComplete(agent: AgentRow, totalTicks: number): boolean {
     return agent.current_destination === null;
   }
 
-  // Talking agents wait for conversation system to end the conversation
-  if (actionType === 'talking') return false;
+  // Talking agents wait for conversation system to end — UNLESS needs are critical.
+  // An agent with hunger or energy below the emergency threshold should bail out
+  // of a conversation so the decision system can trigger an emergency override.
+  if (actionType === 'talking') {
+    const agentNeeds = db.select().from(needs).where(eq(needs.agent_id, agent.id)).get();
+    if (agentNeeds) {
+      const critical = CONFIG.NEEDS.THRESHOLDS.critical;
+      if (agentNeeds.hunger < critical || agentNeeds.energy < critical) {
+        return true; // interrupt conversation for emergency
+      }
+    }
+    return false;
+  }
 
   // Idle with no duration = needs reassignment
   if (actionType === 'idle' && agent.action_duration === null) return true;
@@ -567,6 +578,19 @@ function scoreFreeTimeActions(
         if (s.action === 'shopping') s.score *= 1.3;
       }
     }
+  }
+
+  // --- Distance penalty ---
+  // Agents prefer nearby locations. Score decays with distance so that a location
+  // 20 tiles away scores ~50% of an identical location right next to the agent.
+  // Home and workplace are exempt (agents commit to the commute).
+  const DISTANCE_HALF_LIFE_PX = 20 * 32; // 20 tiles in pixels
+  for (const s of scores) {
+    if (s.targetLocationId === agent.home || s.targetLocationId === agent.workplace) continue;
+    const targetLoc = allLocations.find((l) => l.id === s.targetLocationId);
+    if (!targetLoc) continue;
+    const d = distance(agent.position, targetLoc.entry_point);
+    s.score *= DISTANCE_HALF_LIFE_PX / (DISTANCE_HALF_LIFE_PX + d);
   }
 
   return scores;
