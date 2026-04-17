@@ -1,3 +1,5 @@
+import { ENCLOSED_BUILDING_TYPES } from '../lib/worldgen/buildingTemplates';
+
 export const DEFAULT_MAP_WIDTH = 60;
 export const DEFAULT_MAP_HEIGHT = 45;
 export const TILE_SIZE = 32;
@@ -287,7 +289,7 @@ function generateCollisionGrid(): string {
     }
   }
 
-  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison', 'pawnshop', 'divebar']);
+  const BUILDING_TYPES = ENCLOSED_BUILDING_TYPES;
 
   for (const loc of MAP_LOCATIONS) {
     const tileX = Math.floor(loc.x / TILE_SIZE);
@@ -423,7 +425,7 @@ export function generateCollisionGridForLocations(
     }
   }
 
-  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison', 'pawnshop', 'divebar']);
+  const BUILDING_TYPES = ENCLOSED_BUILDING_TYPES;
 
   for (const loc of locs) {
     const tileX = Math.floor(loc.x / TILE_SIZE);

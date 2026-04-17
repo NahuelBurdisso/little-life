@@ -1,9 +1,6 @@
-const TILE_SIZE = 32;
+import { ENCLOSED_BUILDING_TYPES } from './buildingTemplates';
 
-const BUILDING_TYPES = new Set([
-  'home', 'shop', 'tavern', 'clinic', 'town_hall',
-  'bakery', 'workshop', 'prison', 'pawnshop', 'divebar',
-]);
+const TILE_SIZE = 32;
 
 interface CollisionLoc {
   x: number;
@@ -38,7 +35,7 @@ export function generateCollisionGridForLocations(
     const tileW = Math.ceil(loc.width / TILE_SIZE);
     const tileH = Math.ceil(loc.height / TILE_SIZE);
 
-    if (BUILDING_TYPES.has(loc.type)) {
+    if (ENCLOSED_BUILDING_TYPES.has(loc.type)) {
       for (let x = tileX; x < tileX + tileW; x++) {
         for (let y = tileY; y < tileY + tileH; y++) {
           if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) continue;

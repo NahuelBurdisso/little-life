@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { BUILDING_COLORS as TEMPLATE_COLORS } from '../../../server/lib/worldgen/buildingTemplates';
 
 interface GenLocation {
   name: string;
@@ -25,21 +26,6 @@ const BG = '#2d2a24';
 const HOME_COLOR = '#6b5b45';
 const HOME_LABEL = '#a09070';
 const DOOR_COLOR = '#c8a84b';
-const BUILDING_COLORS: Record<string, string> = {
-  shop: '#5a5040',
-  tavern: '#7a4f35',
-  clinic: '#d8e8e0',
-  town_hall: '#7a6a4a',
-  bakery: '#6B5B4A',
-  workshop: '#4a4a42',
-  prison: '#6A6A6A',
-  farm: '#6b7c3a',
-  park: '#4a6b3a',
-  town_square: '#8a7a5a',
-  pawnshop: '#5a4a3a',
-  divebar: '#6a3a2a',
-};
-
 /** Outdoor location types — rendered as semi-transparent overlays, not solid blocks */
 const OUTDOOR_TYPES = new Set(['mainstreet', 'alley', 'farmyard', 'market_square']);
 
@@ -121,7 +107,7 @@ export function WorldPreview({ result, size = { width: 320, height: 240 } }: Wor
         continue;
       }
 
-      ctx.fillStyle = isHome ? HOME_COLOR : (BUILDING_COLORS[loc.type] ?? '#4a3f2e');
+      ctx.fillStyle = isHome ? HOME_COLOR : (TEMPLATE_COLORS[loc.type] ?? '#4a3f2e');
       ctx.fillRect(
         toCanvasX(loc.position.x),
         toCanvasY(loc.position.y),

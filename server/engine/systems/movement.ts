@@ -11,6 +11,7 @@ import { simEvents } from '../../lib/simEvents';
 import { getInteriorGrid, zoneOccupancy, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
 import { INTERIOR_ZONES, type ZoneDef } from '../../data/interiors';
 import { executeZoneAction } from './zoneActions';
+import { OPEN_AREA_TYPES } from '../../lib/worldgen/buildingTemplates';
 
 // --- Types ---
 
@@ -113,8 +114,6 @@ function findContainingLocation(
 function getMinDuration(actionType: string): number {
   return CONFIG.DECISIONS.ACTION_MIN_DURATIONS[actionType] ?? 10;
 }
-
-const OPEN_AREA_TYPES = new Set(['farm', 'town_square', 'park']);
 
 function isClosedBuilding(locType: string): boolean {
   return !OPEN_AREA_TYPES.has(locType);

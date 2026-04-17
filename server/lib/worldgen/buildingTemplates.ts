@@ -13,6 +13,10 @@ export interface BuildingTemplate {
   furniture: Array<{ offsetX: number; offsetY: number; key: string }>;
   description: string;
   zoneWeights: Record<string, number>;
+  /** Enclosed buildings have walls + interior grids. Open-area buildings (farm, park, town_square) are walkable. */
+  enclosed: boolean;
+  /** Hex color for map preview rendering. */
+  color: string;
 }
 
 const TILE = 32;
@@ -35,6 +39,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: "The town's main shop, well-stocked and tidy. Rosa runs a tight operation with Lucia's help.",
     zoneWeights: { commercial: 5, mainStreet: 4, civic: 1 },
+    enclosed: true,
+    color: '#5a5040',
   },
   {
     id: 'tavern',
@@ -53,6 +59,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'A cozy tavern where locals gather every evening. Marco serves drinks behind a weathered oak bar while Diego plays in the corner.',
     zoneWeights: { commercial: 4, mainStreet: 5, civic: 1 },
+    enclosed: true,
+    color: '#7a4f35',
   },
   {
     id: 'clinic',
@@ -69,6 +77,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'A small but well-equipped medical clinic. Sofia and Omar keep the town healthy, one patient at a time.',
     zoneWeights: { commercial: 4, mainStreet: 3, civic: 3 },
+    enclosed: true,
+    color: '#d8e8e0',
   },
   {
     id: 'town_hall',
@@ -83,6 +93,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'The center of town governance, with a bell tower visible from anywhere. Mayor Park holds meetings here every morning.',
     zoneWeights: { civic: 5, commercial: 2, residential: 1 },
+    enclosed: true,
+    color: '#7a6a4a',
   },
   {
     id: 'town_square',
@@ -100,6 +112,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'The heart of Little Life, where everyone meets under the old oak tree. A fountain sits in the center.',
     zoneWeights: { civic: 4, commercial: 3, mainStreet: 3 },
+    enclosed: false,
+    color: '#8a7a5a',
   },
   {
     id: 'farm',
@@ -114,6 +128,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: "The town's main source of food, with fields stretching to the river. Elena and James work the land from dawn to dusk.",
     zoneWeights: { residential: 4, civic: 3, commercial: 0 },
+    enclosed: false,
+    color: '#6b7c3a',
   },
   {
     id: 'park',
@@ -131,6 +147,8 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'A peaceful park by the river with old willow trees and a stone bridge.',
     zoneWeights: { civic: 4, residential: 3, commercial: 1 },
+    enclosed: false,
+    color: '#4a6b3a',
   },
 ];
 
@@ -152,6 +170,8 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A warm bakery that fills the street with the smell of fresh bread every morning. Priya is here before dawn.',
     zoneWeights: { commercial: 4, mainStreet: 5, residential: 2 },
+    enclosed: true,
+    color: '#6B5B4A',
   },
   {
     id: 'workshop',
@@ -166,6 +186,8 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A chaotic but functional workshop filled with tools, half-finished repairs, and sawdust. Carlos fixes everything here.',
     zoneWeights: { commercial: 4, residential: 3, civic: 1 },
+    enclosed: true,
+    color: '#4a4a42',
   },
   {
     id: 'prison',
@@ -180,6 +202,8 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A small stone jail behind the tavern. Rarely used, but the cells are always ready. The constable has the key.',
     zoneWeights: { civic: 4, commercial: 2, residential: 0 },
+    enclosed: true,
+    color: '#6A6A6A',
   },
   {
     id: 'pawnshop',
@@ -196,6 +220,8 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: "A dusty shop packed with odds and ends. You never know what you'll find — or who sold it.",
     zoneWeights: { commercial: 5, mainStreet: 3, civic: 0 },
+    enclosed: true,
+    color: '#5a4a3a',
   },
   {
     id: 'divebar',
@@ -213,8 +239,29 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A dimly lit bar at the edge of town. No frills, no judgment — just cheap drinks and loud music.',
     zoneWeights: { commercial: 5, mainStreet: 2, residential: 1 },
+    enclosed: true,
+    color: '#6a3a2a',
   },
 ];
+
+// ─── Derived sets — single source of truth for type classification ───────────
+
+/** Types that generate collision tiles (walls block pathfinding). Includes 'home'. */
+export const ENCLOSED_BUILDING_TYPES: ReadonlySet<string> = new Set([
+  'home',
+  ...CORE.filter((t) => t.enclosed).map((t) => t.type),
+  ...OPTIONAL.filter((t) => t.enclosed).map((t) => t.type),
+]);
+
+/** Types that are walkable open areas (farm, park, town_square) — no interior A*. */
+export const OPEN_AREA_TYPES: ReadonlySet<string> = new Set(
+  [...CORE, ...OPTIONAL].filter((t) => !t.enclosed).map((t) => t.type),
+);
+
+/** Type → hex color map for preview/rendering. */
+export const BUILDING_COLORS: Readonly<Record<string, string>> = Object.fromEntries(
+  [...CORE, ...OPTIONAL].map((t) => [t.type, t.color]),
+);
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
 

@@ -4,8 +4,7 @@ import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getTerrainTexture } from "./textures";
 
-/** Open-area location types whose interior zones should show as floor textures */
-const OPEN_AREA_TYPES = new Set(["farm", "park", "town_square"]);
+import { OPEN_AREA_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
 
 /** Map zone ids to terrain texture keys. Falls back to colored fill when unmapped. */
 const ZONE_TEXTURE: Record<string, string> = {

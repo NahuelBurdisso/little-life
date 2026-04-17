@@ -31,8 +31,7 @@ export interface LocationData {
   current_occupants: number[];
 }
 
-/** Open-area types that get a transparent patch instead of walls + roof. */
-const OPEN_AREA_TYPES = new Set(["farm", "town_square", "park"]);
+import { OPEN_AREA_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
 
 const OPEN_AREA_COLORS: Record<string, number> = {
   farm: 0x6b7c3a,
