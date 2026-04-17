@@ -29,6 +29,22 @@ describe('property: generateWorld invariants', () => {
             expect(overlap).toBe(false);
           }
         }
+
+        // Roads exist in result
+        expect(r.roads.length).toBeGreaterThan(0);
+
+        // All public buildings have valid entry points (south-centered)
+        const publicBuildings = r.locations.filter((l) => l.type !== 'home');
+        for (const b of publicBuildings) {
+          // Skip outdoor locations (they have different position semantics)
+          if (['market_square', 'mainstreet', 'alley', 'farmyard'].includes(b.type)) continue;
+          expect(b.entry_point.x).toBe(b.position.x + b.position.width / 2);
+          expect(b.entry_point.y).toBe(b.position.y + b.position.height);
+        }
+
+        // Determinism: same seed → same positions
+        const r2 = generateWorld({ sizeTier: 'auto', overrides: {}, seed }, n);
+        expect(r.locations.map((l) => l.position)).toEqual(r2.locations.map((l) => l.position));
       }
     });
   }
