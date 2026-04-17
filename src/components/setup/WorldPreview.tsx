@@ -36,7 +36,12 @@ const BUILDING_COLORS: Record<string, string> = {
   farm: '#6b7c3a',
   park: '#4a6b3a',
   town_square: '#8a7a5a',
+  pawnshop: '#5a4a3a',
+  divebar: '#6a3a2a',
 };
+
+/** Outdoor location types — rendered as semi-transparent overlays, not solid blocks */
+const OUTDOOR_TYPES = new Set(['mainstreet', 'alley', 'farmyard', 'market_square']);
 
 export function WorldPreview({ result, size = { width: 320, height: 240 } }: WorldPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -95,9 +100,27 @@ export function WorldPreview({ result, size = { width: 320, height: 240 } }: Wor
       }
     }
 
-    // Buildings.
+    // Buildings + outdoor locations.
     for (const loc of result.locations) {
       const isHome = loc.type === 'home';
+      const isOutdoor = OUTDOOR_TYPES.has(loc.type);
+
+      if (isOutdoor) {
+        // Outdoor locations: subtle dashed outline, no solid fill
+        ctx.globalAlpha = 0.4;
+        ctx.strokeStyle = '#8a7a5a';
+        ctx.setLineDash([2, 2]);
+        ctx.strokeRect(
+          toCanvasX(loc.position.x),
+          toCanvasY(loc.position.y),
+          loc.position.width * scale,
+          loc.position.height * scale,
+        );
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1.0;
+        continue;
+      }
+
       ctx.fillStyle = isHome ? HOME_COLOR : (BUILDING_COLORS[loc.type] ?? '#4a3f2e');
       ctx.fillRect(
         toCanvasX(loc.position.x),
