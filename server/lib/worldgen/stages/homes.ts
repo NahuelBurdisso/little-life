@@ -20,7 +20,7 @@ const HOME_SERVICES = [
 
 export const homesStage: Stage<{ homes: LocationSeed[] }> = {
   name: 'homes',
-  dependsOn: ['dimensions', 'publicBuildings'],
+  dependsOn: ['dimensions', 'roads', 'publicBuildings'],
   needsAgents: true,
   run(ctx, rng, cfg, agentCount, extras) {
     if (!ctx.dimensions || !ctx.publicBuildings) {
@@ -40,6 +40,8 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
     const homeCount = Math.max(halfAgents, maxReferenced);
     if (homeCount === 0) return { homes: [] };
 
+    const roadTiles = ctx.roads?.tiles ?? [];
+
     // --- Override path ---
     if (cfg.overrides?.homePositions) {
       const pinned = cfg.overrides.homePositions;
@@ -48,7 +50,7 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
           `override length ${pinned.length} does not match homeCount ${homeCount}`);
       }
       // Validate each pin fits.
-      const blocked = buildBlockedMask(ctx.publicBuildings, width, height);
+      const blocked = buildBlockedMask(ctx.publicBuildings, roadTiles, width, height);
       for (const p of pinned) {
         if (!pinFits(p, blocked, width, height)) {
           throw new FitError('homes',
@@ -59,7 +61,7 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
     }
 
     // --- Normal path: enumerate candidates → shuffle → greedy pick ---
-    const blocked = buildBlockedMask(ctx.publicBuildings, width, height);
+    const blocked = buildBlockedMask(ctx.publicBuildings, roadTiles, width, height);
     const candidates: Array<{ tx: number; ty: number }> = [];
     for (let ty = 1; ty + HOME_TILES <= height - 1; ty++) {
       for (let tx = 1; tx + HOME_TILES <= width - 1; tx++) {
@@ -94,6 +96,7 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
 
 function buildBlockedMask(
   publicBuildings: LocationSeed[],
+  roadTiles: Array<{ x: number; y: number }>,
   width: number,
   height: number,
 ): boolean[] {
@@ -106,6 +109,17 @@ function buildBlockedMask(
   for (let y = 0; y < height; y++) {
     mask[y * width] = true;
     mask[y * width + (width - 1)] = true;
+  }
+  // Road tiles + 1-tile buffer (consistent with building↔road spacing rule)
+  for (const t of roadTiles) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = t.x + dx, ny = t.y + dy;
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          mask[ny * width + nx] = true;
+        }
+      }
+    }
   }
   // Public buildings + 2-tile buffer.
   for (const loc of publicBuildings) {
