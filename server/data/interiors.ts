@@ -41,62 +41,75 @@ export type BuildingZone = ZoneDef;
 // 0=floor  1=wall  2=furniture  3=door
 // ---------------------------------------------------------------------------
 
+// All buildings in maps.ts have entry_point.y = building.y + height → world
+// door is on the SOUTH edge. Interior grids must put their door cell (3) on
+// the bottom row at the column matching the entry_point's relative offset,
+// otherwise agents walk through the south wall when entering/exiting.
+//
+// Entry column = floor((entryX - building.x) / TILE_SIZE):
+//   shop (x=352, entryX=432) → col 2
+//   tavern (x=1088, entryX=1184) → col 3
+//   clinic (x=1376, entryX=1456) → col 2
+//   bakery (x=96, entryX=176) → col 2
+//   workshop (x=96, entryX=176) → col 2
+//   town_hall (x=352, entryX=448) → col 3
+//   prison (x=1088, entryX=1168) → col 2
 export const INTERIOR_GRIDS: Record<string, number[][]> = {
-  // Shop — 5w × 4h
+  // Shop — 5w × 4h, door at row 3 col 2
   shop: [
-    [1, 1, 3, 1, 1],
+    [1, 1, 1, 1, 1],
     [1, 2, 0, 2, 1],
     [1, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1],
+    [1, 1, 3, 1, 1],
   ],
 
-  // Tavern — 6w × 4h
+  // Tavern — 6w × 4h, door at row 3 col 3
   tavern: [
-    [1, 1, 3, 1, 1, 1],
+    [1, 1, 1, 1, 1, 1],
     [1, 2, 0, 0, 2, 1],
     [1, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1, 1],
+    [1, 1, 1, 3, 1, 1],
   ],
 
-  // Clinic — 5w × 4h
+  // Clinic — 5w × 4h, door at row 3 col 2
   clinic: [
-    [1, 1, 3, 1, 1],
+    [1, 1, 1, 1, 1],
     [1, 2, 0, 0, 1],
     [1, 0, 0, 2, 1],
-    [1, 1, 1, 1, 1],
+    [1, 1, 3, 1, 1],
   ],
 
-  // Bakery — 5w × 4h
+  // Bakery — 5w × 4h, door at row 3 col 2
   bakery: [
-    [1, 1, 3, 1, 1],
+    [1, 1, 1, 1, 1],
     [1, 2, 0, 2, 1],
     [1, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1],
+    [1, 1, 3, 1, 1],
   ],
 
-  // Workshop — 5w × 4h
+  // Workshop — 5w × 4h, door at row 3 col 2
   workshop: [
-    [1, 1, 3, 1, 1],
+    [1, 1, 1, 1, 1],
     [1, 2, 0, 2, 1],
     [1, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1],
+    [1, 1, 3, 1, 1],
   ],
 
-  // Town Hall — 6w × 5h
+  // Town Hall — 6w × 5h, door at row 4 col 3
   town_hall: [
-    [1, 1, 3, 1, 1, 1],
+    [1, 1, 1, 1, 1, 1],
     [1, 2, 0, 0, 0, 1],
     [1, 0, 0, 0, 2, 1],
     [1, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1, 1],
+    [1, 1, 1, 3, 1, 1],
   ],
 
-  // Prison — 5w × 4h
+  // Prison — 5w × 4h, door at row 3 col 2
   prison: [
-    [1, 1, 3, 1, 1],
+    [1, 1, 1, 1, 1],
     [1, 2, 0, 2, 1],
     [1, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1],
+    [1, 1, 3, 1, 1],
   ],
 };
 
@@ -105,6 +118,7 @@ export const INTERIOR_GRIDS: Record<string, number[][]> = {
 // ---------------------------------------------------------------------------
 
 export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
+  // Homes are 3×3 tiles (96px square). Zone tiles must stay within cols 0..2.
   home: [
     {
       id: 'bed',
@@ -123,7 +137,7 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       id: 'kitchen',
       name: 'Kitchen',
       label: 'Kitchen',
-      tiles: [[2, 0], [3, 0]],
+      tiles: [[2, 0]],
       center: [2, 0],
       maxOccupants: 2,
       color: 0x8B6B3D,
@@ -136,7 +150,7 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       id: 'living',
       name: 'Living',
       label: 'Living Room',
-      tiles: [[0, 1], [1, 1], [2, 1], [3, 1]],
+      tiles: [[0, 1], [1, 1], [2, 1]],
       center: [1, 1],
       maxOccupants: 4,
       color: 0x5C4033,

@@ -1,6 +1,15 @@
 import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
+import { getFurnitureTexture } from "./textures";
+
+const TILE_SIZE = 32;
+
+/** Map furniture labels to furniture sprite keys. Unlisted labels stay text-only. */
+const FURNITURE_SPRITE: Record<string, string> = {
+  'Bed': 'bed',
+  'Patient Bed': 'bed',
+};
 
 const FLOOR_MATERIALS: Record<string, number> = {
   home: 0x6b5b45,
@@ -121,13 +130,13 @@ export class BuildingRenderer {
     const walls = new PIXI.Graphics();
     walls.rect(x, y, width, height).fill({ color: floorColor, alpha: 1.0 });
 
-    // Outer wall stroke (3px, drawn after fill)
+    // Fallback wall stroke — shown while sprite textures load, also a safety net.
     walls.rect(x, y, width, height).stroke({ width: 3, color: 0x4a3f2e });
 
     // Inner shadow — dark border just inside wall bounds
     walls.rect(x + 2, y + 2, width - 4, height - 4).stroke({ color: 0x1a1510, width: 1, alpha: 0.6 });
 
-    // Door — a small brown rectangle centered on the entry point edge
+    // Fallback door rect — shown while sprite loads.
     const doorW = 12;
     const doorH = 8;
     const ex = loc.entry_point.x;
@@ -159,14 +168,35 @@ export class BuildingRenderer {
       interiorContainer.addChild(zoneLabel);
     }
 
-    // Furniture labels
+    // Furniture labels + sprites
     for (const zone of zones) {
       if ((zone as any).furniture) {
         const furn = (zone as any).furniture as { label: string; tile: [number, number] };
+
+        // Sprite for mapped furniture labels (bed, patient bed) — loaded async.
+        const spriteKey = FURNITURE_SPRITE[furn.label];
+        if (spriteKey) {
+          const px = x + furn.tile[0] * TILE_SIZE;
+          const py = y + furn.tile[1] * TILE_SIZE;
+          getFurnitureTexture(spriteKey)
+            ?.then((texture) => {
+              if (interiorContainer.destroyed) return;
+              const sprite = new PIXI.Sprite(texture);
+              sprite.x = px;
+              sprite.y = py;
+              sprite.width = TILE_SIZE;
+              sprite.height = TILE_SIZE;
+              interiorContainer.addChild(sprite);
+            })
+            .catch(() => {
+              // No-op — label stays as-is.
+            });
+        }
+
         const furnText = new PIXI.Text({ text: furn.label, style: FURNITURE_STYLE });
         furnText.anchor.set(0.5, 0.5);
-        furnText.x = x + furn.tile[0] * 32 + 16;
-        furnText.y = y + furn.tile[1] * 32 + 16;
+        furnText.x = x + furn.tile[0] * TILE_SIZE + TILE_SIZE / 2;
+        furnText.y = y + furn.tile[1] * TILE_SIZE + TILE_SIZE / 2;
         furnText.alpha = 0.6;
         interiorContainer.addChild(furnText);
       }

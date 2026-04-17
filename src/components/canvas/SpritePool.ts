@@ -5,6 +5,7 @@ export interface AgentData {
   id: number;
   name: string;
   position: { x: number; y: number };
+  sprite_sheet?: string;
   current_action?: { type?: string } | string;
   current_location?: number | null;
   needs?: {
@@ -45,7 +46,7 @@ export class SpritePool {
 
       let sprite = this.sprites.get(id);
       if (!sprite) {
-        sprite = new AgentSprite(agent.name ?? "Agent");
+        sprite = new AgentSprite(agent.name ?? "Agent", agent.sprite_sheet);
         sprite.setPositionImmediate(px, py);
         this.sprites.set(id, sprite);
         this.container.addChild(sprite.container);

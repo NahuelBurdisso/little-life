@@ -1,8 +1,14 @@
+import { useState } from "react";
 import { getAgentColor } from "../../lib/spriteConfig";
 import { formatMood } from "../../lib/formatters";
 
 interface AgentPortraitProps {
-  agent: { name: string; age: number; portraitSprite?: string };
+  agent: {
+    name: string;
+    age: number;
+    portraitSprite?: string;
+    portrait_sprite?: string;
+  };
   economy: { job_title: string } | null;
   mood?: number;
   size?: number;
@@ -17,30 +23,52 @@ function moodEmoji(mood: number): string {
 }
 
 export function AgentPortrait({ agent, economy, mood, size = 48 }: AgentPortraitProps) {
+  const [imgError, setImgError] = useState(false);
   const color = getAgentColor(agent.name);
   const hexColor = "#" + color.toString(16).padStart(6, "0");
   const letter = agent.name.charAt(0).toUpperCase();
 
+  const spriteKey = agent.portrait_sprite ?? agent.portraitSprite;
+  const spriteSrc = spriteKey ? `/sprites/agents/${spriteKey}.png` : null;
+
   return (
     <div className="flex items-center gap-3">
-      <div
-        style={{
-          width: size,
-          height: size,
-          borderRadius: "50%",
-          backgroundColor: hexColor,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: size * 0.45,
-          fontWeight: "bold",
-          color: "white",
-          fontFamily: "monospace",
-          flexShrink: 0,
-        }}
-      >
-        {letter}
-      </div>
+      {spriteSrc && !imgError ? (
+        <img
+          src={spriteSrc}
+          alt={agent.name}
+          width={size}
+          height={size}
+          onError={() => setImgError(true)}
+          style={{
+            width: size,
+            height: size,
+            imageRendering: "pixelated",
+            flexShrink: 0,
+            border: "1px solid #3d3a2e",
+            backgroundColor: "#1a1814",
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            width: size,
+            height: size,
+            borderRadius: "50%",
+            backgroundColor: hexColor,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: size * 0.45,
+            fontWeight: "bold",
+            color: "white",
+            fontFamily: "monospace",
+            flexShrink: 0,
+          }}
+        >
+          {letter}
+        </div>
+      )}
       <div>
         <div className="font-bold text-white">{agent.name}</div>
         <div className="text-sm text-gray-400">

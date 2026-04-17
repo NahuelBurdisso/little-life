@@ -87,11 +87,11 @@ describe('gridToCollisionString', () => {
     expect(result.length).toBe(5 * 4);
   });
 
-  it('shop grid door tile (col=2, row=0) maps to walkable', () => {
+  it('shop grid door tile (col=2, row=3, south edge) maps to walkable', () => {
     const grid = INTERIOR_GRIDS.shop;
     const result = gridToCollisionString(grid);
-    // row 0, col 2 → index 2
-    expect(result[2]).toBe('0');
+    // row 3, col 2 → index 3*5 + 2 = 17
+    expect(result[17]).toBe('0');
   });
 
   it('shop grid wall tiles map to blocked', () => {
@@ -129,9 +129,28 @@ describe('getInteriorGrid', () => {
     expect(info!.raw).toBe(INTERIOR_GRIDS.shop);
   });
 
-  it('shop doorTile is at [col=2, row=0]', () => {
+  it('shop doorTile is at [col=2, row=3] (south edge, matching world entry)', () => {
     const info = getInteriorGrid('shop')!;
-    expect(info.doorTile).toEqual([2, 0]);
+    expect(info.doorTile).toEqual([2, 3]);
+  });
+
+  it('every closed-building grid has its door on the south edge (last row)', () => {
+    const closedTypes = ['shop', 'tavern', 'clinic', 'bakery', 'workshop', 'town_hall', 'prison'];
+    for (const type of closedTypes) {
+      const info = getInteriorGrid(type)!;
+      expect(info.doorTile[1], `${type} door must be on last row`).toBe(info.height - 1);
+    }
+  });
+
+  it('door column matches each building entry_point offset', () => {
+    // Derived from server/data/maps.ts entry_point - building.x
+    const expected: Record<string, number> = {
+      shop: 2, tavern: 3, clinic: 2, bakery: 2, workshop: 2, town_hall: 3, prison: 2,
+    };
+    for (const [type, col] of Object.entries(expected)) {
+      const info = getInteriorGrid(type)!;
+      expect(info.doorTile[0], `${type} door col`).toBe(col);
+    }
   });
 
   it('caches results — same object reference on second call', () => {
