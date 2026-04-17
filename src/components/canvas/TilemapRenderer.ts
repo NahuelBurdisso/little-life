@@ -25,6 +25,7 @@ export class TilemapRenderer {
 
   private labelContainer: PIXI.Container;
   private occupancyContainer: PIXI.Container;
+  private terrainContainer: PIXI.Container;
   private roadContainer: PIXI.Container;
   private openAreaContainer: PIXI.Container;
 
@@ -41,12 +42,16 @@ export class TilemapRenderer {
     this.container = new PIXI.Container();
     this.labelContainer = new PIXI.Container();
     this.occupancyContainer = new PIXI.Container();
+    this.terrainContainer = new PIXI.Container();
+    this.terrainContainer.eventMode = 'none';
     this.roadContainer = new PIXI.Container();
     this.roadContainer.eventMode = 'none';
     this.openAreaContainer = new PIXI.Container();
     this.openAreaContainer.eventMode = 'none';
 
-    // Road tiles sit above grass bg but below open-area zones
+    // Terrain scatter sits above grass bg but below roads
+    this.container.addChild(this.terrainContainer);
+    // Road tiles sit above terrain but below open-area zones
     this.container.addChild(this.roadContainer);
     // Open-area zone patches sit above roads but below BuildingRenderer output
     this.container.addChild(this.openAreaContainer);
@@ -181,6 +186,36 @@ export class TilemapRenderer {
       .catch(() => {
         // Fallback stays.
       });
+  }
+
+  /**
+   * Draw terrain variety tiles (dirt patches, flowers, tall grass) as colored overlays.
+   * Idempotent — re-running replaces prior terrain graphics.
+   */
+  setTerrainTiles(tiles: Array<{ x: number; y: number; kind: string }>): void {
+    for (const child of this.terrainContainer.children) child.destroy();
+    this.terrainContainer.removeChildren();
+
+    if (!Array.isArray(tiles) || tiles.length === 0) return;
+
+    const g = new PIXI.Graphics();
+    for (const tile of tiles) {
+      const px = tile.x * TILE_SIZE;
+      const py = tile.y * TILE_SIZE;
+
+      if (tile.kind === 'flowers') {
+        // Small pink dots at tile center for a subtle flower look
+        g.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x3a5a2a, alpha: 0.15 });
+        g.circle(px + TILE_SIZE / 2 - 4, py + TILE_SIZE / 2 - 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
+        g.circle(px + TILE_SIZE / 2 + 4, py + TILE_SIZE / 2 + 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
+        g.circle(px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 5, 2.5).fill({ color: 0xd98aaa, alpha: 0.3 });
+      } else if (tile.kind === 'tall_grass') {
+        g.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x3a5a2a, alpha: 0.3 });
+      } else if (tile.kind === 'dirt_patch') {
+        g.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x5a4a2e, alpha: 0.4 });
+      }
+    }
+    this.terrainContainer.addChild(g);
   }
 
   updateOccupancy(agents: any[], locations: any[]): void {

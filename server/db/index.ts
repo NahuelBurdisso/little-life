@@ -49,6 +49,7 @@ function migrateSchema() {
 
   // World state extensions
   addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
+  addColumnIfMissing('world_state', 'terrain_tiles', 'TEXT', "'[]'");
 
   // Backfill existing goals with description = type
   sqlite.exec(`UPDATE goals SET description = type WHERE description IS NULL`);

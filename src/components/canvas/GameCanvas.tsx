@@ -233,6 +233,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     if (tilemapRef.current && locations) {
       tilemapRef.current.updateOccupancy(agents, locations);
       tilemapRef.current.setOpenAreaZones(locations);
+      tilemapRef.current.setTerrainTiles(world?.terrain_tiles ?? []);
       tilemapRef.current.setRoadTiles(world?.road_tiles ?? []);
     }
 

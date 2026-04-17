@@ -12,6 +12,7 @@ interface GenResultLite {
   dimensions: { width: number; height: number };
   locations: GenLocation[];
   roads?: Array<{ x: number; y: number }>;
+  terrainTiles?: Array<{ x: number; y: number; kind: string }>;
 }
 
 interface WorldPreviewProps {
@@ -70,6 +71,16 @@ export function WorldPreview({ result, size = { width: 320, height: 240 } }: Wor
     // Map frame.
     ctx.strokeStyle = '#3d3a2e';
     ctx.strokeRect(offsetX, offsetY, worldW * scale, worldH * scale);
+
+    // Terrain scatter
+    if (result.terrainTiles) {
+      for (const tile of result.terrainTiles) {
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = tile.kind === 'flowers' ? '#c75a8a' : tile.kind === 'tall_grass' ? '#3a5a2a' : '#5a4a2e';
+        ctx.fillRect(toCanvasX(tile.x * 32), toCanvasY(tile.y * 32), 32 * scale, 32 * scale);
+      }
+      ctx.globalAlpha = 1.0;
+    }
 
     // Roads
     if (result.roads) {

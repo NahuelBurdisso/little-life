@@ -82,6 +82,7 @@ export interface GenResult {
   /** Row-major '0'/'1' string computed post-pipeline from `locations`. */
   collisionGrid: string;
   roads: Array<{ x: number; y: number }>;
+  terrainTiles: TerrainTile[];
 }
 
 export interface GenerateOptions {

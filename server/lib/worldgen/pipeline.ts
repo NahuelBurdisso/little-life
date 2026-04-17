@@ -128,6 +128,7 @@ function runStages(
     locations,
     collisionGrid,
     roads: ctx.roads?.tiles ?? [],
+    terrainTiles: ctx.terrainTiles ?? [],
   };
 }
 
