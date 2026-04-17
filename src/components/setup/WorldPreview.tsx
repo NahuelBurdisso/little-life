@@ -11,6 +11,7 @@ interface GenResultLite {
   seed: string;
   dimensions: { width: number; height: number };
   locations: GenLocation[];
+  roads?: Array<{ x: number; y: number }>;
 }
 
 interface WorldPreviewProps {
@@ -69,6 +70,19 @@ export function WorldPreview({ result, size = { width: 320, height: 240 } }: Wor
     // Map frame.
     ctx.strokeStyle = '#3d3a2e';
     ctx.strokeRect(offsetX, offsetY, worldW * scale, worldH * scale);
+
+    // Roads
+    if (result.roads) {
+      ctx.fillStyle = '#6b5a3e';
+      for (const tile of result.roads) {
+        ctx.fillRect(
+          toCanvasX(tile.x * 32),
+          toCanvasY(tile.y * 32),
+          32 * scale,
+          32 * scale,
+        );
+      }
+    }
 
     // Buildings.
     for (const loc of result.locations) {

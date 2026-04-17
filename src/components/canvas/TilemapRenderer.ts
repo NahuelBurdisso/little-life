@@ -25,6 +25,7 @@ export class TilemapRenderer {
 
   private labelContainer: PIXI.Container;
   private occupancyContainer: PIXI.Container;
+  private roadContainer: PIXI.Container;
   private openAreaContainer: PIXI.Container;
 
   private mapWidth = 0;
@@ -40,10 +41,14 @@ export class TilemapRenderer {
     this.container = new PIXI.Container();
     this.labelContainer = new PIXI.Container();
     this.occupancyContainer = new PIXI.Container();
+    this.roadContainer = new PIXI.Container();
+    this.roadContainer.eventMode = 'none';
     this.openAreaContainer = new PIXI.Container();
     this.openAreaContainer.eventMode = 'none';
 
-    // Open-area zone patches sit above grass bg but below BuildingRenderer output
+    // Road tiles sit above grass bg but below open-area zones
+    this.container.addChild(this.roadContainer);
+    // Open-area zone patches sit above roads but below BuildingRenderer output
     this.container.addChild(this.openAreaContainer);
     this.container.addChild(this.labelContainer);
     this.container.addChild(this.occupancyContainer);
@@ -132,6 +137,50 @@ export class TilemapRenderer {
         }
       }
     }
+  }
+
+  /**
+   * Draw road tiles as colored rectangles (with optional texture upgrade).
+   * Idempotent — re-running replaces prior road graphics.
+   */
+  setRoadTiles(tiles: Array<{ x: number; y: number }>): void {
+    for (const child of this.roadContainer.children) child.destroy();
+    this.roadContainer.removeChildren();
+
+    if (!Array.isArray(tiles) || tiles.length === 0) return;
+
+    const ROAD_COLOR = 0x6b5a3e;
+
+    // Immediate fallback — colored rectangles
+    const fallback = new PIXI.Graphics();
+    for (const tile of tiles) {
+      fallback.rect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+        .fill({ color: ROAD_COLOR });
+    }
+    this.roadContainer.addChild(fallback);
+
+    // Async texture upgrade — replace color fill with sprites if a road texture exists
+    const container = this.roadContainer;
+    const tilesSnapshot = tiles.slice();
+    getTerrainTexture('road')
+      ?.then((texture) => {
+        if (container.destroyed) return;
+        container.removeChild(fallback);
+        fallback.destroy();
+        const tileGroup = new PIXI.Container();
+        for (const tile of tilesSnapshot) {
+          const sprite = new PIXI.Sprite(texture);
+          sprite.x = tile.x * TILE_SIZE;
+          sprite.y = tile.y * TILE_SIZE;
+          sprite.width = TILE_SIZE;
+          sprite.height = TILE_SIZE;
+          tileGroup.addChild(sprite);
+        }
+        container.addChild(tileGroup);
+      })
+      .catch(() => {
+        // Fallback stays.
+      });
   }
 
   updateOccupancy(agents: any[], locations: any[]): void {
