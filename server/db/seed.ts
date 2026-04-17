@@ -325,6 +325,7 @@ function seed() {
     map_width: DEFAULT_MAP_WIDTH,
     map_height: DEFAULT_MAP_HEIGHT,
     collision_grid: COLLISION_GRID,
+    road_tiles: [],
   }).run();
 
   // 9. Create conversationSchedulerState singleton

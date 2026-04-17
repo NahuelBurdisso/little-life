@@ -486,6 +486,7 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
     map_width: genResult.dimensions.width,
     map_height: genResult.dimensions.height,
     collision_grid: dynamicCollisionGrid,
+    road_tiles: genResult.roads,
     setup_config: config as any,
   }).run();
 
@@ -629,6 +630,7 @@ export const setupRouter = router({
       map_width: DEFAULT_MAP_WIDTH,
       map_height: DEFAULT_MAP_HEIGHT,
       collision_grid: '',
+      road_tiles: [],
       setup_config: null,
     }).run();
 

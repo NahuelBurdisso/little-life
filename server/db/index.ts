@@ -47,6 +47,9 @@ function migrateSchema() {
   // Activity log extensions
   addColumnIfMissing('activity_log', 'metadata', 'TEXT');
 
+  // World state extensions
+  addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
+
   // Backfill existing goals with description = type
   sqlite.exec(`UPDATE goals SET description = type WHERE description IS NULL`);
   // Backfill existing aspirations with description from type
