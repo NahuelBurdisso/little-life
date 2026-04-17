@@ -1,12 +1,11 @@
 import { z } from 'zod';
 
 // Exported constants — see spec §6.1 for rationale.
-// MIN values match the bounding box of the hardcoded public buildings in
-// server/data/maps.ts (Clinic east edge tile 48, Farm/Park south edge tile 37).
+// MIN values sized for proportional road grid + largest core building (town_square 9×8).
 // MAX values cap auto-growth for performance + visual sanity.
-export const MIN_WIDTH = 48;
+export const MIN_WIDTH = 56;
 export const MAX_WIDTH = 90;
-export const MIN_HEIGHT = 37;
+export const MIN_HEIGHT = 43;
 export const MAX_HEIGHT = 70;
 
 /**

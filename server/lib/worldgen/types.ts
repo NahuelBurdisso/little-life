@@ -9,6 +9,17 @@ export interface TerrainTile {
   kind: string;
 }
 
+export interface Zone {
+  id: string;
+  bounds: { x1: number; y1: number; x2: number; y2: number };
+  affinity: Record<string, number>;
+}
+
+export interface RoadsOutput {
+  tiles: Array<{ x: number; y: number }>;
+  zones: Zone[];
+}
+
 /** Phase 4 may extend. Placeholder for Phase 1. */
 export interface InteriorData {
   /** Cell codes per INTERIOR_GRIDS convention (1=wall, 2=furniture, 3=door, 0=floor),
@@ -20,6 +31,7 @@ export interface InteriorData {
 export interface WorldContext {
   dimensions: { width: number; height: number } | null;
   terrainTiles: TerrainTile[] | null;
+  roads: RoadsOutput | null;
   publicBuildings: LocationSeed[] | null;
   homes: LocationSeed[] | null;
   interiors: Record<number, InteriorData> | null;
@@ -69,6 +81,7 @@ export interface GenResult {
   locations: LocationSeed[];
   /** Row-major '0'/'1' string computed post-pipeline from `locations`. */
   collisionGrid: string;
+  roads: Array<{ x: number; y: number }>;
 }
 
 export interface GenerateOptions {

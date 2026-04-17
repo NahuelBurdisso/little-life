@@ -56,8 +56,8 @@ const PIPELINE: Array<Stage<any>> = [
 
 function emptyCtx(): WorldContext {
   return {
-    dimensions: null, terrainTiles: null, publicBuildings: null,
-    homes: null, interiors: null, names: null,
+    dimensions: null, terrainTiles: null, roads: null,
+    publicBuildings: null, homes: null, interiors: null, names: null,
   };
 }
 
@@ -124,6 +124,7 @@ function runStages(
     dimensions: ctx.dimensions!,
     locations,
     collisionGrid,
+    roads: ctx.roads?.tiles ?? [],
   };
 }
 
