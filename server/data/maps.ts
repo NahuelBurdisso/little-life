@@ -301,7 +301,7 @@ function generateCollisionGrid(): string {
     }
   }
 
-  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison']);
+  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison', 'pawnshop', 'divebar']);
 
   for (const loc of MAP_LOCATIONS) {
     const tileX = Math.floor(loc.x / TILE_SIZE);
@@ -437,7 +437,7 @@ export function generateCollisionGridForLocations(
     }
   }
 
-  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison']);
+  const BUILDING_TYPES = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'prison', 'pawnshop', 'divebar']);
 
   for (const loc of locs) {
     const tileX = Math.floor(loc.x / TILE_SIZE);

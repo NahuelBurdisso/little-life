@@ -111,6 +111,22 @@ export const INTERIOR_GRIDS: Record<string, number[][]> = {
     [1, 0, 0, 0, 1],
     [1, 1, 3, 1, 1],
   ],
+
+  // Pawnshop — 5w × 4h, door at row 3 col 2 (same as shop)
+  pawnshop: [
+    [1, 1, 1, 1, 1],
+    [1, 2, 0, 2, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 3, 1, 1],
+  ],
+
+  // Divebar — 5w × 4h, door at row 3 col 2
+  divebar: [
+    [1, 1, 1, 1, 1],
+    [1, 2, 0, 0, 1],
+    [1, 0, 0, 2, 1],
+    [1, 1, 3, 1, 1],
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -546,6 +562,61 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
     },
   ],
 
+  pawnshop: [
+    {
+      id: 'counter', name: 'Counter', label: 'Counter',
+      tiles: [[1, 1]], center: [2, 1], maxOccupants: 2,
+      color: 0xB8860B, allowedActions: ['work', 'sell', 'buy'],
+      visibility: 0.8, furniture: { label: 'Counter', tile: [1, 1] },
+      relativePosition: tilesToRelPos([[1, 1], [2, 1]]),
+    },
+    {
+      id: 'shelves', name: 'Shelves', label: 'Shelves',
+      tiles: [[3, 1]], center: [3, 2], maxOccupants: 2,
+      color: 0x7B5B3A, allowedActions: ['browse', 'stock'],
+      visibility: 0.7, furniture: { label: 'Shelves', tile: [3, 1] },
+      relativePosition: tilesToRelPos([[3, 1], [3, 2]]),
+    },
+    {
+      id: 'storage', name: 'Storage', label: 'Storage',
+      tiles: [[1, 2]], center: [1, 2], maxOccupants: 1,
+      color: 0x4A6741, allowedActions: ['store', 'work'],
+      visibility: 0.4,
+      relativePosition: tilesToRelPos([[1, 2]]),
+    },
+    {
+      id: 'display', name: 'Display', label: 'Display',
+      tiles: [[2, 2], [3, 2]], center: [2, 2], maxOccupants: 3,
+      color: 0xA0785A, allowedActions: ['browse', 'buy'],
+      visibility: 0.9,
+      relativePosition: tilesToRelPos([[2, 2], [3, 2]]),
+    },
+  ],
+
+  divebar: [
+    {
+      id: 'bar', name: 'Bar', label: 'Bar',
+      tiles: [[1, 1]], center: [2, 1], maxOccupants: 2,
+      color: 0x6B3A2A, allowedActions: ['work', 'drink', 'socialize'],
+      visibility: 0.8, furniture: { label: 'Bar Counter', tile: [1, 1] },
+      relativePosition: tilesToRelPos([[1, 1], [2, 1]]),
+    },
+    {
+      id: 'tables', name: 'Tables', label: 'Tables',
+      tiles: [[1, 2], [2, 2]], center: [1, 2], maxOccupants: 3,
+      color: 0x8B6B3D, allowedActions: ['eat', 'drink', 'socialize', 'gamble'],
+      visibility: 0.7,
+      relativePosition: tilesToRelPos([[1, 2], [2, 2]]),
+    },
+    {
+      id: 'booth', name: 'Booth', label: 'Booth',
+      tiles: [[3, 2]], center: [3, 2], maxOccupants: 2,
+      color: 0x5C3D2E, allowedActions: ['drink', 'socialize', 'scheme'],
+      visibility: 0.3, furniture: { label: 'Booth Seat', tile: [3, 1] },
+      relativePosition: tilesToRelPos([[3, 2]]),
+    },
+  ],
+
   farm: [
     { id: 'crops_north', name: 'Crop Field', label: 'Crops', tiles: [[0,0],[1,0],[2,0],[3,0],[0,1],[1,1],[2,1],[3,1]], center: [2, 1], maxOccupants: 2, color: 0x4a7a2a, allowedActions: ['working', 'plant', 'harvest'], visibility: 1.0, relativePosition: { x: 8, y: 8, width: 120, height: 56 } },
     { id: 'crops_south', name: 'Crop Field', label: 'Crops', tiles: [[4,0],[5,0],[6,0],[7,0],[4,1],[5,1],[6,1],[7,1]], center: [6, 1], maxOccupants: 2, color: 0x4a7a2a, allowedActions: ['working', 'plant', 'harvest'], visibility: 1.0, relativePosition: { x: 136, y: 8, width: 120, height: 56 } },
@@ -590,6 +661,8 @@ export const ACTION_ZONE_REQUIREMENTS: Record<string, Record<string, string[]>> 
     town_hall: ['mayors_desk'],
     prison: ['guard_desk'],
     farm: ['crops_north', 'crops_south'],
+    pawnshop: ['counter', 'storage'],
+    divebar: ['bar'],
   },
-  gambling: { tavern: ['tables'] },
+  gambling: { tavern: ['tables'], divebar: ['tables'] },
 };
