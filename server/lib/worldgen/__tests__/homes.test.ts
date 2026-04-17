@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { homesStage } from '../stages/homes';
+import { roadsStage } from '../stages/roads';
 import { forkRng } from '../rng';
 import { FitError } from '../types';
 import type { WorldContext } from '../types';
@@ -9,6 +10,7 @@ function ctxWith(width: number, height: number, publicBuildings: LocationSeed[] 
   return {
     dimensions: { width, height },
     terrainTiles: [],
+    roads: null,
     publicBuildings,
     homes: null, interiors: null, names: null,
   };
@@ -152,6 +154,24 @@ describe('homes stage', () => {
       expect(ty).toBeGreaterThanOrEqual(1);
       expect(tx + 3).toBeLessThanOrEqual(60 - 1);
       expect(ty + 3).toBeLessThanOrEqual(45 - 1);
+    }
+  });
+
+  it('homes do not overlap road tiles', () => {
+    const baseCtx = ctxWith(60, 45);
+    const roadResult = roadsStage.run(baseCtx, forkRng('test', 'roads'), CFG, 10, {});
+    const ctx: WorldContext = { ...baseCtx, roads: roadResult.roads, publicBuildings: [] };
+    const rng = forkRng('test', 'homes');
+    const homes = homesStage.run(ctx, rng, CFG, 10, {}).homes!;
+    const roadSet = new Set(roadResult.roads!.tiles.map((t) => `${t.x},${t.y}`));
+    for (const h of homes) {
+      const tx = h.position.x / 32;
+      const ty = h.position.y / 32;
+      for (let dy = 0; dy < 3; dy++) {
+        for (let dx = 0; dx < 3; dx++) {
+          expect(roadSet.has(`${tx + dx},${ty + dy}`)).toBe(false);
+        }
+      }
     }
   });
 });

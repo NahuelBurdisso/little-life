@@ -30,9 +30,9 @@ describe('dimensions stage', () => {
   });
 
   it('auto formula scales with agent count', () => {
-    // N=15 → 30 + ceil(1.8*15) = 30 + 27 = 57, clamped up to MIN_WIDTH=48 (57 > 48 OK)
-    // height: 20 + ceil(1.3*15) = 20 + 20 = 40, >= MIN_HEIGHT=37 OK
-    expect(run({ sizeTier: 'auto', overrides: {} }, 15)).toEqual({ width: 57, height: 40 });
+    // N=15 → 30 + ceil(1.8*15) = 30 + 27 = 57, clamped up to MIN_WIDTH=56 (57 > 56 OK)
+    // height: 20 + ceil(1.3*15) = 20 + 20 = 40, clamped up to MIN_HEIGHT=43
+    expect(run({ sizeTier: 'auto', overrides: {} }, 15)).toEqual({ width: 57, height: 43 });
   });
 
   it('auto formula clamps at MIN for low agent counts', () => {
