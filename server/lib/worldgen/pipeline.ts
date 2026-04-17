@@ -15,8 +15,8 @@ import { layoutStage } from './stages/layout';
 import { homesStage } from './stages/homes';
 import { interiorsStage } from './stages/interiors';
 import { namesStage } from './stages/names';
-import { generateCollisionGridForLocations } from '../../data/maps';
-import type { LocationSeed } from '../../data/maps';
+import { generateCollisionGridForLocations } from './collisionGrid';
+import type { LocationSeed } from './types';
 
 const MAX_EXPAND_ATTEMPTS = 3;
 const EXPAND_FACTOR = 1.2;

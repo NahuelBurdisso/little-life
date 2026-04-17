@@ -1,5 +1,4 @@
-import type { LocationSeed } from '../../../data/maps';
-import { HOME_DESCRIPTIONS } from '../../../data/maps';
+import type { LocationSeed } from '../types';
 import { FitError, type Stage } from '../types';
 
 const TILE = 32;
@@ -16,6 +15,24 @@ const HOME_SERVICES = [
   { needSatisfied: 'energy', amount: 8, cost: 0, itemRequired: null as string | null },
   { needSatisfied: 'comfort', amount: 5, cost: 0, itemRequired: null as string | null },
   { needSatisfied: 'hunger', amount: 10, cost: 0, itemRequired: 'food_raw' as string | null },
+];
+
+const HOME_DESCRIPTIONS = [
+  'A cozy farmhouse with a well-worn porch',
+  'A warm house with flower boxes in every window',
+  'A tidy house with an herb garden out back',
+  'A quiet residence, always well-lit',
+  'A stately house with a polished front door',
+  'A cluttered but charming cottage',
+  'A small apartment decorated with paintings',
+  'A bohemian loft filled with instruments',
+  'A spartan house with heavy curtains',
+  'A bright cottage with a red roof',
+  'A stone house with ivy-covered walls',
+  'A modest cabin near the edge of town',
+  'A cheerful yellow house with a garden',
+  'A renovated barn turned cozy home',
+  'A two-story house with a balcony',
 ];
 
 export const homesStage: Stage<{ homes: LocationSeed[] }> = {

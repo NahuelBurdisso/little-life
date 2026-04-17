@@ -11,4 +11,4 @@ export type { WorldGenConfig } from './config';
 // FitError is a class (both a value AND a type). Export it as a value so
 // downstream `instanceof FitError` checks work.
 export { FitError } from './types';
-export type { GenResult, GenerateOptions, Stage, WorldContext, StageExtras, TerrainTile, InteriorData } from './types';
+export type { GenResult, GenerateOptions, Stage, WorldContext, StageExtras, TerrainTile, InteriorData, LocationSeed } from './types';

@@ -27,7 +27,7 @@ import {
   aspirations,
   interactionCooldowns,
 } from '../db/schema';
-import { DEFAULT_MAP_WIDTH, DEFAULT_MAP_HEIGHT } from '../data/maps';
+import { MIN_WIDTH, MIN_HEIGHT } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
@@ -628,8 +628,8 @@ export const setupRouter = router({
       tick_id: 'reset',
       pending_transitions: [],
       tax_pool: 0,
-      map_width: DEFAULT_MAP_WIDTH,
-      map_height: DEFAULT_MAP_HEIGHT,
+      map_width: MIN_WIDTH,
+      map_height: MIN_HEIGHT,
       collision_grid: '',
       road_tiles: [],
       terrain_tiles: [],

@@ -1,6 +1,23 @@
-import type { LocationSeed } from '../../data/maps';
 import type { AgentConfig } from '../../../src/components/setup/types';
 import type { RNG } from './rng';
+
+export interface LocationSeed {
+  name: string;
+  type: string;
+  position: { x: number; y: number; width: number; height: number };
+  entry_point: { x: number; y: number };
+  capacity: number;
+  current_occupants: number[];
+  operating_hours: { open: number; close: number } | null;
+  services: Array<{
+    needSatisfied: string;
+    amount: number;
+    cost: number;
+    itemRequired: string | null;
+  }>;
+  description: string;
+  owner: null;
+}
 
 /** Phase 3 may extend. Placeholder for Phase 1. */
 export interface TerrainTile {

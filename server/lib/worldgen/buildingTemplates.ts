@@ -1,4 +1,4 @@
-import type { LocationSeed } from '../../data/maps';
+import type { LocationSeed } from './types';
 
 export interface BuildingTemplate {
   id: string;

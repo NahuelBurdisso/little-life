@@ -4,7 +4,7 @@ import {
   type BuildingTemplate,
 } from '../buildingTemplates';
 import { FitError, type Stage, type Zone } from '../types';
-import type { LocationSeed } from '../../../data/maps';
+import type { LocationSeed } from '../types';
 import type { RNG } from '../rng';
 
 const TILE = 32;

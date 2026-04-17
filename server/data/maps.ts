@@ -259,23 +259,9 @@ function getOperatingHours(type: string): { open: number; close: number } | null
 
 // ─── Exported data ───────────────────────────────────────────────────────────
 
-export interface LocationSeed {
-  name: string;
-  type: string;
-  position: { x: number; y: number; width: number; height: number };
-  entry_point: { x: number; y: number };
-  capacity: number;
-  current_occupants: number[];
-  operating_hours: { open: number; close: number } | null;
-  services: Array<{
-    needSatisfied: string;
-    amount: number;
-    cost: number;
-    itemRequired: string | null;
-  }>;
-  description: string;
-  owner: null;
-}
+// Re-export from canonical location
+import type { LocationSeed } from '../lib/worldgen/types';
+export type { LocationSeed } from '../lib/worldgen/types';
 
 export const LOCATIONS: LocationSeed[] = MAP_LOCATIONS.map((loc) => ({
   name: loc.name,

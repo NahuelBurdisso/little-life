@@ -21,7 +21,7 @@ import {
   aspirations,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
-import { LOCATIONS, DEFAULT_MAP_WIDTH, DEFAULT_MAP_HEIGHT, COLLISION_GRID } from '../data/maps';
+import { generateWorld } from '../lib/worldgen';
 import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -69,7 +69,13 @@ function isSeeded(): boolean {
 function seed() {
   const now = Date.now(); // wall-clock only — used for last_tick_completed, real_timestamp
 
-  // 1. Insert locations, build name -> ID map
+  // 1. Generate world via procedural pipeline
+  console.log('[seed] Generating world via worldgen pipeline...');
+  const genResult = generateWorld({ sizeTier: 'auto', overrides: {} }, AGENT_SEEDS.length);
+  const LOCATIONS = genResult.locations;
+  console.log(`[seed] Generated ${LOCATIONS.length} locations (${genResult.dimensions.width}×${genResult.dimensions.height}).`);
+
+  // Insert locations, build name -> ID map
   console.log('[seed] Inserting locations...');
   const locationMap = new Map<string, number>();
 
@@ -322,11 +328,11 @@ function seed() {
     tick_id: "init",
     pending_transitions: [],
     tax_pool: 0,
-    map_width: DEFAULT_MAP_WIDTH,
-    map_height: DEFAULT_MAP_HEIGHT,
-    collision_grid: COLLISION_GRID,
-    road_tiles: [],
-    terrain_tiles: [],
+    map_width: genResult.dimensions.width,
+    map_height: genResult.dimensions.height,
+    collision_grid: genResult.collisionGrid,
+    road_tiles: genResult.roads,
+    terrain_tiles: genResult.terrainTiles,
   }).run();
 
   // 9. Create conversationSchedulerState singleton

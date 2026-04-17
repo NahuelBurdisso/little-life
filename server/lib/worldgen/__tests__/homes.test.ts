@@ -4,7 +4,7 @@ import { roadsStage } from '../stages/roads';
 import { forkRng } from '../rng';
 import { FitError } from '../types';
 import type { WorldContext } from '../types';
-import type { LocationSeed } from '../../../data/maps';
+import type { LocationSeed } from '../types';
 
 function ctxWith(width: number, height: number, publicBuildings: LocationSeed[] = []): WorldContext {
   return {
