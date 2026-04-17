@@ -71,7 +71,9 @@ function seed() {
 
   // 1. Generate world via procedural pipeline
   console.log('[seed] Generating world via worldgen pipeline...');
-  const genResult = generateWorld({ sizeTier: 'auto', overrides: {} }, AGENT_SEEDS.length);
+  const genResult = generateWorld({ sizeTier: 'auto', overrides: {} }, AGENT_SEEDS.length, {
+    agents: AGENT_SEEDS.map((a) => ({ homeName: a.homeName })),
+  });
   const LOCATIONS = genResult.locations;
   console.log(`[seed] Generated ${LOCATIONS.length} locations (${genResult.dimensions.width}×${genResult.dimensions.height}).`);
 
