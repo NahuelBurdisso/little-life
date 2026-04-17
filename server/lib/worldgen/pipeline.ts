@@ -10,6 +10,7 @@ import {
 } from './types';
 import { dimensionsStage } from './stages/dimensions';
 import { terrainStage } from './stages/terrain';
+import { roadsStage } from './stages/roads';
 import { layoutStage } from './stages/layout';
 import { homesStage } from './stages/homes';
 import { interiorsStage } from './stages/interiors';
@@ -24,6 +25,7 @@ const EXPAND_FACTOR = 1.2;
 const PIPELINE: Array<Stage<any>> = [
   dimensionsStage,
   terrainStage,
+  roadsStage,
   layoutStage,
   homesStage,
   interiorsStage,
@@ -37,6 +39,7 @@ const PIPELINE: Array<Stage<any>> = [
   const STAGE_OUTPUTS: Record<string, (keyof WorldContext)[]> = {
     dimensions: ['dimensions'],
     terrain: ['terrainTiles'],
+    roads: ['roads'],
     layout: ['publicBuildings'],
     homes: ['homes'],
     interiors: ['interiors'],
