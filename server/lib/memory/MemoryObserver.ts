@@ -169,7 +169,12 @@ export function initMemoryObserver(memoryService: MemoryService): void {
 
   simEvents.on('economy:milestone', ({ agentId, amount, direction }: { agentId: number; amount: number; direction: 'up' | 'down' }) => {
     const templateKey = direction === 'up' ? 'economy_milestone_up' : 'economy_milestone_down';
-    memoryService.record(agentId, 'observation', describeEvent(templateKey, { amount: String(amount) }), { subtype: 'economy' }, direction === 'up' ? 0.3 : -0.3, 5);
+    const importance = direction === 'down' && amount <= 10 ? 7 : 5;
+    memoryService.record(agentId, 'observation', describeEvent(templateKey, { amount: String(amount) }), { subtype: 'economy' }, direction === 'up' ? 0.3 : -0.5, importance);
+    // Crossing down below $10 is a crisis — trigger stress and replan
+    if (direction === 'down' && amount <= 10) {
+      simEvents.emit('state:triggered', { agentId, state: 'stressed', source: 'financial_crisis' });
+    }
   });
 
   simEvents.on('perception:observed', ({ agentId, targetName, templateKey }: { agentId: number; targetName: string; templateKey: string }) => {
