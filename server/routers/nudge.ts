@@ -78,6 +78,8 @@ const nudgeInput = z.object({
     z.object({ type: z.literal('toggle_pause') }),
     z.object({ type: z.literal('introduce_agent'), name: z.string(), bio: z.string(), traits: z.array(z.string()), job: z.string() }),
     z.object({ type: z.literal('remove_agent'), agentId: z.number() }),
+    z.object({ type: z.literal('tell_secret'), agentId: z.number(), targetId: z.number(), factId: z.number() }),
+    z.object({ type: z.literal('force_confront'), agentA: z.number(), agentB: z.number() }),
   ]),
 });
 
@@ -602,6 +604,100 @@ export const nudgeRouter = router({
 
           emitter.markDirty('agents.all');
           emitter.markDirty('conversations');
+          emitter.flush();
+          return { success: true };
+        }
+
+        // ─── tell_secret ────────────────────────────────────────────────────
+        case 'tell_secret': {
+          const { agentId, targetId, factId } = action;
+          const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
+          const target = db.select().from(agents).where(eq(agents.id, targetId)).get();
+          if (!agent || !target) return { success: false, reason: 'Agent not found' };
+
+          const { shared_knowledge } = await import('../db/schema');
+          const fact = db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();
+          if (!fact) return { success: false, reason: 'Fact not found' };
+
+          const knownBy = fact.known_by as number[];
+          if (!knownBy.includes(targetId)) {
+            db.update(shared_knowledge)
+              .set({ known_by: [...new Set([...knownBy, targetId])] })
+              .where(eq(shared_knowledge.id, factId))
+              .run();
+          }
+
+          // Queue dramatic conversation about this fact
+          db.insert(conversationQueue).values({
+            participants: [agentId, targetId],
+            tier: 'llm_deep',
+            priority: CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY,
+            trigger_reason: 'player_tell_secret',
+            topic: `revealing: ${fact.content}`,
+            queued_at: now,
+            max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+          }).run();
+
+          logActivity({
+            type: 'player_nudge',
+            agents: [agentId, targetId],
+            templateData: { description: `Player made ${agent.name} reveal a secret to ${target.name}` },
+          });
+
+          emitter.markDirty('agents.all');
+          emitter.flush();
+          return { success: true };
+        }
+
+        // ─── force_confront ─────────────────────────────────────────────────
+        case 'force_confront': {
+          const { agentA: aId, agentB: bId } = action;
+          const agentA = db.select().from(agents).where(eq(agents.id, aId)).get();
+          const agentB = db.select().from(agents).where(eq(agents.id, bId)).get();
+          if (!agentA || !agentB) return { success: false, reason: 'Agent not found' };
+
+          // Queue deep confrontation conversation
+          db.insert(conversationQueue).values({
+            participants: [aId, bId],
+            tier: 'llm_deep',
+            priority: CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY + 50,
+            trigger_reason: 'player_confront',
+            topic: 'confrontation',
+            queued_at: now,
+            max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+          }).run();
+
+          // Walk both to midpoint
+          const posA = agentA.position as { x: number; y: number };
+          const posB = agentB.position as { x: number; y: number };
+          const midX = (posA.x + posB.x) / 2;
+          const midY = (posA.y + posB.y) / 2;
+
+          db.update(agents).set({
+            current_action: { type: 'walking', to: { x: midX, y: midY } },
+            current_destination: { x: midX, y: midY },
+            current_path: null,
+            action_started: now,
+            action_duration: null,
+            action_queue: [{ type: 'talking', target: bId }],
+          }).where(eq(agents.id, aId)).run();
+
+          db.update(agents).set({
+            current_action: { type: 'walking', to: { x: midX, y: midY } },
+            current_destination: { x: midX, y: midY },
+            current_path: null,
+            action_started: now,
+            action_duration: null,
+            action_queue: [{ type: 'talking', target: aId }],
+          }).where(eq(agents.id, bId)).run();
+
+          logActivity({
+            type: 'player_nudge',
+            agents: [aId, bId],
+            templateData: { description: `Player forced a confrontation between ${agentA.name} and ${agentB.name}` },
+          });
+
+          emitter.markDirty('agents.all');
           emitter.flush();
           return { success: true };
         }

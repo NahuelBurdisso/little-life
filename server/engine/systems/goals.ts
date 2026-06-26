@@ -338,9 +338,45 @@ function evaluatePassiveProgress(agent: any, goal: any, _currentTick: number): v
   }
 }
 
+// ─── Conversation-driven goal progress ────────────────────────────────────────
+
+let goalConvoListenerInitialized = false;
+
+function initGoalConversationListener(): void {
+  if (goalConvoListenerInitialized) return;
+  goalConvoListenerInitialized = true;
+
+  simEvents.on('conversation:ended', (payload: {
+    agentId: number;
+    perpetratorId?: number | null;
+    sentiment?: number;
+    turns?: number;
+  }) => {
+    const otherId = payload.perpetratorId;
+    if (!otherId || otherId === payload.agentId) return;
+    const sentiment = payload.sentiment ?? 0;
+    if (sentiment < -0.5) return; // negative conversations don't help goals
+
+    // Find active goals targeting this conversation partner
+    const agentGoals = db.select().from(goals)
+      .where(and(eq(goals.agent_id, payload.agentId), eq(goals.status, 'active')))
+      .all();
+
+    for (const goal of agentGoals) {
+      if (goal.target_id !== otherId) continue;
+      // Social goals advance through positive conversations
+      const progressGain = Math.max(0.02, sentiment * 0.05);
+      const newProgress = Math.min(1.0, (goal.progress ?? 0) + progressGain);
+      db.update(goals).set({ progress: newProgress }).where(eq(goals.id, goal.id)).run();
+    }
+  });
+}
+
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 export function goalsTick(): void {
+  // Initialize conversation listener on first tick
+  initGoalConversationListener();
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const currentTick = getCurrentTick();
   const world = db.select().from(worldState).limit(1).all()[0];

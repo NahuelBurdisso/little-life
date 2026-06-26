@@ -234,15 +234,24 @@ function buildTurnInstruction(
   maxTurns: number,
   otherName: string,
   topic: string | null,
+  friendship: number,
+  isFirstMeeting: boolean,
 ): string {
-  if (messageCount === 0 && topic) {
-    return `Start talking to ${otherName} about ${topic}. If you have shared memories or past conversations with them, reference them naturally — "I was thinking about what you said last time..." or "Remember when we...". Be authentic to your personality.`;
-  }
   if (messageCount === 0) {
-    return `Start talking to ${otherName}. If you have memories of past interactions, bring them up naturally. Be authentic to your personality.`;
+    if (isFirstMeeting) {
+      const approach = friendship >= 0
+        ? `Introduce yourself to ${otherName}. You haven't really talked before. Be curious but cautious — first impressions matter.`
+        : `You're meeting ${otherName} for the first time. Size them up. Your personality decides how open you are.`;
+      return topic ? `${approach} The topic is ${topic}.` : approach;
+    }
+    if (topic) {
+      return `Start talking to ${otherName} about ${topic}. Reference your [Memory] entries naturally — "I was thinking about what you said..." or "Remember when...". Don't repeat the memory text verbatim, just weave it in.`;
+    }
+    return `Start talking to ${otherName}. Use your [Memory] entries as conversation fuel. Be authentic to your personality and mood.`;
   }
-  if (messageCount >= maxTurns - 2) return 'Wrap up the conversation naturally.';
-  return `Respond to ${otherName}. Stay true to your personality and current mood.`;
+  if (messageCount >= maxTurns - 2) return `Wrap up the conversation naturally. If something important was discussed, acknowledge it.`;
+  if (messageCount >= maxTurns - 4) return `Continue with ${otherName}. The conversation is winding down — make your point if you have one.`;
+  return `Respond to ${otherName}. React to what they said. Stay in character. Reference your memories or secrets if relevant.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,8 +285,11 @@ export function buildAgentSystemPrompt(
   // Mood
   const moodLine = buildMoodLine(needs.mood);
 
-  // States
-  const stateLines = statePrompts?.length ? statePrompts.join('\n') : '';
+  // States — dramatize for LLM
+  let stateLines = '';
+  if (statePrompts?.length) {
+    stateLines = 'Right now:\n' + statePrompts.map(s => `• ${s}`).join('\n');
+  }
 
   // Critical needs
   const criticalNeedsLine = buildCriticalNeedsLine(needs, economy.money);
@@ -388,7 +400,8 @@ export function buildConversationPrompt(
   // Turn instruction
   const messageCount = conversation.messages.length;
   const maxTurns = conversation.max_turns ?? 6;
-  userParts.push(buildTurnInstruction(messageCount, maxTurns, otherAgent.name, conversation.topic));
+  const isFirstMeeting = relationship ? relationship.familiarity < 5 : true;
+  userParts.push(buildTurnInstruction(messageCount, maxTurns, otherAgent.name, conversation.topic, friendship, isFirstMeeting));
 
   // Build message array
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [];

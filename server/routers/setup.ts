@@ -61,24 +61,24 @@ const PersonalityConfigSchema = z.object({
 });
 
 const ScheduleSchema = z.object({
-  wakeTime: z.number(),
-  sleepTime: z.number(),
-  workStart: z.number(),
-  workEnd: z.number(),
-  lunchTime: z.number(),
+  wakeTime: z.number().int().min(0).max(23),
+  sleepTime: z.number().int().min(0).max(23),
+  workStart: z.number().int().min(0).max(23),
+  workEnd: z.number().int().min(0).max(23),
+  lunchTime: z.number().int().min(0).max(23),
   freeTimePreferences: z.array(z.string()),
 });
 
 const AgentConfigSchema = z.object({
   id: z.string(),
-  name: z.string(),
-  age: z.number(),
+  name: z.string().min(1).max(50),
+  age: z.number().int().min(16).max(99),
   gender: z.string(),
-  bio: z.string(),
-  traits: z.array(z.string()),
-  job: z.string(),
-  jobTitle: z.string(),
-  salary: z.number(),
+  bio: z.string().max(500),
+  traits: z.array(z.string().max(30)).max(8),
+  job: z.string().min(1),
+  jobTitle: z.string().min(1).max(50),
+  salary: z.number().min(0).max(500),
   homeName: z.string(),
   workplaceName: z.string().nullable(),
   schedule: ScheduleSchema,
@@ -91,24 +91,24 @@ const AgentConfigSchema = z.object({
 });
 
 const RelationshipConfigSchema = z.object({
-  agentAName: z.string(),
-  agentBName: z.string(),
-  friendshipAB: z.number(),
-  friendshipBA: z.number(),
-  romanceAB: z.number(),
-  romanceBA: z.number(),
-  trustAB: z.number(),
-  trustBA: z.number(),
-  familiarity: z.number(),
+  agentAName: z.string().min(1),
+  agentBName: z.string().min(1),
+  friendshipAB: z.number().min(-100).max(100),
+  friendshipBA: z.number().min(-100).max(100),
+  romanceAB: z.number().min(0).max(100),
+  romanceBA: z.number().min(0).max(100),
+  trustAB: z.number().min(-100).max(100),
+  trustBA: z.number().min(-100).max(100),
+  familiarity: z.number().min(0).max(100),
   status: z.string(),
   tags: z.array(z.string()),
 });
 
 const WorldConfigSchema = z.object({
   season: z.enum(['spring', 'summer', 'autumn', 'winter']),
-  weather: z.string(),
-  startHour: z.number(),
-  startDay: z.number(),
+  weather: z.enum(['sunny', 'cloudy', 'rainy', 'stormy', 'foggy']),
+  startHour: z.number().int().min(0).max(23),
+  startDay: z.number().int().min(1).max(28),
 });
 
 // Dynamic rules — accepts any key/value pairs from the config registry

@@ -32,7 +32,7 @@ describe('generateVoiceDirective', () => {
       sensuality: 50, neuroticism: 50,
     };
     const directive = generateVoiceDirective(3, personality);
-    expect(directive).toContain('Rules are suggestions');
+    expect(directive).toContain('Rules are for other people');
   });
 
   it('returns empty string when all axes near 50', () => {

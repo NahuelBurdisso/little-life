@@ -640,6 +640,14 @@ function scoreFreeTimeActions(
         if (tavern && s.targetLocationId === tavern.id) s.score *= 0.4;
       }
     }
+    // In-debt agents are desperate: boost work, suppress leisure
+    if (agentStateTypes.includes('in_debt')) {
+      for (const s of scores) {
+        if (s.action === 'working') s.score *= 1.8; // desperate to earn
+        if (s.action === 'idle' && s.source !== 'forage') s.score *= 0.5; // no time for leisure
+        if (s.action === 'socializing') s.score *= 0.7; // less chatty
+      }
+    }
     if (agentEcon.money > 80) {
       for (const s of scores) {
         if (tavern && s.targetLocationId === tavern.id) s.score *= 1.2;
@@ -834,24 +842,31 @@ export function tick(world: WorldRow): void {
         econMap,
       );
       if (scored.length > 0) {
-        // Goal alignment bonus
+        // Goal alignment bonus — boost social actions toward goal targets
         const agentGoals = goalsMap.get(agent.id) ?? [];
         for (const goal of agentGoals) {
-          if (!goal.mapped_interactions) continue;
-          let mapped: string[];
-          try {
-            const raw = goal.mapped_interactions;
-            mapped = raw.startsWith('[') ? JSON.parse(raw) : raw.split(',').map((s: string) => s.trim());
-          } catch { continue; }
-          if (goal.target_id && mapped.length > 0) {
-            const target = activeAgents.find(a => a.id === goal.target_id);
-            if (target && agent.current_location === target.current_location) {
-              for (const s of scored) {
-                if (s.action === 'socializing' && s.targetAgentId === goal.target_id) {
-                  s.score += Math.round(2500 * goal.priority);
-                }
+          if (!goal.target_id) continue;
+          const target = activeAgents.find(a => a.id === goal.target_id);
+          if (!target || !target.is_active) continue;
+
+          // Co-located: massive score boost for socializing with target
+          if (agent.current_location === target.current_location) {
+            for (const s of scored) {
+              if (s.action === 'socializing' && s.targetAgentId === goal.target_id) {
+                s.score += Math.round(2500 * goal.priority);
               }
             }
+          } else {
+            // NOT co-located: add a "go find target" socializing option
+            // Goal-driven agents seek out their targets
+            const seekScore = Math.round(800 * goal.priority);
+            scored.push({
+              action: 'socializing',
+              score: addNoise(seekScore),
+              targetAgentId: target.id,
+              targetLocationId: target.current_location ?? undefined,
+              source: `goal:seek_target`,
+            });
           }
         }
 

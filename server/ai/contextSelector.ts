@@ -67,6 +67,10 @@ function scoreMemory(
   return score;
 }
 
+const MAX_CONTEXT_ITEMS = 5;
+const MAX_MEMORIES = 3;
+const MAX_FACTS = 2;
+
 export function selectConversationContext(params: ContextSelectorParams): ContextItem[] {
   const {
     memories, facts, statePrompts, situationalPrompt,
@@ -75,29 +79,36 @@ export function selectConversationContext(params: ContextSelectorParams): Contex
 
   const items: ContextItem[] = [];
 
+  // 1. Situational prompt (always first if present)
   if (situationalPrompt) {
     items.push({ type: 'situation', text: situationalPrompt });
   }
 
-  if (items.length < 2 && statePrompts.length > 0) {
-    items.push({ type: 'state', text: statePrompts[0] });
+  // 2. State prompts (up to 2 most relevant)
+  for (const sp of statePrompts.slice(0, 2)) {
+    if (items.length < MAX_CONTEXT_ITEMS) {
+      items.push({ type: 'state', text: sp });
+    }
   }
 
-  if (items.length >= 2) return items;
-
+  // 3. Relevant memories (up to MAX_MEMORIES)
   const scoredMemories = memories
     .map(m => ({ memory: m, score: scoreMemory(m, otherAgentName, otherAgentId, topic, currentTick, friendship) }))
     .filter(m => m.score >= RELEVANCE_THRESHOLD)
     .sort((a, b) => b.score - a.score);
 
-  if (scoredMemories.length > 0 && items.length < 2) {
-    items.push({ type: 'memory', text: scoredMemories[0].memory.description });
+  for (let i = 0; i < Math.min(scoredMemories.length, MAX_MEMORIES); i++) {
+    if (items.length < MAX_CONTEXT_ITEMS) {
+      items.push({ type: 'memory', text: scoredMemories[i].memory.description });
+    }
   }
 
-  if (items.length >= 2) return items;
-
-  if (facts.length > 0 && items.length < 2) {
-    items.push({ type: 'fact', text: facts[0].content });
+  // 4. Gossip facts (up to MAX_FACTS — prioritize high sensitivity)
+  const sortedFacts = [...facts].sort((a, b) => b.sensitivity - a.sensitivity);
+  for (let i = 0; i < Math.min(sortedFacts.length, MAX_FACTS); i++) {
+    if (items.length < MAX_CONTEXT_ITEMS) {
+      items.push({ type: 'fact', text: sortedFacts[i].content });
+    }
   }
 
   return items;
