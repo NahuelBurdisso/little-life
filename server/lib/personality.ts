@@ -286,7 +286,11 @@ export function selectPersonalityTopic(
   targetFriendship: number,
   targetRomance: number,
   agents: Array<{ name: string }>,
+  recentDrama?: string | null,
 ): string | null {
+  // Priority 0: Recent drama overrides everything (if provided)
+  if (recentDrama && Math.random() < 0.6) return recentDrama;
+
   // Priority 1: Dramatic personality-driven topics (these trigger LLM)
   if (personality.sensuality > 60 && targetRomance > 30) return 'flirting';
   if (personality.aggression > 60 && targetFriendship < -20) return 'confrontation';

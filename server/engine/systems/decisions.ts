@@ -1123,6 +1123,15 @@ export function tick(world: WorldRow): void {
       const agentPersonality = agent.personality as PersonalityProfile | null;
       let topic: string | null = decision.topic ?? null;
       if (!topic && agentPersonality) {
+        // Generate drama topic from current states
+        const agentStatesForTopic = getAgentStates(agentId);
+        let recentDrama: string | null = null;
+        if (agentStatesForTopic.includes('heartbroken')) recentDrama = 'heartbreak';
+        else if (agentStatesForTopic.includes('jealous')) recentDrama = 'jealousy and suspicion';
+        else if (agentStatesForTopic.includes('in_debt')) recentDrama = 'money troubles';
+        else if (agentStatesForTopic.includes('angry')) recentDrama = 'something that made you angry';
+        else if (agentStatesForTopic.includes('infatuated')) recentDrama = 'someone special';
+
         const otherActiveAgents = activeAgents.filter(a => a.id !== agent.id && a.id !== targetId);
         topic = selectPersonalityTopic(
           agentPersonality,
@@ -1130,6 +1139,7 @@ export function tick(world: WorldRow): void {
           friendship,
           romance,
           otherActiveAgents.map(a => ({ name: a.name })),
+          recentDrama,
         );
       }
 
