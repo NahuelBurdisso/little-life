@@ -319,7 +319,15 @@ export function buildAgentSystemPrompt(
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ');
   const middle = [descriptionLine, moodLine, stateLines, criticalNeedsLine, econLine].filter(Boolean).join('\n');
-  const instruction = "Reply in 1-2 sentences. Natural speech, not prose. You can be rude, evasive, flirty, or dismissive — whatever fits.";
+  // Adaptive instruction based on personality extremes
+  const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
+  let toneHint = '';
+  if (p) {
+    if (p.impulsiveness && p.impulsiveness > 70) toneHint = ' Keep it raw and unfiltered.';
+    else if (p.warmth && p.warmth > 70) toneHint = ' Be genuine and caring.';
+    else if (p.aggression && p.aggression > 60) toneHint = " Don't hold back.";
+  }
+  const instruction = `Reply in 1-2 sentences. Natural speech, not prose. You can be rude, evasive, flirty, or dismissive — whatever fits your personality.${toneHint}`;
 
   const sections = [header, middle, instruction].filter(Boolean);
   return sections.join('\n\n');

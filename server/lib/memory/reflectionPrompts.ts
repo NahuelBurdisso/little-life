@@ -7,6 +7,8 @@ export interface QuestionPromptParams {
   traits: string[];
   personality: PersonalityProfile;
   recentMemories: Array<{ description: string; importance: number }>;
+  ambition?: string | null;
+  activeGoals?: string[];
 }
 
 export interface SynthesisPromptParams {
@@ -26,12 +28,16 @@ export function buildQuestionPrompt(params: QuestionPromptParams): { system: str
     .map((m, i) => `${i + 1}. ${m.description} (importance: ${m.importance})`)
     .join('\n');
 
-  const system = `You are ${name}, a ${age}-year-old. ${personalityDesc}
+  const ambitionLine = params.ambition ? `Your life ambition: ${params.ambition}` : '';
+  const goalsLine = params.activeGoals?.length ? `Current goals: ${params.activeGoals.join('; ')}` : '';
+  const contextLines = [ambitionLine, goalsLine].filter(Boolean).join('\n');
 
+  const system = `You are ${name}, a ${age}-year-old. ${personalityDesc}
+${contextLines ? '\n' + contextLines + '\n' : ''}
 Here are your recent experiences:
 ${memoriesList}
 
-Given these experiences, what are the 3 most important questions you'd ask yourself right now? Consider what patterns you notice, what concerns you, and what matters most to you given your personality.
+Given these experiences, what are the 3 most important questions you'd ask yourself right now? Consider what patterns you notice, what concerns you, what matters most to you given your personality${params.ambition ? ', and how these relate to your ambition' : ''}.
 
 Respond with exactly 3 questions, one per line. No numbering, no explanation.`;
 

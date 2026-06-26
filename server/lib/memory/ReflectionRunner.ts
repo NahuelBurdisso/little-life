@@ -1,6 +1,6 @@
 import { db } from '../../db';
-import { agents } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { agents, aspirations, goals } from '../../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../../lib/constants';
 import type { PersonalityProfile } from '../../lib/personality';
@@ -95,6 +95,16 @@ export class ReflectionRunner {
     const recentMemories = this.memoryService.getRecent(agentId, QUESTION_MEMORY_COUNT);
     if (recentMemories.length < 5) return;
 
+    // 2b. Get active ambition and goals for reflection context
+    const ambitionRow = db.select({ description: aspirations.description })
+      .from(aspirations)
+      .where(and(eq(aspirations.agent_id, agentId), eq(aspirations.status, 'active')))
+      .get();
+    const activeGoals = db.select({ type: goals.type })
+      .from(goals)
+      .where(and(eq(goals.agent_id, agentId), eq(goals.status, 'active')))
+      .all();
+
     // 3. Build question prompt
     const { system: qSystem, user: qUser } = buildQuestionPrompt({
       name,
@@ -102,6 +112,8 @@ export class ReflectionRunner {
       traits,
       personality,
       recentMemories,
+      ambition: ambitionRow?.description ?? null,
+      activeGoals: activeGoals.map(g => g.type),
     });
 
     // 4. Call LLM for questions
