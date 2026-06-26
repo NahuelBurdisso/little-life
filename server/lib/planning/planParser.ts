@@ -224,9 +224,10 @@ export function inferActionType(description: string): string {
   // ── Generic verbs ──
   if (/\b(eat|eating|lunch|breakfast|dinner|food|meal|snack)\b/.test(lower)) return 'eating';
   if (/\b(work|working|task|shift|job|labor)\b/.test(lower)) return 'working';
-  if (/\b(talk|talking|chat|chatting|visit|visiting|socialize|socializ|meet|meeting)\b/.test(lower)) return 'socializing';
+  if (/\b(talk|talking|chat|chatting|visit|visiting|socialize|socializ|meet|meeting|drink|drinks|tavern|pub|bar|hang\s+out)\b/.test(lower)) return 'socializing';
   if (/\b(sleep|sleeping|rest|resting|nap|napping|bed)\b/.test(lower)) return 'sleeping';
-  if (/\b(walk|walking|go to|head to|travel|move)\b/.test(lower)) return 'walking';
+  if (/\b(walk|walking|stroll|strolling|wander|wandering)\b/.test(lower)) return 'walking';
+  if (/\b(go\s+to|head\s+to|travel|move)\b/.test(lower)) return 'walking';
   if (/\b(shop|shopping|buy|buying|purchase|purchasing)\b/.test(lower)) return 'shopping';
 
   return 'idle';

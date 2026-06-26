@@ -205,11 +205,12 @@ export function initMemoryObserver(memoryService: MemoryService): void {
 
   simEvents.on('goal:emotional_failure', ({ agentId, importance, personality }: { agentId: number; importance: number; personality: any }) => {
     memoryService.record(agentId, 'observation', `I feel the weight of failure. My efforts didn't lead anywhere.`, { subtype: 'emotion' }, -0.5, 6);
-    // Trigger emotional states based on personality
+    // Trigger emotional states based on personality — use state:triggered so cascade engine picks it up
     if (personality.neuroticism > 60) {
-      simEvents.emit('state:apply', { agentId, state: importance > 0.8 ? 'depressed' : 'stressed' });
+      const stateType = importance > 0.8 ? 'depressed' : 'stressed';
+      simEvents.emit('state:triggered', { agentId, state: stateType, source: 'goal_failure' });
     } else if (personality.aggression > 60) {
-      simEvents.emit('state:apply', { agentId, state: 'angry' });
+      simEvents.emit('state:triggered', { agentId, state: 'angry', source: 'goal_failure' });
     }
   });
 

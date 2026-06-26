@@ -95,7 +95,7 @@ export function gossipTick(_currentTick: number): void {
 
           // Eavesdrop chance: curiosity-driven
           const curiosity = eavesdropper.personality?.curiosity ?? 50;
-          const chance = curiosity / 5000; // ~1% for max curiosity per tick
+          const chance = curiosity / 2500; // ~4% for max curiosity per tick, ~2% for average
           if (Math.random() > chance) continue;
 
           const updated = [...new Set([...knownBy, eavesdropper.id])];
@@ -188,8 +188,7 @@ export function gossipTick(_currentTick: number): void {
       // Find secrets about co-located agents that this agent doesn't know
       const coLocatedIds = group.map(a => a.id).filter(id => id !== agent.id);
       const discoverable = allFacts.filter(f => {
-        if (!(f.known_by as number[]).includes(agent.id) === false) return false; // already knows
-        if ((f.known_by as number[]).includes(agent.id)) return false;
+        if ((f.known_by as number[]).includes(agent.id)) return false; // already knows
         if (!coLocatedIds.includes(f.subject_id)) return false;
         return f.sensitivity >= 2; // only discover non-public shared_knowledge
       });

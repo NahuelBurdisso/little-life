@@ -19,7 +19,7 @@ export interface BuildingTemplate {
   color: string;
 }
 
-const TILE = 32;
+import { TILE } from './config';
 
 // ─── Core templates (always present, minAgents: 0) ────────────────────────────
 

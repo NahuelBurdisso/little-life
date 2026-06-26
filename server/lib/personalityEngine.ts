@@ -63,7 +63,7 @@ export function computeBehaviorModifiers(
     sensuality, neuroticism,
   } = personality;
 
-  const { mood, social, isEvening, activeStates } = context;
+  const { mood, social, energy, hunger, isEvening, activeStates } = context;
 
   // --- Social ---
 
@@ -105,11 +105,12 @@ export function computeBehaviorModifiers(
   if (activeStates.includes('alcoholic')) tavernAttraction += 40;
   if (activeStates.includes('hungover')) tavernAttraction = -50;
 
-  // Home: neuroticism = comfort in familiar spaces
+  // Home: neuroticism = comfort in familiar spaces, low energy = want to rest
   let homePreference = 1.0;
   if (neuroticism > 65) homePreference = 1.3;
   if (neuroticism > 80) homePreference = 1.5;
   if (vanity > 60) homePreference *= 0.7; // vain people don't want to be alone
+  if (energy < 30) homePreference *= 1.4; // exhausted agents go home
 
   // Work ethic: low impulsiveness + high loyalty = workaholic
   let workEthic = 0;
@@ -118,7 +119,9 @@ export function computeBehaviorModifiers(
 
   // --- Action modifiers ---
 
-  const eatImpulsiveness = 1 + impulsiveness / 200; // 1.0-1.5
+  // Hunger-aware eating: impulsive agents eat sooner, but also hunger level amplifies
+  const hungerUrgency = hunger < 40 ? 1 + (40 - hunger) / 80 : 1.0; // up to 1.5 when very hungry
+  const eatImpulsiveness = (1 + impulsiveness / 200) * hungerUrgency; // 1.0-2.25
 
   // Risk tolerance affects theft/gambling thresholds
   const riskTolerance = (impulsiveness * 0.4 + (100 - morality) * 0.4 + aggression * 0.2) / 100;

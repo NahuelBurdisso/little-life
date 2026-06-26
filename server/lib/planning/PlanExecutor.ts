@@ -49,7 +49,7 @@ export class PlanExecutor {
     if (!plan) return null;
 
     // 1b. Stale plan check — skip plans from previous days
-    if (currentDay !== undefined && plan.day < currentDay - 1) return null;
+    if (currentDay !== undefined && plan.day < currentDay) return null;
 
     // 2. Find the appropriate block for the current hour
     const block = this._resolveBlock(plan, agentId, currentHour);

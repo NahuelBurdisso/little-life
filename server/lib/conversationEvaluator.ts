@@ -58,12 +58,20 @@ export function evaluateConversation(params: EvaluationInput): EvaluationResult 
   }
 
   // Combined score (weighted)
+  // If no injected memories available, redistribute that weight to other factors
+  const hasMemories = injectedMemories.length > 0;
+  const memWeight = hasMemories ? 0.20 : 0;
+  const sentWeight = hasMemories ? 0.20 : 0.30;
+  const relWeight = hasMemories ? 0.25 : 0.30;
+  const turnWeight = hasMemories ? 0.15 : 0.20;
+  const topicWeight = hasMemories ? 0.20 : 0.20;
+
   const quality_score =
-    memoryRef * 0.25 +
-    sentimentVar * 0.20 +
-    relationshipImpact * 0.25 +
-    turnEngagement * 0.15 +
-    topicCoherence * 0.15;
+    memoryRef * memWeight +
+    sentimentVar * sentWeight +
+    relationshipImpact * relWeight +
+    turnEngagement * turnWeight +
+    topicCoherence * topicWeight;
 
   return {
     quality_score: Math.round(quality_score * 1000) / 1000,

@@ -210,6 +210,7 @@ export function createFact(
 const NEGATIVE_FACT_TYPES = [
   'theft', 'blackmail', 'gambling_loss', 'rumor',
   'reputation', 'work_issue', 'drunk_incident', 'grudge',
+  'affair', 'arrest', 'seduction',
 ];
 
 export function getNegativeFactCount(agentId: number): number {

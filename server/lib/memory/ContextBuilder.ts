@@ -18,7 +18,7 @@ export class ContextBuilder {
     if (params.situationalPrompt) {
       items.push({ type: 'situation', text: params.situationalPrompt });
     }
-    for (const sp of params.statePrompts.slice(0, 2)) {
+    for (const sp of params.statePrompts.slice(0, 4)) {
       items.push({ type: 'state', text: sp });
     }
 

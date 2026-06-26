@@ -38,7 +38,7 @@ export class MemoryConsolidator {
   ) {}
 
   consolidate(currentDay: number, currentTick: number): void {
-    const allAgents = db.select({ id: agents.id }).from(agents).all();
+    const allAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
     let totalDeactivated = 0;
     let totalSummaries = 0;
 

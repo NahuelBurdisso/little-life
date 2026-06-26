@@ -8,6 +8,11 @@
 import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../constants';
 import type { SnapAction } from './cascadeTypes';
+import { db } from '../../db';
+import { agents, needs, agentStates, locations } from '../../db/schema';
+import { eq, and } from 'drizzle-orm';
+import { simEvents } from '../simEvents';
+import { logActivity } from '../activityLogger';
 
 export interface SnapPromptContext {
   agentName: string;
@@ -97,9 +102,94 @@ export class SnapResolver {
     tensionSources: Array<{ event: string; description: string; tick: number }>,
     metadata: Record<string, unknown>
   ): Promise<void> {
-    // Stub — Task 8 wires up actual DB writes
-    console.log(
-      `[SnapResolver] executeSnapAction stub: agent=${agentId}, action=${action}, sources=${tensionSources.length}, metadata=${JSON.stringify(metadata)}`
-    );
+    const agentRow = db.select({ name: agents.name, home: agents.home })
+      .from(agents).where(eq(agents.id, agentId)).get();
+    const agentName = agentRow?.name ?? `Agent#${agentId}`;
+
+    switch (action) {
+      case 'confront': {
+        // Find the most mentioned agent in tension sources
+        simEvents.emit('interaction:completed', {
+          agentId,
+          action: 'confrontation',
+          _cascade: metadata,
+        });
+        logActivity({ type: 'drama', initiator: agentId,
+          templateData: { description: `${agentName} snapped and confronted someone!` } });
+        break;
+      }
+      case 'flee': {
+        // Send agent home
+        if (agentRow?.home) {
+          const loc = db.select({ entry_point: locations.entry_point })
+            .from(locations).where(eq(locations.id, agentRow.home)).get();
+          if (loc) {
+            const ep = loc.entry_point as { x: number; y: number };
+            db.update(agents).set({
+              current_action: { type: 'walking', to: ep },
+              current_destination: { x: ep.x, y: ep.y, locationId: agentRow.home },
+              current_path: null,
+            }).where(eq(agents.id, agentId)).run();
+          }
+        }
+        logActivity({ type: 'drama', initiator: agentId,
+          templateData: { description: `${agentName} snapped and fled home in distress` } });
+        break;
+      }
+      case 'plot': {
+        // Create stressed state + emit plot event
+        const existingStressed = db.select({ id: agentStates.id }).from(agentStates)
+          .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, 'angry'))).get();
+        if (!existingStressed) {
+          db.insert(agentStates).values({
+            agent_id: agentId, type: 'angry', severity: 0.7,
+            started_at: 0, duration: 240, source: 'snap:plot', metadata: {},
+          }).run();
+        }
+        logActivity({ type: 'drama', initiator: agentId,
+          templateData: { description: `${agentName} snapped quietly and began plotting revenge` } });
+        break;
+      }
+      case 'breakdown': {
+        // Public emotional breakdown: stress spike, mood crash
+        const agentNeeds = db.select({ stress: needs.stress, mood: needs.mood })
+          .from(needs).where(eq(needs.agent_id, agentId)).get();
+        if (agentNeeds) {
+          db.update(needs).set({
+            stress: Math.min(100, agentNeeds.stress + 25),
+            mood: Math.max(0, agentNeeds.mood - 20),
+          }).where(eq(needs.agent_id, agentId)).run();
+        }
+        simEvents.emit('state:triggered', { agentId, state: 'stressed', source: 'snap:breakdown' });
+        logActivity({ type: 'drama', initiator: agentId,
+          templateData: { description: `${agentName} had a public emotional breakdown!` } });
+        break;
+      }
+      case 'lash_out': {
+        // Take anger out on nearby agents
+        simEvents.emit('interaction:completed', {
+          agentId,
+          action: 'insult',
+          _cascade: metadata,
+        });
+        logActivity({ type: 'drama', initiator: agentId,
+          templateData: { description: `${agentName} snapped and lashed out at those nearby!` } });
+        break;
+      }
+      case 'self_destruct': {
+        // Self-destructive behavior: seek tavern, stress, mood crash
+        const agentNeeds2 = db.select({ stress: needs.stress, mood: needs.mood })
+          .from(needs).where(eq(needs.agent_id, agentId)).get();
+        if (agentNeeds2) {
+          db.update(needs).set({
+            stress: Math.min(100, agentNeeds2.stress + 15),
+            mood: Math.max(0, agentNeeds2.mood - 15),
+          }).where(eq(needs.agent_id, agentId)).run();
+        }
+        logActivity({ type: 'drama', initiator: agentId,
+          templateData: { description: `${agentName} snapped and spiraled into self-destructive behavior` } });
+        break;
+      }
+    }
   }
 }

@@ -581,16 +581,16 @@ function evaluateTriggers(
   }
 
   // ── Euphoric ──────────────────────────────────────────────────────────────
-  if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 80) {
+  if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 70) {
     const msPerTick = CONFIG.TICK_INTERVAL_MS;
-    const sinceWindow = Date.now() - 60 * msPerTick;
+    const sinceWindow = Date.now() - 90 * msPerTick;
     const positiveConvoRows = db
       .select()
       .from(conversations)
       .where(
         and(
           eq(conversations.status, 'ended'),
-          gt(conversations.sentiment, 0.8),
+          gt(conversations.sentiment, 0.6),
           gt(conversations.started_at, sinceWindow),
         ),
       )
@@ -783,7 +783,7 @@ function evaluateTriggers(
       }
       const socialDuration = currentTick - lowSocialSince.get(agent.id)!;
       if (socialDuration >= 60) {
-        const sinceWindow = Date.now() - 1440000; // last 24 minutes real-time (1440 ticks × 1000ms)
+        const sinceWindow = Date.now() - 3600000; // last 60 minutes real-time
         const positiveConvoRows = db
           .select()
           .from(conversations)
@@ -897,17 +897,17 @@ function evaluateTriggers(
   }
 
   // ── Confident ─────────────────────────────────────────────────────────────
-  if (!activeTypes.has('confident') && personality.vanity > 50) {
+  if (!activeTypes.has('confident') && personality.vanity > 40) {
     const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 1440 * msPerTick;
     const positiveConvos = db
       .select()
       .from(conversations)
-      .where(and(gt(conversations.sentiment, 0.3), gt(conversations.started_at, sinceWindow)))
+      .where(and(gt(conversations.sentiment, 0.25), gt(conversations.started_at, sinceWindow)))
       .all()
       .filter((c) => (c.participants as number[]).includes(agent.id));
 
-    if (positiveConvos.length >= 3) {
+    if (positiveConvos.length >= 2) {
       const severity = 0.4 + Math.random() * 0.4;
       const duration = Math.floor(480 + Math.random() * 480); // 8-16 hours
       db.insert(agentStates)
@@ -960,18 +960,17 @@ function checkConditionalExits(
       }
 
       case 'depressed': {
-        // Exits ONLY when a warm friend initiates a positive conversation
-        const msPerTick = CONFIG.TICK_INTERVAL_MS;
-        const sinceWindow = Date.now() - 60 * msPerTick;
+        // Exit path 1: positive conversation with any friend (friendship > 30)
+        // Look back 10 minutes real-time (enough to catch recent conversations)
+        const sinceWindow = Date.now() - 600_000;
         const recentPositiveConvos = db
           .select()
           .from(conversations)
-          .where(and(gt(conversations.sentiment, 0.3), gt(conversations.started_at, sinceWindow)))
+          .where(and(gt(conversations.sentiment, 0.2), gt(conversations.started_at, sinceWindow)))
           .all()
           .filter((c) => {
             const parts = c.participants as number[];
             if (!parts.includes(agent.id)) return false;
-            // Check if another participant is a warm friend
             return parts.some((otherId) => {
               if (otherId === agent.id) return false;
               const rel = db
@@ -987,16 +986,25 @@ function checkConditionalExits(
               if (!rel) return false;
               const isA = rel.agent_a === agent.id;
               const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
-              const otherAgent = db
-                .select({ personality: agents.personality })
-                .from(agents)
-                .where(eq(agents.id, otherId))
-                .get();
-              const otherPersonality = otherAgent?.personality as PersonalityProfile | null;
-              return friendship > 50 && (otherPersonality?.warmth ?? 0) > 50;
+              return friendship > 30;
             });
           });
-        shouldExit = recentPositiveConvos.length > 0;
+        if (recentPositiveConvos.length > 0) {
+          shouldExit = true;
+          break;
+        }
+        // Exit path 2: sustained high mood (mood > 55 for 120+ ticks = natural recovery)
+        if (agentNeeds && agentNeeds.mood > 55) {
+          const elapsed = currentTick - state.started_at;
+          if (elapsed > 120) {
+            shouldExit = true;
+          }
+        }
+        // Exit path 3: long duration (depression lifts after ~2 game days even without help)
+        const maxDepressedTicks = 2880; // ~2 game days
+        if (currentTick - state.started_at > maxDepressedTicks) {
+          shouldExit = Math.random() < 0.05; // 5% per tick after 2 days
+        }
         break;
       }
 
@@ -1081,6 +1089,11 @@ function checkConditionalExits(
             const ownRomance = isA ? ownRel.romance_ab : ownRel.romance_ba;
             if (ownRomance < 30) shouldExit = true;
           }
+        }
+        // Safety valve: jealousy fades after ~1.5 game days even if romance is still high
+        if (!shouldExit) {
+          const elapsed = currentTick - state.started_at;
+          if (elapsed > 2160 && Math.random() < 0.03) shouldExit = true;
         }
         break;
       }

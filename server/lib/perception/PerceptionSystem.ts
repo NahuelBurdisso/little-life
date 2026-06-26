@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { agents, needs, agentStates, relationships, conversations, conversationQueue } from '../../db/schema';
+import { agents, needs, agentStates, relationships, conversations, conversationQueue, locations } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { simEvents } from '../simEvents';
 import { PERCEPTION_REGISTRY, REACTION_TYPES } from './perceptionRegistry';
@@ -185,6 +185,7 @@ export class PerceptionSystem {
     const activeConvs = db
       .select({ participants: conversations.participants })
       .from(conversations)
+      .where(eq(conversations.status, 'active'))
       .all();
 
     const queuedConvs = db
@@ -338,12 +339,22 @@ export class PerceptionSystem {
             addBusy([observer.id, target.id]);
           }
         } else if (reaction.action === 'leave') {
-          // Update agent's action to walking home / leaving
-          db
-            .update(agents)
-            .set({ current_action: { type: 'walking', destination: 'home', reason: reaction.trigger_reason } })
-            .where(eq(agents.id, observer.id))
-            .run();
+          // Send agent walking home
+          const observerRow = db.select({ home: agents.home })
+            .from(agents).where(eq(agents.id, observer.id)).get();
+          if (observerRow?.home) {
+            const homeLoc = db.select({ entry_point: locations.entry_point })
+              .from(locations).where(eq(locations.id, observerRow.home)).get();
+            if (homeLoc) {
+              const ep = homeLoc.entry_point as { x: number; y: number };
+              db.update(agents).set({
+                current_action: { type: 'walking', to: ep },
+                current_destination: { x: ep.x, y: ep.y, locationId: observerRow.home },
+                current_path: null,
+                action_queue: [{ type: 'idle' }],
+              }).where(eq(agents.id, observer.id)).run();
+            }
+          }
         }
       }
     }

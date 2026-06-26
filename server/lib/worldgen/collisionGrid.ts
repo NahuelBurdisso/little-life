@@ -1,6 +1,5 @@
 import { ENCLOSED_BUILDING_TYPES } from './buildingTemplates';
-
-const TILE_SIZE = 32;
+import { TILE as TILE_SIZE } from './config';
 
 interface CollisionLoc {
   x: number;
@@ -47,9 +46,12 @@ export function generateCollisionGridForLocations(
       if (doorTileX >= 0 && doorTileX < mapWidth && doorTileY >= 0 && doorTileY < mapHeight) {
         grid[doorTileY][doorTileX] = 0;
       }
-      const outsideDoorY = doorTileY + 1;
-      if (outsideDoorY >= 0 && outsideDoorY < mapHeight) {
-        grid[outsideDoorY][doorTileX] = 0;
+      // Unblock tile south of door (exit direction) and the tile above (approach path)
+      for (const dy of [-1, 1]) {
+        const adjY = doorTileY + dy;
+        if (adjY >= 0 && adjY < mapHeight && doorTileX >= 0 && doorTileX < mapWidth) {
+          grid[adjY][doorTileX] = 0;
+        }
       }
     }
   }

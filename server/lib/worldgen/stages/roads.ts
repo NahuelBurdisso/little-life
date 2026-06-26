@@ -51,9 +51,12 @@ export function deriveZones(r: RoadPositions, width: number, height: number): Zo
   for (let row = 0; row < 3; row++) {
     for (let col = 0; col < 3; col++) {
       const id = ZONE_IDS[row][col];
+      const bounds = { x1: cols[col].x1, y1: rows[row].y1, x2: cols[col].x2, y2: rows[row].y2 };
+      // Skip degenerate zones (can happen on very small maps)
+      if (bounds.x2 <= bounds.x1 || bounds.y2 <= bounds.y1) continue;
       zones.push({
         id,
-        bounds: { x1: cols[col].x1, y1: rows[row].y1, x2: cols[col].x2, y2: rows[row].y2 },
+        bounds,
         affinity: AFFINITIES[id],
       });
     }

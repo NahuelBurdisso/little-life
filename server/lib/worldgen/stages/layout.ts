@@ -6,8 +6,7 @@ import {
 import { FitError, type Stage, type Zone } from '../types';
 import type { LocationSeed } from '../types';
 import type { RNG } from '../rng';
-
-const TILE = 32;
+import { TILE } from '../config';
 const BUILDING_GAP = 2;
 const ROAD_BUFFER = 1;
 const BORDER_BUFFER = 2;

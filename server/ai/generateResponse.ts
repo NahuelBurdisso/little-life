@@ -79,7 +79,6 @@ export async function generateResponse(
         model: CONFIG.AI.CHAT_MODEL,
         system,
         messages: promptMessages,
-        baseUrl: process.env.OLLAMA_BASE_URL,
         priority: 'critical',
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
@@ -92,7 +91,9 @@ export async function generateResponse(
       });
       responseText = result.text;
       break;
-    } catch (_error) {
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[generateResponse] Attempt ${attempt + 1}/${CONFIG.AI.RETRY_ATTEMPTS} failed for conversation ${conversationId}: ${msg}`);
       if (attempt < CONFIG.AI.RETRY_ATTEMPTS - 1) {
         await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
       }

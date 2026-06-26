@@ -118,12 +118,12 @@ describe('RippleEngine', () => {
   // ─── chain depth limiting ───────────────────────────────────────────────────
 
   describe('chain depth limiting', () => {
-    it('depth 4 is not exceeded', () => {
-      expect(engine.isChainDepthExceeded(4)).toBe(false);
+    it('depth 5 is not exceeded (max allowed)', () => {
+      expect(engine.isChainDepthExceeded(5)).toBe(false);
     });
 
-    it('depth 5 is exceeded', () => {
-      expect(engine.isChainDepthExceeded(5)).toBe(true);
+    it('depth 6 is exceeded', () => {
+      expect(engine.isChainDepthExceeded(6)).toBe(true);
     });
   });
 

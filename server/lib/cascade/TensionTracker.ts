@@ -45,7 +45,7 @@ export class TensionTracker {
     const impulseReduction = personality.impulsiveness / 5;   // 0-20 reduction
     const moralityBoost = personality.morality / 6.67;        // 0-15 boost
     const warmthBoost = personality.warmth / 10;              // 0-10 boost
-    return base - neuroReduction - impulseReduction + moralityBoost + warmthBoost;
+    return Math.max(55, Math.min(125, base - neuroReduction - impulseReduction + moralityBoost + warmthBoost));
   }
 
   // ─── Tick update ─────────────────────────────────────────────────────────────

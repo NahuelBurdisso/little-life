@@ -3,6 +3,9 @@ import { z } from 'zod';
 // Exported constants — see spec §6.1 for rationale.
 // MIN values sized for proportional road grid + largest core building (town_square 9×8).
 // MAX values cap auto-growth for performance + visual sanity.
+/** Tile size in pixels — single source of truth for all worldgen stages. */
+export const TILE = 32;
+
 export const MIN_WIDTH = 56;
 export const MAX_WIDTH = 90;
 export const MIN_HEIGHT = 43;

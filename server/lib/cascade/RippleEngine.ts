@@ -110,7 +110,7 @@ export class RippleEngine {
   // ─── Chain depth ─────────────────────────────────────────────────────────────
 
   isChainDepthExceeded(depth: number): boolean {
-    return depth >= 5;
+    return depth > 5;
   }
 
   // ─── Per-tick cap ─────────────────────────────────────────────────────────────
@@ -186,26 +186,24 @@ export class RippleEngine {
 
     if (requires.relationshipMin !== undefined) {
       const targetId = payload?.perpetratorId ?? payload?.victimId ?? payload?.targetId ?? null;
-      if (targetId != null) {
-        const rel = ctx.getRelationship(agentId, targetId);
-        if (!rel) return false;
-        const a = Math.min(agentId, targetId);
-        const isA = agentId === a;
-        const fieldValue = this.getRelField(rel, requires.relationshipMin.field, isA);
-        if (fieldValue < requires.relationshipMin.value) return false;
-      }
+      if (targetId == null) return false; // can't check relationship without a target
+      const rel = ctx.getRelationship(agentId, targetId);
+      if (!rel) return false;
+      const a = Math.min(agentId, targetId);
+      const isA = agentId === a;
+      const fieldValue = this.getRelField(rel, requires.relationshipMin.field, isA);
+      if (fieldValue < requires.relationshipMin.value) return false;
     }
 
     if (requires.relationshipMax !== undefined) {
       const targetId = payload?.perpetratorId ?? payload?.victimId ?? payload?.targetId ?? null;
-      if (targetId != null) {
-        const rel = ctx.getRelationship(agentId, targetId);
-        if (!rel) return false;
-        const a = Math.min(agentId, targetId);
-        const isA = agentId === a;
-        const fieldValue = this.getRelField(rel, requires.relationshipMax.field, isA);
-        if (fieldValue > requires.relationshipMax.value) return false;
-      }
+      if (targetId == null) return false; // can't check relationship without a target
+      const rel = ctx.getRelationship(agentId, targetId);
+      if (!rel) return false;
+      const a = Math.min(agentId, targetId);
+      const isA = agentId === a;
+      const fieldValue = this.getRelField(rel, requires.relationshipMax.field, isA);
+      if (fieldValue > requires.relationshipMax.value) return false;
     }
 
     return true;

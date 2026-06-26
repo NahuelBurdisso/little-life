@@ -42,4 +42,8 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   watch:       { category: 'social', base_importance: 0.1, retention: 'short', template: '{agent} watched a performance' },
   browse:      { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} browsed the shelves' },
   jog:         { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} went for a jog' },
+
+  // ─── Crime ──────────────────────────────────────────────────────────────────
+  shoplifting: { category: 'drama', base_importance: 0.6, retention: 'medium', template: '{description}' },
+  pickpocket:  { category: 'drama', base_importance: 0.7, retention: 'medium', template: '{description}' },
 };

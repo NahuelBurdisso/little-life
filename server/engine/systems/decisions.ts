@@ -273,9 +273,18 @@ function checkSchedule(
     }
   }
 
-  // Sleep time: handle wrap-around
-  if (hour >= sched.sleepTime || hour < sched.wakeTime) {
-    return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+  // Sleep time: handle wrap-around (sleepTime=0 means midnight=24)
+  const effectiveSleepTime = sched.sleepTime === 0 ? 24 : sched.sleepTime;
+  if (effectiveSleepTime > sched.wakeTime) {
+    // Normal case: sleep 22 → wake 7 → sleeping when hour >= 22 OR hour < 7
+    if (hour >= effectiveSleepTime || hour < sched.wakeTime) {
+      return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+    }
+  } else {
+    // Inverted case: sleep 2 → wake 10 → sleeping when hour >= 2 AND hour < 10
+    if (hour >= effectiveSleepTime && hour < sched.wakeTime) {
+      return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+    }
   }
 
   // Work time
@@ -510,6 +519,65 @@ function scoreFreeTimeActions(
     scores.push({ action: 'socializing', score: addNoise(walkScore), targetLocationId: square.id });
   }
 
+  // ── Zone-driven activities ─────────────────────────────────────────────────
+  // Personality and state-driven activities at specific zones
+  if (personality) {
+    const park = nearestLocation(agent.position, allLocations, 'park');
+    const farm = nearestLocation(agent.position, allLocations, 'farm');
+
+    // Contemplate at riverside — lonely/stressed/neurotic agents seek solitude
+    if (park && (agentStateTypes.includes('stressed') || agentStateTypes.includes('lonely') ||
+        agentStateTypes.includes('heartbroken') || personality.neuroticism > 55)) {
+      let contemplateScore = 25;
+      if (agentStateTypes.includes('stressed')) contemplateScore += 20;
+      if (agentStateTypes.includes('heartbroken')) contemplateScore += 25;
+      if (agentStateTypes.includes('lonely')) contemplateScore += 15;
+      contemplateScore += (personality.neuroticism - 50) * 0.3;
+      scores.push({ action: 'idle', score: addNoise(contemplateScore), targetLocationId: park.id, source: 'contemplate' });
+    }
+
+    // Fish at riverside — relaxing activity for low fun/comfort
+    if (park && agentNeeds.fun < 50) {
+      const fishScore = 15 + (50 - agentNeeds.fun) * 0.3 + (personality.curiosity > 50 ? 10 : 0);
+      scores.push({ action: 'idle', score: addNoise(fishScore), targetLocationId: park.id, source: 'fish' });
+    }
+
+    // Garden at park — warm/curious agents tend the garden
+    if (park && (personality.warmth > 50 || personality.curiosity > 60)) {
+      let gardenScore = 15 + (personality.warmth - 40) * 0.2;
+      if (agentNeeds.fun < 60) gardenScore += 10;
+      scores.push({ action: 'idle', score: addNoise(gardenScore), targetLocationId: park.id, source: 'garden' });
+    }
+
+    // Forage in groves — curious or poor agents forage
+    if (park && (personality.curiosity > 60 || (agentEcon && agentEcon.money < 15))) {
+      let forageScore = 10 + (personality.curiosity - 40) * 0.2;
+      if (agentEcon && agentEcon.money < 15) forageScore += 20;
+      scores.push({ action: 'idle', score: addNoise(forageScore), targetLocationId: park.id, source: 'forage' });
+    }
+
+    // Perform at town square fountain — vain/sensual agents perform
+    if (square && personality.vanity > 45 && personality.sensuality > 40) {
+      const performScore = 15 + (personality.vanity - 40) * 0.3 + (agentNeeds.social < 50 ? 10 : 0);
+      scores.push({ action: 'idle', score: addNoise(performScore), targetLocationId: square.id, source: 'perform' });
+    }
+
+    // Jog around town — energetic agents with high comfort needs
+    if (agentNeeds.comfort < 50 && personality.impulsiveness > 40) {
+      const jogScore = 10 + (50 - agentNeeds.comfort) * 0.3;
+      const jogTarget = park ?? square;
+      if (jogTarget) {
+        scores.push({ action: 'idle', score: addNoise(jogScore), targetLocationId: jogTarget.id, source: 'jog' });
+      }
+    }
+
+    // Browse market stalls — curious shoppers or bored agents
+    if (square && agentNeeds.fun < 50 && personality.curiosity > 40) {
+      const browseScore = 12 + (personality.curiosity - 40) * 0.2 + (50 - agentNeeds.fun) * 0.2;
+      scores.push({ action: 'idle', score: addNoise(browseScore), targetLocationId: square.id, source: 'browse' });
+    }
+  }
+
   // Work ethic — driven by personality engine
   if (mods && mods.workEthic > 0 && agent.workplace) {
     scores.push({ action: 'working', score: addNoise(mods.workEthic), targetLocationId: agent.workplace });
@@ -580,6 +648,41 @@ function scoreFreeTimeActions(
     }
   }
 
+  // --- Opportunistic crime ---
+  // Broke agents with low morality may attempt theft at shops or from nearby agents
+  if (personality && agentEcon && agentEcon.money < 10 && personality.morality < 45) {
+    const shop = nearestLocation(agent.position, allLocations, 'shop');
+    const desperation = Math.max(0, 10 - agentEcon.money) * 2; // 0-20
+    const moralityFactor = (45 - personality.morality) * 0.4; // 0-18
+    const impulseFactor = personality.impulsiveness > 50 ? (personality.impulsiveness - 50) * 0.2 : 0;
+    const crimeScore = desperation + moralityFactor + impulseFactor;
+
+    // Shoplifting
+    if (shop && crimeScore > 15) {
+      scores.push({ action: 'idle', score: addNoise(crimeScore), targetLocationId: shop.id, source: 'shoplifting' });
+    }
+
+    // Pickpocket nearby wealthy agent
+    if (crimeScore > 20) {
+      for (const other of otherAgents) {
+        if (other.id === agent.id || !other.is_active) continue;
+        const otherEcon = econMap?.get(other.id) ?? null;
+        if (!otherEcon || otherEcon.money < 30) continue;
+        const d = distance(agent.position, other.position);
+        if (d < 128) { // Within 4 tiles
+          scores.push({
+            action: 'idle',
+            score: addNoise(crimeScore * 0.8),
+            targetLocationId: other.current_location ?? undefined,
+            targetAgentId: other.id,
+            source: 'pickpocket',
+          });
+          break; // Only target one agent
+        }
+      }
+    }
+  }
+
   // --- Distance penalty ---
   // Agents prefer nearby locations. Score decays with distance so that a location
   // 20 tiles away scores ~50% of an identical location right next to the agent.
@@ -611,7 +714,7 @@ function buildAction(decision: ScoredAction): Record<string, unknown> {
     case 'walking':
       return { type: 'walking', to: { x: 0, y: 0 } };
     case 'idle':
-      return { type: 'idle' };
+      return { type: 'idle', ...(decision.source ? { zoneActivity: decision.source } : {}) };
     case 'shopping':
       return { type: 'shopping', shopId: decision.targetLocationId ?? '', items: [] };
     default:
@@ -671,7 +774,10 @@ export function tick(world: WorldRow): void {
     const sched = agent.schedule as { wakeTime?: number; sleepTime?: number } | null;
     const wakeTime = sched?.wakeTime ?? 7;
     const sleepTime = sched?.sleepTime ?? 22;
-    const isDaytime = world.time.hour >= wakeTime && world.time.hour < sleepTime;
+    const effSleepTime = sleepTime === 0 ? 24 : sleepTime;
+    const isDaytime = effSleepTime > wakeTime
+      ? (world.time.hour >= wakeTime && world.time.hour < effSleepTime)
+      : !(world.time.hour >= effSleepTime && world.time.hour < wakeTime);
     const currentPlan = (agent as any).daily_plan as { day: number } | null;
     const planIsStale = !currentPlan || currentPlan.day < (world.time.day ?? 1);
 
@@ -884,8 +990,76 @@ export function tick(world: WorldRow): void {
         .run();
     }
 
+    // Log zone-driven activities to activity feed
+    if (decision.source && ['contemplate', 'fish', 'garden', 'forage', 'perform', 'jog', 'browse', 'shoplifting', 'pickpocket'].includes(decision.source)) {
+      const activityNames: Record<string, string> = {
+        contemplate: 'is contemplating by the riverside',
+        fish: 'is fishing at the river',
+        garden: 'is tending the garden',
+        forage: 'is foraging in the grove',
+        perform: 'is performing in the town square',
+        jog: 'is jogging around town',
+        browse: 'is browsing the market stalls',
+        shoplifting: 'is eyeing goods at the shop suspiciously',
+        pickpocket: 'is lurking near someone with money',
+      };
+      logActivity({
+        type: decision.source as string,
+        initiator: agent.id,
+        templateData: { agent: agent.name, description: `${agent.name} ${activityNames[decision.source] ?? decision.source}` },
+      });
+    }
+
+    // Crime execution — resolve theft when agent starts the action
+    if (decision.source === 'shoplifting' || decision.source === 'pickpocket') {
+      const thief = agent;
+      const thiefEcon = agentEcon;
+      if (thiefEcon) {
+        const stolenAmount = Math.floor(5 + Math.random() * 10); // $5-15
+        const caught = Math.random() < 0.35; // 35% chance caught
+
+        if (decision.source === 'pickpocket' && decision.targetAgentId) {
+          const victimEcon = db.select().from(economy).where(eq(economy.agent_id, decision.targetAgentId)).get();
+          const victimAgent = activeAgents.find(a => a.id === decision.targetAgentId);
+          if (victimEcon && victimAgent && victimEcon.money >= stolenAmount) {
+            db.update(economy).set({ money: victimEcon.money - stolenAmount }).where(eq(economy.id, victimEcon.id)).run();
+            db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
+            if (caught) {
+              createFact('theft', thief.id, decision.targetAgentId, 2, [thief.id, decision.targetAgentId], 'witnessed');
+              simEvents.emit('economy:theft_caught', {
+                agentId: thief.id, perpetratorId: thief.id, victimId: decision.targetAgentId,
+                locationId: thief.current_location,
+              });
+              logActivity({ type: 'drama', initiator: thief.id, target: decision.targetAgentId,
+                templateData: { description: `${thief.name} was caught pickpocketing $${stolenAmount} from ${victimAgent.name}!` } });
+            } else {
+              logActivity({ type: 'drama', initiator: thief.id,
+                templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` } });
+              simEvents.emit('economy:theft_success', { agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount });
+            }
+          }
+        } else if (decision.source === 'shoplifting') {
+          // Steal from shop — no specific victim, just gain money
+          db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
+          if (caught) {
+            createFact('theft', thief.id, null, 2, [thief.id], 'witnessed');
+            simEvents.emit('economy:theft_caught', {
+              agentId: thief.id, perpetratorId: thief.id,
+              locationId: thief.current_location,
+            });
+            logActivity({ type: 'drama', initiator: thief.id,
+              templateData: { description: `${thief.name} was caught shoplifting $${stolenAmount} worth of goods!` } });
+          } else {
+            logActivity({ type: 'drama', initiator: thief.id,
+              templateData: { description: `${thief.name} shoplifted $${stolenAmount} worth of goods` } });
+          }
+        }
+      }
+    }
+
     // Social decisions -> conversation queue (only if agents are at same location)
-    if (decision.action === 'socializing' && decision.targetAgentId) {
+    // Skip if queue is already full
+    if (decision.action === 'socializing' && decision.targetAgentId && allQueuedConvos.length < CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE * 3) {
       const agentId = agent.id;
       const targetId = decision.targetAgentId;
 
@@ -1146,10 +1320,12 @@ export function tick(world: WorldRow): void {
       const prison = allLocations.find(l => l.type === 'prison');
       if (!prison) continue;
 
-      // Arrest: force the criminal to idle at prison for 480 ticks (8 hours)
+      // Arrest: teleport criminal to prison entrance, then idle for 480 ticks (8 hours)
       db.update(agents).set({
         current_action: { type: 'idle' },
-        current_destination: { x: prison.entry_point.x, y: prison.entry_point.y, locationId: prison.id },
+        position: { x: prison.entry_point.x, y: prison.entry_point.y },
+        current_destination: null,
+        current_location: prison.id,
         action_started: totalTicks,
         action_duration: 480,
         action_queue: [],

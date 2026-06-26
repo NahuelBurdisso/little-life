@@ -141,8 +141,8 @@ describe('rippleRules', () => {
     }
   });
 
-  it('contains exactly 46 rules', () => {
-    expect(rippleRules.length).toBe(46);
+  it('contains exactly 64 rules', () => {
+    expect(rippleRules.length).toBe(64);
   });
 
   it('has all expected rule IDs present', () => {
@@ -171,6 +171,15 @@ describe('rippleRules', () => {
       'escape_authority_grudge', 'scheme_tension', 'secret_meeting_bond',
       'confide_trust_gain', 'announce_rumor_spread', 'smuggle_bond',
       'lock_out_grudge', 'lock_out_initiator_stress',
+      // Positive / Reconciliation
+      'good_conversation_bonding', 'deep_conversation_trust', 'grudge_forgiveness',
+      'shared_enemy_bond', 'comfort_bonding', 'romantic_spark',
+      'post_confrontation_apology', 'goal_completion_inspires', 'generosity_bond',
+      // Goal completion consequences
+      'revenge_breeds_revenge', 'seduce_success_infatuation',
+      'undermine_victim_retaliation', 'protect_gratitude', 'protect_gratitude_trust',
+      'theft_guilt', 'post_confrontation_apology_friendship',
+      'flirt_triggers_jealousy', 'theft_success_confidence',
     ];
     for (const id of expectedIds) {
       expect(ruleIds.has(id), `Missing expected rule: "${id}"`).toBe(true);

@@ -103,6 +103,10 @@ export class PlanGenerator {
     currentDay: number,
     _currentTick: number,
   ): Promise<void> {
+    // 0. Skip if plan already exists for today (dedup against multiple queue calls)
+    const existing = this.cache.get(agentId);
+    if (existing && existing.day >= currentDay) return;
+
     // 1. Load agent row
     const agentRow = db
       .select({
@@ -223,7 +227,7 @@ export class PlanGenerator {
 
     // 10. Call LLM
     const response = await callOllamaChat({
-      model: CONFIG.AI.CHAT_MODEL,
+      model: CONFIG.AI.LIGHT_MODEL,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
       priority: 'normal',
@@ -394,7 +398,7 @@ export class PlanGenerator {
 
     // 7. Call LLM
     const response = await callOllamaChat({
-      model: CONFIG.AI.CHAT_MODEL,
+      model: CONFIG.AI.LIGHT_MODEL,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
       priority: 'normal',

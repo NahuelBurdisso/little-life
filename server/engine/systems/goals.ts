@@ -282,9 +282,9 @@ function evaluateAbandonment(
       goal.status = newStatus;
 
       if (newStatus === 'completed') {
-        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type });
+        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined, victimId: agent.id });
       } else {
-        simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type });
+        simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined });
       }
 
       logActivity({
@@ -325,7 +325,7 @@ function evaluatePassiveProgress(agent: any, goal: any, _currentTick: number): v
           .set({ progress: newProgress, status: 'completed' })
           .where(eq(goals.id, goal.id))
           .run();
-        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type });
+        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined, victimId: agent.id });
         logActivity({
           type: 'goal_completed',
           initiator: agent.id,
@@ -350,7 +350,7 @@ export function goalsTick(): void {
 
   // Pre-load shared tables once per tick to avoid per-agent/per-trigger queries
   const allActiveKnowledge = db.select().from(shared_knowledge)
-    .where(eq(shared_knowledge.is_active, 1 as any))
+    .where(eq(shared_knowledge.is_active, true))
     .all();
   const allRelationships = db.select().from(relationships).all();
   const allAgentStates = db.select().from(agentStates).all();

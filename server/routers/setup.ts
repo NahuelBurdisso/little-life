@@ -42,6 +42,8 @@ import { perceptionSystem } from '../lib/perception/instance';
 import { emitter } from '../engine/emitter';
 import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
+import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
+import { resetCascade } from '../lib/cascade';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -150,6 +152,33 @@ const ALL_TABLES = [
   agents,
   locations,
 ] as const;
+
+// ─── Helper: job-based starting money ────────────────────────────────────────
+
+const JOB_STARTING_MONEY: Record<string, number> = {
+  farmer: 80, farmhand: 40, bartender: 60, shopkeeper: 120,
+  retired: 90, doctor: 100, medical_assistant: 55, mayor: 150,
+  baker: 65, handyperson: 25, shop_assistant: 35, musician: 20,
+  constable: 70,
+};
+
+function getJobStartingMoney(job: string, defaultMoney: number): number {
+  return JOB_STARTING_MONEY[job] ?? defaultMoney;
+}
+
+const JOB_STARTING_INVENTORY: Record<string, Array<{ itemId: string; quantity: number; acquiredAt: number }>> = {
+  farmer: [{ itemId: 'food_raw', quantity: 10, acquiredAt: 0 }],
+  farmhand: [{ itemId: 'food_raw', quantity: 3, acquiredAt: 0 }],
+  shopkeeper: [{ itemId: 'food_prepared', quantity: 5, acquiredAt: 0 }, { itemId: 'food_raw', quantity: 8, acquiredAt: 0 }],
+  doctor: [{ itemId: 'medicine', quantity: 4, acquiredAt: 0 }],
+  medical_assistant: [{ itemId: 'medicine', quantity: 2, acquiredAt: 0 }],
+  baker: [{ itemId: 'food_raw', quantity: 6, acquiredAt: 0 }, { itemId: 'food_prepared', quantity: 4, acquiredAt: 0 }],
+  bartender: [{ itemId: 'drink', quantity: 8, acquiredAt: 0 }, { itemId: 'food_raw', quantity: 3, acquiredAt: 0 }],
+};
+
+function getJobStartingInventory(job: string): Array<{ itemId: string; quantity: number; acquiredAt: number }> {
+  return JOB_STARTING_INVENTORY[job] ?? [];
+}
 
 // ─── Helper: determine day phase from hour ────────────────────────────────────
 
@@ -316,14 +345,14 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       job_title: agentCfg.jobTitle,
       salary: agentCfg.salary,
       work_performance: 70 + Math.floor(Math.random() * 20),
-      money: (config.rules.startingMoney as number) ?? 50,
+      money: getJobStartingMoney(agentCfg.job, (config.rules.startingMoney as number) ?? 50),
       daily_expenses:
         CONFIG.ECONOMY.DAILY_EXPENSES.min +
         Math.floor(
           Math.random() *
             (CONFIG.ECONOMY.DAILY_EXPENSES.max - CONFIG.ECONOMY.DAILY_EXPENSES.min)
         ),
-      inventory: [],
+      inventory: getJobStartingInventory(agentCfg.job),
       last_payday: 0,
       production_remainder: 0,
     }).run();
@@ -563,6 +592,22 @@ export const setupRouter = router({
     planLLMQueue.clear();
     replanEvaluator.clear();
     perceptionSystem.clear();
+    zoneOccupancy.clear();
+    resetCascade();
+
+    // Reconstruct zone occupancy from freshly seeded agent positions
+    const activeAgentsForZone = db.select({
+      id: agents.id,
+      current_location: agents.current_location,
+      position: agents.position,
+    }).from(agents).where(eq(agents.is_active, true)).all();
+    const allLocsForZone = db.select({
+      id: locations.id,
+      type: locations.type,
+      position: locations.position,
+    }).from(locations).all();
+    reconstructZoneOccupancy(activeAgentsForZone, allLocsForZone);
+
     startTickLoop();
     emitter.markAllDirty();
     emitter.flush();
@@ -662,6 +707,8 @@ export const setupRouter = router({
     planLLMQueue.clear();
     replanEvaluator.clear();
     perceptionSystem.clear();
+    zoneOccupancy.clear();
+    resetCascade();
 
     // Do NOT restart tick loop — leave paused for wizard
     emitter.markAllDirty();

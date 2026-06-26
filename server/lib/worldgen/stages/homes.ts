@@ -1,7 +1,6 @@
 import type { LocationSeed } from '../types';
 import { FitError, type Stage } from '../types';
-
-const TILE = 32;
+import { TILE } from '../config';
 const HOME_TILES = 3;           // 3×3 tile footprint
 const HOME_PX = HOME_TILES * TILE;
 const PUBLIC_BUFFER = 2;        // tiles of buffer around public buildings

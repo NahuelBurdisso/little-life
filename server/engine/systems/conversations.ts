@@ -102,9 +102,14 @@ export async function conversationsTick(): Promise<void> {
       if (now - entry.startedAt > LLM_CONVERSATION_TIMEOUT_MS) {
         const convo = db.select().from(conversations).where(eq(conversations.id, entry.conversationId)).get();
         if (convo && convo.status !== 'ended') {
-          db.update(conversations).set({ status: 'ended', ended_at: now, sentiment: 0 })
+          // Compute sentiment from whatever messages we got so far
+          const partialMessages = (convo.messages as ConversationMessage[]) ?? [];
+          const avgSentiment = partialMessages.length > 0
+            ? partialMessages.reduce((sum, m) => sum + (m.sentiment ?? 0), 0) / partialMessages.length
+            : 0;
+          db.update(conversations).set({ status: 'ended', ended_at: now, sentiment: avgSentiment })
             .where(eq(conversations.id, entry.conversationId)).run();
-          // Reset agents
+          // Reset agents and give minimal social needs update
           const participants = convo.participants as number[];
           for (const pid of participants) {
             const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
@@ -112,6 +117,27 @@ export async function conversationsTick(): Promise<void> {
               db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
                 .where(eq(agents.id, pid)).run();
             }
+            // Give social credit for partial conversation (they did talk, even if LLM timed out)
+            const agentNeeds = db.select().from(needs).where(eq(needs.agent_id, pid)).get();
+            if (agentNeeds) {
+              db.update(needs).set({ social: clamp(agentNeeds.social + 2, 0, 100) })
+                .where(eq(needs.id, agentNeeds.id)).run();
+            }
+          }
+          // Emit conversation:ended so cascade/memory systems still process partial conversations
+          if (participants.length >= 2) {
+            simEvents.emit('conversation:ended', {
+              agentId: participants[0],
+              perpetratorId: participants[1],
+              otherName: '',
+              summary: (convo.topic as string) ?? 'interrupted conversation',
+              turns: partialMessages.length,
+              sentiment: avgSentiment,
+              topics: [],
+              partnerState: null,
+              romanceLevel: 0,
+              hadRecentConflict: false,
+            });
           }
           changed = true;
         }
@@ -484,6 +510,81 @@ async function processCompletedConversation(
     }
   }
 
+  // --- Conversation-triggered interactions ---
+  // Very negative conversations can escalate to insults or confrontations
+  if (overallSentiment < -0.5 && participants.length >= 2) {
+    const aggressorId = participantIds[0];
+    const targetId = participantIds[1];
+    const aggressorAgent = participants.find(p => p.id === aggressorId);
+    const targetAgent = participants.find(p => p.id === targetId);
+    const aggressorPersonality = aggressorAgent?.personality as PersonalityProfile | null;
+
+    if (aggressorPersonality) {
+      // High aggression + very negative → insult
+      if (aggressorPersonality.aggression > 45 && overallSentiment < -0.6 && Math.random() < 0.3) {
+        simEvents.emit('interaction:completed', {
+          agentId: aggressorId,
+          perpetratorId: aggressorId,
+          victimId: targetId,
+          action: 'insult',
+          locationId: aggressorAgent?.current_location,
+        });
+        logActivity({
+          type: 'drama',
+          initiator: aggressorId,
+          target: targetId,
+          templateData: {
+            description: `${aggressorAgent?.name} insulted ${targetAgent?.name} during a heated argument`,
+          },
+        });
+      }
+      // Low morality + very negative + drunk → confrontation
+      if (aggressorPersonality.morality < 40 && overallSentiment < -0.7 &&
+          getAgentStates(aggressorId).includes('drunk') && Math.random() < 0.4) {
+        simEvents.emit('interaction:completed', {
+          agentId: aggressorId,
+          perpetratorId: aggressorId,
+          victimId: targetId,
+          action: 'confrontation',
+          locationId: aggressorAgent?.current_location,
+        });
+        logActivity({
+          type: 'drama',
+          initiator: aggressorId,
+          target: targetId,
+          templateData: {
+            description: `${aggressorAgent?.name} started a fight with ${targetAgent?.name}`,
+          },
+        });
+      }
+    }
+  }
+
+  // Flirtatious conversations can trigger romance interactions
+  if (overallSentiment > 0.3 && participants.length >= 2) {
+    const p1 = participants[0];
+    const p2 = participants[1];
+    const p1Personality = p1.personality as PersonalityProfile | null;
+
+    if (p1Personality && p1Personality.sensuality > 50 && totalRomanceDelta > 3 && Math.random() < 0.25) {
+      simEvents.emit('interaction:completed', {
+        agentId: p1.id,
+        perpetratorId: p1.id,
+        victimId: p2.id,
+        action: 'flirt',
+        locationId: p1.current_location,
+      });
+      logActivity({
+        type: 'drama',
+        initiator: p1.id,
+        target: p2.id,
+        templateData: {
+          description: `${p1.name} flirted with ${p2.name} after their conversation`,
+        },
+      });
+    }
+  }
+
   // --- Proactive Financial Help ---
   if (overallSentiment > 0 && participants.length >= 2) {
     const speaker = participants[0];
@@ -599,12 +700,41 @@ async function processCompletedConversation(
     );
     const otherNames = otherParticipants.map((p) => p.name);
 
+    // Gather partner state and romance level for cascade rules
+    const otherIds = otherParticipants.map((p) => p.id);
+    const partnerStates = otherIds.flatMap((oid) => getAgentStates(oid));
+    const partnerState = partnerStates.find((s) =>
+      ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt'].includes(s),
+    ) ?? null;
+    const relForRomance = otherIds.length === 1
+      ? db.select().from(relationships).where(
+          and(eq(relationships.agent_a, Math.min(participant.id, otherIds[0])),
+              eq(relationships.agent_b, Math.max(participant.id, otherIds[0]))),
+        ).get() ?? null
+      : null;
+    const romanceLevel = relForRomance
+      ? (relForRomance.agent_a === participant.id ? relForRomance.romance_ab : relForRomance.romance_ba)
+      : 0;
+    // Check for recent conflict between this pair
+    const hadRecentConflict = otherIds.length === 1 && db.select().from(relationshipEvents)
+      .where(eq(relationshipEvents.processed, false)).all()
+      .some((re) => {
+        const reParticipants = [re.agent_a, re.agent_b];
+        return reParticipants.includes(participant.id) && reParticipants.includes(otherIds[0]) &&
+               (re.sentiment ?? 0) < -0.3;
+      });
+
     simEvents.emit('conversation:ended', {
       agentId: participant.id,
+      perpetratorId: otherIds[0] ?? null,
       otherName: otherNames.join(' and '),
       summary: fresh.topic ?? '',
       turns: messages.length,
       sentiment: overallSentiment ?? 0,
+      topics: extractTopics(messages.map((m: ConversationMessage) => m.text).join(' ')),
+      partnerState,
+      romanceLevel,
+      hadRecentConflict,
     });
 
     // Update needs: social boost + mood modifier
@@ -622,6 +752,15 @@ async function processCompletedConversation(
         socialBoost *= 1.3;
       }
       const newSocial = clamp(agentNeeds.social + socialBoost, 0, 100);
+
+      // Fun boost from enjoyable conversations
+      let funBoost = 0;
+      if (overallSentiment > 0.3) {
+        funBoost = clamp(overallSentiment * 4, 0, 8); // good convos are fun
+      } else if (overallSentiment < -0.3) {
+        funBoost = clamp(overallSentiment * 2, -4, 0); // arguments drain fun
+      }
+      const newFun = clamp(agentNeeds.fun + funBoost, 0, 100);
 
       const currentTime =
         time.day * 24 * 60 + time.hour * 60 + time.minute;
@@ -641,6 +780,7 @@ async function processCompletedConversation(
       db.update(needs)
         .set({
           social: newSocial,
+          fun: newFun,
           mood_modifiers: moodModifiers,
         })
         .where(eq(needs.id, agentNeeds.id))
@@ -1268,16 +1408,29 @@ async function processTimedOutEntry(
   // Lighter memory for each participant
   for (const agent of agentList) {
     const otherAgent = agentList.find((a) => a.id !== agent.id)!;
+    const templatePartnerStates = getAgentStates(otherAgent.id);
+    const templatePartnerState = templatePartnerStates.find((s) =>
+      ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt'].includes(s),
+    ) ?? null;
+
     simEvents.emit('conversation:ended', {
       agentId: agent.id,
+      perpetratorId: otherAgent.id,
       otherName: otherAgent.name,
       summary: conversationDoc.topic ?? '',
       turns: (conversationDoc.messages as Array<unknown>).length,
       sentiment: messageSentiment ?? 0,
+      topics: [],
+      partnerState: templatePartnerState,
+      romanceLevel: agent.id === orderedA
+        ? (existingRel?.romance_ab ?? 0)
+        : (existingRel?.romance_ba ?? 0),
+      hadRecentConflict: false,
     });
   }
 
-  // Minimal social boost
+  // Social + fun + mood boost (consistent with LLM conversation effects)
+  const avgSentiment = agentList.length === 2 ? (messageSentiment ?? 0) : 0;
   for (const agent of agentList) {
     const agentNeeds = db
       .select()
@@ -1286,9 +1439,25 @@ async function processTimedOutEntry(
       .get();
 
     if (agentNeeds) {
+      // Fun delta mirrors LLM conversations: positive sentiment → fun boost
+      const funDelta = avgSentiment > 0 ? 2 : avgSentiment < -0.3 ? -1 : 0.5;
+      const currentTime = agentNeeds.last_updated ?? 0;
+
+      // Add mood modifier like LLM conversations do
+      const moodModifiers = [...agentNeeds.mood_modifiers];
+      if (Math.abs(avgSentiment) > 0.1) {
+        moodModifiers.push({
+          value: avgSentiment * 3,
+          source: 'template_conversation',
+          expiresAt: currentTime + CONFIG.NEEDS.MOOD_MODIFIER_DURATION_TICKS,
+        });
+      }
+
       db.update(needs)
         .set({
           social: clamp(agentNeeds.social + 3, 0, 100),
+          fun: clamp(agentNeeds.fun + funDelta, 0, 100),
+          mood_modifiers: moodModifiers,
         })
         .where(eq(needs.id, agentNeeds.id))
         .run();
