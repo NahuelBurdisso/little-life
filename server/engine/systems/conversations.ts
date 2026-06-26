@@ -1123,7 +1123,7 @@ async function processCompletedConversation(
   // --- Conversation Quality Evaluation ---
   const evaluation = evaluateConversation({
     messages: messages.map(m => ({ text: m.text || '', sentiment: m.sentiment || 0 })),
-    injectedMemories: [], // TODO: pass actual memories if available in scope
+    injectedMemories: [], // Memories are in the LLM prompt, not stored on conversation record; evaluator redistributes this weight
     topic: (fresh.topic as string) || null,
     maxTurns: fresh.max_turns || 6,
     relationshipDeltas: {

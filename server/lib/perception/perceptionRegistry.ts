@@ -179,6 +179,31 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
     personality_weights: { morality: 0.5 },
     cooldown: 180,
   },
+  {
+    id: 'someone_angry',
+    observes: { target_states: ['angry'], min_friendship: -10 },
+    reaction: 'approach_cautious',
+    base_score: 30,
+    personality_weights: { warmth: 0.4, curiosity: 0.3, neuroticism: -0.2 },
+    relationship_bonus: { friendship_weight: 0.5 },
+    cooldown: 40,
+  },
+  {
+    id: 'someone_euphoric',
+    observes: { target_states: ['euphoric', 'confident'] },
+    reaction: 'approach_chat',
+    base_score: 30,
+    personality_weights: { warmth: 0.3, curiosity: 0.3 },
+    cooldown: 25,
+  },
+  {
+    id: 'infatuated_sees_target',
+    observes: { target_is_state_target: true },
+    reaction: 'approach_flirt',
+    base_score: 55,
+    personality_weights: { sensuality: 0.6, impulsiveness: 0.4 },
+    cooldown: 30,
+  },
 ];
 
 export const REACTION_TYPES: Record<string, ReactionDef> = {
@@ -233,6 +258,13 @@ export const REACTION_TYPES: Record<string, ReactionDef> = {
     conversation_tier: 'llm_deep',
     memory_template: 'perception_jealousy',
     trigger_reason: 'perception_jealousy',
+  },
+  approach_cautious: {
+    action: 'approach',
+    conversation_topic: 'checking in',
+    conversation_tier: 'llm_standard',
+    memory_template: 'perception_someone_angry',
+    trigger_reason: 'perception_cautious_approach',
   },
   observe_only: {
     action: 'none',

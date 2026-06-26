@@ -59,6 +59,23 @@ export const activityRouter = router({
         .all();
     }),
 
+  /** Get dramatic events — high importance drama/relationship/state changes */
+  getDramaticEvents: publicProcedure
+    .input(z.object({ limit: z.number().optional().default(15) }).optional())
+    .query(({ input }) => {
+      const dramaticCategories = ['drama', 'relationship', 'aspiration', 'goal'];
+      return db
+        .select()
+        .from(activityLog)
+        .where(and(
+          inArray(activityLog.category, dramaticCategories),
+          gte(activityLog.importance, 0.5),
+        ))
+        .orderBy(desc(activityLog.real_timestamp))
+        .limit(input?.limit ?? 15)
+        .all();
+    }),
+
   onUpdate: publicProcedure.subscription(async function* (opts) {
     for await (const data of emitter.iterate('activity.all', opts.signal)) {
       yield data;

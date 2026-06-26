@@ -221,9 +221,28 @@ function buildRelationshipTag(
   if (trust > 50) {
     parts.push(`You trust ${otherName} deeply.`);
   } else if (trust < -50) {
-    parts.push(`You deeply distrust ${otherName}.`);
+    parts.push(`You deeply distrust ${otherName}. Watch what you say.`);
   } else if (trust < -30) {
     parts.push(`You're wary of ${otherName}.`);
+  }
+
+  // Asymmetric awareness: hint at other's feelings toward you
+  const otherFriendship = isA ? relationship.friendship_ba : relationship.friendship_ab;
+  const otherRomance = isA ? relationship.romance_ba : relationship.romance_ab;
+  if (otherFriendship > 60 && friendship < 30) {
+    parts.push(`${otherName} seems to like you more than you like them.`);
+  } else if (otherFriendship < -30 && friendship > 0) {
+    parts.push(`You sense ${otherName} doesn't like you much.`);
+  }
+  if (otherRomance > 40 && romance < 15) {
+    parts.push(`You think ${otherName} might have feelings for you.`);
+  }
+
+  // Interaction history
+  if (relationship.interaction_count > 20) {
+    parts.push(`You've talked many times before.`);
+  } else if (relationship.interaction_count === 0) {
+    parts.push(`You've never really talked.`);
   }
 
   return parts.join(' ');
