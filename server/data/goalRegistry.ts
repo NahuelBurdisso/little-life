@@ -102,6 +102,7 @@ export const ASPIRATION_REGISTRY: Record<AspirationType, AspirationDef> = {
     shift_triggers: [
       { event: 'secret_used_against_them', personality: 'aggression > 40', becomes: 'power' },
       { event: 'mentored_someone', chance: 0.2, becomes: 'legacy' },
+      { event: 'hobby_mastered', chance: 0.3, becomes: 'legacy' },
     ],
   },
 
@@ -118,6 +119,7 @@ export const ASPIRATION_REGISTRY: Record<AspirationType, AspirationDef> = {
     shift_triggers: [
       { event: 'life_work_destroyed', personality: 'aggression > 50', becomes: 'power' },
       { event: 'life_work_destroyed', personality: 'neuroticism > 60', becomes: 'freedom' },
+      { event: 'reputation_beloved', chance: 0.2, becomes: 'justice' },
     ],
   },
 
@@ -133,6 +135,7 @@ export const ASPIRATION_REGISTRY: Record<AspirationType, AspirationDef> = {
     shift_triggers: [
       { event: 'addiction_consequences', personality: 'morality > 50', becomes: 'justice' },
       { event: 'deep_connection', chance: 0.3, becomes: 'love' },
+      { event: 'reputation_pariah', personality: 'neuroticism > 50', becomes: 'freedom' },
     ],
   },
 };
