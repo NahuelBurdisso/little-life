@@ -43,6 +43,7 @@ export async function generateResponse(
     situationalPrompt,
     speakerGoals,
     enrichment,
+    goalStakes,
   } = context;
 
   const hasSituationalPrompt = !!situationalPrompt;
@@ -70,9 +71,10 @@ export async function generateResponse(
   const goalsContext = speakerGoals?.length
     ? `\nYour goals: ${speakerGoals.join('; ')}`
     : '';
-  const system = baseSystem + goalsContext;
-
-  // TODO: pass goal-target context to turn instruction for even richer steering
+  const goalStakesContext = goalStakes
+    ? `\n${goalStakes}`
+    : '';
+  const system = baseSystem + goalsContext + goalStakesContext;
 
   // 3. Call Ollama with retry
   let responseText: string | null = null;

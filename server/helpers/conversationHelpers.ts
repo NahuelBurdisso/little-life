@@ -88,12 +88,26 @@ export async function getConversationContext(conversationId: number, speakerId: 
   if (!speakerNeeds || !speakerEcon) return null;
 
   // Load speaker's active goals for conversation context
-  const speakerGoals = db.select().from(goals)
+  const allGoals = db.select().from(goals)
     .where(and(eq(goals.agent_id, speakerId), eq(goals.status, 'active')))
-    .all()
+    .all();
+  const speakerGoals = allGoals
     .filter(g => (g as any).description)
     .map(g => (g as any).description as string)
     .slice(0, 3);
+
+  // Check if any goal targets the conversation partner
+  const GOAL_HINTS: Record<string, string> = {
+    revenge: 'You want to get back at them. Subtly provoke or confront.',
+    seduce: 'You want to win them over romantically. Be charming.',
+    befriend: 'You want to become their friend. Be warm and relatable.',
+    investigate: 'You want to find out what they know. Ask probing questions.',
+    undermine: 'You want to damage their reputation. Be subtly manipulative.',
+    protect: 'You feel protective of them. Show you care.',
+    comfort_grieving: 'They need comfort. Be gentle and supportive.',
+  };
+  const targetedGoal = allGoals.find(g => g.target_id === otherId);
+  const goalStakes = targetedGoal ? GOAL_HINTS[targetedGoal.type] ?? null : null;
 
   // Use cached relationship and personality
   const relationship = cached.relationship;
@@ -193,6 +207,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     situationalPrompt,
     speakerGoals,
     enrichment,
+    goalStakes,
   };
 }
 
