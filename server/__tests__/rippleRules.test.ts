@@ -27,6 +27,10 @@ const VALID_SOURCES = new Set([
   'relationship:sentiment',
   'need:critical',
   'perception:observed',
+  'jealousy:triggered',
+  'confrontation:occurred',
+  'agent:birthday',
+  'secret:shared',
 ]);
 
 const VALID_STATES = new Set([
@@ -41,6 +45,8 @@ const VALID_FACTS = new Set([
   'gambling_loss', 'rumor', 'seduction', 'confession', 'alcoholic', 'death', 'arrest',
   // Tier 3 drama facts
   'political_dissent', 'escape', 'conspiracy', 'contraband', 'speech',
+  // New social facts
+  'fight', 'hobby_expert', 'gift_given', 'secret_shared', 'confrontation', 'hoarding',
 ]);
 
 const VALID_GOALS = new Set([
@@ -141,8 +147,8 @@ describe('rippleRules', () => {
     }
   });
 
-  it('contains exactly 64 rules', () => {
-    expect(rippleRules.length).toBe(64);
+  it('contains exactly 68 rules', () => {
+    expect(rippleRules.length).toBe(68);
   });
 
   it('has all expected rule IDs present', () => {

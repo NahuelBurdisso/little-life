@@ -92,6 +92,18 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   contraband: (s, t, ctx) =>
     ctx?.detail ? `${s} was caught smuggling ${ctx.detail} to ${t ?? 'a prisoner'}` :
     `${s} smuggled something to ${t ?? 'a prisoner'}`,
+  hobby_expert: (s, _t, ctx) =>
+    ctx?.detail ? `${s} is really skilled at ${ctx.detail}` :
+    `${s} has become quite talented at their hobby`,
+  gift_given: (s, t, ctx) =>
+    ctx?.detail ? `${s} gave ${ctx.detail} to ${t ?? 'someone'}` :
+    `${s} was very generous with ${t ?? 'someone'}`,
+  secret_shared: (s, t) =>
+    `${s} confided something personal to ${t ?? 'someone'}`,
+  confrontation: (s, t) =>
+    `${s} and ${t ?? 'someone'} got into a public confrontation`,
+  hoarding: (s) =>
+    `${s} is hoarding supplies`,
 };
 
 // ─── getAgentName ─────────────────────────────────────────────────────────────

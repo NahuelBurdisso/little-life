@@ -204,6 +204,49 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
     personality_weights: { sensuality: 0.6, impulsiveness: 0.4 },
     cooldown: 30,
   },
+  {
+    id: 'someone_lonely',
+    observes: {
+      target_states: ['lonely'],
+      min_friendship: 10,
+    },
+    reaction: 'approach_comfort',
+    base_score: 40,
+    personality_weights: {
+      warmth: 0.7,
+      loyalty: 0.3,
+    },
+    relationship_bonus: {
+      friendship_weight: 0.5,
+    },
+    cooldown: 60,
+  },
+  {
+    id: 'enemy_nearby_angry',
+    observes: {
+      target_states: ['angry'],
+      max_friendship: -30,
+    },
+    reaction: 'confront_or_avoid',
+    base_score: 45,
+    personality_weights: {
+      aggression: 0.7,
+      neuroticism: -0.3,
+    },
+    cooldown: 60,
+  },
+  {
+    id: 'someone_jealous',
+    observes: {
+      target_states: ['jealous'],
+    },
+    reaction: 'observe_only',
+    base_score: 25,
+    personality_weights: {
+      curiosity: 0.5,
+    },
+    cooldown: 40,
+  },
 ];
 
 export const REACTION_TYPES: Record<string, ReactionDef> = {
