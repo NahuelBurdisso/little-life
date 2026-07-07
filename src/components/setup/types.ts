@@ -52,7 +52,7 @@ export interface RelationshipConfig {
 
 export interface WorldConfig {
   season: 'spring' | 'summer' | 'autumn' | 'winter';
-  weather: string;
+  weather: 'sunny' | 'cloudy' | 'rainy' | 'stormy' | 'foggy' | 'snowy' | 'windy' | 'hot';
   startHour: number;
   startDay: number;
 }

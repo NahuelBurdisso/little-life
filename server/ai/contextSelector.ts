@@ -29,6 +29,33 @@ export interface ContextSelectorParams {
 
 const RELEVANCE_THRESHOLD = 0.3;
 
+// Topic synonym map — expands keyword matching for better memory retrieval
+const TOPIC_SYNONYMS: Record<string, string[]> = {
+  fishing: ['river', 'catch', 'fish', 'rod', 'bait', 'water'],
+  cooking: ['food', 'kitchen', 'meal', 'recipe', 'eat', 'cook', 'bake'],
+  gardening: ['garden', 'plant', 'flower', 'grow', 'soil', 'harvest'],
+  performing: ['perform', 'sing', 'music', 'dance', 'stage', 'audience'],
+  love: ['romance', 'heart', 'feelings', 'crush', 'date', 'kiss', 'attraction'],
+  work: ['job', 'career', 'boss', 'salary', 'workplace', 'colleagues'],
+  money: ['financial', 'debt', 'broke', 'rich', 'pay', 'afford', 'expense'],
+  weather: ['rain', 'sun', 'storm', 'snow', 'cold', 'hot', 'wind'],
+  family: ['home', 'house', 'parent', 'child', 'sibling'],
+  health: ['sick', 'doctor', 'illness', 'pain', 'tired', 'energy'],
+  gossip: ['rumor', 'heard', 'secret', 'scandal', 'affair'],
+  fight: ['argue', 'conflict', 'angry', 'grudge', 'confrontation'],
+};
+
+function getTopicKeywords(topic: string): string[] {
+  const lower = topic.toLowerCase();
+  const keywords = [lower];
+  for (const [key, synonyms] of Object.entries(TOPIC_SYNONYMS)) {
+    if (lower.includes(key) || synonyms.some(s => lower.includes(s))) {
+      keywords.push(...synonyms, key);
+    }
+  }
+  return [...new Set(keywords)];
+}
+
 function scoreMemory(
   memory: MemoryInput,
   otherAgentName: string,
@@ -38,28 +65,37 @@ function scoreMemory(
   friendship: number,
 ): number {
   let score = 0;
+  const desc = memory.description.toLowerCase();
 
   const relatedAgents = (memory.metadata?.related_agents as number[] | undefined) ?? [];
-  if (
-    memory.description.toLowerCase().includes(otherAgentName.toLowerCase()) ||
-    relatedAgents.includes(otherAgentId)
-  ) {
+  // Mentions other agent
+  if (desc.includes(otherAgentName.toLowerCase()) || relatedAgents.includes(otherAgentId)) {
     score += 0.5;
   }
 
-  if (topic && memory.description.toLowerCase().includes(topic.toLowerCase())) {
-    score += 0.3;
+  // Topic matching with synonym expansion
+  if (topic) {
+    const keywords = getTopicKeywords(topic);
+    const matchCount = keywords.filter(kw => desc.includes(kw)).length;
+    if (matchCount > 0) {
+      score += Math.min(0.5, 0.15 * matchCount); // up to 0.5 from topic matching
+    }
   }
 
+  // Recency bonus
   const ticksAgo = currentTick - memory.created_at;
   if (ticksAgo >= 0 && ticksAgo < 1440) {
     score += 0.2;
+  } else if (ticksAgo >= 0 && ticksAgo < 4320) {
+    score += 0.1; // slight boost for memories from last 3 days
   }
 
+  // Emotional memories are more salient
   if (Math.abs(memory.emotional_valence) > 0.5) {
     score += 0.1;
   }
 
+  // Grudge-relevant negative memories
   if (friendship < -20 && memory.emotional_valence < -0.3) {
     score += 0.3;
   }
@@ -67,8 +103,8 @@ function scoreMemory(
   return score;
 }
 
-const MAX_CONTEXT_ITEMS = 5;
-const MAX_MEMORIES = 3;
+const MAX_CONTEXT_ITEMS = 6;
+const MAX_MEMORIES = 4;
 const MAX_FACTS = 2;
 
 export function selectConversationContext(params: ContextSelectorParams): ContextItem[] {

@@ -366,12 +366,20 @@ export async function conversationsTick(): Promise<void> {
 
   // Process timed-out queue entries with template fallback
   for (const { entry, world } of timedOutQueue) {
-    await processTimedOutEntry(entry, world);
+    try {
+      await processTimedOutEntry(entry, world);
+    } catch (err) {
+      console.error('[conversations] Error processing timed-out entry:', err);
+    }
   }
 
   // Process completed LLM conversations
   for (const { conversation, world } of completedConversations) {
-    await processCompletedConversation(conversation, world);
+    try {
+      await processCompletedConversation(conversation, world);
+    } catch (err) {
+      console.error('[conversations] Error processing completed conversation:', err);
+    }
   }
 
   if (changed) {
@@ -731,7 +739,7 @@ async function processCompletedConversation(
       summary: fresh.topic ?? '',
       turns: messages.length,
       sentiment: overallSentiment ?? 0,
-      topics: extractTopics(messages.map((m: ConversationMessage) => m.text).join(' ')),
+      topics: extractTopics(messages.map((m: ConversationMessage) => ({ text: m.text }))),
       partnerState,
       romanceLevel,
       hadRecentConflict,

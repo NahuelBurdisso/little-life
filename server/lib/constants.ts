@@ -47,24 +47,33 @@ export const CONFIG = {
 
   // Conversations
   CONVERSATIONS: {
-    MAX_CONCURRENT_LLM: 2,
-    MAX_QUEUE_SIZE: 4,
+    MAX_CONCURRENT_LLM: 4,
+    MAX_QUEUE_SIZE: 6,
     MAX_TURNS_DEEP: 10,
     MAX_TURNS_STANDARD: 6,
     TEMPLATE_FALLBACK_MS: 10000,
     PLAYER_NUDGE_PRIORITY: 200,
     PLAYER_NUDGE_MAX_WAIT_MS: 30000,
-    COOLDOWN_SAME_PAIR_HOURS: 2,
-    TEMPLATE_COOLDOWN_PER_PAIR: 4,
+    COOLDOWN_SAME_PAIR_HOURS: 1,
+    TEMPLATE_COOLDOWN_PER_PAIR: 2,
   },
 
-  // AI / Ollama
+  // AI / LLM
   AI: {
-    CHAT_MODEL: "huihui_ai/gemma-4-abliterated:e4b",
-    EMBEDDING_MODEL: "mxbai-embed-large",
+    // Heavy model — conversations, reflections, snap resolution (needs personality/depth)
+    CHAT_MODEL: process.env.CHAT_MODEL ?? "huihui_ai/gemma-4-abliterated:e4b",
+    // Light model — planning, decomposition, goals, self-descriptions (structured output, speed)
+    LIGHT_MODEL: process.env.LIGHT_MODEL ?? "huihui_ai/gemma-4-abliterated:e4b",
+    EMBEDDING_MODEL: process.env.EMBEDDING_MODEL ?? "mxbai-embed-large",
+    // Backend: "ollama" (default) or "openai" (llama-server, vLLM, etc.)
+    BACKEND: (process.env.LLM_BACKEND ?? "ollama") as "ollama" | "openai",
+    // Base URL for chat models (Ollama or OpenAI-compatible server)
+    CHAT_BASE_URL: process.env.LLM_BASE_URL ?? process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
+    // Separate base URL for embeddings (always Ollama)
+    EMBED_BASE_URL: process.env.EMBED_BASE_URL ?? process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
     CHAT_TEMPERATURE: 0.8,
     CHAT_TOP_P: 0.9,
-    CHAT_MAX_TOKENS: 100,
+    CHAT_MAX_TOKENS: 80,
     CHAT_MAX_TOKENS_SITUATIONAL: 120,
     CHAT_REPEAT_PENALTY: 1.1,
     EMBEDDING_DIMENSIONS: 1024,

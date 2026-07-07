@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateWorld } from '../pipeline';
-import { MIN_WIDTH, MAX_WIDTH, MIN_HEIGHT, MAX_HEIGHT } from '../config';
+import { MIN_WIDTH, MIN_HEIGHT } from '../config';
 import type { WorldGenConfig } from '../config';
 
 const CFG_AUTO: WorldGenConfig = { sizeTier: 'auto', overrides: {} };

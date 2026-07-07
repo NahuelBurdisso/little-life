@@ -25,14 +25,24 @@ export type JobType =
 
 export type Season = "spring" | "summer" | "autumn" | "winter";
 export type DayPhase = "dawn" | "morning" | "afternoon" | "evening" | "night";
-export type WeatherType = "sunny" | "cloudy" | "rainy" | "stormy" | "foggy";
+export type WeatherType = "sunny" | "cloudy" | "rainy" | "stormy" | "foggy" | "snowy" | "windy" | "hot";
 export type WorldEventType =
   | "festival"
   | "market_day"
   | "storm"
   | "new_arrival"
   | "sickness"
-  | "harvest";
+  | "harvest"
+  | "traveling_merchant"
+  | "town_meeting"
+  | "wedding"
+  | "fire_outbreak"
+  | "mysterious_stranger"
+  | "competition"
+  | "full_moon"
+  | "heatwave"
+  | "bountiful_catch"
+  | "starry_night";
 
 export type RelationshipStatus =
   | "strangers"

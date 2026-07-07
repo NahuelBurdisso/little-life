@@ -5,7 +5,7 @@ import { makeRng } from '../rng';
 import type { WorldContext } from '../types';
 
 const EMPTY_CTX: WorldContext = {
-  dimensions: null, terrainTiles: null, publicBuildings: null,
+  dimensions: null, terrainTiles: null, roads: null, publicBuildings: null,
   homes: null, interiors: null, names: null,
 };
 const RNG = makeRng(0);

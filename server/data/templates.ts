@@ -327,6 +327,60 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
     ],
     cooldownPerPair: 6,
   },
+  {
+    category: "small_talk_weather",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: null,
+      minMood: null,
+      maxMood: null,
+      timeOfDay: null,
+      location: null,
+      weather: ["snowy"],
+    },
+    variants: [
+      { text: "{speaker.name}: Look at all this snow! It's beautiful but freezing.", sentiment: 0.1 },
+      { text: "{speaker.name}: I can barely feel my fingers. This winter is harsh.", sentiment: -0.2 },
+      { text: "{speaker.name}: There's something peaceful about the snow, don't you think?", sentiment: 0.2 },
+    ],
+    cooldownPerPair: 6,
+  },
+  {
+    category: "small_talk_weather",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: null,
+      minMood: null,
+      maxMood: null,
+      timeOfDay: null,
+      location: null,
+      weather: ["windy"],
+    },
+    variants: [
+      { text: "{speaker.name}: This wind is relentless today!", sentiment: -0.1 },
+      { text: "{speaker.name}: Hold onto your hat, {other.name}! The wind's picking up.", sentiment: 0.0 },
+      { text: "{speaker.name}: I love a good breeze, but this is a bit much.", sentiment: -0.1 },
+    ],
+    cooldownPerPair: 6,
+  },
+  {
+    category: "small_talk_weather",
+    conditions: {
+      minFriendship: null,
+      maxFriendship: null,
+      minMood: null,
+      maxMood: null,
+      timeOfDay: null,
+      location: null,
+      weather: ["hot"],
+    },
+    variants: [
+      { text: "{speaker.name}: It's absolutely scorching out here. I need shade.", sentiment: -0.2 },
+      { text: "{speaker.name}: This heat is unbearable. Want to grab a cold drink?", sentiment: 0.1 },
+      { text: "{speaker.name}: I'm melting! How do you handle this heat, {other.name}?", sentiment: -0.1 },
+    ],
+    cooldownPerPair: 6,
+  },
 
   // ===== small_talk_work =====
   {

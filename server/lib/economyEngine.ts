@@ -15,6 +15,18 @@ type InventoryItem = { itemId: string; quantity: number; acquiredAt: number };
 
 // --- Price Engine ---
 
+// Cache active event types for price modifiers (updated by economy tick)
+let cachedEventPriceModifiers: Record<string, number> = {};
+
+export function setEventPriceModifiers(modifiers: Record<string, number>): void {
+  cachedEventPriceModifiers = modifiers;
+}
+
+/** Get production multiplier from active events (e.g., harvest doubles farm output). */
+export function getEventProductionMultiplier(): number {
+  return cachedEventPriceModifiers.farm_production ?? 1.0;
+}
+
 export function getMarketPrice(
   itemId: string,
   season: string,
@@ -29,11 +41,21 @@ export function getMarketPrice(
   // Season modifier for food items
   if (item.category === 'food') {
     price *= SEASON_PRICE_MODIFIERS[season] ?? 1.0;
+    // Winter food is more expensive (scarcity)
+    if (season === 'winter') price *= 1.15;
   }
 
   // Supply/demand curve
   const supplyFactor = Math.max(0.7, Math.min(1.8, 1.5 - shopSupply * 0.05));
   price *= supplyFactor;
+
+  // Event-driven price modifiers
+  if (cachedEventPriceModifiers.shop_prices) {
+    price *= cachedEventPriceModifiers.shop_prices; // e.g. 0.5 for market_day, 0.7 for festival
+  }
+  if (cachedEventPriceModifiers.food_prices && item.category === 'food') {
+    price *= cachedEventPriceModifiers.food_prices; // e.g. 0.6 for harvest
+  }
 
   // Price gouging
   if (ownerMorality !== undefined && ownerMorality < 40 && shopSupply < 3) {

@@ -50,7 +50,7 @@ export class TensionTracker {
 
   // ─── Tick update ─────────────────────────────────────────────────────────────
 
-  tickUpdate(agentId: number, activeStates: string[], currentTick: number): void {
+  tickUpdate(agentId: number, activeStates: string[], _currentTick: number): void {
     const state = this.getOrCreate(agentId);
 
     let delta = 0;

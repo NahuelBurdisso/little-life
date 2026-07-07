@@ -42,6 +42,7 @@ export async function generateResponse(
     gossipFacts,
     situationalPrompt,
     speakerGoals,
+    enrichment,
   } = context;
 
   const hasSituationalPrompt = !!situationalPrompt;
@@ -61,14 +62,17 @@ export async function generateResponse(
     statePrompts,
     gossipFacts,
     situationalPrompt,
+    enrichment,
   };
 
   const { system: baseSystem, messages: promptMessages } = buildConversationPrompt(promptParams);
 
   const goalsContext = speakerGoals?.length
-    ? `\nYour current goals: ${speakerGoals.join('; ')}`
+    ? `\nYour goals: ${speakerGoals.join('; ')}`
     : '';
   const system = baseSystem + goalsContext;
+
+  // TODO: pass goal-target context to turn instruction for even richer steering
 
   // 3. Call Ollama with retry
   let responseText: string | null = null;
@@ -96,6 +100,47 @@ export async function generateResponse(
       console.warn(`[generateResponse] Attempt ${attempt + 1}/${CONFIG.AI.RETRY_ATTEMPTS} failed for conversation ${conversationId}: ${msg}`);
       if (attempt < CONFIG.AI.RETRY_ATTEMPTS - 1) {
         await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
+      }
+    }
+  }
+
+  // 3b. Validate response quality
+  if (responseText) {
+    const trimmed = responseText.trim();
+    const lastMsg = conversation.messages.length > 0
+      ? (conversation.messages[conversation.messages.length - 1] as Record<string, any>)?.text as string | undefined
+      : undefined;
+    const sentiment = analyzeSentiment(trimmed);
+    const isInvalid =
+      trimmed.length < 2 ||                                    // too short
+      trimmed === lastMsg?.trim() ||                            // exact repeat
+      /^(undefined|null|error|Error)$/i.test(trimmed) ||        // broken output
+      (trimmed.length < 10 && Math.abs(sentiment) < 0.2);       // low-quality filler ("Ok", "Mm")
+
+    if (isInvalid) {
+      // One retry with nudge
+      try {
+        const nudge = await callOllamaChat({
+          model: CONFIG.AI.CHAT_MODEL,
+          system,
+          messages: [
+            ...promptMessages,
+            { role: 'assistant' as const, content: trimmed },
+            { role: 'user' as const, content: `Please respond in character as ${speaker.name}. Say something natural in 1-2 sentences.` },
+          ],
+          priority: 'critical',
+          options: {
+            temperature: CONFIG.AI.CHAT_TEMPERATURE + 0.1,
+            top_p: CONFIG.AI.CHAT_TOP_P,
+            num_predict: CONFIG.AI.CHAT_MAX_TOKENS,
+            repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
+          },
+        });
+        if (nudge.text && nudge.text.trim().length >= 2) {
+          responseText = nudge.text;
+        }
+      } catch {
+        // nudge failed, fall through to fallback
       }
     }
   }

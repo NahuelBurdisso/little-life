@@ -10,6 +10,8 @@ import {
   relationshipEvents,
   shared_knowledge,
   goals,
+  worldEvents,
+  worldState,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { findAvailableZone } from '../../lib/interiorGrid';
@@ -31,6 +33,8 @@ import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personality
 import { getCheapestFoodPrice } from '../../lib/economyEngine';
 import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
+import { getReputationSocialModifier } from '../../lib/reputationEngine';
+import { getSharedHobbies } from '../../lib/hobbyEngine';
 
 // --- Types ---
 
@@ -157,8 +161,14 @@ function checkEmergency(
   allLocations: LocationRow[],
   allRelationships: RelRow[],
   otherAgents: AgentRow[],
+  activeEventTypes?: Set<string>,
 ): ScoredAction | null {
   const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
+
+  // Storm/weather emergency: outdoor agents flee home in bad conditions
+  if (agent.current_location === null && activeEventTypes?.has('storm')) {
+    return { action: 'idle', score: 9999, targetLocationId: agent.home };
+  }
 
   const crises: { need: string; value: number }[] = [];
   if (agentNeeds.hunger < critical) crises.push({ need: 'hunger', value: agentNeeds.hunger });
@@ -273,17 +283,60 @@ function checkSchedule(
     }
   }
 
-  // Sleep time: handle wrap-around (sleepTime=0 means midnight=24)
-  const effectiveSleepTime = sched.sleepTime === 0 ? 24 : sched.sleepTime;
-  if (effectiveSleepTime > sched.wakeTime) {
+  // Sleep time: personality-adjusted chronotype
+  // Night owls (high impulsiveness, high sensuality) stay up later and wake later
+  // Early birds (high morality, low impulsiveness) sleep earlier and wake earlier
+  let sleepShift = 0; // hours to shift sleep schedule (positive = later, negative = earlier)
+  if (personality) {
+    // Impulsive/sensual agents are night owls: up to +2 hours later
+    sleepShift += (personality.impulsiveness - 50) * 0.02;
+    sleepShift += (personality.sensuality - 50) * 0.01;
+    // Conscientious/moral agents are early birds: up to -1.5 hours earlier
+    sleepShift -= (personality.morality - 50) * 0.015;
+    // Neurotic agents need more regular sleep: dampen the shift
+    if (personality.neuroticism > 60) sleepShift *= 0.5;
+    // Clamp to reasonable range
+    sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
+  }
+
+  const baseSleepTime = sched.sleepTime === 0 ? 24 : sched.sleepTime;
+  const effectiveSleepTime = Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24;
+  const effectiveWakeTime = Math.max(4, Math.min(12, sched.wakeTime + sleepShift));
+
+  if (effectiveSleepTime > effectiveWakeTime) {
     // Normal case: sleep 22 → wake 7 → sleeping when hour >= 22 OR hour < 7
-    if (hour >= effectiveSleepTime || hour < sched.wakeTime) {
+    if (hour >= effectiveSleepTime || hour < effectiveWakeTime) {
       return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
     }
   } else {
     // Inverted case: sleep 2 → wake 10 → sleeping when hour >= 2 AND hour < 10
-    if (hour >= effectiveSleepTime && hour < sched.wakeTime) {
+    if (hour >= effectiveSleepTime && hour < effectiveWakeTime) {
       return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+    }
+  }
+
+  // Morning routine: personality-driven activities between wake and work
+  if (hour >= effectiveWakeTime && agent.workplace && hour < sched.workStart) {
+    // Morning window: agent is awake but work hasn't started yet
+    if (personality) {
+      // Athletic / impulsive agents: morning jog
+      if (personality.impulsiveness > 55 && hour === effectiveWakeTime) {
+        const park = nearestLocation(agent.position, allLocations, 'park');
+        if (park) return { action: 'idle', score: 3500, targetLocationId: park.id, source: 'jog' };
+      }
+      // Social agents: visit a cafe/tavern for morning coffee
+      if (personality.warmth > 55 && hour === effectiveWakeTime + 1) {
+        const cafe = nearestLocation(agent.position, allLocations, ['tavern', 'bakery', 'shop']);
+        if (cafe) return { action: 'eating', score: 3500, targetLocationId: cafe.id };
+      }
+      // Neurotic agents: need quiet time at home first
+      if (personality.neuroticism > 60 && hour === effectiveWakeTime) {
+        return { action: 'idle', score: 3500, targetLocationId: agent.home, source: 'contemplate' };
+      }
+    }
+    // Default: eat breakfast at home
+    if (hour === effectiveWakeTime) {
+      return { action: 'eating', score: 3500, targetLocationId: agent.home };
     }
   }
 
@@ -318,9 +371,14 @@ function scoreFreeTimeActions(
   otherAgents: AgentRow[],
   world: WorldRow,
   econMap?: Map<number, EconRow>,
+  activeEventTypes?: Set<string>,
+  weather?: string,
 ): ScoredAction[] {
   const scores: ScoredAction[] = [];
   const evening = isEvening(world.time.hour);
+  const events = activeEventTypes ?? new Set<string>();
+  const season = world.time.season;
+  const wx = weather ?? 'sunny';
   const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
   const mood = agentNeeds.mood;
   const agentStateTypes = getAgentStates(agent.id);
@@ -403,6 +461,17 @@ function scoreFreeTimeActions(
     let socScore = (100 - agentNeeds.social) * 1.2;
     if (friendship > 50) socScore += 15;
     if (romance > 30) socScore += 20;
+
+    // Romantic date boost: evening + high romance = strong date urge
+    const isDateTime = evening || world.time.hour >= 20;
+    if (romance > 30 && isDateTime) {
+      const dateBonus = Math.min(40, (romance - 30) * 0.6); // up to +40 score
+      socScore += dateBonus;
+      // Prefer romantic locations for dates
+      if (personality && personality.sensuality > 45) {
+        socScore += 10; // sensual agents love dates
+      }
+    }
     // Lonely → remove negative-friendship penalty
     if (friendship < -30 && !agentStateTypes.includes('lonely')) socScore -= 25;
     if (mood < 30 && trust > 50) socScore += 20;
@@ -426,6 +495,9 @@ function scoreFreeTimeActions(
       if (agent.traits.includes('extroverted')) socScore *= 1.3;
     }
 
+    // Reputation: community opinion affects willingness to socialize
+    socScore *= getReputationSocialModifier(other.id);
+
     // Escalation: reduce social score toward agents with many negative facts
     const targetNegFacts = getNegativeFactCount(other.id);
     if (targetNegFacts >= 10) {
@@ -444,6 +516,29 @@ function scoreFreeTimeActions(
     const sharedEnemies = agentGrudgeTargets.filter(t => otherGrudgeTargets.includes(t));
     if (sharedEnemies.length > 0) {
       socScore += 5 * sharedEnemies.length;
+    }
+
+    // Shared hobby bonding: agents who share hobbies enjoy each other's company more
+    const sharedHobbies = getSharedHobbies(agent.id, other.id);
+    if (sharedHobbies.length > 0) {
+      socScore += 8 * sharedHobbies.length;
+    }
+
+    // Coworker bonding: agents at same workplace socialize more
+    if (agent.workplace && agent.workplace === other.workplace) {
+      socScore += 12; // base coworker bonus
+      // During work hours, coworkers chat more
+      const sched = agent.schedule;
+      if (world.time.hour >= sched.workStart && world.time.hour < sched.workEnd) {
+        socScore += 15; // work break socializing
+      }
+      // Coworker rivalry: if both have high vanity, they compete
+      if (personality && personality.vanity > 55) {
+        const otherPersonality = getEffectivePersonality(other.id);
+        if (otherPersonality && otherPersonality.vanity > 55) {
+          socScore -= 8; // friction between vain coworkers
+        }
+      }
     }
 
     const noiseMultiplier = personality
@@ -536,34 +631,42 @@ function scoreFreeTimeActions(
       scores.push({ action: 'idle', score: addNoise(contemplateScore), targetLocationId: park.id, source: 'contemplate' });
     }
 
+    // Weather gates for outdoor activities
+    const canFish = !['stormy', 'snowy'].includes(wx); // can't fish in storms or snow
+    const canJog = !['stormy', 'snowy', 'hot'].includes(wx); // can't jog in extreme weather
+    const canGarden = !['stormy', 'snowy'].includes(wx) && season !== 'winter';
+    const canPerformOutdoors = !['stormy', 'rainy', 'snowy'].includes(wx);
+    const canForage = !['stormy'].includes(wx);
+
     // Fish at riverside — relaxing activity for low fun/comfort
-    if (park && agentNeeds.fun < 50) {
-      const fishScore = 15 + (50 - agentNeeds.fun) * 0.3 + (personality.curiosity > 50 ? 10 : 0);
+    if (park && agentNeeds.fun < 50 && canFish) {
+      let fishScore = 15 + (50 - agentNeeds.fun) * 0.3 + (personality.curiosity > 50 ? 10 : 0);
+      if (wx === 'rainy') fishScore *= 1.5; // fish bite more in rain!
       scores.push({ action: 'idle', score: addNoise(fishScore), targetLocationId: park.id, source: 'fish' });
     }
 
     // Garden at park — warm/curious agents tend the garden
-    if (park && (personality.warmth > 50 || personality.curiosity > 60)) {
+    if (park && (personality.warmth > 50 || personality.curiosity > 60) && canGarden) {
       let gardenScore = 15 + (personality.warmth - 40) * 0.2;
       if (agentNeeds.fun < 60) gardenScore += 10;
       scores.push({ action: 'idle', score: addNoise(gardenScore), targetLocationId: park.id, source: 'garden' });
     }
 
     // Forage in groves — curious or poor agents forage
-    if (park && (personality.curiosity > 60 || (agentEcon && agentEcon.money < 15))) {
+    if (park && (personality.curiosity > 60 || (agentEcon && agentEcon.money < 15)) && canForage) {
       let forageScore = 10 + (personality.curiosity - 40) * 0.2;
       if (agentEcon && agentEcon.money < 15) forageScore += 20;
       scores.push({ action: 'idle', score: addNoise(forageScore), targetLocationId: park.id, source: 'forage' });
     }
 
     // Perform at town square fountain — vain/sensual agents perform
-    if (square && personality.vanity > 45 && personality.sensuality > 40) {
+    if (square && personality.vanity > 45 && personality.sensuality > 40 && canPerformOutdoors) {
       const performScore = 15 + (personality.vanity - 40) * 0.3 + (agentNeeds.social < 50 ? 10 : 0);
       scores.push({ action: 'idle', score: addNoise(performScore), targetLocationId: square.id, source: 'perform' });
     }
 
     // Jog around town — energetic agents with high comfort needs
-    if (agentNeeds.comfort < 50 && personality.impulsiveness > 40) {
+    if (agentNeeds.comfort < 50 && personality.impulsiveness > 40 && canJog) {
       const jogScore = 10 + (50 - agentNeeds.comfort) * 0.3;
       const jogTarget = park ?? square;
       if (jogTarget) {
@@ -575,6 +678,66 @@ function scoreFreeTimeActions(
     if (square && agentNeeds.fun < 50 && personality.curiosity > 40) {
       const browseScore = 12 + (personality.curiosity - 40) * 0.2 + (50 - agentNeeds.fun) * 0.2;
       scores.push({ action: 'idle', score: addNoise(browseScore), targetLocationId: square.id, source: 'browse' });
+    }
+
+    // ── Seasonal activity modifiers ──────────────────────────────────────────
+    // Spring: gardening and foraging are more appealing, walking is pleasant
+    if (season === 'spring') {
+      for (const s of scores) {
+        if (s.source === 'garden') s.score *= 1.5;
+        if (s.source === 'forage') s.score *= 1.3;
+        if (s.source === 'jog') s.score *= 1.3;
+      }
+      // Spring flower walk — any agent with warmth or curiosity
+      if (park && personality.warmth > 35) {
+        const flowerScore = 15 + (personality.warmth - 30) * 0.2 + (agentNeeds.fun < 60 ? 8 : 0);
+        scores.push({ action: 'idle', score: addNoise(flowerScore), targetLocationId: park.id, source: 'garden' });
+      }
+    }
+
+    // Summer: fishing peaks, outdoor socializing is great, swimming
+    if (season === 'summer') {
+      for (const s of scores) {
+        if (s.source === 'fish') s.score *= 1.8;
+        if (s.action === 'socializing' && s.targetLocationId !== tavern?.id) s.score *= 1.2;
+      }
+      // Summer swimming/relaxing at the riverside
+      if (park && agentNeeds.comfort < 60) {
+        const swimScore = 20 + (60 - agentNeeds.comfort) * 0.3 + (personality.impulsiveness - 40) * 0.2;
+        scores.push({ action: 'idle', score: addNoise(swimScore), targetLocationId: park.id, source: 'contemplate' });
+      }
+    }
+
+    // Autumn: foraging peaks, contemplation is stronger, cozy indoor preference
+    if (season === 'autumn') {
+      for (const s of scores) {
+        if (s.source === 'forage') s.score *= 2.0;
+        if (s.source === 'contemplate') s.score *= 1.5;
+        if (s.targetLocationId === agent.home) s.score *= 1.2;
+      }
+    }
+
+    // Winter: strong indoor preference, tavern is cozy, outdoor activities penalized
+    if (season === 'winter') {
+      for (const s of scores) {
+        if (s.source === 'fish' || s.source === 'jog' || s.source === 'garden') s.score *= 0.4;
+        if (s.source === 'forage') s.score *= 0.3;
+        if (s.targetLocationId === agent.home) s.score *= 1.5;
+        if (tavern && s.targetLocationId === tavern.id) s.score *= 1.6; // warm tavern
+      }
+      // Winter: reading/resting at home is cozy
+      if (agentNeeds.comfort < 70 || personality.neuroticism > 40) {
+        const cozyScore = 20 + (70 - agentNeeds.comfort) * 0.3;
+        scores.push({ action: 'idle', score: addNoise(cozyScore), targetLocationId: agent.home, source: 'rest' });
+      }
+    }
+
+    // Help at farm — warm agents or during harvest events
+    if (farm && (personality.warmth > 55 || events.has('harvest') || events.has('bountiful_catch'))) {
+      let farmScore = 10 + (personality.warmth - 40) * 0.2;
+      if (events.has('harvest')) farmScore += 20;
+      if (agentNeeds.fun < 50) farmScore += 5;
+      scores.push({ action: 'idle', score: addNoise(farmScore), targetLocationId: farm.id, source: 'garden' });
     }
   }
 
@@ -704,6 +867,92 @@ function scoreFreeTimeActions(
     s.score *= DISTANCE_HALF_LIFE_PX / (DISTANCE_HALF_LIFE_PX + d);
   }
 
+  // --- World Event Modifiers ---
+  // Active events shape agent behavior: storms drive indoors, festivals boost socializing, etc.
+  if (events.size > 0) {
+    for (const s of scores) {
+      const targetLoc = allLocations.find((l) => l.id === s.targetLocationId);
+      const targetIsIndoors = targetLoc ? !['park', 'town_square', 'farm'].includes(targetLoc.type) : false;
+
+      // Storm: strongly prefer indoor locations, avoid outdoor activities
+      if (events.has('storm')) {
+        if (!targetIsIndoors && s.targetLocationId !== agent.home) {
+          s.score *= 0.2; // heavily penalize going outdoors
+        }
+        if (targetIsIndoors || s.targetLocationId === agent.home) {
+          s.score *= 1.4; // boost indoor activities
+        }
+      }
+
+      // Festival: boost socializing, eating at taverns, performing
+      if (events.has('festival')) {
+        if (s.action === 'socializing') s.score *= 1.6;
+        if (s.action === 'eating') s.score *= 1.3;
+        if (s.source === 'perform') s.score *= 2.0;
+        if (s.source === 'browse') s.score *= 1.5;
+      }
+
+      // Market Day: boost shopping and browsing
+      if (events.has('market_day')) {
+        if (s.action === 'shopping') s.score *= 2.0;
+        if (s.source === 'browse') s.score *= 2.5;
+        if (s.action === 'eating') s.score *= 1.2; // food stalls
+      }
+
+      // Sickness/Flu: prefer staying home, avoid crowded places
+      if (events.has('sickness')) {
+        if (s.action === 'socializing') s.score *= 0.6; // avoid crowds
+        if (s.targetLocationId === agent.home) s.score *= 1.5; // stay home
+      }
+
+      // Harvest: boost farm work and foraging
+      if (events.has('harvest') || events.has('bountiful_catch')) {
+        if (s.source === 'forage') s.score *= 2.0;
+        if (s.source === 'garden') s.score *= 1.8;
+        if (s.source === 'fish') s.score *= 2.5;
+        if (s.action === 'working') s.score *= 1.3;
+      }
+
+      // Full Moon / Wedding / Starry Night: boost romantic socializing
+      if (events.has('full_moon') || events.has('wedding') || events.has('starry_night')) {
+        if (s.action === 'socializing' && s.targetAgentId) {
+          const rel = getRelationshipValues(allRelationships, agent.id, s.targetAgentId);
+          if (rel && rel.romance > 10) {
+            s.score *= 1.8; // romantic encounters are magnetic
+          }
+        }
+        if (s.source === 'contemplate') s.score *= 1.3; // stargazing
+      }
+
+      // Competition: boost fun-seeking activities
+      if (events.has('competition')) {
+        if (s.source === 'fish') s.score *= 2.0;
+        if (s.source === 'perform') s.score *= 2.0;
+        if (s.action === 'socializing') s.score *= 1.3;
+      }
+
+      // Heatwave: prefer indoors and tavern (cool drinks)
+      if (events.has('heatwave')) {
+        if (!targetIsIndoors && s.targetLocationId !== agent.home) {
+          s.score *= 0.5;
+        }
+        if (targetLoc && targetLoc.type === 'tavern') s.score *= 1.8; // cool drinks
+      }
+
+      // Traveling Merchant: boost shopping and browsing
+      if (events.has('traveling_merchant')) {
+        if (s.action === 'shopping') s.score *= 1.8;
+        if (s.source === 'browse') s.score *= 2.0;
+      }
+
+      // Town Meeting: boost town square socializing
+      if (events.has('town_meeting')) {
+        if (targetLoc && targetLoc.type === 'town_square') s.score *= 2.0;
+        if (s.action === 'socializing') s.score *= 1.3;
+      }
+    }
+  }
+
   return scores;
 }
 
@@ -769,6 +1018,16 @@ export function tick(world: WorldRow): void {
     .where(eq(shared_knowledge.is_active, true))
     .all();
 
+  // Cache active world events — agents react to storms, festivals, etc.
+  const activeWorldEvents = db.select().from(worldEvents)
+    .where(eq(worldEvents.is_active, true))
+    .all();
+  const activeEventTypes = new Set(activeWorldEvents.map(e => e.type));
+
+  // Cache current weather for activity availability
+  const worldRow = db.select({ weather: worldState.weather }).from(worldState).limit(1).get();
+  const currentWeather = worldRow?.weather ?? 'sunny';
+
   const totalTicks = world.time.totalTicks;
 
   for (const agent of activeAgents) {
@@ -813,6 +1072,7 @@ export function tick(world: WorldRow): void {
         allLocations,
         allRelationships,
         activeAgents,
+        activeEventTypes,
       );
     }
 
@@ -829,6 +1089,35 @@ export function tick(world: WorldRow): void {
       decision = checkSchedule(agent, world, allLocations);
     }
 
+    // Phase 2b: Event crowd behavior — idle agents gravitate toward active events
+    if (!decision && activeEventTypes.size > 0) {
+      // Festival/wedding/competition: head to town square to join the fun
+      if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')) {
+        const square = nearestLocation(agent.position, allLocations, 'town_square');
+        if (square && agent.current_location !== square.id && Math.random() < 0.4) {
+          decision = { action: 'socializing', score: 3800, targetLocationId: square.id };
+        }
+      }
+      // Storm: rush home if outdoors
+      if (activeEventTypes.has('storm') && agent.current_location === null) {
+        decision = { action: 'idle', score: 3800, targetLocationId: agent.home };
+      }
+      // Town meeting: head to town square
+      if (activeEventTypes.has('town_meeting')) {
+        const square = nearestLocation(agent.position, allLocations, 'town_square');
+        if (square && agent.current_location !== square.id && Math.random() < 0.6) {
+          decision = { action: 'socializing', score: 3900, targetLocationId: square.id };
+        }
+      }
+      // Traveling merchant: browse the market
+      if (activeEventTypes.has('traveling_merchant') && Math.random() < 0.25) {
+        const square = nearestLocation(agent.position, allLocations, 'town_square');
+        if (square) {
+          decision = { action: 'idle', score: 3500, targetLocationId: square.id, source: 'browse' };
+        }
+      }
+    }
+
     // Phase 3: Free time scoring
     if (!decision) {
       const scored = scoreFreeTimeActions(
@@ -840,6 +1129,8 @@ export function tick(world: WorldRow): void {
         activeAgents,
         world,
         econMap,
+        activeEventTypes,
+        currentWeather,
       );
       if (scored.length > 0) {
         // Goal alignment bonus — boost social actions toward goal targets
@@ -867,6 +1158,14 @@ export function tick(world: WorldRow): void {
               targetLocationId: target.current_location ?? undefined,
               source: `goal:seek_target`,
             });
+          }
+        }
+
+        // Safety net: if all scores suppressed to near-zero, add a minimum walk
+        if (scored.every(s => s.score < 5)) {
+          const square = allLocations.find(l => l.type === 'town_square');
+          if (square) {
+            scored.push({ action: 'socializing', score: 10, targetLocationId: square.id });
           }
         }
 
@@ -1006,7 +1305,7 @@ export function tick(world: WorldRow): void {
     }
 
     // Log zone-driven activities to activity feed
-    if (decision.source && ['contemplate', 'fish', 'garden', 'forage', 'perform', 'jog', 'browse', 'shoplifting', 'pickpocket'].includes(decision.source)) {
+    if (decision.source && ['contemplate', 'fish', 'garden', 'forage', 'perform', 'jog', 'browse', 'rest', 'shoplifting', 'pickpocket'].includes(decision.source)) {
       const activityNames: Record<string, string> = {
         contemplate: 'is contemplating by the riverside',
         fish: 'is fishing at the river',
@@ -1015,6 +1314,7 @@ export function tick(world: WorldRow): void {
         perform: 'is performing in the town square',
         jog: 'is jogging around town',
         browse: 'is browsing the market stalls',
+        rest: 'is resting at home',
         shoplifting: 'is eyeing goods at the shop suspiciously',
         pickpocket: 'is lurking near someone with money',
       };
@@ -1119,6 +1419,18 @@ export function tick(world: WorldRow): void {
       const friendship = rel?.friendship ?? 0;
       const romance = rel?.romance ?? 0;
 
+      // Date detection: romantic socializing in evening = date
+      const isDate = romance > 30 && isEvening(world.time.hour);
+      if (isDate) {
+        const targetName = targetAgent?.name ?? 'someone';
+        logActivity({
+          type: 'drama',
+          initiator: agentId,
+          target: targetId,
+          templateData: { description: `${agent.name} and ${targetName} are on a date` },
+        });
+      }
+
       // Topic selection: use plan-provided topic if available, else personality-driven
       const agentPersonality = agent.personality as PersonalityProfile | null;
       let topic: string | null = decision.topic ?? null;
@@ -1158,6 +1470,47 @@ export function tick(world: WorldRow): void {
           topic = 'financial struggles';
         } else if (agentEcon.money > 80 && friendship > 40 && Math.random() < 0.15) {
           topic = 'the town economy';
+        }
+      }
+
+      // Date topic override: romantic conversations
+      if (!topic && isDate) {
+        const dateTopics = [
+          'flirting and getting to know each other better',
+          'dreams and hopes for the future',
+          'favorite memories together',
+          'what they find attractive about each other',
+          'planning something fun to do together',
+        ];
+        topic = dateTopics[Math.floor(Math.random() * dateTopics.length)];
+      }
+
+      // Context-driven topic overrides: weather, events, hobbies
+      if (!topic && Math.random() < 0.35) {
+        const contextTopics: string[] = [];
+
+        // Weather commentary
+        if (world.time.season === 'winter' && Math.random() < 0.4) contextTopics.push('the cold weather');
+        if (world.time.season === 'spring' && Math.random() < 0.3) contextTopics.push('the beautiful spring weather');
+
+        // Active world events
+        if (activeEventTypes.has('festival')) contextTopics.push('the town festival');
+        if (activeEventTypes.has('storm')) contextTopics.push('the terrible storm');
+        if (activeEventTypes.has('wedding')) contextTopics.push('the wedding celebration');
+        if (activeEventTypes.has('sickness')) contextTopics.push('the flu going around');
+        if (activeEventTypes.has('full_moon')) contextTopics.push('the beautiful full moon');
+        if (activeEventTypes.has('competition')) contextTopics.push('the town competition');
+        if (activeEventTypes.has('mysterious_stranger')) contextTopics.push('the mysterious stranger in town');
+        if (activeEventTypes.has('traveling_merchant')) contextTopics.push('the traveling merchant and their wares');
+
+        // Shared hobbies
+        const sharedHobbies = getSharedHobbies(agentId, targetId);
+        if (sharedHobbies.length > 0) {
+          contextTopics.push(`their shared love of ${sharedHobbies[0]}`);
+        }
+
+        if (contextTopics.length > 0) {
+          topic = contextTopics[Math.floor(Math.random() * contextTopics.length)];
         }
       }
 

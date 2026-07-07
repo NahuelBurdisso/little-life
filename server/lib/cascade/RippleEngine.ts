@@ -574,7 +574,7 @@ export class RippleEngine {
     rule: RippleRule,
     agentId: number,
     metadata: CascadeMetadata,
-    payload: any,
+    _payload: any,
   ): void {
     const fx = rule.effects;
     const currentTick = this.getCurrentTick();

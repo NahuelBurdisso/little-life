@@ -30,7 +30,7 @@ class TaskRunner {
       }
       emitter.markDirty('conversations');
       if (result.messageCount < result.maxTurns && result.otherParticipantId) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 200));
         await this.runConversationTurn(conversationId, result.otherParticipantId);
       } else {
         // Conversation complete — let conversationsTick handle cleanup

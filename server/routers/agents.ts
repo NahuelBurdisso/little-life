@@ -4,6 +4,8 @@ import { agents, needs, economy, agentStates, goals, aspirations, relationships,
 import { eq, and, or, desc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
+import { getReputation, getReputationLabel } from '../lib/reputationEngine';
+import { getAgentHobbies } from '../lib/hobbyEngine';
 
 export const agentsRouter = router({
   getActive: publicProcedure.query(() => {
@@ -33,11 +35,16 @@ export const agentsRouter = router({
       statesMap.set(s.agent_id, arr);
     }
 
-    return activeAgents.map((agent) => ({
-      ...agent,
-      needs: needsMap.get(agent.id) ?? null,
-      activeStates: statesMap.get(agent.id) ?? [],
-    }));
+    return activeAgents.map((agent) => {
+      const rep = getReputation(agent.id);
+      return {
+        ...agent,
+        needs: needsMap.get(agent.id) ?? null,
+        activeStates: statesMap.get(agent.id) ?? [],
+        reputation: { score: rep, label: getReputationLabel(rep) },
+        hobbies: getAgentHobbies(agent.id),
+      };
+    });
   }),
 
   getAgent: publicProcedure

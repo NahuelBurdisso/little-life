@@ -97,6 +97,14 @@ export interface LocationRow {
   description: string;
 }
 
+export interface AgentEnrichment {
+  reputationLabel: string;
+  reputationScore: number;
+  hobbies: Array<{ hobby: string; level: number }>;
+  moodMomentum: number;
+  drinkCount: number;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -255,22 +263,55 @@ function buildTurnInstruction(
   topic: string | null,
   friendship: number,
   isFirstMeeting: boolean,
+  romance?: number,
+  lastMessageSentiment?: number,
+  goalContext?: string | null,
 ): string {
+  const parts: string[] = [];
+
   if (messageCount === 0) {
+    // Opening turn
     if (isFirstMeeting) {
       const approach = friendship >= 0
         ? `Introduce yourself to ${otherName}. You haven't really talked before. Be curious but cautious — first impressions matter.`
         : `You're meeting ${otherName} for the first time. Size them up. Your personality decides how open you are.`;
-      return topic ? `${approach} The topic is ${topic}.` : approach;
+      parts.push(approach);
+    } else if (topic) {
+      parts.push(`You want to discuss ${topic} with ${otherName} — bring it up naturally, as if it's been on your mind. Use your [Memory] entries as fuel.`);
+    } else {
+      parts.push(`Start talking to ${otherName}. Use your [Memory] entries as conversation fuel. Be authentic to your personality and mood.`);
     }
-    if (topic) {
-      return `Start talking to ${otherName} about ${topic}. Reference your [Memory] entries naturally — "I was thinking about what you said..." or "Remember when...". Don't repeat the memory text verbatim, just weave it in.`;
-    }
-    return `Start talking to ${otherName}. Use your [Memory] entries as conversation fuel. Be authentic to your personality and mood.`;
+  } else if (messageCount >= maxTurns - 2) {
+    // Wrapping up
+    parts.push(`Start wrapping up naturally. Say goodbye, make plans to meet again, or leave a lasting impression.`);
+  } else if (messageCount >= maxTurns - 4) {
+    // Winding down
+    parts.push(`Continue with ${otherName}. The conversation is winding down — make your point if you have one.`);
+  } else {
+    // Mid-conversation
+    parts.push(`Respond to ${otherName}. Build on what was just said — don't change topic abruptly.`);
   }
-  if (messageCount >= maxTurns - 2) return `Wrap up the conversation naturally. If something important was discussed, acknowledge it.`;
-  if (messageCount >= maxTurns - 4) return `Continue with ${otherName}. The conversation is winding down — make your point if you have one.`;
-  return `Respond to ${otherName}. React to what they said. Stay in character. Reference your memories or secrets if relevant.`;
+
+  // Emotional reaction to last message
+  if (lastMessageSentiment !== undefined && messageCount > 0) {
+    if (lastMessageSentiment > 0.5) {
+      parts.push('They seemed happy. React to their energy.');
+    } else if (lastMessageSentiment < -0.5) {
+      parts.push('They seemed upset. Your personality decides if you comfort or dismiss them.');
+    }
+  }
+
+  // Date mode
+  if (romance && romance > 30 && messageCount > 0) {
+    parts.push('This is a romantic moment. Be flirty, vulnerable, or playful — whatever fits you.');
+  }
+
+  // Goal stakes
+  if (goalContext) {
+    parts.push(goalContext);
+  }
+
+  return parts.join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +324,7 @@ export function buildAgentSystemPrompt(
   economy: EconomyRow,
   effectivePersonality?: PersonalityProfile | null,
   statePrompts?: string[],
+  enrichment?: AgentEnrichment | null,
 ): string {
   const resolvedPersonality = effectivePersonality ?? agent.personality;
 
@@ -301,13 +343,26 @@ export function buildAgentSystemPrompt(
   const agentDescription = agent.self_description || agent.bio || '';
   const descriptionLine = agentDescription ? `About you: ${agentDescription}` : '';
 
-  // Mood
+  // Mood + momentum
   const moodLine = buildMoodLine(needs.mood);
+  let momentumLine = '';
+  if (enrichment) {
+    if (enrichment.moodMomentum > 5) momentumLine = "You've been feeling increasingly happy lately.";
+    else if (enrichment.moodMomentum < -5) momentumLine = "You've been going through a rough patch.";
+  }
 
   // States — dramatize for LLM
   let stateLines = '';
   if (statePrompts?.length) {
     stateLines = 'Right now:\n' + statePrompts.map(s => `• ${s}`).join('\n');
+  }
+
+  // Drink state
+  let drinkLine = '';
+  if (enrichment && enrichment.drinkCount >= 5) {
+    drinkLine = "You're drunk. Your words slur and your filter is gone.";
+  } else if (enrichment && enrichment.drinkCount >= 3) {
+    drinkLine = `You've had ${enrichment.drinkCount} drinks and you're feeling tipsy.`;
   }
 
   // Critical needs
@@ -316,9 +371,22 @@ export function buildAgentSystemPrompt(
   // Financial status
   const econLine = `Your financial situation: ${describeFinancialStatus(economy.money)} ($${Math.round(economy.money)}).`;
 
+  // Reputation
+  let repLine = '';
+  if (enrichment && enrichment.reputationScore !== 0) {
+    repLine = `The townspeople consider you ${enrichment.reputationLabel}.`;
+  }
+
+  // Hobbies
+  let hobbyLine = '';
+  if (enrichment && enrichment.hobbies.length > 0) {
+    const hobbyParts = enrichment.hobbies.slice(0, 3).map(h => `${h.hobby} (lv${h.level})`);
+    hobbyLine = `Your hobbies: ${hobbyParts.join(', ')}.`;
+  }
+
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ');
-  const middle = [descriptionLine, moodLine, stateLines, criticalNeedsLine, econLine].filter(Boolean).join('\n');
+  const middle = [descriptionLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
   let toneHint = '';
@@ -351,6 +419,7 @@ export interface ConversationPromptParams {
   statePrompts?: string[];
   gossipFacts?: Array<{ content: string; sensitivity: number }>;
   situationalPrompt?: string | null;
+  enrichment?: AgentEnrichment | null;
 }
 
 export function buildConversationPrompt(
@@ -395,13 +464,14 @@ export function buildConversationPrompt(
     friendship,
   });
 
-  // Build system prompt (new signature — no toneModifiers/situationalPrompt)
+  // Build system prompt with enrichment data
   const system = buildAgentSystemPrompt(
     speaker,
     speakerNeeds,
     speakerEcon,
     effectivePersonality,
     statePrompts,
+    params.enrichment,
   );
 
   // Build user message parts
@@ -424,11 +494,23 @@ export function buildConversationPrompt(
     userParts.push(`${contextPrefixes[item.type]} ${item.text}`);
   }
 
-  // Turn instruction
+  // Turn instruction with enriched context
   const messageCount = conversation.messages.length;
   const maxTurns = conversation.max_turns ?? 6;
   const isFirstMeeting = relationship ? relationship.familiarity < 5 : true;
-  userParts.push(buildTurnInstruction(messageCount, maxTurns, otherAgent.name, conversation.topic, friendship, isFirstMeeting));
+  const romance = relationship
+    ? (relationship.agent_a === speaker.id ? relationship.romance_ab : relationship.romance_ba)
+    : 0;
+  // Get sentiment from last message (if any)
+  const lastMsg = conversation.messages.length > 0
+    ? conversation.messages[conversation.messages.length - 1] as Record<string, any>
+    : null;
+  const lastSentiment = lastMsg?.sentiment as number | undefined;
+
+  userParts.push(buildTurnInstruction(
+    messageCount, maxTurns, otherAgent.name, conversation.topic,
+    friendship, isFirstMeeting, romance, lastSentiment,
+  ));
 
   // Build message array
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [];

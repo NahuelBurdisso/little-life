@@ -99,7 +99,7 @@ export class SnapResolver {
   async executeSnapAction(
     agentId: number,
     action: SnapAction,
-    tensionSources: Array<{ event: string; description: string; tick: number }>,
+    _tensionSources: Array<{ event: string; description: string; tick: number }>,
     metadata: Record<string, unknown>
   ): Promise<void> {
     const agentRow = db.select({ name: agents.name, home: agents.home })

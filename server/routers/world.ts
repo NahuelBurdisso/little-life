@@ -78,7 +78,7 @@ export const worldRouter = router({
   /** Change weather directly */
   setWeather: publicProcedure
     .input(z.object({
-      weather: z.enum(['sunny', 'cloudy', 'rainy', 'stormy', 'foggy']),
+      weather: z.enum(['sunny', 'cloudy', 'rainy', 'stormy', 'foggy', 'snowy', 'windy', 'hot']),
       durationHours: z.number().min(1).max(24).default(4),
     }))
     .mutation(({ input }) => {

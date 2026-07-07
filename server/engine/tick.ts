@@ -18,6 +18,12 @@ import { CONFIG } from '../lib/constants';
 import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
 import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
 import { perceptionSystem } from '../lib/perception/instance';
+import { refreshAllReputations } from '../lib/reputationEngine';
+import { processAllMoodMomentum } from '../lib/moodMomentum';
+import { tavernTick } from '../lib/tavernEngine';
+import { lonelinessCheck } from '../lib/lonelinessEngine';
+import { confrontationCheck } from '../lib/confrontationEngine';
+import { agingTick } from '../lib/agingEngine';
 import crypto from 'crypto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -201,6 +207,12 @@ async function gameTick(): Promise<void> {
   // Perception scan every 10 ticks: agents observe and react to nearby agents
   if (worldWithNewTime.time.totalTicks % 10 === 0) {
     perceptionSystem.scan(worldWithNewTime);
+    tavernTick(worldWithNewTime.time.totalTicks);
+    // Check loneliness every 60 ticks (~1 game hour)
+    if (worldWithNewTime.time.totalTicks % 60 === 0) {
+      lonelinessCheck(worldWithNewTime.time.totalTicks);
+      confrontationCheck(worldWithNewTime.time.totalTicks);
+    }
   }
 
   // Discard the tick-level cache before returning so stale data never leaks.
@@ -221,6 +233,12 @@ async function gameTick(): Promise<void> {
     for (const { id } of allAgentIds) {
       void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
     }
+    // Refresh community reputation scores from accumulated facts
+    refreshAllReputations();
+    // Process mood momentum: yesterday's mood affects today's emotional baseline
+    processAllMoodMomentum();
+    // Check for birthdays and handle aging
+    agingTick(newTime.day);
   }
 
   // 8. Finalize tick

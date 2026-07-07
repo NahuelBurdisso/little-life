@@ -86,7 +86,7 @@ const nudgeInput = z.object({
 export const nudgeRouter = router({
   execute: publicProcedure
     .input(nudgeInput)
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const { action } = input;
 
       const world = db.select().from(worldState).get();

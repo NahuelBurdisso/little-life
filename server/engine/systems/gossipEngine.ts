@@ -12,7 +12,7 @@
  */
 
 import { db } from '../../db';
-import { agents, shared_knowledge, relationships, conversations } from '../../db/schema';
+import { agents, shared_knowledge, relationships, conversations, worldEvents } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
 import { logActivity } from '../../lib/activityLogger';
@@ -34,6 +34,14 @@ export function gossipTick(_currentTick: number): void {
 
   const allFacts = db.select().from(shared_knowledge).where(eq(shared_knowledge.is_active, true)).all();
   if (allFacts.length === 0) return;
+
+  // Check for gossip_boost from active events (e.g., mysterious_stranger)
+  const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
+  let gossipMultiplier = 1.0;
+  for (const event of activeEvents) {
+    const effects = event.effects as Record<string, number> | null;
+    if (effects?.gossip_boost) gossipMultiplier *= effects.gossip_boost;
+  }
 
   // Build location groups
   const locationGroups = new Map<number, AgentInfo[]>();
@@ -126,7 +134,7 @@ export function gossipTick(_currentTick: number): void {
 
       // Only gossip-prone agents share: curious + dishonest
       if (curiosity < 50 || honesty > 60) continue;
-      if (Math.random() > 0.02) continue; // 2% per tick per gossiper
+      if (Math.random() > 0.02 * gossipMultiplier) continue; // 2% per tick, boosted by events
 
       // Pick a random co-located agent to gossip with
       const targets = group.filter(a => a.id !== agent.id);
@@ -183,7 +191,7 @@ export function gossipTick(_currentTick: number): void {
   for (const [, group] of locationGroups) {
     for (const agent of group) {
       if (!agent.personality || agent.personality.curiosity < 60) continue;
-      if (Math.random() > 0.005) continue; // 0.5% per tick — rare
+      if (Math.random() > 0.005 * gossipMultiplier) continue; // 0.5% per tick, boosted by events
 
       // Find secrets about co-located agents that this agent doesn't know
       const coLocatedIds = group.map(a => a.id).filter(id => id !== agent.id);

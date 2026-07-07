@@ -4,15 +4,17 @@ import { generateVoiceDirective, clearVoiceDirectiveCache } from '../voiceDirect
 describe('generateVoiceDirective', () => {
   beforeEach(() => clearVoiceDirectiveCache());
 
-  it('picks top 3 most extreme axes', () => {
+  it('picks combos and individual axes', () => {
     const personality = {
       honesty: 35, aggression: 65, warmth: 30, impulsiveness: 50,
       vanity: 50, curiosity: 70, loyalty: 50, morality: 50,
       sensuality: 50, neuroticism: 50,
     };
     const directive = generateVoiceDirective(1, personality);
-    expect(directive).toContain('You ask a lot of questions');
-    expect(directive).toContain('No chitchat');
+    // Should match honesty:low + curiosity:high combo ("social spy")
+    expect(directive).toContain('social spy');
+    // Also picks up warmth:low individual axis
+    expect(directive).toContain('transactional');
   });
 
   it('uses high mappings for axes > 70', () => {

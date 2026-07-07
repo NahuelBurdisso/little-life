@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { findAvailableZone, resolveZoneForAction, ZoneOccupancy, zoneOccupancy } from '../lib/interiorGrid';
+import { findAvailableZone, resolveZoneForAction, zoneOccupancy } from '../lib/interiorGrid';
 
 describe('findAvailableZone', () => {
   beforeEach(() => {

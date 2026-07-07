@@ -32,7 +32,8 @@ describe('buildAgentSystemPrompt', () => {
 
   it('includes voice directive from personality', () => {
     const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
-    expect(prompt).toContain('You ask a lot of questions');
+    // honesty:35 + curiosity:70 triggers "social spy" combo
+    expect(prompt).toContain('social spy');
   });
 
   it('includes mood line when mood < 35', () => {
@@ -120,7 +121,7 @@ describe('buildConversationPrompt', () => {
   it('includes topic in first turn instruction', () => {
     const { messages } = buildConversationPrompt(baseParams);
     const userMsg = messages[0].content;
-    expect(userMsg).toContain('Start talking to Carlos Mendez about confrontation');
+    expect(userMsg).toContain('discuss confrontation with Carlos Mendez');
   });
 
   it('uses "Respond to" for mid-conversation turns', () => {

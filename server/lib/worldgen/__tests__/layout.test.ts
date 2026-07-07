@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { layoutStage } from '../stages/layout';
 import { roadsStage } from '../stages/roads';
 import { forkRng } from '../rng';
-import { FitError } from '../types';
 import type { WorldContext } from '../types';
 import { getTemplatesForAgentCount } from '../buildingTemplates';
 

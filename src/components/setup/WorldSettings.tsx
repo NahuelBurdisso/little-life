@@ -43,7 +43,7 @@ export function WorldSettings({ config, onChange }: Props) {
         {/* Weather */}
         <div>
           <label className="text-xs text-gray-400 uppercase block mb-2">Starting Weather</label>
-          <select value={config.weather} onChange={e => update({ weather: e.target.value })}
+          <select value={config.weather} onChange={e => update({ weather: e.target.value as WorldConfig['weather'] })}
             className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white capitalize">
             {WEATHER_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
           </select>

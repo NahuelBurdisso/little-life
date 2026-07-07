@@ -1,8 +1,9 @@
 import { db } from '../../db';
-import { agents, needs, economy } from '../../db/schema';
+import { agents, needs, economy, worldState } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { addToInventory } from '../../lib/economyEngine';
+import { practiceHobby, getSkillOutputMultiplier, getSkillNeedBonus } from '../../lib/hobbyEngine';
 
 interface ZoneActionEffect {
   needDeltas: Record<string, number>; // positive = increases need value, negative = decreases
@@ -40,7 +41,14 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
 
   const effect = effectFn();
 
-  // Apply need deltas
+  // Practice hobby and get skill bonuses
+  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
+  const currentTick = (world?.time as any)?.totalTicks ?? 0;
+  practiceHobby(agentId, actionType, currentTick);
+  const skillNeedBonus = getSkillNeedBonus(agentId, actionType);
+  const skillOutputMult = getSkillOutputMultiplier(agentId, actionType);
+
+  // Apply need deltas (enhanced by hobby skill)
   const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
   if (!agent) return false;
 
@@ -50,7 +58,9 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
     for (const [need, delta] of Object.entries(effect.needDeltas)) {
       if (isNeedColumn(need)) {
         const current = agentNeeds[need] as number;
-        updates[need] = Math.max(0, Math.min(100, current + delta));
+        // Negative deltas (restoration) are enhanced by skill
+        const enhancedDelta = delta < 0 ? delta - skillNeedBonus : delta;
+        updates[need] = Math.max(0, Math.min(100, current + enhancedDelta));
       }
     }
     if (Object.keys(updates).length > 0) {
@@ -58,14 +68,15 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
     }
   }
 
-  // Produce items
+  // Produce items (quantity scaled by skill)
   if (effect.itemProduced) {
     const econ = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
     if (econ) {
+      const scaledQty = Math.max(1, Math.round(effect.itemProduced.qty * skillOutputMult));
       const newInv = addToInventory(
         econ.inventory as { itemId: string; quantity: number; acquiredAt: number }[],
         effect.itemProduced.item,
-        effect.itemProduced.qty,
+        scaledQty,
         Date.now(),
       );
       db.update(economy).set({ inventory: newInv }).where(eq(economy.id, econ.id)).run();

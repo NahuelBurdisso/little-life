@@ -4,12 +4,12 @@ import { eq } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
-import { computeAStarPath, pixelToTile, tileCenterToPixel } from '../../lib/pathfinding';
+import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { simEvents } from '../../lib/simEvents';
 import { getInteriorGrid, zoneOccupancy, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
-import { INTERIOR_ZONES, type ZoneDef } from '../../data/interiors';
+import { INTERIOR_ZONES } from '../../data/interiors';
 import { executeZoneAction } from './zoneActions';
 import { OPEN_AREA_TYPES } from '../../lib/worldgen/buildingTemplates';
 
@@ -151,29 +151,7 @@ function computeInteriorPath(
   return interiorPath.map(([px, py]) => [px + buildingPosX, py + buildingPosY]);
 }
 
-/**
- * Find which zone an agent is at by checking proximity to zone centers (world coords).
- */
-function detectZoneAtPosition(
-  pos: { x: number; y: number },
-  buildingType: string,
-  buildingPos: { x: number; y: number },
-): ZoneDef | null {
-  const TILE_SIZE = CONFIG.MOVEMENT.TILE_SIZE;
-  const zones = INTERIOR_ZONES[buildingType];
-  if (!zones) return null;
 
-  const THRESHOLD = TILE_SIZE; // within 1 tile
-  for (const zone of zones) {
-    const [cx, cy] = zone.center;
-    const worldX = buildingPos.x + cx * TILE_SIZE + TILE_SIZE / 2;
-    const worldY = buildingPos.y + cy * TILE_SIZE + TILE_SIZE / 2;
-    if (Math.abs(pos.x - worldX) < THRESHOLD && Math.abs(pos.y - worldY) < THRESHOLD) {
-      return zone;
-    }
-  }
-  return null;
-}
 
 // --- Arrival Handler ---
 

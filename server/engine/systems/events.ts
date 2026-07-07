@@ -7,12 +7,12 @@ import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
 import { simEvents } from '../../lib/simEvents';
 
-// Season-based weather weights
+// Season-based weather weights (including snowy for winter, windy for autumn)
 const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
-  spring: { sunny: 30, cloudy: 30, rainy: 30, stormy: 5, foggy: 5 },
-  summer: { sunny: 50, cloudy: 25, rainy: 15, stormy: 8, foggy: 2 },
-  autumn: { sunny: 20, cloudy: 35, rainy: 25, stormy: 5, foggy: 15 },
-  winter: { sunny: 15, cloudy: 35, rainy: 15, stormy: 10, foggy: 25 },
+  spring: { sunny: 30, cloudy: 25, rainy: 25, stormy: 5, foggy: 5, windy: 10 },
+  summer: { sunny: 50, cloudy: 20, rainy: 12, stormy: 8, foggy: 2, windy: 5, hot: 3 },
+  autumn: { sunny: 15, cloudy: 25, rainy: 20, stormy: 5, foggy: 15, windy: 20 },
+  winter: { sunny: 10, cloudy: 20, rainy: 5, stormy: 8, foggy: 15, snowy: 30, windy: 12 },
 };
 
 // Random event definitions
@@ -64,6 +64,102 @@ const EVENT_DEFINITIONS = [
     weight: 10,
     condition: (_phase: string, _weather: string, season: string) =>
       season === 'summer' || season === 'autumn',
+  },
+  {
+    type: 'traveling_merchant',
+    name: 'Traveling Merchant',
+    description: 'A mysterious merchant has arrived with rare and exotic wares.',
+    duration: 6,
+    effects: { shop_prices: 0.8, fun_boost: 5 },
+    weight: 8,
+    condition: (phase: string) => phase === 'morning' || phase === 'afternoon',
+  },
+  {
+    type: 'town_meeting',
+    name: 'Town Meeting',
+    description: 'The mayor has called a town meeting to discuss important matters.',
+    duration: 2,
+    effects: { social_boost: 10 },
+    weight: 7,
+    condition: (phase: string) => phase === 'evening',
+  },
+  {
+    type: 'wedding',
+    name: 'Wedding Celebration',
+    description: 'Love is in the air! A couple is getting married and the whole town is invited.',
+    duration: 6,
+    effects: { social_boost: 25, fun_boost: 20, romance_boost: 10 },
+    weight: 3,
+    condition: (phase: string, _weather: string) =>
+      phase === 'afternoon' || phase === 'evening',
+  },
+  {
+    type: 'fire_outbreak',
+    name: 'Building Fire',
+    description: 'A fire has broken out! Townspeople rush to help contain the blaze.',
+    duration: 2,
+    effects: { mood_outdoor: -10, social_boost: 15 },
+    weight: 4,
+    condition: (_phase: string, _weather: string, season: string) =>
+      season === 'summer' || season === 'autumn',
+  },
+  {
+    type: 'mysterious_stranger',
+    name: 'Mysterious Stranger',
+    description: 'A hooded figure has been spotted around town, whispering secrets to those who listen.',
+    duration: 8,
+    effects: { gossip_boost: 2.0 },
+    weight: 5,
+    condition: (phase: string) => phase === 'evening' || phase === 'night',
+  },
+  {
+    type: 'competition',
+    name: 'Town Competition',
+    description: 'A friendly competition has been organized — fishing, cooking, or crafts!',
+    duration: 4,
+    effects: { fun_boost: 25, social_boost: 10 },
+    weight: 8,
+    condition: (phase: string, weather: string) =>
+      (phase === 'morning' || phase === 'afternoon') && weather !== 'stormy',
+  },
+  {
+    type: 'full_moon',
+    name: 'Full Moon Night',
+    description: 'The full moon bathes the town in silver light. Romance and mischief fill the air.',
+    duration: 6,
+    effects: { romance_boost: 15, fun_boost: 5, mood_outdoor: 5 },
+    weight: 6,
+    condition: (phase: string) => phase === 'night',
+  },
+  {
+    type: 'heatwave',
+    name: 'Scorching Heatwave',
+    description: 'An oppressive heatwave grips the town. Everyone seeks shade and cool drinks.',
+    duration: 10,
+    effects: { energy_drain: 1.3, mood_outdoor: -8, fun_boost: -5 },
+    weight: 7,
+    condition: (_phase: string, weather: string, season: string) =>
+      season === 'summer' && weather === 'sunny',
+  },
+  {
+    type: 'bountiful_catch',
+    name: 'Bountiful Catch',
+    description: 'The river is teeming with fish! Anglers are having a field day.',
+    duration: 8,
+    effects: { farm_production: 1.5, fun_boost: 10 },
+    weight: 6,
+    condition: (_phase: string, _weather: string, season: string) =>
+      season === 'spring' || season === 'summer',
+  },
+  {
+    type: 'starry_night',
+    name: 'Spectacular Starry Night',
+    description: 'The sky is crystal clear, revealing a breathtaking display of stars.',
+    duration: 4,
+    effects: { mood_outdoor: 10, romance_boost: 5, fun_boost: 8 },
+    weight: 5,
+    condition: (phase: string, weather: string) =>
+      phase === 'night' && weather === 'sunny',
   },
 ];
 

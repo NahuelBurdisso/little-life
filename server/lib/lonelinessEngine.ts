@@ -1,0 +1,109 @@
+import { db } from '../db';
+import { agents, needs, relationships, agentStates } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { logActivity } from './activityLogger';
+import { simEvents } from './simEvents';
+import { getEffectivePersonality } from './states';
+
+// ─── Loneliness Engine ────────────────────────────────────────────────────────
+// Tracks chronic low social need. When social stays < 20 for extended periods,
+// the agent enters 'lonely' state. Warm agents who notice lonely neighbors
+// will visit them (comfort interaction via simEvents).
+
+const lonelySince = new Map<number, number>(); // agentId → tick when social first dropped below 20
+const LONELY_THRESHOLD = 20;
+const LONELY_DURATION_TICKS = 720; // ~12 game hours of consecutive low social
+
+/** Called periodically (every 60 ticks) from the tick loop. */
+export function lonelinessCheck(totalTicks: number): void {
+  const allNeeds = db.select().from(needs).all();
+  const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
+  const allStates = db.select().from(agentStates).all();
+
+  for (const agentNeeds of allNeeds) {
+    const agent = activeAgents.find(a => a.id === agentNeeds.agent_id);
+    if (!agent) continue;
+
+    // Check if already lonely
+    const hasLonelyState = allStates.some(
+      s => s.agent_id === agent.id && s.type === 'lonely'
+    );
+
+    if (agentNeeds.social < LONELY_THRESHOLD) {
+      const since = lonelySince.get(agent.id);
+      if (!since) {
+        lonelySince.set(agent.id, totalTicks);
+      } else if (totalTicks - since > LONELY_DURATION_TICKS && !hasLonelyState) {
+        // Agent has been lonely long enough — create lonely state
+        db.insert(agentStates).values({
+          agent_id: agent.id,
+          type: 'lonely',
+          severity: Math.min(1.0, (LONELY_THRESHOLD - agentNeeds.social) / LONELY_THRESHOLD),
+          started_at: Date.now(),
+          duration: 2880, // 2 game days
+          source: 'chronic_low_social',
+          metadata: null,
+        }).run();
+
+        logActivity({
+          type: 'drama',
+          initiator: agent.id,
+          templateData: { description: `${agent.name} has become lonely and withdrawn` },
+        });
+
+        simEvents.emit('agent:lonely', { agentId: agent.id });
+
+        // Trigger warm neighbor intervention
+        triggerComfortVisit(agent.id, activeAgents);
+      }
+    } else {
+      // Social is above threshold — reset tracker
+      lonelySince.delete(agent.id);
+    }
+  }
+}
+
+function triggerComfortVisit(lonelyAgentId: number, allAgents: (typeof agents.$inferSelect)[]): void {
+  // Find warm agents with positive relationship who might visit
+  const rels = db.select().from(relationships).all();
+
+  for (const other of allAgents) {
+    if (other.id === lonelyAgentId || !other.is_active) continue;
+
+    const personality = getEffectivePersonality(other.id);
+    if (!personality || personality.warmth < 50) continue;
+
+    // Check if they have any relationship
+    const a = Math.min(other.id, lonelyAgentId);
+    const b = Math.max(other.id, lonelyAgentId);
+    const rel = rels.find(r => r.agent_a === a && r.agent_b === b);
+    if (!rel) continue;
+
+    const isA = a === other.id;
+    const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
+    if (friendship < 10) continue; // need at least basic positive regard
+
+    // Probability based on warmth and friendship
+    const visitChance = personality.warmth * 0.005 + friendship * 0.003;
+    if (Math.random() > visitChance) continue;
+
+    // Emit comfort visit event — the decision system will pick this up
+    simEvents.emit('comfort:visit_needed', {
+      visitorId: other.id,
+      lonelyAgentId: lonelyAgentId,
+    });
+
+    const visitorName = other.name;
+    const lonelyAgent = allAgents.find(a => a.id === lonelyAgentId);
+    const lonelyName = lonelyAgent?.name ?? 'someone';
+
+    logActivity({
+      type: 'drama',
+      initiator: other.id,
+      target: lonelyAgentId,
+      templateData: { description: `${visitorName} noticed ${lonelyName} seems lonely and decided to visit` },
+    });
+
+    break; // Only one visitor at a time
+  }
+}

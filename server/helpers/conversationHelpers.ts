@@ -7,6 +7,32 @@ import { getShareableFacts, getAgentName } from '../lib/gossip';
 import type { MemoryRow } from '../ai/prompts';
 import { contextBuilder, memoryService } from '../lib/memory/instance';
 import { generateSituationalPrompt } from '../lib/personality';
+import { getReputation, getReputationLabel } from '../lib/reputationEngine';
+import { getAgentHobbies } from '../lib/hobbyEngine';
+import { getMoodMomentum } from '../lib/moodMomentum';
+
+// ─── Conversation Context Cache ───────────────────────────────────────────────
+// Caches agent identity, relationship, and enrichment data per conversation.
+// These don't change mid-conversation, saving ~10 DB queries per turn.
+
+interface CachedIdentity {
+  speaker: any;
+  otherAgent: any;
+  relationship: any;
+  location: any;
+  effectivePersonality: any;
+  enrichment: any;
+  speakerEcon: any;
+}
+
+const identityCache = new Map<string, CachedIdentity>(); // key: `${conversationId}:${speakerId}`
+
+export function clearConversationCache(conversationId: number): void {
+  for (const key of identityCache.keys()) {
+    if (key.startsWith(`${conversationId}:`)) identityCache.delete(key);
+  }
+}
+import { getDrinkCount } from '../lib/tavernEngine';
 
 export async function getConversationContext(conversationId: number, speakerId: number) {
   // Load conversation and world state first (needed to derive otherId and currentTick)
@@ -19,18 +45,44 @@ export async function getConversationContext(conversationId: number, speakerId: 
   const world = db.select().from(worldState).get();
   if (!world) return null;
 
-  const location = conversation.location
-    ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
-    : null;
-  if (!location) return null;
+  // Check cache for stable identity data (agent, relationship, location, personality)
+  const cacheKey = `${conversationId}:${speakerId}`;
+  let cached = identityCache.get(cacheKey);
 
-  // Batch-load both agents in a single query
-  const agentRows = db.select().from(agents).where(inArray(agents.id, [speakerId, otherId])).all();
-  const speaker = agentRows.find((a) => a.id === speakerId);
-  const otherAgent = agentRows.find((a) => a.id === otherId);
-  if (!speaker || !otherAgent) return null;
+  if (!cached) {
+    const location = conversation.location
+      ? db.select().from(locations).where(eq(locations.id, conversation.location)).get()
+      : null;
+    if (!location) return null;
 
-  // Batch-load needs and economy for the speaker
+    const agentRows = db.select().from(agents).where(inArray(agents.id, [speakerId, otherId])).all();
+    const speaker = agentRows.find((a) => a.id === speakerId);
+    const otherAgent = agentRows.find((a) => a.id === otherId);
+    if (!speaker || !otherAgent) return null;
+
+    const [a, b] = speakerId < otherId ? [speakerId, otherId] : [otherId, speakerId];
+    const relationship = db.select().from(relationships)
+      .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).get();
+
+    const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
+    const speakerEcon = db.select().from(economy).where(eq(economy.agent_id, speakerId)).get();
+
+    const rep = getReputation(speakerId);
+    const enrichment = {
+      reputationLabel: getReputationLabel(rep),
+      reputationScore: rep,
+      hobbies: getAgentHobbies(speakerId),
+      moodMomentum: getMoodMomentum(speakerId),
+      drinkCount: getDrinkCount(speakerId),
+    };
+
+    cached = { speaker, otherAgent, relationship, location, effectivePersonality, enrichment, speakerEcon };
+    identityCache.set(cacheKey, cached);
+  }
+
+  const { speaker, otherAgent, location, effectivePersonality, enrichment } = cached;
+
+  // Needs and economy change every turn — always reload
   const speakerNeeds = db.select().from(needs).where(eq(needs.agent_id, speakerId)).get();
   const speakerEcon = db.select().from(economy).where(eq(economy.agent_id, speakerId)).get();
   if (!speakerNeeds || !speakerEcon) return null;
@@ -43,19 +95,14 @@ export async function getConversationContext(conversationId: number, speakerId: 
     .map(g => (g as any).description as string)
     .slice(0, 3);
 
-  const [a, b] = speakerId < otherId ? [speakerId, otherId] : [otherId, speakerId];
-
-  const relationship = db
-    .select()
-    .from(relationships)
-    .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
-    .get();
+  // Use cached relationship and personality
+  const relationship = cached.relationship;
 
   const otherAgentName = otherAgent.name ?? '';
   const topic = (conversation.topic as string) ?? '';
   const currentTick = world?.time?.totalTicks ?? 0;
 
-  const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
+  // State prompts change per turn (mood-dependent) — always reload
   const statePrompts = getActiveStatePrompts(speaker.id, world?.time?.totalTicks);
 
   // Build situational prompt from the speaker's active dramatic states
@@ -145,6 +192,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     gossipFacts,
     situationalPrompt,
     speakerGoals,
+    enrichment,
   };
 }
 
@@ -175,6 +223,7 @@ export function addMessage(
 }
 
 export function markConversationEnded(conversationId: number) {
+  clearConversationCache(conversationId);
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
   if (!conversation || conversation.status === 'ended') return;
 

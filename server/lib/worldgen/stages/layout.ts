@@ -5,7 +5,7 @@ import {
 } from '../buildingTemplates';
 import { FitError, type Stage, type Zone } from '../types';
 import type { LocationSeed } from '../types';
-import type { RNG } from '../rng';
+// RNG type used implicitly via stage interface
 import { TILE } from '../config';
 const BUILDING_GAP = 2;
 const ROAD_BUFFER = 1;

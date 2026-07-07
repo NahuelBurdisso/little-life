@@ -106,7 +106,7 @@ const RelationshipConfigSchema = z.object({
 
 const WorldConfigSchema = z.object({
   season: z.enum(['spring', 'summer', 'autumn', 'winter']),
-  weather: z.enum(['sunny', 'cloudy', 'rainy', 'stormy', 'foggy']),
+  weather: z.enum(['sunny', 'cloudy', 'rainy', 'stormy', 'foggy', 'snowy', 'windy', 'hot']),
   startHour: z.number().int().min(0).max(23),
   startDay: z.number().int().min(1).max(28),
 });

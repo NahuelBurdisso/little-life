@@ -6,9 +6,10 @@ import { CONFIG } from '../../lib/constants';
 import type { Season } from '../../lib/types';
 import { emitter } from '../emitter';
 import { createFact } from '../../lib/gossip';
-import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation } from '../../lib/economyEngine';
+import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation, setEventPriceModifiers, getEventProductionMultiplier } from '../../lib/economyEngine';
 import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { simEvents } from '../../lib/simEvents';
+import { getReputationPriceModifier } from '../../lib/reputationEngine';
 
 // --- Module-level state for batching and milestones ---
 
@@ -66,7 +67,8 @@ export function economyTick(): void {
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
   const allLocations = db.select().from(locations).all();
 
-  mergeEventEffects(activeEvents); // reserved for future event price modifiers
+  const eventEffects = mergeEventEffects(activeEvents);
+  setEventPriceModifiers(eventEffects); // Apply event price modifiers (market_day, festival, harvest)
   const season = world.time!.season as Season;
   const currentHour = world.time!.hour;
   const now = Date.now();
@@ -126,7 +128,8 @@ export function economyTick(): void {
     } else {
       // Raw production: rate-based with seasonal modifier and remainder
       const seasonMult = recipe.seasonal ? (SEASON_PRODUCTION_MODIFIERS[season] ?? 1.0) : 1.0;
-      const rawProduction = recipe.rate * gameHoursElapsed * seasonMult + econ.production_remainder;
+      const eventMult = getEventProductionMultiplier();
+      const rawProduction = recipe.rate * gameHoursElapsed * seasonMult * eventMult + econ.production_remainder;
       const wholeUnits = Math.floor(rawProduction);
       const remainder = rawProduction - wholeUnits;
 
@@ -330,7 +333,7 @@ export function economyTick(): void {
           if (!itemToBuy) { continue; }
 
           const shopStock = getInventoryCount(ownerEcon.inventory as any[], itemToBuy);
-          const price = getMarketPrice(itemToBuy, season, shopStock);
+          const price = Math.round(getMarketPrice(itemToBuy, season, shopStock) * getReputationPriceModifier(agent.id));
           if (buyerEcon.money < price) { continue; }
 
           // Transfer item
@@ -410,8 +413,8 @@ export function economyTick(): void {
       const shopStock = getInventoryCount(ownerEcon.inventory as any[], item);
       if (shopStock <= 0) continue;
 
-      // Get price
-      const price = getMarketPrice(item, season, shopStock);
+      // Get price (modified by buyer's reputation)
+      const price = Math.round(getMarketPrice(item, season, shopStock) * getReputationPriceModifier(agent.id));
       if (buyerEcon.money < price) continue;
 
       // Transfer item: remove from shop, add to buyer
@@ -607,6 +610,14 @@ export function economyTick(): void {
     if (prod.qty > 0) simEvents.emit('economy:production', { agentId, item: prod.item, quantity: prod.qty });
   }
   productionThisTick.clear();
+
+  // Cleanup: prune milestone tracking for inactive agents (prevents memory leak)
+  if (dayChanged) {
+    const activeIds = new Set(activeAgents.map(a => a.id));
+    for (const id of lastMilestoneLevel.keys()) {
+      if (!activeIds.has(id)) lastMilestoneLevel.delete(id);
+    }
+  }
 
   emitter.markDirty('agents.all');
 }

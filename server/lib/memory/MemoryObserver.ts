@@ -204,8 +204,8 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', `My approach to ${description} wasn't working. I'm going to try: ${newStrategy}.`, { subtype: 'goal' }, 0, 5);
   });
 
-  simEvents.on('ambition:shifted', ({ agentId, oldDescription, newDescription, reason }: { agentId: number; oldDescription: string; newDescription: string; reason: string }) => {
-    memoryService.record(agentId, 'observation', `I used to want "${oldDescription}". Now I want "${newDescription}" because ${reason}.`, { subtype: 'ambition' }, 0.3, 8);
+  simEvents.on('goal:ambition_shifted', ({ agentId, from, to, reason }: { agentId: number; from: string; to: string; reason: string }) => {
+    memoryService.record(agentId, 'observation', `I used to want "${from}". Now I want "${to}" because ${reason}.`, { subtype: 'ambition' }, 0.3, 8);
   });
 
   simEvents.on('goal:emotional_failure', ({ agentId, importance, personality }: { agentId: number; importance: number; personality: any }) => {

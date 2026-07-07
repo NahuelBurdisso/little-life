@@ -67,12 +67,6 @@ describe('RippleEngine', () => {
     });
 
     it('zero probability always returns zero', () => {
-      const rule = makeRule({
-        probability: 0,
-        personalityGates: [
-          { axis: 'neuroticism', direction: '+', weight: 0.5 },
-        ],
-      });
       const personality = makePersonality({ neuroticism: 100 });
       // 0 + (100/100 * 0.5) = 0.5, but base is 0 so total = 0 + 0.5 = 0.5
       // Actually zero probability just means 0 + modifier. The spec says "zero probability always returns zero"

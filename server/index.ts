@@ -12,12 +12,23 @@ import { initMemoryObserver } from './lib/memory/MemoryObserver';
 import { initPlanEventAdapter } from './lib/planning/PlanEventAdapter';
 import { initCascade } from './lib/cascade';
 import { reconstructZoneOccupancy } from './lib/interiorGrid';
+import { CONFIG } from './lib/constants';
+import './lib/giftEngine'; // Initialize gift-giving event listeners
+import './lib/secretSharing'; // Initialize secret-sharing event listeners
+import { initBirthdays } from './lib/agingEngine';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
 // Initialize memory system
 initMemoryObserver(memoryService);
 console.log('Memory service initialized');
+initBirthdays();
+
+// Log LLM configuration
+console.log(`LLM backend: ${CONFIG.AI.BACKEND} @ ${CONFIG.AI.CHAT_BASE_URL}`);
+console.log(`  Chat model:  ${CONFIG.AI.CHAT_MODEL}`);
+console.log(`  Light model: ${CONFIG.AI.LIGHT_MODEL}${CONFIG.AI.LIGHT_MODEL === CONFIG.AI.CHAT_MODEL ? ' (same)' : ''}`);
+console.log(`  Embed model: ${CONFIG.AI.EMBEDDING_MODEL} @ ${CONFIG.AI.EMBED_BASE_URL}`);
 
 // Backfill embeddings for memories that don't have them (e.g., seed/backstory data)
 import { db } from './db';
@@ -25,10 +36,14 @@ import { agents as agentsTable, locations as locationsTable, memories } from './
 import { sql, eq } from 'drizzle-orm';
 import { EmbeddingBatcher } from './lib/memory/EmbeddingBatcher';
 
-const unembedded = db.select({ id: memories.id, description: memories.description })
-  .from(memories)
-  .where(sql`${memories.embedding} IS NULL AND ${memories.is_active} = 1`)
-  .all();
+// Backfill may fail on fresh DB (no tables yet — setup wizard creates them)
+let unembedded: { id: number; description: string }[] = [];
+try {
+  unembedded = db.select({ id: memories.id, description: memories.description })
+    .from(memories)
+    .where(sql`${memories.embedding} IS NULL AND ${memories.is_active} = 1`)
+    .all();
+} catch { /* empty DB — setup wizard will create tables */ }
 if (unembedded.length > 0) {
   console.log(`Will backfill ${unembedded.length} embeddings after tick loop stabilizes...`);
   // Delay backfill by 30 seconds to avoid DB lock contention with initial tick burst
