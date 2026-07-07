@@ -35,6 +35,7 @@ import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
 import { getReputationSocialModifier } from '../../lib/reputationEngine';
 import { getSharedHobbies } from '../../lib/hobbyEngine';
+import { getFavorSocialModifier } from '../../lib/favorEngine';
 
 // --- Types ---
 
@@ -523,6 +524,9 @@ function scoreFreeTimeActions(
     if (sharedHobbies.length > 0) {
       socScore += 8 * sharedHobbies.length;
     }
+
+    // Favor obligation: agents who owe favors seek out their benefactors
+    socScore += getFavorSocialModifier(agent.id, other.id);
 
     // Coworker bonding: agents at same workplace socialize more
     if (agent.workplace && agent.workplace === other.workplace) {

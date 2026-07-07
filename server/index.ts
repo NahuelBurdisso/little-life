@@ -16,6 +16,8 @@ import { CONFIG } from './lib/constants';
 import './lib/giftEngine'; // Initialize gift-giving event listeners
 import './lib/secretSharing'; // Initialize secret-sharing event listeners
 import { initBirthdays } from './lib/agingEngine';
+import { initPersonalityDrift } from './lib/personalityDrift';
+import { initFavorTracking } from './lib/favorEngine';
 
 const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 
@@ -23,6 +25,8 @@ const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
 initMemoryObserver(memoryService);
 console.log('Memory service initialized');
 initBirthdays();
+initPersonalityDrift();
+initFavorTracking();
 
 // Log LLM configuration
 console.log(`LLM backend: ${CONFIG.AI.BACKEND} @ ${CONFIG.AI.CHAT_BASE_URL}`);
