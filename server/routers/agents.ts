@@ -79,10 +79,13 @@ export const agentsRouter = router({
         .where(eq(economy.agent_id, input.agentId))
         .get();
 
+      const rep = getReputation(input.agentId);
       return {
         agent,
         needs: agentNeeds ?? null,
         economy: agentEconomy ?? null,
+        reputation: { score: rep, label: getReputationLabel(rep) },
+        hobbies: getAgentHobbies(input.agentId),
       };
     }),
 

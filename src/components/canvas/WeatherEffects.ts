@@ -61,6 +61,15 @@ export class WeatherEffects {
       case "foggy":
         this.spawnFog(width, height, 2);
         break;
+      case "snowy":
+        this.spawnSnow(width, 6);
+        break;
+      case "windy":
+        this.spawnWind(width, height, 3);
+        break;
+      case "hot":
+        this.spawnHeat(width, height, 1);
+        break;
       // sunny, cloudy: no particles
     }
   }
@@ -110,6 +119,59 @@ export class WeatherEffects {
       vy: 0,
       life: 3,
     });
+  }
+
+  private spawnSnow(width: number, count: number) {
+    for (let i = 0; i < count; i++) {
+      const g = new Graphics();
+      const size = 2 + Math.random() * 3;
+      g.circle(0, 0, size).fill({ color: 0xffffff, alpha: 0.7 + Math.random() * 0.3 });
+      g.x = Math.random() * width;
+      g.y = -10;
+      this.container.addChild(g);
+      this.particles.push({
+        graphic: g,
+        vx: -0.5 + Math.random() * 1.0, // gentle drift
+        vy: 1.5 + Math.random() * 1.5,   // slow fall
+        life: 250,
+      });
+    }
+  }
+
+  private spawnWind(_width: number, height: number, count: number) {
+    for (let i = 0; i < count; i++) {
+      const g = new Graphics();
+      // Horizontal leaf/dust streak
+      const len = 4 + Math.random() * 8;
+      g.moveTo(0, 0).lineTo(len, -1).stroke({ color: 0x998866, width: 1.5, alpha: 0.4 });
+      g.x = -10;
+      g.y = Math.random() * height;
+      this.container.addChild(g);
+      this.particles.push({
+        graphic: g,
+        vx: 6 + Math.random() * 4, // fast horizontal
+        vy: -1 + Math.random() * 2, // slight vertical drift
+        life: 120,
+      });
+    }
+  }
+
+  private spawnHeat(width: number, height: number, count: number) {
+    for (let i = 0; i < count; i++) {
+      const g = new Graphics();
+      // Rising heat shimmer
+      const w = 20 + Math.random() * 30;
+      g.rect(-w / 2, -2, w, 4).fill({ color: 0xffcc66, alpha: 0.06 });
+      g.x = Math.random() * width;
+      g.y = height - Math.random() * (height * 0.3);
+      this.container.addChild(g);
+      this.particles.push({
+        graphic: g,
+        vx: Math.sin(g.y * 0.1) * 0.3, // wavering
+        vy: -0.3 - Math.random() * 0.3, // rising
+        life: 200,
+      });
+    }
   }
 
   private clearParticles() {

@@ -8,6 +8,9 @@ import { buildDailyPlanPrompt, buildReplanPrompt } from './planPrompts';
 import { parsePlanBlocks } from './planParser';
 import type { DailyPlan, PlanBlock, PlanExecutionState, ReplanEvent } from './types';
 import { logActivity } from '../activityLogger';
+import { getAgentHobbies } from '../hobbyEngine';
+import { getReputation, getReputationLabel } from '../reputationEngine';
+import { getMoodMomentum } from '../moodMomentum';
 import { describeEvent } from '../memory/descriptionTemplates';
 
 // ---------------------------------------------------------------------------
@@ -223,6 +226,9 @@ export class PlanGenerator {
       validLocations,
       economy: agentEcon ? { money: agentEcon.money, job: agentEcon.job, jobTitle: agentEcon.job_title, salary: agentEcon.salary } : undefined,
       selfDescription: agentRow.self_description ?? undefined,
+      hobbies: getAgentHobbies(agentId),
+      reputationLabel: getReputationLabel(getReputation(agentId)),
+      moodMomentum: getMoodMomentum(agentId),
     });
 
     // 10. Call LLM

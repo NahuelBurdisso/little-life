@@ -28,6 +28,9 @@ export interface DailyPlanPromptParams {
   validLocations: string[];
   economy?: { money: number; job?: string; jobTitle?: string; salary?: number };
   selfDescription?: string;
+  hobbies?: Array<{ hobby: string; level: number }>;
+  reputationLabel?: string;
+  moodMomentum?: number;
 }
 
 export interface DecompositionPromptParams {
@@ -129,7 +132,10 @@ ${yesterdaySection}
 ${params.economy ? `
 Your finances:
 - Money: $${Math.round(params.economy.money)} (${describeMoneyLevel(params.economy.money)})
-- ${params.economy.jobTitle ? `Job: ${params.economy.jobTitle}, salary $${params.economy.salary}/day` : 'Unemployed'}` : ''}
+- ${params.economy.jobTitle ? `Job: ${params.economy.jobTitle}, salary $${params.economy.salary}/day` : 'Unemployed'}` : ''}${params.hobbies && params.hobbies.length > 0 ? `
+Your hobbies: ${params.hobbies.map(h => `${h.hobby} (lv${h.level})`).join(', ')}` : ''}${params.reputationLabel ? `
+Reputation: ${params.reputationLabel}` : ''}${params.moodMomentum && Math.abs(params.moodMomentum) > 3 ? `
+Mood trend: ${params.moodMomentum > 0 ? 'getting happier' : 'going through a rough patch'}` : ''}
 Available locations: ${locationsList}
 
 Plan your day in 5-8 time blocks from ${wakeTime}:00 to ${sleepTime}:00. Each block should be a meaningful chunk of time. Account for meals, work if applicable, social time, and personal needs based on your current state.

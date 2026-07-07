@@ -46,4 +46,13 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // ─── Crime ──────────────────────────────────────────────────────────────────
   shoplifting: { category: 'drama', base_importance: 0.6, retention: 'medium', template: '{description}' },
   pickpocket:  { category: 'drama', base_importance: 0.7, retention: 'medium', template: '{description}' },
+
+  // ─── Social Events ─────────────────────────────────────────────────────────
+  gift:            { category: 'social', base_importance: 0.5, retention: 'medium', template: '{description}' },
+  secret_shared:   { category: 'social', base_importance: 0.6, retention: 'long', template: '{description}' },
+  confrontation:   { category: 'drama', base_importance: 0.8, retention: 'long', template: '{description}' },
+  birthday:        { category: 'social', base_importance: 0.7, retention: 'long', template: '{description}' },
+  tavern_tipsy:    { category: 'social', base_importance: 0.3, retention: 'short', template: '{description}' },
+  tavern_drunk:    { category: 'drama', base_importance: 0.5, retention: 'medium', template: '{description}' },
+  hobby_levelup:   { category: 'social', base_importance: 0.4, retention: 'medium', template: '{agent} improved at {hobby} (level {level})' },
 };

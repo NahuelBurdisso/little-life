@@ -26,8 +26,11 @@ function getCategory(type: string): EventCategory {
   if (type === 'conversation_ended') return 'conversation';
   if (type === 'economy' || type === 'salary_paid' || type === 'purchase') return 'economy';
   if (type === 'state_gained' || type === 'state_lost' || type === 'state_change') return 'state_change';
+  if (['contemplate', 'fish', 'garden', 'forage', 'perform', 'jog', 'browse', 'cook', 'rest', 'watch'].includes(type)) return 'state_change';
   if (type === 'relationship' || type === 'relationship_status_change') return 'relationship';
   if (type === 'drama' || type === 'theft_caught' || type === 'affair_discovery' || type === 'interaction_resolved') return 'drama';
+  if (type === 'confrontation' || type === 'tavern_drunk') return 'drama';
+  if (type === 'gift' || type === 'secret_shared' || type === 'birthday' || type === 'tavern_tipsy' || type === 'hobby_levelup') return 'relationship';
   if (type === 'world_event') return 'world_event';
   if (type === 'goal_ambition_shifted' || type === 'goal_ambition_generated' || type.startsWith('aspiration')) return 'aspiration';
   if (type.startsWith('goal_')) return 'goal';

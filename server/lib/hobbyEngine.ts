@@ -1,4 +1,8 @@
 import { simEvents } from './simEvents';
+import { logActivity } from './activityLogger';
+import { db } from '../db';
+import { agents } from '../db/schema';
+import { eq } from 'drizzle-orm';
 
 // ─── Hobby System ─────────────────────────────────────────────────────────────
 // Agents develop skills through repeated zone activities.
@@ -67,6 +71,17 @@ export function practiceHobby(agentId: number, zoneActivity: string, currentTick
     skill.experience -= needed;
     skill.level++;
     simEvents.emit('hobby:levelup', { agentId, hobby: hobbyId, level: skill.level });
+    // Log activity for level-ups at milestone levels
+    if (skill.level % 5 === 0 || skill.level === 1) {
+      const agent = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get();
+      if (agent) {
+        logActivity({
+          type: 'hobby_levelup',
+          initiator: agentId,
+          templateData: { agent: agent.name, hobby: hobbyId, level: skill.level },
+        });
+      }
+    }
   }
 
   return skill.level;
