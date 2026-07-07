@@ -1,6 +1,9 @@
 import { simEvents } from '../simEvents';
 import { describeEvent } from './descriptionTemplates';
 import type { MemoryService } from './MemoryService';
+import { db } from '../../db';
+import { agents } from '../../db/schema';
+import { eq } from 'drizzle-orm';
 
 export function initMemoryObserver(memoryService: MemoryService): void {
   simEvents.on('agent:arrived', ({ agentId, locationName }: { agentId: number; locationName: string }) => {
@@ -235,5 +238,27 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation',
       describeEvent('crime_arrested', { constable: constableName }),
       { subtype: 'crime' }, -0.8, 8);
+  });
+
+  // Hobby level-up
+  simEvents.on('hobby:levelup', ({ agentId, hobby, level }: { agentId: number; hobby: string; level: number }) => {
+    memoryService.record(agentId, 'observation',
+      `I'm getting better at ${hobby}! I'm now at skill level ${level}.`,
+      { subtype: 'growth', hobby }, 0.3, 4 + Math.floor(level / 10));
+  });
+
+  // Gift given — giver remembers
+  simEvents.on('gift:given', ({ giverId, receiverId }: { giverId: number; receiverId: number; item?: string; amount?: number }) => {
+    const receiverName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, receiverId)).get()?.name ?? 'someone';
+    memoryService.record(giverId, 'observation',
+      `I gave a gift to ${receiverName}. It felt good to be generous.`,
+      { subtype: 'social', related_agents: [receiverId] }, 0.4, 5);
+  });
+
+  // Agent birthday — self-memory
+  simEvents.on('agent:birthday', ({ agentId, age }: { agentId: number; age: number }) => {
+    memoryService.record(agentId, 'observation',
+      `Today is my birthday! I turned ${age}. Another year gone by.`,
+      { subtype: 'life_event' }, 0.5, 7);
   });
 }
