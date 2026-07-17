@@ -488,6 +488,11 @@ export class BuildingRenderer {
     const patch = new PIXI.Graphics();
     patch.roundRect(x, y, width, height, 4).fill({ color, alpha: 0.5 });
     patch.roundRect(x, y, width, height, 4).stroke({ width: 1, color, alpha: 0.6 });
+    // Worn perimeter band — a darker inner rim softens the crisp rectangular
+    // seam where open-area ground meets grass, matching the road edge
+    // treatment (fresh-eyes audit r30).
+    patch.roundRect(x + 2, y + 2, width - 4, height - 4, 4)
+      .stroke({ width: 4, color: darken(color, 0.7), alpha: 0.25 });
     this.buildingLayer.addChild(patch);
 
     // Town square landmark: a stone well/fountain at the center gives the
