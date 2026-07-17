@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { findAvailableZone, resolveZoneForAction, zoneOccupancy } from '../lib/interiorGrid';
+import { findAvailableZone, resolveZoneForAction, zoneOccupancy, occupancyKey } from '../lib/interiorGrid';
 
 describe('findAvailableZone', () => {
   beforeEach(() => {
@@ -51,6 +51,16 @@ describe('findAvailableZone', () => {
     zoneOccupancy.enter(2, 'home', 'kitchen');
     const zone = findAvailableZone('home', 'cook');
     expect(zone).toBeNull();
+  });
+
+  it('tracks occupancy per building instance when a location id is given', () => {
+    // Agent 1 sleeps in home #10 — bed bucket for home #10 is full
+    zoneOccupancy.enter(1, occupancyKey('home', 10), 'bed');
+    expect(findAvailableZone('home', 'sleeping', 10)).toBeNull();
+    // But home #11's bed is a separate instance and stays available
+    const zone = findAvailableZone('home', 'sleeping', 11);
+    expect(zone).not.toBeNull();
+    expect(zone!.id).toBe('bed');
   });
 
   it('uses fallback zone via ZONE_FALLBACKS when applicable', () => {

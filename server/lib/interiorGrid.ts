@@ -186,7 +186,7 @@ export function reconstructZoneOccupancy(
     }
 
     if (bestZone && bestDist <= MAX_SNAP_DISTANCE) {
-      zoneOccupancy.enter(agent.id, loc.type, bestZone.id);
+      zoneOccupancy.enter(agent.id, occupancyKey(loc.type, agent.current_location), bestZone.id);
     }
   }
 }
@@ -217,9 +217,15 @@ const ZONE_FALLBACKS: Record<string, string[]> = {
 export function findAvailableZone(
   buildingType: string,
   actionType: string,
+  locationId?: number,
 ): ZoneDef | null {
   const zones = INTERIOR_ZONES[buildingType] as ZoneDef[] | undefined;
   if (!zones || zones.length === 0) return null;
+
+  // Occupancy is tracked per building INSTANCE when a location id is provided,
+  // so two different homes never share the same "bed" bucket. Falls back to
+  // type-level keys for callers that don't know the instance.
+  const occKey = occupancyKey(buildingType, locationId);
 
   // Check ACTION_ZONE_REQUIREMENTS first for non-interaction actions
   const requirements = ACTION_ZONE_REQUIREMENTS[actionType];
@@ -228,7 +234,7 @@ export function findAvailableZone(
     if (allowedZoneIds) {
       for (const zoneId of allowedZoneIds) {
         const zone = zones.find(z => z.id === zoneId);
-        if (zone && !zoneOccupancy.isFull(buildingType, zone.id, zone.maxOccupants)) {
+        if (zone && !zoneOccupancy.isFull(occKey, zone.id, zone.maxOccupants)) {
           return zone;
         }
       }
@@ -241,7 +247,7 @@ export function findAvailableZone(
 
   // Try primary matches first (prefer non-full zones)
   for (const zone of matching) {
-    if (!zoneOccupancy.isFull(buildingType, zone.id, zone.maxOccupants)) {
+    if (!zoneOccupancy.isFull(occKey, zone.id, zone.maxOccupants)) {
       return zone;
     }
   }
@@ -255,7 +261,7 @@ export function findAvailableZone(
         const fallbackZone = zones.find(z => z.id === fallbackId);
         if (
           fallbackZone &&
-          !zoneOccupancy.isFull(buildingType, fallbackZone.id, fallbackZone.maxOccupants)
+          !zoneOccupancy.isFull(occKey, fallbackZone.id, fallbackZone.maxOccupants)
         ) {
           return fallbackZone;
         }
@@ -265,6 +271,14 @@ export function findAvailableZone(
 
   // Everything is full
   return null;
+}
+
+/**
+ * Build the occupancy bucket key for a building. Per-instance when a location
+ * id is known ("home#12"), per-type otherwise ("home").
+ */
+export function occupancyKey(buildingType: string, locationId?: number | null): string {
+  return locationId != null ? `${buildingType}#${locationId}` : buildingType;
 }
 
 /**

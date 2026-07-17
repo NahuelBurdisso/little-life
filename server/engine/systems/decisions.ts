@@ -1231,7 +1231,7 @@ export function tick(world: WorldRow): void {
         const destY = loc.entry_point.y;
 
         const locType = loc.type as string;
-        const zone = findAvailableZone(locType, decision!.action);
+        const zone = findAvailableZone(locType, decision!.action, loc.id);
         if (zone) {
           const locPos = loc.position as { x: number; y: number; width: number; height: number };
           zoneTarget = {

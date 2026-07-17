@@ -8,7 +8,7 @@ import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { simEvents } from '../../lib/simEvents';
-import { getInteriorGrid, zoneOccupancy, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
+import { getInteriorGrid, zoneOccupancy, occupancyKey, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
 import { INTERIOR_ZONES } from '../../data/interiors';
 import { executeZoneAction } from './zoneActions';
 import { OPEN_AREA_TYPES } from '../../lib/worldgen/buildingTemplates';
@@ -259,7 +259,7 @@ function handleArrival(
     const interiorZoneId = (nextAction as any)?._interiorArrivalZone as string | undefined;
     const interiorBuilding = (nextAction as any)?._interiorArrivalBuilding as string | undefined;
     if (interiorZoneId && interiorBuilding) {
-      zoneOccupancy.enter(agent.id, interiorBuilding, interiorZoneId);
+      zoneOccupancy.enter(agent.id, occupancyKey(interiorBuilding, agent.current_location), interiorZoneId);
       // Strip interior metadata from the action
       const { _interiorArrivalZone, _interiorArrivalBuilding, ...cleanAction } = nextAction as any;
       const resolvedAction = cleanAction.type ? cleanAction : { type: 'idle' };
