@@ -220,7 +220,11 @@ export class BuildingRenderer {
     const palette = INTERIOR_PALETTE[loc.type] ?? { floor: DEFAULT_FLOOR, wall: DEFAULT_WALL };
     const walls = new PIXI.Graphics();
 
-    // ── 0. Drop shadow — offset rect under building grounds it on the terrain ──
+    // ── 0a. Ground-contact apron — worn-earth ring plants the building in the
+    // terrain instead of floating on untouched grass (fresh-eyes audit r14) ──
+    walls.rect(x - 5, y - 5, width + 10, height + 10).fill({ color: 0x6b5a3a, alpha: 0.35 });
+
+    // ── 0b. Drop shadow — offset rect under building grounds it on the terrain ──
     walls.rect(x + 4, y + 4, width, height).fill({ color: 0x1a1208, alpha: 0.35 });
 
     // ── 1. Chimney rects — drawn BEFORE floor so walls overlap base naturally ──
