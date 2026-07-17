@@ -64,6 +64,14 @@ const DOOR_STYLE: Record<string, { color: number; w: number; h: number }> = {
 // Building types that get a chimney rect (proposal-visual.md §4 chimneys)
 const CHIMNEY_TYPES = new Set(['tavern', 'bakery', 'workshop', 'divebar', 'home']);
 
+/** Per-channel multiply darken for hex colors (used for south wall face band). */
+function darken(color: number, factor: number): number {
+  const r = Math.round(((color >> 16) & 0xff) * factor);
+  const g = Math.round(((color >> 8) & 0xff) * factor);
+  const b = Math.round((color & 0xff) * factor);
+  return (r << 16) | (g << 8) | b;
+}
+
 // ── Accent colors for sign plates (type accent = wall color lightened) ────────
 // These are the sign plate colors drawn above the door.
 const SIGN_COLOR: Record<string, number | null> = {
@@ -250,6 +258,11 @@ export class BuildingRenderer {
 
     // ── 2. Floor rect ──────────────────────────────────────────────────────────
     walls.rect(x, y, width, height).fill({ color: palette.floor, alpha: 1.0 });
+
+    // ── 2b. South wall face band — darkened wall-color strip along bottom edge
+    // implies vertical height so buildings read as masses, not painted rects
+    // (fresh-eyes audit r19). Door drawn later punches doorway through it. ──
+    walls.rect(x, y + height - 6, width, 6).fill({ color: darken(palette.wall, 0.62) });
 
     // ── 3. Roof trim strip: 4px horizontal bar at the building top edge ────────
     // Color = wall color (darker than floor, implies eave shadow line)
