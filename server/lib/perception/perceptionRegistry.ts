@@ -4,11 +4,11 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
   {
     id: 'friend_distressed',
     observes: {
-      mood_below: 30,
+      mood_below: 22,
       min_friendship: 40,
     },
     reaction: 'approach_comfort',
-    base_score: 50,
+    base_score: 42,
     personality_weights: {
       warmth: 0.6,
       neuroticism: 0.2,
@@ -16,7 +16,7 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
     relationship_bonus: {
       friendship_weight: 0.8,
     },
-    cooldown: 30,
+    cooldown: 120,
   },
   {
     id: 'friend_grieving',
