@@ -79,18 +79,29 @@ export class AgentSprite {
     this.container.addChild(this.stateRing);
 
     // --- Name label below sprite ---
+    // Bright fill + dark pill backing keeps names readable on any terrain
+    // (light plaza sand, dark evening grass) — fresh-eyes audit r17.
     this.nameLabel = new PIXI.Text({
       text: name,
       style: {
         fontFamily: "monospace",
         fontSize: 7,
-        fill: 0xa09070,
+        fill: 0xe8e0d0,
         stroke: { color: 0x000000, width: 2 },
         align: "center",
       },
     });
     this.nameLabel.anchor.set(0.5, 0);
     this.nameLabel.position.set(0, AGENT_RADIUS + 6);
+    const pill = new PIXI.Graphics();
+    pill.roundRect(
+      -this.nameLabel.width / 2 - 3,
+      AGENT_RADIUS + 5,
+      this.nameLabel.width + 6,
+      this.nameLabel.height + 2,
+      3,
+    ).fill({ color: 0x000000, alpha: 0.4 });
+    this.container.addChild(pill);
     this.container.addChild(this.nameLabel);
   }
 
