@@ -134,6 +134,9 @@ export class BuildingRenderer {
 
   private buildings: Map<number, BuildingEntry> = new Map();
 
+  // Zone/furniture label visibility state (toggled by zoom level)
+  private zoneLabelsVisible = true;
+
   // Track hover state for zone-rect suppression (task 3)
   private hoveredBuildingId: number | null = null;
   // Track which building IDs contain the selected agent (task 3)
@@ -159,6 +162,19 @@ export class BuildingRenderer {
   setZoom(cameraScale: number): void {
     const s = Math.min(2, Math.max(0.45, 1 / cameraScale));
     for (const child of this.labelLayer.children) child.scale.set(s);
+
+    // Interior zone/furniture labels are simulation detail — only readable
+    // when zoomed in. At wide zoom they render as pixel noise, so hide them.
+    const showZoneLabels = cameraScale >= 1.3;
+    if (showZoneLabels !== this.zoneLabelsVisible) {
+      this.zoneLabelsVisible = showZoneLabels;
+      for (const b of this.buildings.values()) {
+        if (!b.interiorContainer) continue;
+        for (const ch of b.interiorContainer.children) {
+          if (ch instanceof PIXI.Text) ch.visible = showZoneLabels;
+        }
+      }
+    }
   }
 
   init(locations: LocationData[]): void {
