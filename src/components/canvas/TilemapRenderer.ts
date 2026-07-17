@@ -192,6 +192,7 @@ export class TilemapRenderer {
     if (!Array.isArray(tiles) || tiles.length === 0) return;
 
     const ROAD_COLOR = 0x6b5a3e;
+    const ROAD_EDGE_COLOR = 0x4e4029;
 
     // Immediate fallback — colored rectangles
     const fallback = new PIXI.Graphics();
@@ -200,6 +201,20 @@ export class TilemapRenderer {
         .fill({ color: ROAD_COLOR });
     }
     this.roadContainer.addChild(fallback);
+
+    // Edge strips: darker 3px band on any side bordering non-road, so roads
+    // read as carved paths instead of flat color bands.
+    const roadSet = new Set(tiles.map((t) => `${t.x},${t.y}`));
+    const edges = new PIXI.Graphics();
+    for (const tile of tiles) {
+      const px = tile.x * TILE_SIZE;
+      const py = tile.y * TILE_SIZE;
+      if (!roadSet.has(`${tile.x},${tile.y - 1}`)) edges.rect(px, py, TILE_SIZE, 3).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
+      if (!roadSet.has(`${tile.x},${tile.y + 1}`)) edges.rect(px, py + TILE_SIZE - 3, TILE_SIZE, 3).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
+      if (!roadSet.has(`${tile.x - 1},${tile.y}`)) edges.rect(px, py, 3, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
+      if (!roadSet.has(`${tile.x + 1},${tile.y}`)) edges.rect(px + TILE_SIZE - 3, py, 3, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
+    }
+    this.roadContainer.addChild(edges);
 
     // Async texture upgrade — replace color fill with sprites if a road texture exists
     const container = this.roadContainer;
@@ -219,6 +234,8 @@ export class TilemapRenderer {
           tileGroup.addChild(sprite);
         }
         container.addChild(tileGroup);
+        // Keep edge strips on top of the texture sprites.
+        if (!edges.destroyed) container.addChild(edges);
       })
       .catch(() => {
         // Fallback stays.
