@@ -39,7 +39,7 @@ const PHASE_AMBIENT: Record<string, AmbientProfile> = {
   morning:   { r: 255, g: 248, b: 240, brightness: 0.95 },
   afternoon: { r: 255, g: 250, b: 230, brightness: 1.0 },
   evening:   { r: 255, g: 160, b: 96,  brightness: 0.55 },
-  night:     { r: 42,  g: 48,  b: 80,  brightness: 0.15 },
+  night:     { r: 100, g: 110, b: 150, brightness: 0.45 },
 };
 
 const SEASON_TINT: Record<string, { r: number; g: number; b: number; mix: number }> = {
@@ -92,7 +92,7 @@ const OPEN_AREA_TYPES = new Set(['farm', 'park', 'town_square', 'mainstreet', 'a
 // Rendered as two small point lights offset left/right of the entry_point.
 const WINDOW_GLOW_COLOR = 0xFFD9A0;
 const WINDOW_GLOW_RADIUS = 14;
-const WINDOW_GLOW_INTENSITY = 0.55;
+const WINDOW_GLOW_INTENSITY = 0.35;
 const WINDOW_GLOW_FLICKER = 0.06;
 // Lateral offset from door center to each window light (px in world space)
 const WINDOW_OFFSET_X = 20;
@@ -565,11 +565,11 @@ export class LightingSystem {
 
       // Radial gradient approximation: 3 concentric circles with decreasing alpha
       // Core (inner 30%): full color
-      this.lightGfx.circle(lx, ly, lr * 0.3).fill({ color: fillColor, alpha: 0.9 });
+      this.lightGfx.circle(lx, ly, lr * 0.3).fill({ color: fillColor, alpha: 0.7 });
       // Mid (inner 60%): reduced
-      this.lightGfx.circle(lx, ly, lr * 0.6).fill({ color: fillColor, alpha: 0.5 });
+      this.lightGfx.circle(lx, ly, lr * 0.6).fill({ color: fillColor, alpha: 0.3 });
       // Outer (full radius): faint
-      this.lightGfx.circle(lx, ly, lr).fill({ color: fillColor, alpha: 0.2 });
+      this.lightGfx.circle(lx, ly, lr).fill({ color: fillColor, alpha: 0.1 });
     }
 
     // ── Render to texture ────────────────────────────────────────────
