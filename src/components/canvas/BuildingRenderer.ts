@@ -487,6 +487,19 @@ export class BuildingRenderer {
       const cx = x + Math.floor(width / 2 / 32) * 32;
       const cy = y + Math.floor(height / 2 / 32) * 32;
       const well = new PIXI.Graphics();
+      // Worn stone apron ring + benches turn the well into a gathering point
+      // instead of a lone mechanism on an empty lot (fresh-eyes audit r23).
+      well.circle(cx + 16, cy + 16, 36).stroke({ width: 7, color: 0x8a7a5e, alpha: 0.3 });
+      for (const [bx, by, bw, bh] of [
+        [cx + 10, cy - 40, 14, 5], // north bench
+        [cx + 10, cy + 68, 14, 5], // south bench
+        [cx - 40, cy + 10, 5, 14], // west bench
+        [cx + 68, cy + 10, 5, 14], // east bench
+      ]) {
+        well.rect(bx + 1, by + 2, bw, bh).fill({ color: 0x1a1208, alpha: 0.25 }); // bench shadow
+        well.rect(bx, by, bw, bh).fill({ color: 0x6a5236 });
+        well.rect(bx, by, bw, bh).stroke({ width: 1, color: 0x2a2016, alpha: 0.8 });
+      }
       // Contact shadow — offset ellipse grounds the well on the plaza so it
       // doesn't float at night when ambient light flattens (fresh-eyes r20)
       well.ellipse(cx + 19, cy + 20, 21, 18).fill({ color: 0x1a1208, alpha: 0.3 });
