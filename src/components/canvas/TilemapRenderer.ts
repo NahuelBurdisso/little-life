@@ -72,6 +72,8 @@ export class TilemapRenderer {
 
   /** Current background child. Null until first resize(). */
   private bg: PIXI.Container | null = null;
+  /** Grass value micro-variation overlay — rebuilt with the background. */
+  private grassNoise: PIXI.Graphics | null = null;
   /** Monotonic generation counter — async texture loads compare against this
    *  to detect "I'm stale because resize() was called again". */
   private bgGeneration = 0;
@@ -423,6 +425,35 @@ export class TilemapRenderer {
     fallback.fill({ color: TERRAIN_COLORS.grass });
     this.bg = fallback;
     this.container.addChildAt(fallback, 0);
+
+    // Grass value micro-variation: sparse low-alpha blotches (lighter sun-hit
+    // and darker shade tones) break the flat single-hue field so ground reads
+    // as ground, not a filled rectangle (fresh-eyes audit r29). Deterministic
+    // per-cell hash keeps it stable across rebuilds. Sits just above the bg
+    // (index 1) so roads/zones/buildings still cover it.
+    if (this.grassNoise) {
+      this.container.removeChild(this.grassNoise);
+      this.grassNoise.destroy();
+      this.grassNoise = null;
+    }
+    const noise = new PIXI.Graphics();
+    const CELL = 64;
+    for (let cx = 0; cx < this.mapWidth; cx += CELL) {
+      for (let cy = 0; cy < this.mapHeight; cy += CELL) {
+        const h = ((cx / CELL) * 73856093) ^ ((cy / CELL) * 19349663);
+        if ((h >>> 4) % 10 >= 4) continue; // ~40% of cells get a blotch
+        const size = 24 + ((h >>> 7) % 25); // 24-48px
+        const ox = (h >>> 11) % (CELL - 16);
+        const oy = (h >>> 16) % (CELL - 16);
+        const light = ((h >>> 21) & 1) === 0;
+        noise.roundRect(cx + ox, cy + oy, size, size, 10).fill({
+          color: light ? 0x9ab55a : 0x2e4a22,
+          alpha: light ? 0.06 : 0.08,
+        });
+      }
+    }
+    this.grassNoise = noise;
+    this.container.addChildAt(noise, 1);
 
     // Async swap: replace fallback with a TilingSprite once grass texture loads.
     const grass = getTerrainTexture('grass');
