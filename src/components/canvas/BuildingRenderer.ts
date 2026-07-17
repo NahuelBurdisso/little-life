@@ -278,6 +278,17 @@ export class BuildingRenderer {
     const doorDef = DOOR_STYLE[loc.type] ?? { color: TERRAIN_COLORS.door, w: 12, h: 8 };
     const ex = loc.entry_point.x;
     const ey = loc.entry_point.y;
+
+    // ── 5b. Windows on the south facade band — warm-lit apertures break the
+    // solid wall face so buildings read as inhabited (fresh-eyes audit r21).
+    // Skipped where they'd collide with a south-facing door. ──
+    const doorOnSouth = Math.abs(ey - (y + height)) < 6;
+    const windowXs = width < 70 ? [x + width / 2] : [x + width * 0.28, x + width * 0.72];
+    for (const wx of windowXs) {
+      if (doorOnSouth && Math.abs(wx - ex) < doorDef.w / 2 + 10) continue;
+      walls.rect(Math.round(wx - 5), y + height - 10, 10, 8).fill({ color: 0x1a1510 });
+      walls.rect(Math.round(wx - 4), y + height - 9, 8, 6).fill({ color: 0xd8c07a, alpha: 0.9 });
+    }
     const doorX = Math.round(ex - doorDef.w / 2);
     const doorY = Math.round(ey - doorDef.h / 2);
     walls.rect(doorX, doorY, doorDef.w, doorDef.h).fill({ color: doorDef.color });
