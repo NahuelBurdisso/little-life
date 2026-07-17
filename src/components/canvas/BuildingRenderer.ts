@@ -443,14 +443,14 @@ export class BuildingRenderer {
       const cx = x + Math.floor(width / 2 / 32) * 32;
       const cy = y + Math.floor(height / 2 / 32) * 32;
       const well = new PIXI.Graphics();
-      // Stone basin (outer ring)
-      well.circle(cx + 16, cy + 16, 14).fill({ color: 0x7a7468 });
-      well.circle(cx + 16, cy + 16, 14).stroke({ width: 2, color: 0x1a1510 });
+      // Stone basin (outer ring) — bright enough to read as the plaza focal point
+      well.circle(cx + 16, cy + 16, 20).fill({ color: 0x9a9284 });
+      well.circle(cx + 16, cy + 16, 20).stroke({ width: 2, color: 0x1a1510 });
       // Water
-      well.circle(cx + 16, cy + 16, 9).fill({ color: 0x4a7a8c });
-      well.circle(cx + 16, cy + 16, 9).stroke({ width: 1, color: 0x2a4a56 });
+      well.circle(cx + 16, cy + 16, 13).fill({ color: 0x4a7a8c });
+      well.circle(cx + 16, cy + 16, 13).stroke({ width: 1, color: 0x2a4a56 });
       // Highlight glint
-      well.rect(cx + 11, cy + 11, 3, 3).fill({ color: 0x8ab8c8 });
+      well.rect(cx + 9, cy + 9, 4, 4).fill({ color: 0x8ab8c8 });
       this.buildingLayer.addChild(well);
     }
 

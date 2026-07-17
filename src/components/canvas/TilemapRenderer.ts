@@ -130,6 +130,16 @@ export class TilemapRenderer {
 
       const pos = loc.position ?? { x: 0, y: 0 };
 
+      // Town square: unified sandstone base so zone patches read as markings
+      // on a plaza floor instead of an abstract color mosaic.
+      const zoneAlpha = loc.type === 'town_square' ? 0.25 : 0.55;
+      if (loc.type === 'town_square' && loc.position?.width) {
+        const base = new PIXI.Graphics();
+        base.rect(pos.x, pos.y, loc.position.width, loc.position.height)
+          .fill({ color: 0xC9B37E, alpha: 0.5 });
+        this.openAreaContainer.addChild(base);
+      }
+
       for (const zone of zones) {
         if (!zone.tiles || zone.tiles.length === 0) continue;
 
@@ -142,7 +152,7 @@ export class TilemapRenderer {
           for (const [tx, ty] of zone.tiles) {
             const x = pos.x + tx * TILE_SIZE;
             const y = pos.y + ty * TILE_SIZE;
-            fallback.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: 0.55 });
+            fallback.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: zoneAlpha });
           }
           this.openAreaContainer.addChild(fallback);
 
@@ -173,7 +183,7 @@ export class TilemapRenderer {
           for (const [tx, ty] of zone.tiles) {
             const x = pos.x + tx * TILE_SIZE;
             const y = pos.y + ty * TILE_SIZE;
-            g.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: 0.55 });
+            g.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha: zoneAlpha });
           }
           this.openAreaContainer.addChild(g);
         }
