@@ -259,6 +259,13 @@ export class BuildingRenderer {
     // ── 2. Floor rect ──────────────────────────────────────────────────────────
     walls.rect(x, y, width, height).fill({ color: palette.floor, alpha: 1.0 });
 
+    // ── 2a. Floor plank lines — faint horizontal courses break the flat color
+    // field so interiors read as built floors, not diagram fills (r24) ──
+    const plankColor = darken(palette.floor, 0.8);
+    for (let py = y + 8; py < y + height - 6; py += 8) {
+      walls.rect(x + 2, py, width - 4, 1).fill({ color: plankColor, alpha: 0.35 });
+    }
+
     // ── 2b. South wall face band — darkened wall-color strip along bottom edge
     // implies vertical height so buildings read as masses, not painted rects
     // (fresh-eyes audit r19). Door drawn later punches doorway through it. ──
