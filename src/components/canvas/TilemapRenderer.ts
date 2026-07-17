@@ -137,7 +137,7 @@ export class TilemapRenderer {
 
       // Town square: unified sandstone base so zone patches read as markings
       // on a plaza floor instead of an abstract color mosaic.
-      const zoneAlpha = loc.type === 'town_square' ? 0.25 : 0.55;
+      const zoneAlpha = loc.type === 'town_square' ? 0.14 : 0.55;
       if (loc.type === 'town_square' && loc.position?.width) {
         const base = new PIXI.Graphics();
         base.rect(pos.x, pos.y, loc.position.width, loc.position.height)
