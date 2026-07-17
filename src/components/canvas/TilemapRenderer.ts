@@ -297,6 +297,11 @@ export class TilemapRenderer {
       } else if (vert && !horiz) {
         edges.rect(px + 9, py, 2, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
         edges.rect(px + TILE_SIZE - 11, py, 2, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
+      } else if (vert && horiz) {
+        // Intersection wear: turning traffic churns the crossing into a
+        // darker worn patch instead of pristine grid squares (r28).
+        edges.roundRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 8, 8)
+          .fill({ color: ROAD_EDGE_COLOR, alpha: 0.18 });
       }
     }
     this.roadContainer.addChild(edges);
