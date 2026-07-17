@@ -69,3 +69,41 @@ Furniture label × (sprite disk / URLS entry / renderer maps / distinct):
 Building type × (exterior look / wall set / floor set / signage):
 - ALL types: exterior = colored rect only; walls generic stroke; floor color 8/13; signage none.
 - Roofs/windows/chimneys/awnings: none anywhere.
+
+---
+# Phase 2 — Audit Findings (verified)
+
+## Grid/data integrity (programmatic validation; 226 checks passed, 9 findings)
+- A1 HIGH divebar.booth: center [3,2] = furniture cell (grid [1,0,0,2,1] row2); furniture.tile [3,1] = floor. Swap: furniture at [3,2], center [2,2]... but [2,2] belongs to tables zone — resolve by making booth tiles/center consistent. VERIFIED by direct read.
+- A2/A3 MED home bed/kitchen: furniture.tile points to floor — home grid is synthetic all-floor 3×3, no furniture cells (no INTERIOR_GRIDS[home]). Renderer still draws Bed sprite from zone data, but grid/data invariant broken.
+- A4 MED town_hall.meeting_table: furniture.tile [3,1]=0; actual furniture cell [1,1] claimed by mayors_desk? (grid row1 [1,2,0,0,0,1]).
+- A5 MED town_hall.records: furniture.tile [4,2] Chebyshev 3 from center [1,3] — agent nowhere near filing cabinet.
+- A6 MED workshop.forge: furniture.tile [3,2]=0 — forge has no furniture cell in grid.
+- A7 MED divebar.booth.furniture.tile [3,1]=0 (see A1).
+- A8 LOW prison orphan furniture cell [3,1] — no zone.furniture claims it.
+- A9 LOW divebar orphan furniture cell [3,2].
+- Clean: all zone centers reachable from doors; ACTION_ZONE_REQUIREMENTS + requiredZone refs all valid; zone tiles in bounds.
+
+## Template/renderer consistency
+- B1 MED FLOOR_MATERIALS missing pawnshop + divebar (BuildingRenderer.ts:14-23) → fallback color.
+- B2 LOW LightingSystem OPEN_AREA_TYPES lists 'mainstreet','alley' — types DO exist as derived outdoor locations (auditor wrong that they don't exist — worldgen layout.ts derives them). Treat as OK but verify rendering of derived outdoor locs (no INTERIOR_ZONES → no zone render; likely invisible areas).
+- B3 LOW maps.ts getDefaultServices/getOperatingHours missing pawnshop/divebar cases (redundant with templates; verify which is actually consumed at runtime before touching).
+- Clean: grid dims match templates; door alignment verified all types; open-area zone tiles within footprints; BUILDING_LIGHTS 10/10.
+
+## Believability top breaks (static)
+- C1 HIGH homes 100% identical 3×3 clones; descriptions promise variety.
+- C2 HIGH no sleep/sit/use poses; sleeping agent = standing sprite at bed top-left corner (zone.center [0,0]).
+- C3 MED-HIGH home/non-A* interiors: door→zone straight lerp clips through walls (movement.ts:236-256).
+- C4 MED prison/clinic/bakery/workshop interiors indistinguishable without text; brown-gray soup.
+- C5 MED bubbles/emotes: fixed offsets tuned for AGENT_RADIUS=8; overlap in dense scenes; emote stacking.
+- C6 MED lights = radial blobs at door; no window visuals; home lights pop on arrival.
+- C7 LOW-MED occupancy dots mood-only.
+- Day/night traffic: OK (sleep 22-07 w/ personality shift, high priority) — plausible.
+
+## Live audit (screenshots: docs/scratch/shots/)
+- town-initial.png: buildings = flat rects + pale zone patches + illegible 5-6px text; terrain scatter = flat dark squares (reads as artifacts, not flowers/grass); roads = flat brown, no edges/transitions; daytime white glow blobs visible (shop/clinic lights render in day); town square = translucent color patches; agents = circle fallbacks (test world). No roofs/walls/signs/windows anywhere.
+- Current DB world = "Test Agent" seed, few buildings. Full-type audit needs seeded 12+ agent world.
+
+## Tooling notes
+- Playwright CLI works: npx playwright screenshot --viewport-size=1600,1000 --wait-for-timeout=10000 http://localhost:5173 out.png
+- Dev server bg task byb9dstnq. Ollama offline — LLM errors spam but sim+render fine.
