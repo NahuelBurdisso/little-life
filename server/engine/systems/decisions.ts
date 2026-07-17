@@ -611,10 +611,12 @@ function scoreFreeTimeActions(
   homeScore *= mods?.homePreference ?? 1.0;
   scores.push({ action: 'idle', score: addNoise(homeScore), targetLocationId: agent.home });
 
-  // Stroll in the town square
+  // Stroll in the town square — the social heart of town should actually draw people
   const square = nearestLocation(agent.position, allLocations, 'town_square');
   if (square) {
-    const walkScore = 20 + (agentNeeds.fun < 60 ? 10 : 0);
+    let walkScore = 35 + (agentNeeds.fun < 60 ? 10 : 0);
+    // Afternoon promenade: agents low on social gravitate to the square
+    if (world.time.hour >= 14 && world.time.hour < 17 && agentNeeds.social < 70) walkScore += 15;
     scores.push({ action: 'socializing', score: addNoise(walkScore), targetLocationId: square.id });
   }
 
@@ -643,21 +645,21 @@ function scoreFreeTimeActions(
     const canForage = !['stormy'].includes(wx);
 
     // Fish at riverside — relaxing activity for low fun/comfort
-    if (park && agentNeeds.fun < 50 && canFish) {
-      let fishScore = 15 + (50 - agentNeeds.fun) * 0.3 + (personality.curiosity > 50 ? 10 : 0);
+    if (park && agentNeeds.fun < 65 && canFish) {
+      let fishScore = 25 + (65 - agentNeeds.fun) * 0.3 + (personality.curiosity > 50 ? 10 : 0);
       if (wx === 'rainy') fishScore *= 1.5; // fish bite more in rain!
       scores.push({ action: 'idle', score: addNoise(fishScore), targetLocationId: park.id, source: 'fish' });
     }
 
-    // Garden at park — warm/curious agents tend the garden
-    if (park && (personality.warmth > 50 || personality.curiosity > 60) && canGarden) {
-      let gardenScore = 15 + (personality.warmth - 40) * 0.2;
+    // Garden at park — open to anyone needing fun/comfort; warmth adds affinity
+    if (park && (agentNeeds.fun < 70 || agentNeeds.comfort < 65) && canGarden) {
+      let gardenScore = 22 + Math.max(0, (personality.warmth - 40) * 0.2);
       if (agentNeeds.fun < 60) gardenScore += 10;
       scores.push({ action: 'idle', score: addNoise(gardenScore), targetLocationId: park.id, source: 'garden' });
     }
 
     // Forage in groves — curious or poor agents forage
-    if (park && (personality.curiosity > 60 || (agentEcon && agentEcon.money < 15)) && canForage) {
+    if (park && (personality.curiosity > 50 || (agentEcon && agentEcon.money < 15)) && canForage) {
       let forageScore = 10 + (personality.curiosity - 40) * 0.2;
       if (agentEcon && agentEcon.money < 15) forageScore += 20;
       scores.push({ action: 'idle', score: addNoise(forageScore), targetLocationId: park.id, source: 'forage' });

@@ -420,9 +420,26 @@ export class BuildingRenderer {
     const color = OPEN_AREA_COLORS[loc.type] ?? 0x888888;
 
     const patch = new PIXI.Graphics();
-    patch.roundRect(x, y, width, height, 4).fill({ color, alpha: 0.30 });
-    patch.roundRect(x, y, width, height, 4).stroke({ width: 1, color, alpha: 0.4 });
+    patch.roundRect(x, y, width, height, 4).fill({ color, alpha: 0.5 });
+    patch.roundRect(x, y, width, height, 4).stroke({ width: 1, color, alpha: 0.6 });
     this.buildingLayer.addChild(patch);
+
+    // Town square landmark: a stone well/fountain at the center gives the
+    // open space a focal point instead of reading as an empty patch.
+    if (loc.type === 'town_square') {
+      const cx = x + Math.floor(width / 2 / 32) * 32;
+      const cy = y + Math.floor(height / 2 / 32) * 32;
+      const well = new PIXI.Graphics();
+      // Stone basin (outer ring)
+      well.circle(cx + 16, cy + 16, 14).fill({ color: 0x7a7468 });
+      well.circle(cx + 16, cy + 16, 14).stroke({ width: 2, color: 0x1a1510 });
+      // Water
+      well.circle(cx + 16, cy + 16, 9).fill({ color: 0x4a7a8c });
+      well.circle(cx + 16, cy + 16, 9).stroke({ width: 1, color: 0x2a4a56 });
+      // Highlight glint
+      well.rect(cx + 11, cy + 11, 3, 3).fill({ color: 0x8ab8c8 });
+      this.buildingLayer.addChild(well);
+    }
 
     const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE });
     label.anchor.set(0.5, 0.5);
