@@ -64,6 +64,7 @@ export class TilemapRenderer {
   private occupancyContainer: PIXI.Container;
   private terrainContainer: PIXI.Container;
   private roadContainer: PIXI.Container;
+  private doorPathContainer: PIXI.Container;
   private openAreaContainer: PIXI.Container;
 
   private mapWidth = 0;
@@ -83,11 +84,15 @@ export class TilemapRenderer {
     this.terrainContainer.eventMode = 'none';
     this.roadContainer = new PIXI.Container();
     this.roadContainer.eventMode = 'none';
+    this.doorPathContainer = new PIXI.Container();
+    this.doorPathContainer.eventMode = 'none';
     this.openAreaContainer = new PIXI.Container();
     this.openAreaContainer.eventMode = 'none';
 
     // Terrain scatter sits above grass bg but below roads
     this.container.addChild(this.terrainContainer);
+    // Worn door-to-road paths sit above terrain but below road surfaces
+    this.container.addChild(this.doorPathContainer);
     // Road tiles sit above terrain but below open-area zones
     this.container.addChild(this.roadContainer);
     // Open-area zone patches sit above roads but below BuildingRenderer output
@@ -189,6 +194,63 @@ export class TilemapRenderer {
         }
       }
     }
+  }
+
+  /**
+   * Draw worn dirt paths from each building door to the nearest road tile.
+   * Implies foot-traffic history — buildings no longer float on untouched grass.
+   * Idempotent — re-running replaces prior paths.
+   */
+  setDoorPaths(locations: any[], roadTiles: Array<{ x: number; y: number }>): void {
+    for (const child of this.doorPathContainer.children) child.destroy();
+    this.doorPathContainer.removeChildren();
+    if (!Array.isArray(locations) || !Array.isArray(roadTiles) || roadTiles.length === 0) return;
+
+    const g = new PIXI.Graphics();
+    const PATH_W = 10;
+    const PATH_COLOR = 0x8a7248; // packed earth
+    const PATH_ALPHA = 0.5;
+
+    for (const loc of locations) {
+      if (OPEN_AREA_TYPES.has(loc.type)) continue;
+      const pos = loc.position;
+      const ep = loc.entry_point;
+      if (!pos?.width || !ep) continue;
+
+      // Nearest road tile center (Manhattan)
+      let bx = 0, by = 0, bestD = Infinity;
+      for (const t of roadTiles) {
+        const cx = t.x * TILE_SIZE + TILE_SIZE / 2;
+        const cy = t.y * TILE_SIZE + TILE_SIZE / 2;
+        const d = Math.abs(cx - ep.x) + Math.abs(cy - ep.y);
+        if (d < bestD) { bestD = d; bx = cx; by = cy; }
+      }
+      if (bestD > TILE_SIZE * 10) continue; // building far from any road — skip
+
+      // Door on top/bottom edge → leave vertically first; else horizontally first
+      const vertFirst =
+        Math.abs(ep.y - pos.y) < 6 || Math.abs(ep.y - (pos.y + pos.height)) < 6;
+
+      if (vertFirst) {
+        // vertical leg at door x, then horizontal leg at road y
+        g.rect(ep.x - PATH_W / 2, Math.min(ep.y, by), PATH_W, Math.abs(by - ep.y) + PATH_W / 2)
+          .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
+        if (Math.abs(bx - ep.x) > PATH_W / 2) {
+          g.rect(Math.min(ep.x, bx) - PATH_W / 2, by - PATH_W / 2, Math.abs(bx - ep.x) + PATH_W, PATH_W)
+            .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
+        }
+      } else {
+        // horizontal leg at door y, then vertical leg at road x
+        g.rect(Math.min(ep.x, bx), ep.y - PATH_W / 2, Math.abs(bx - ep.x) + PATH_W / 2, PATH_W)
+          .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
+        if (Math.abs(by - ep.y) > PATH_W / 2) {
+          g.rect(bx - PATH_W / 2, Math.min(ep.y, by) - PATH_W / 2, PATH_W, Math.abs(by - ep.y) + PATH_W)
+            .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
+        }
+      }
+    }
+
+    this.doorPathContainer.addChild(g);
   }
 
   /**

@@ -263,6 +263,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       tilemapRef.current.setOpenAreaZones(locations);
       tilemapRef.current.setTerrainTiles(world?.terrain_tiles ?? []);
       tilemapRef.current.setRoadTiles(world?.road_tiles ?? []);
+      tilemapRef.current.setDoorPaths(locations, world?.road_tiles ?? []);
     }
 
     // Update lighting system with current state
