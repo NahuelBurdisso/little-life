@@ -476,6 +476,9 @@ export class BuildingRenderer {
       const cx = x + Math.floor(width / 2 / 32) * 32;
       const cy = y + Math.floor(height / 2 / 32) * 32;
       const well = new PIXI.Graphics();
+      // Contact shadow — offset ellipse grounds the well on the plaza so it
+      // doesn't float at night when ambient light flattens (fresh-eyes r20)
+      well.ellipse(cx + 19, cy + 20, 21, 18).fill({ color: 0x1a1208, alpha: 0.3 });
       // Stone basin (outer ring) — bright enough to read as the plaza focal point
       well.circle(cx + 16, cy + 16, 20).fill({ color: 0x9a9284 });
       well.circle(cx + 16, cy + 16, 20).stroke({ width: 2, color: 0x1a1510 });
