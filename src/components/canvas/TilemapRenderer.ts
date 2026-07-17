@@ -19,6 +19,44 @@ const ZONE_TEXTURE: Record<string, string> = {
   plaza: 'stone_plaza',
 };
 
+// ── Activity dot color map (proposal-readability.md §3d) ─────────────────────
+// Green = active/working, yellow = idle/socializing,
+// blue = sleeping/resting, red = stressed/in conflict.
+// Exported for unit tests.
+export function activityDotColor(agent: any): number {
+  if (!agent) return 0xeab308; // yellow: unknown → treat as idle
+  const action = agent.current_action;
+  const actionType: string =
+    typeof action === 'string' ? action :
+    typeof action === 'object' && action !== null ? (action.type ?? '') : '';
+
+  // Sleeping/resting states
+  if (actionType === 'sleep' || actionType === 'rest' || actionType === 'nap') {
+    return 0x5a7ac8; // blue
+  }
+  // Conflict/stress — check active states first
+  const states: string[] = (agent.activeStates ?? []).map((s: any) =>
+    typeof s === 'string' ? s : s.type,
+  );
+  if (
+    states.includes('angry') || states.includes('stressed') ||
+    states.includes('conflict') || actionType === 'fight' || actionType === 'argue'
+  ) {
+    return 0xcc4444; // red
+  }
+  // Active / working
+  if (
+    actionType === 'work' || actionType === 'craft' || actionType === 'farm' ||
+    actionType === 'bake' || actionType === 'serve' || actionType === 'treat' ||
+    actionType === 'guard' || actionType === 'stock' || actionType === 'cook' ||
+    actionType === 'forge' || actionType === 'garden' || actionType === 'fish'
+  ) {
+    return 0x4a9e6b; // green
+  }
+  // Idle / socializing / default
+  return 0xe8c84a; // yellow
+}
+
 export class TilemapRenderer {
   container: PIXI.Container;
 
@@ -232,8 +270,10 @@ export class TilemapRenderer {
       for (let i = 0; i < dotCount; i++) {
         const occupantId = occupants[i];
         const agent = agents.find((a: any) => a.id === occupantId);
-        const mood = agent?.needs?.mood ?? 50;
-        const color = mood > 60 ? 0x22c55e : mood > 40 ? 0xeab308 : 0xef4444;
+        // Activity-colored dots (proposal-readability.md §3d):
+        //   green = active/working, yellow = idle/socializing,
+        //   blue = sleeping/resting, red = stressed/conflict
+        const color = activityDotColor(agent);
         const dot = new PIXI.Graphics();
         dot.circle(0, 0, 3).fill(color);
         dot.x = startX + i * 6;

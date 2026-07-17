@@ -5,7 +5,7 @@ import { useAssetLoader } from "../../hooks/useAssetLoader";
 import { TilemapRenderer } from "./TilemapRenderer";
 import { BuildingRenderer } from "./BuildingRenderer";
 import { CameraController } from "./CameraController";
-import { DayNightCycle } from "./DayNightCycle";
+import { LightingSystem } from "./LightingSystem";
 import { WeatherEffects } from "./WeatherEffects";
 import { SpritePool } from "./SpritePool";
 import { BubbleSystem } from "./BubbleSystem";
@@ -43,7 +43,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   const tilemapRef = useRef<TilemapRenderer | null>(null);
   const buildingRendererRef = useRef<BuildingRenderer | null>(null);
   const cameraRef = useRef<CameraController | null>(null);
-  const dayNightRef = useRef<DayNightCycle | null>(null);
+  const lightingRef = useRef<LightingSystem | null>(null);
   const weatherRef = useRef<WeatherEffects | null>(null);
   const spritePoolRef = useRef<SpritePool | null>(null);
   const bubbleSystemRef = useRef<BubbleSystem | null>(null);
@@ -146,9 +146,9 @@ export const GameCanvas = React.memo(function GameCanvas({
     const camera = new CameraController(app, worldContainer);
     cameraRef.current = camera;
 
-    // Day/night overlay (on stage, above world)
-    const dayNight = new DayNightCycle(app);
-    dayNightRef.current = dayNight;
+    // Lighting system (lightmap overlay, replaces DayNightCycle)
+    const lighting = new LightingSystem(app, worldContainer);
+    lightingRef.current = lighting;
 
     // Weather (on stage, above world but below day/night)
     const weather = new WeatherEffects(app);
@@ -173,7 +173,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       app.ticker.remove(cameraTickFn);
       interaction.destroy();
       camera.destroy();
-      dayNight.destroy();
+      lighting.destroy();
       weather.destroy();
       tilemap.destroy();
       buildingRenderer.destroy();
@@ -235,6 +235,28 @@ export const GameCanvas = React.memo(function GameCanvas({
       tilemapRef.current.setOpenAreaZones(locations);
       tilemapRef.current.setTerrainTiles(world?.terrain_tiles ?? []);
       tilemapRef.current.setRoadTiles(world?.road_tiles ?? []);
+    }
+
+    // Update lighting system with current state
+    if (lightingRef.current && locations && world) {
+      lightingRef.current.setRoadTiles(world?.road_tiles ?? []);
+
+      const activeEvents = (world as any)?.activeEvents ?? [];
+      lightingRef.current.update(
+        agents.map((a: any) => ({
+          id: a.id,
+          position: a.position ?? { x: 0, y: 0 },
+          current_location: a.current_location ?? null,
+          activeStates: a.activeStates ?? [],
+        })),
+        {
+          day_phase: world?.day_phase ?? 'morning',
+          weather: world?.weather ?? 'sunny',
+          time: world?.time ?? { season: 'spring', hour: 12 },
+        },
+        locations,
+        activeEvents,
+      );
     }
 
     // Update BuildingRenderer with current agent locations
@@ -301,14 +323,22 @@ export const GameCanvas = React.memo(function GameCanvas({
     };
   }, [app]);
 
-  // Update day/night cycle
+  // Lighting render loop — runs per frame in ticker
   useEffect(() => {
-    if (!app || !dayNightRef.current) return;
-    const dayPhase = world?.day_phase ?? "morning";
-    const w = app.renderer.width;
-    const h = app.renderer.height;
-    dayNightRef.current.update(dayPhase, w, h);
-  }, [world?.day_phase, app]);
+    if (!app || !lightingRef.current) return;
+    const lighting = lightingRef.current;
+
+    const lightTick = () => {
+      const wc = worldContainerRef.current;
+      if (!wc) return;
+      const screenW = app.renderer.width;
+      const screenH = app.renderer.height;
+      lighting.render(wc.x, wc.y, wc.scale.x, screenW, screenH);
+    };
+
+    app.ticker.add(lightTick);
+    return () => { app.ticker.remove(lightTick); };
+  }, [app]);
 
   // Update weather effects
   useEffect(() => {

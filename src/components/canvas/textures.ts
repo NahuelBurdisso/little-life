@@ -20,8 +20,25 @@ const WALL_URLS: Record<string, string> = {
   // walls. Keep the map here so getWallTexture() still returns null cleanly.
 };
 
-const FURNITURE_URLS: Record<string, string> = {
-  bed: '/sprites/furniture/bed.png',
+export const FURNITURE_URLS: Record<string, string> = {
+  bed:             '/sprites/furniture/bed.png',
+  stove:           '/sprites/furniture/stove.png',
+  counter:         '/sprites/furniture/counter.png',
+  shelves:         '/sprites/furniture/shelves.png',
+  bar_counter:     '/sprites/furniture/bar_counter.png',
+  stage:           '/sprites/furniture/stage.png',
+  booth_seat:      '/sprites/furniture/booth_seat.png',
+  reception_desk:  '/sprites/furniture/reception_desk.png',
+  patient_bed:     '/sprites/furniture/patient_bed.png',
+  mayors_desk:     '/sprites/furniture/mayors_desk.png',
+  meeting_table:   '/sprites/furniture/meeting_table.png',
+  filing_cabinet:  '/sprites/furniture/filing_cabinet.png',
+  oven:            '/sprites/furniture/oven.png',
+  prep_table:      '/sprites/furniture/prep_table.png',
+  workbench:       '/sprites/furniture/workbench.png',
+  tool_rack:       '/sprites/furniture/tool_rack.png',
+  forge:           '/sprites/furniture/forge.png',
+  guard_desk:      '/sprites/furniture/guard_desk.png',
 };
 
 const cache = new Map<string, PIXI.Texture>();

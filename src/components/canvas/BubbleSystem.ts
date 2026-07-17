@@ -38,6 +38,18 @@ const EMOTE_EMOJIS: Record<string, string> = {
   exclaim: "❗",
   zzz: "💤",
   cry: "😢",
+  sparkle: "✨",
+  fish: "🐟",
+  flower: "🌸",
+  music: "🎵",
+  sweat: "💧",
+  money: "💰",
+  skull: "💀",
+  fire: "🔥",
+  star: "⭐",
+  drink: "🍺",
+  sick: "🤢",
+  think: "💭",
 };
 
 /** Renders speech, thought, and emote bubbles above agents. */
@@ -45,6 +57,8 @@ export class BubbleSystem {
   private bubbles: Map<string, BubbleEntry> = new Map();
   readonly container: PIXI.Container;
   private prevMoodMap: Map<string, number> = new Map();
+  private prevStatesMap: Map<string, string[]> = new Map();
+  private prevActionMap: Map<string, string> = new Map();
   private shownMessageCounts = new Map<string, number>(); // agentId → message count when last bubble shown
 
   constructor(parentContainer: PIXI.Container) {
@@ -84,9 +98,13 @@ export class BubbleSystem {
 
     bubbleContainer.addChild(bg, textObj);
 
-    // Position above agent circle
+    // Position above agent sprite head.
+    // Formula: agent.y - 32 (sprite half-height) - 4 (gap) - bgH
+    // AGENT_RADIUS is 8; the sprite is 32px tall with feet at agent.y + ~8,
+    // so head top is approximately agent.y - 24. The -32 constant matches
+    // proposal-readability.md §4a for a 32px tall sprite.
     bubbleContainer.x = position.x - bgW / 2 + offsetX;
-    bubbleContainer.y = position.y - AGENT_RADIUS - bgH - 4;
+    bubbleContainer.y = position.y - 32 - 4 - bgH;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -118,8 +136,9 @@ export class BubbleSystem {
 
     bubbleContainer.addChild(bg, dots);
 
+    // Thought bubble: 28×18 box. Place above head like speech bubble.
     bubbleContainer.x = position.x - 14;
-    bubbleContainer.y = position.y - AGENT_RADIUS - 22;
+    bubbleContainer.y = position.y - 32 - 4 - 18;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -167,7 +186,7 @@ export class BubbleSystem {
 
     bubbleContainer.addChild(bg, textObj);
     bubbleContainer.x = position.x - bgW / 2;
-    bubbleContainer.y = position.y - 30 - bgH; // above agent, above speech area
+    bubbleContainer.y = position.y - 32 - 4 - bgH; // above sprite head
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -194,8 +213,9 @@ export class BubbleSystem {
     });
     bubbleContainer.addChild(label);
 
+    // Emote floats above sprite head: same baseline as bubbles
     bubbleContainer.x = position.x - 8;
-    bubbleContainer.y = position.y - AGENT_RADIUS - 16;
+    bubbleContainer.y = position.y - 32 - 20; // 20px above head top
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(emoteKey, {
@@ -309,8 +329,37 @@ export class BubbleSystem {
 
       if (curMood > 80 && prevMood <= 80) this.showEmote(aid, "heart", pos);
       if (curMood < 20 && prevMood >= 20) this.showEmote(aid, "cry", pos);
-
       this.prevMoodMap.set(aid, curMood);
+
+      // State-triggered emotes — show when a new state appears
+      const curStates: string[] = ((a as any).activeStates ?? []).map((s: any) => s.type);
+      const prevStates = this.prevStatesMap.get(aid) ?? [];
+      const STATE_EMOTES: Record<string, string> = {
+        drunk: 'drink', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
+        confident: 'star', jealous: 'fire', sick: 'sick', stressed: 'sweat',
+        infatuated: 'heart', lonely: 'think', depressed: 'cry',
+      };
+      for (const state of curStates) {
+        if (!prevStates.includes(state) && STATE_EMOTES[state]) {
+          this.showEmote(aid, STATE_EMOTES[state], pos);
+          break; // one emote per tick
+        }
+      }
+      this.prevStatesMap.set(aid, curStates);
+
+      // Zone activity emotes
+      const curAction = (a as any).current_action?.zoneActivity ?? '';
+      const prevAct = this.prevActionMap.get(aid) ?? '';
+      if (curAction && curAction !== prevAct) {
+        const ACTIVITY_EMOTES: Record<string, string> = {
+          fish: 'fish', garden: 'flower', perform: 'music',
+          contemplate: 'think', forage: 'flower', browse: 'sparkle',
+        };
+        if (ACTIVITY_EMOTES[curAction]) {
+          this.showEmote(aid, ACTIVITY_EMOTES[curAction], pos);
+        }
+      }
+      this.prevActionMap.set(aid, curAction);
     }
 
     // Update positions and lifetimes
@@ -335,7 +384,8 @@ export class BubbleSystem {
         if (pos) {
           const w = entry.container.width;
           entry.container.x = pos.x - w / 2;
-          entry.container.y = pos.y - AGENT_RADIUS - entry.container.height - 4;
+          // Consistent with showSpeechBubble: agent.y - 32 - 4 - bubbleHeight
+          entry.container.y = pos.y - 32 - 4 - entry.container.height;
         }
       }
     }
