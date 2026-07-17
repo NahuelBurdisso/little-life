@@ -563,13 +563,15 @@ export class LightingSystem {
       const fb = Math.round(cb * intensity);
       const fillColor = rgbToHex(fr, fg, fb);
 
-      // Radial gradient approximation: 3 concentric circles with decreasing alpha
-      // Core (inner 30%): full color
-      this.lightGfx.circle(lx, ly, lr * 0.3).fill({ color: fillColor, alpha: 0.7 });
-      // Mid (inner 60%): reduced
-      this.lightGfx.circle(lx, ly, lr * 0.6).fill({ color: fillColor, alpha: 0.3 });
-      // Outer (full radius): faint
-      this.lightGfx.circle(lx, ly, lr).fill({ color: fillColor, alpha: 0.1 });
+      // Radial gradient approximation: 6 concentric circles with decreasing
+      // alpha. Alphas accumulate additively toward the center, giving a
+      // roughly quadratic falloff — the old 3-step version produced visible
+      // hard rings where pools met dark ground (fresh-eyes audit r27).
+      const RING_ALPHAS = [0.35, 0.25, 0.18, 0.12, 0.07, 0.04];
+      for (let i = 0; i < RING_ALPHAS.length; i++) {
+        this.lightGfx.circle(lx, ly, (lr * (i + 1)) / RING_ALPHAS.length)
+          .fill({ color: fillColor, alpha: RING_ALPHAS[i] });
+      }
     }
 
     // ── Render to texture ────────────────────────────────────────────
