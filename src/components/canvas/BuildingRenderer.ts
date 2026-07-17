@@ -37,10 +37,10 @@ const INTERIOR_PALETTE: Record<string, { floor: number; wall: number }> = {
   clinic:    { floor: 0xd8e8e0, wall: 0x7a9090 },
   town_hall: { floor: 0x7a6a4a, wall: 0x4a3c28 },
   bakery:    { floor: 0xc8a870, wall: 0x6a4a28 },
-  workshop:  { floor: 0x4a4a42, wall: 0x2a2820 },
+  workshop:  { floor: 0x5c5a4e, wall: 0x2a2820 },
   prison:    { floor: 0x6a6a6a, wall: 0x3a3838 },
   pawnshop:  { floor: 0x5c5044, wall: 0x3a302a },
-  divebar:   { floor: 0x3a3028, wall: 0x28201a },
+  divebar:   { floor: 0x584538, wall: 0x28201a },
 };
 
 // Fallback for any type not in the table above (open areas never reach this path)
