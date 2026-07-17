@@ -348,10 +348,17 @@ export class TilemapRenderer {
         g.circle(px + TILE_SIZE / 2 - 4, py + TILE_SIZE / 2 - 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
         g.circle(px + TILE_SIZE / 2 + 4, py + TILE_SIZE / 2 + 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
         g.circle(px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 5, 2.5).fill({ color: 0xd98aaa, alpha: 0.3 });
-      } else if (tile.kind === 'tall_grass') {
-        g.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x3a5a2a, alpha: 0.3 });
-      } else if (tile.kind === 'dirt_patch') {
-        g.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x5a4a2e, alpha: 0.4 });
+      } else if (tile.kind === 'tall_grass' || tile.kind === 'dirt_patch') {
+        // Deterministic per-tile jitter: vary patch size and offset so scatter
+        // reads as organic growth instead of a grid of stamped squares
+        // (fresh-eyes audit r26).
+        const h = (tile.x * 73856093) ^ (tile.y * 19349663);
+        const size = TILE_SIZE * (0.6 + ((h >>> 3) % 40) / 100); // 60-100%
+        const ox = ((h >>> 8) % (TILE_SIZE - size + 1));
+        const oy = ((h >>> 13) % (TILE_SIZE - size + 1));
+        const color = tile.kind === 'tall_grass' ? 0x3a5a2a : 0x5a4a2e;
+        const alpha = tile.kind === 'tall_grass' ? 0.3 : 0.4;
+        g.roundRect(px + ox, py + oy, size, size, 4).fill({ color, alpha });
       }
     }
     this.terrainContainer.addChild(g);
