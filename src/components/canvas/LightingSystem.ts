@@ -86,6 +86,65 @@ const BUILDING_LIGHT: Record<string, {
 
 const OPEN_AREA_TYPES = new Set(['farm', 'park', 'town_square', 'mainstreet', 'alley']);
 
+// ─── Window Glow ─────────────────────────────────────────────────────────────
+// Small warm rects flanking the door on building facades.
+// Visible only when (occupied OR !needsOccupants) AND night phase.
+// Rendered as two small point lights offset left/right of the entry_point.
+const WINDOW_GLOW_COLOR = 0xFFD9A0;
+const WINDOW_GLOW_RADIUS = 14;
+const WINDOW_GLOW_INTENSITY = 0.55;
+const WINDOW_GLOW_FLICKER = 0.06;
+// Lateral offset from door center to each window light (px in world space)
+const WINDOW_OFFSET_X = 20;
+// Vertical offset above door center
+const WINDOW_OFFSET_Y = 8;
+// Which building types render window glow (all enclosed buildings)
+const WINDOW_GLOW_TYPES = new Set([
+  'home', 'shop', 'tavern', 'clinic', 'town_hall',
+  'bakery', 'workshop', 'prison', 'divebar', 'pawnshop',
+]);
+
+// ─── Emissive Lights (forge + oven) ──────────────────────────────────────────
+// Strong warm-colored lights emitted at furniture tile positions.
+// tile: [col, row] in interior grid — converted to world px as:
+//   worldX = building.x + col * TILE_SIZE + TILE_SIZE/2
+//   worldY = building.y + row * TILE_SIZE + TILE_SIZE/2
+const INTERIOR_TILE_SIZE = 32;
+
+interface EmissiveDef {
+  buildingType: string;
+  furnitureTile: [number, number]; // [col, row]
+  color: number;
+  radius: number;
+  intensity: number;
+  flicker: number;
+  /** If true, only active during operating hours (checked against loc.operating_hours) */
+  operatingHoursOnly: boolean;
+}
+
+const EMISSIVE_DEFS: EmissiveDef[] = [
+  // Workshop forge — tile [3,2] — always-on warm red, high flicker
+  {
+    buildingType: 'workshop',
+    furnitureTile: [3, 2],
+    color: 0xFF8040,
+    radius: 64,
+    intensity: 0.7,
+    flicker: 0.22,
+    operatingHoursOnly: false,
+  },
+  // Bakery oven — tile [1,1] — warm amber, moderate flicker, operating hours only
+  {
+    buildingType: 'bakery',
+    furnitureTile: [1, 1],
+    color: 0xFFA050,
+    radius: 48,
+    intensity: 0.6,
+    flicker: 0.10,
+    operatingHoursOnly: true,
+  },
+];
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function lerp(a: number, b: number, t: number): number {
@@ -263,6 +322,78 @@ export class LightingSystem {
         intensity: def.intensity,
         flicker: def.flicker * weatherMod.flickerMul,
       });
+    }
+
+    // ── Window glow: two small warm lights flanking door, night only ────
+    if (this.isNightish) {
+      for (const loc of locations) {
+        if (OPEN_AREA_TYPES.has(loc.type)) continue;
+        if (!WINDOW_GLOW_TYPES.has(loc.type)) continue;
+
+        // Gate: home requires occupants; all others always glow at night
+        const bgDef = BUILDING_LIGHT[loc.type];
+        const needsOcc = bgDef?.needsOccupants ?? false;
+        if (needsOcc && (loc.current_occupants?.length ?? 0) === 0) continue;
+
+        // Also respect operating hours for non-residential types that have them
+        if (loc.operating_hours && loc.type !== 'home') {
+          const { open, close } = loc.operating_hours;
+          if (hour < open || hour >= close) continue;
+        }
+
+        const ex = loc.entry_point.x;
+        const ey = loc.entry_point.y - WINDOW_OFFSET_Y;
+
+        // Left window
+        this.buildingLights.push({
+          x: ex - WINDOW_OFFSET_X,
+          y: ey,
+          radius: WINDOW_GLOW_RADIUS * weatherMod.radiusMul,
+          color: WINDOW_GLOW_COLOR,
+          intensity: WINDOW_GLOW_INTENSITY,
+          flicker: WINDOW_GLOW_FLICKER * weatherMod.flickerMul,
+        });
+        // Right window
+        this.buildingLights.push({
+          x: ex + WINDOW_OFFSET_X,
+          y: ey,
+          radius: WINDOW_GLOW_RADIUS * weatherMod.radiusMul,
+          color: WINDOW_GLOW_COLOR,
+          intensity: WINDOW_GLOW_INTENSITY,
+          flicker: WINDOW_GLOW_FLICKER * weatherMod.flickerMul,
+        });
+      }
+    }
+
+    // ── Emissive lights (forge + oven) at furniture tile positions ───────
+    for (const emDef of EMISSIVE_DEFS) {
+      // Find matching location(s) of the correct building type
+      for (const loc of locations) {
+        if (loc.type !== emDef.buildingType) continue;
+
+        // Operating hours gate (oven only; forge is always-on)
+        if (emDef.operatingHoursOnly) {
+          if (!this.isNightish && phase !== 'evening' && phase !== 'dawn') continue;
+          if (loc.operating_hours) {
+            const { open, close } = loc.operating_hours;
+            if (hour < open || hour >= close) continue;
+          }
+        }
+
+        // Compute world position from building origin + tile coords
+        const [col, row] = emDef.furnitureTile;
+        const wx = loc.position.x + col * INTERIOR_TILE_SIZE + INTERIOR_TILE_SIZE / 2;
+        const wy = loc.position.y + row * INTERIOR_TILE_SIZE + INTERIOR_TILE_SIZE / 2;
+
+        this.buildingLights.push({
+          x: wx,
+          y: wy,
+          radius: emDef.radius * weatherMod.radiusMul,
+          color: emDef.color,
+          intensity: emDef.intensity,
+          flicker: emDef.flicker * weatherMod.flickerMul,
+        });
+      }
     }
 
     // ── Agent lights (lanterns at night) ────────────────────────────────
