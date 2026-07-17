@@ -180,3 +180,48 @@ describe('comfort outlet reachability', () => {
     expect(bench?.allowedActions).toContain('comfort');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. Door → zone-center reachability (BFS over walkable cells)
+// ---------------------------------------------------------------------------
+
+describe('door reachability', () => {
+  it('every zone.center is reachable from the door via orthogonal walkable cells', () => {
+    for (const [type, zones] of Object.entries(INTERIOR_ZONES)) {
+      const grid = INTERIOR_GRIDS[type];
+      if (!grid) continue;
+      const h = grid.length;
+      const w = grid[0].length;
+      let door: [number, number] | null = null;
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          if (grid[r][c] === 3) door = [c, r];
+        }
+      }
+      expect(door, `${type} has no door cell`).not.toBeNull();
+      if (!door) continue;
+      const seen = new Set<string>([door.join(',')]);
+      const queue: Array<[number, number]> = [door];
+      while (queue.length) {
+        const [c, r] = queue.shift()!;
+        for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nc = c + dc;
+          const nr = r + dr;
+          if (nc < 0 || nr < 0 || nc >= w || nr >= h) continue;
+          const v = grid[nr][nc];
+          const key = `${nc},${nr}`;
+          if ((v === 0 || v === 3) && !seen.has(key)) {
+            seen.add(key);
+            queue.push([nc, nr]);
+          }
+        }
+      }
+      for (const zone of zones) {
+        expect(
+          seen.has(zone.center.join(',')),
+          `${type}:${zone.id} center [${zone.center}] unreachable from door`,
+        ).toBe(true);
+      }
+    }
+  });
+});
