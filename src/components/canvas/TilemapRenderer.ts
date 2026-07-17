@@ -285,6 +285,19 @@ export class TilemapRenderer {
       if (!roadSet.has(`${tile.x},${tile.y + 1}`)) edges.rect(px, py + TILE_SIZE - 3, TILE_SIZE, 3).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
       if (!roadSet.has(`${tile.x - 1},${tile.y}`)) edges.rect(px, py, 3, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
       if (!roadSet.has(`${tile.x + 1},${tile.y}`)) edges.rect(px + TILE_SIZE - 3, py, 3, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.8 });
+
+      // Wheel ruts: two worn tracks along straight road segments distinguish
+      // constructed roads from generic dirt bands (fresh-eyes audit r22).
+      // Intersections (road both axes) stay rut-free.
+      const horiz = roadSet.has(`${tile.x - 1},${tile.y}`) && roadSet.has(`${tile.x + 1},${tile.y}`);
+      const vert = roadSet.has(`${tile.x},${tile.y - 1}`) && roadSet.has(`${tile.x},${tile.y + 1}`);
+      if (horiz && !vert) {
+        edges.rect(px, py + 9, TILE_SIZE, 2).fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
+        edges.rect(px, py + TILE_SIZE - 11, TILE_SIZE, 2).fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
+      } else if (vert && !horiz) {
+        edges.rect(px + 9, py, 2, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
+        edges.rect(px + TILE_SIZE - 11, py, 2, TILE_SIZE).fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
+      }
     }
     this.roadContainer.addChild(edges);
 
