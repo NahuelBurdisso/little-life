@@ -151,6 +151,16 @@ export class BuildingRenderer {
     parent.addChild(this.container);
   }
 
+  /**
+   * Counter-scale name labels so they stay ~screen-constant across zoom.
+   * Zoomed out: labels grow (up to 2x) instead of shrinking to noise.
+   * Zoomed in: labels shrink (down to 0.45x) instead of dominating.
+   */
+  setZoom(cameraScale: number): void {
+    const s = Math.min(2, Math.max(0.45, 1 / cameraScale));
+    for (const child of this.labelLayer.children) child.scale.set(s);
+  }
+
   init(locations: LocationData[]): void {
     // Clear previous
     for (const [, entry] of this.buildings) {

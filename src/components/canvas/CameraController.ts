@@ -114,6 +114,10 @@ export class CameraController {
     this.canvas.addEventListener("touchend", this.onTouchEnd, { passive: true });
   }
 
+  getScale(): number {
+    return this.scale;
+  }
+
   focusOn(worldX: number, worldY: number) {
     this.targetX = this.canvas.width / 2 - worldX * this.scale;
     this.targetY = this.canvas.height / 2 - worldY * this.scale;

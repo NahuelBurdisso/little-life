@@ -164,8 +164,14 @@ export const GameCanvas = React.memo(function GameCanvas({
     interactionRef.current = interaction;
 
     // Animation loop — store ref for cleanup
+    let lastLabelScale = 0;
     const cameraTickFn = (ticker: any) => {
       camera.update(ticker.deltaTime);
+      const s = camera.getScale();
+      if (s !== lastLabelScale) {
+        lastLabelScale = s;
+        buildingRendererRef.current?.setZoom(s);
+      }
     };
     app.ticker.add(cameraTickFn);
 
