@@ -34,7 +34,9 @@ const INTERIOR_PALETTE: Record<string, { floor: number; wall: number }> = {
   home:      { floor: 0x6b5b45, wall: 0x3d2e1e },
   shop:      { floor: 0x5a5040, wall: 0x38302a },
   tavern:    { floor: 0x7a4f35, wall: 0x4a2e18 },
-  clinic:    { floor: 0xd8e8e0, wall: 0x7a9090 },
+  // Muted sage instead of near-white: the old 0xd8e8e0 floor glowed like a
+  // blank placeholder slab against the earthy palette (fresh-eyes audit r25)
+  clinic:    { floor: 0xaebdb2, wall: 0x5e7270 },
   town_hall: { floor: 0x7a6a4a, wall: 0x4a3c28 },
   bakery:    { floor: 0xc8a870, wall: 0x6a4a28 },
   workshop:  { floor: 0x5c5a4e, wall: 0x2a2820 },
