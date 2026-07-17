@@ -90,16 +90,16 @@ export const INTERIOR_GRIDS: Record<string, number[][]> = {
   // Workshop — 5w × 4h, door at row 3 col 2
   workshop: [
     [1, 1, 1, 1, 1],
-    [1, 2, 0, 2, 1],
-    [1, 0, 0, 0, 1],
+    [1, 2, 0, 2, 1],   // [1,1] Workbench, [3,1] Tool Rack
+    [1, 0, 0, 2, 1],   // [3,2] Forge
     [1, 1, 3, 1, 1],
   ],
 
   // Town Hall — 6w × 5h, door at row 4 col 3
   town_hall: [
     [1, 1, 1, 1, 1, 1],
-    [1, 2, 0, 0, 0, 1],
-    [1, 0, 0, 0, 2, 1],
+    [1, 2, 0, 2, 0, 1],   // [1,1] Mayor's Desk, [3,1] Meeting Table
+    [1, 0, 0, 0, 2, 1],   // [4,2] Filing Cabinet
     [1, 0, 0, 0, 0, 1],
     [1, 1, 1, 3, 1, 1],
   ],
@@ -107,7 +107,7 @@ export const INTERIOR_GRIDS: Record<string, number[][]> = {
   // Prison — 5w × 4h, door at row 3 col 2
   prison: [
     [1, 1, 1, 1, 1],
-    [1, 2, 0, 2, 1],
+    [1, 2, 0, 0, 1],   // [1,1] Guard Desk; [3,1] demoted from orphan to floor
     [1, 0, 0, 0, 1],
     [1, 1, 3, 1, 1],
   ],
@@ -123,9 +123,19 @@ export const INTERIOR_GRIDS: Record<string, number[][]> = {
   // Divebar — 5w × 4h, door at row 3 col 2
   divebar: [
     [1, 1, 1, 1, 1],
-    [1, 2, 0, 0, 1],
-    [1, 0, 0, 2, 1],
+    [1, 2, 0, 0, 1],   // [1,1] Bar Counter
+    [1, 0, 0, 2, 1],   // [3,2] Booth Seat
     [1, 1, 3, 1, 1],
+  ],
+
+  // Home — synthetic 3w × 3h grid. All cells are floor (0). Door at [col=1, row=2]
+  // (south edge) satisfies the door-uniqueness invariant. No furniture cells (2) —
+  // home furniture is zone-data-only; furniture.tile uses the [-1,-1] sentinel.
+  // Adding this grid replaces the lerp fallback in movement.ts for home interiors.
+  home: [
+    [0, 0, 0],   // row 0: bed area (left), stove area (right) — all walkable
+    [0, 0, 0],   // row 1: living room
+    [0, 3, 0],   // row 2: door at col 1 (south edge)
   ],
 };
 
@@ -146,7 +156,7 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       color: 0x2E4A7A,
       allowedActions: ['sleep', 'rest'],
       visibility: 0.3,
-      furniture: { label: 'Bed', tile: [0, 0] },
+      furniture: { label: 'Bed', tile: [-1, -1] },  // sentinel: grid-exempt (no furniture cell in home grid)
       relativePosition: { x: 8, y: 8, width: 36, height: 32 },
     },
     {
@@ -159,7 +169,7 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       color: 0x8B6B3D,
       allowedActions: ['eat', 'cook'],
       visibility: 0.6,
-      furniture: { label: 'Stove', tile: [2, 0] },
+      furniture: { label: 'Stove', tile: [-1, -1] },  // sentinel: grid-exempt (no furniture cell in home grid)
       relativePosition: { x: 52, y: 8, width: 36, height: 32 },
     },
     {
@@ -361,12 +371,12 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       name: 'Meeting Table',
       label: 'Meeting Table',
       tiles: [[2, 1], [3, 1], [4, 1]],
-      center: [3, 1],
+      center: [2, 1],          // floor tile ✓, Chebyshev 1 from furniture [3,1] ✓
       maxOccupants: 4,
       color: 0x6B3A1F,
       allowedActions: ['work', 'discuss', 'socialize'],
       visibility: 0.9,
-      furniture: { label: 'Meeting Table', tile: [3, 1] },
+      furniture: { label: 'Meeting Table', tile: [3, 1] },  // grid value = 2 ✓
       relativePosition: { x: 88, y: 8, width: 88, height: 32 },
     },
     {
@@ -385,15 +395,14 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       id: 'records',
       name: 'Records',
       label: 'Records',
-      tiles: [[4, 2], [1, 3], [2, 3], [3, 3], [4, 3]],
-      // [4,2] is furniture (2) — moved to adjacent walkable [1,3] (floor)
-      center: [1, 3],
+      tiles: [[3, 2], [4, 2], [3, 3], [4, 3]],
+      center: [3, 2],          // floor tile ✓, Chebyshev 1 from furniture [4,2] ✓
       maxOccupants: 2,
       color: 0x4A6741,
       allowedActions: ['work', 'research'],
       visibility: 0.5,
-      furniture: { label: 'Filing Cabinet', tile: [4, 2] },
-      relativePosition: { x: 104, y: 48, width: 72, height: 48 },
+      furniture: { label: 'Filing Cabinet', tile: [4, 2] },  // grid value = 2 ✓
+      relativePosition: { x: 88, y: 48, width: 72, height: 48 },
     },
   ],
 
@@ -498,12 +507,12 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       name: 'Forge',
       label: 'Forge',
       tiles: [[2, 2], [3, 2]],
-      center: [3, 2],
+      center: [2, 2],          // floor tile ✓, Chebyshev 1 from furniture [3,2] ✓
       maxOccupants: 1,
       color: 0xB85C00,
       allowedActions: ['work', 'smith', 'craft'],
       visibility: 0.7,
-      furniture: { label: 'Forge', tile: [3, 2] },
+      furniture: { label: 'Forge', tile: [3, 2] },  // grid value = 2 ✓
       relativePosition: { x: 72, y: 48, width: 72, height: 32 },
     },
   ],
@@ -610,10 +619,12 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
     },
     {
       id: 'booth', name: 'Booth', label: 'Booth',
-      tiles: [[3, 2]], center: [3, 2], maxOccupants: 2,
+      tiles: [[2, 2], [3, 2]],
+      center: [2, 2],          // floor tile ✓, Chebyshev 1 from furniture [3,2] ✓
+      maxOccupants: 2,
       color: 0x5C3D2E, allowedActions: ['drink', 'socialize', 'scheme'],
-      visibility: 0.3, furniture: { label: 'Booth Seat', tile: [3, 1] },
-      relativePosition: tilesToRelPos([[3, 2]]),
+      visibility: 0.3, furniture: { label: 'Booth Seat', tile: [3, 2] },  // grid value = 2 ✓
+      relativePosition: tilesToRelPos([[2, 2], [3, 2]]),
     },
   ],
 
@@ -665,4 +676,5 @@ export const ACTION_ZONE_REQUIREMENTS: Record<string, Record<string, string[]>> 
     divebar: ['bar'],
   },
   gambling: { tavern: ['tables'], divebar: ['tables'] },
+  comfort: { park: ['benches'] },
 };

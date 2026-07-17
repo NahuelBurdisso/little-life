@@ -678,6 +678,13 @@ function scoreFreeTimeActions(
       }
     }
 
+    // Comfort outlet: low-comfort agents seek park bench rest
+    // Threshold 35 keeps this optional (not urgent like hunger/energy emergencies).
+    if (park && agentNeeds.comfort < 35) {
+      const comfortScore = 20 + (35 - agentNeeds.comfort) * 0.6;
+      scores.push({ action: 'comfort', score: addNoise(comfortScore), targetLocationId: park.id });
+    }
+
     // Browse market stalls — curious shoppers or bored agents
     if (square && agentNeeds.fun < 50 && personality.curiosity > 40) {
       const browseScore = 12 + (personality.curiosity - 40) * 0.2 + (50 - agentNeeds.fun) * 0.2;
@@ -978,6 +985,8 @@ function buildAction(decision: ScoredAction): Record<string, unknown> {
       return { type: 'idle', ...(decision.source ? { zoneActivity: decision.source } : {}) };
     case 'shopping':
       return { type: 'shopping', shopId: decision.targetLocationId ?? '', items: [] };
+    case 'comfort':
+      return { type: 'comfort', zoneActivity: 'comfort' };
     default:
       return { type: 'idle' };
   }

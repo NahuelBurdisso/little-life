@@ -34,8 +34,12 @@ describe('Interior grid data', () => {
     }
   });
 
-  it('home has no grid (uses lerp fallback)', () => {
-    expect(INTERIOR_GRIDS.home).toBeUndefined();
+  it('home has a synthetic 3x3 grid with door at south edge col 1', () => {
+    const info = getInteriorGrid('home');
+    expect(info).not.toBeNull();
+    expect(info!.doorTile).toEqual([1, 2]);
+    expect(info!.width).toBe(3);
+    expect(info!.height).toBe(3);
   });
 
   it('ZoneDef has required fields', () => {
@@ -105,8 +109,12 @@ describe('gridToCollisionString', () => {
 });
 
 describe('getInteriorGrid', () => {
-  it('returns null for home (no grid)', () => {
-    expect(getInteriorGrid('home')).toBeNull();
+  it('returns valid InteriorGridInfo for home (synthetic 3x3 grid)', () => {
+    const info = getInteriorGrid('home');
+    expect(info).not.toBeNull();
+    expect(info!.width).toBe(3);
+    expect(info!.height).toBe(3);
+    expect(info!.doorTile).toEqual([1, 2]);
   });
 
   it('returns null for farm (no grid)', () => {

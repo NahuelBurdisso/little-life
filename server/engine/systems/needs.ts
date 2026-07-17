@@ -7,6 +7,7 @@ import { getAgentStates } from '../../lib/states';
 import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 import { simEvents } from '../../lib/simEvents';
 import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
+import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
 
 // Track which agents already have an active critical need event to avoid spamming
 const criticalNeedFired = new Map<number, Set<string>>();
@@ -26,6 +27,7 @@ const ACTION_MODIFIERS: Record<string, Record<NeedKey, number>> = {
   idle:        { hunger: 0.8,  energy: -0.5, social: 1,    comfort: -1.0, fun: 1.2  },
   walking:     { hunger: 1.1,  energy: 1.2,  social: 1,    comfort: 0.9,  fun: -0.3 },
   shopping:    { hunger: 1,    energy: 1,    social: 0.9,  comfort: 1,    fun: -0.5 },
+  comfort:     { hunger: 0.8, energy: -0.3, social: -0.5, comfort: -2.5, fun: -0.8 },
 };
 
 const DEFAULT_MODIFIERS: Record<NeedKey, number> = {
@@ -145,7 +147,6 @@ export function needsTick(): void {
     }
     // Home cooking skill bonus
     if (actionType === 'eating' && agent.current_location === agent.home) {
-      const { getHobbyLevel } = require('../../lib/hobbyEngine');
       const cookingSkill = getHobbyLevel(agent.id, 'cook') as number;
       if (cookingSkill > 0) {
         // Skilled cooks make better meals at home
@@ -287,7 +288,6 @@ export function needsTick(): void {
 
       // Mentorship: experienced agents teaching co-located agents with same zone activity
       if (zoneActivity && coLocated.length > 0) {
-        const { getMentorshipOpportunity, applyMentorship } = require('../../lib/hobbyEngine');
         for (const other of coLocated) {
           const otherActivity = (other.current_action as any)?.zoneActivity;
           if (otherActivity !== zoneActivity) continue;
