@@ -56,6 +56,31 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     offset: { x: 0, y: -8 },
   },
 
+  // ── Locations ─────────────────────────────────────────────────────────────
+
+  {
+    // Chimney smoke — anchors are synthetic 'chimney' locations built in
+    // GameCanvas from building positions, phase-gated per building type.
+    id: 'chimney_smoke',
+    trigger: { type: 'location_type', locType: 'chimney' },
+    appearance: {
+      shape: 'circle',
+      colors: [0x8a8a88, 0x6f6f6d, 0x9a9a96],
+      sizeRange: [0.04, 0.09],
+      alpha: 0.32,
+    },
+    motion: {
+      speedRange: [5, 11],
+      directionRange: [-Math.PI * 0.62, -Math.PI * 0.38], // upward with slight drift
+      gravity: -4, // accelerate up as smoke warms/thins
+      spread: 2,
+      rotationSpeed: 0.3,
+    },
+    emission: { rate: 1.4, burst: 0, maxAlive: 6 },
+    lifecycle: { lifetimeRange: [2.5, 4.5], fadeIn: 0.4, fadeOut: 1.2 },
+    offset: { x: 0, y: -2 },
+  },
+
   // ── Season ────────────────────────────────────────────────────────────────
 
   {

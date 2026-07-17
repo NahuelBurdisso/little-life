@@ -13,6 +13,28 @@ import { InteractionLayer } from "./InteractionLayer";
 import { ParticleEngine } from "./particles/ParticleEngine";
 import type { ParticleContext } from "./particles/types";
 
+// Day phases during which each building type's chimney smokes.
+// Mirrors CHIMNEY_TYPES in BuildingRenderer (tavern, bakery, workshop, divebar, home).
+const SMOKE_PHASES: Record<string, string[]> = {
+  home: ['evening', 'night'],
+  tavern: ['evening', 'night'],
+  divebar: ['evening', 'night'],
+  bakery: ['dawn', 'morning'],
+  workshop: ['morning', 'afternoon'],
+};
+
+// Chimney rect sizes from BuildingRenderer.drawChimney (cw, ch)
+function chimneyAnchor(loc: any): { x: number; y: number } | null {
+  const pos = loc.position;
+  if (!pos?.width) return null;
+  const cw = loc.type === 'bakery' ? 6 : loc.type === 'workshop' ? 4 : 5;
+  const ch = loc.type === 'bakery' ? 10 : loc.type === 'workshop' ? 8 : 9;
+  return {
+    x: pos.x + pos.width - cw - 4 + cw / 2, // chimney center (top-right, 4px inset)
+    y: pos.y - ch + 2,                       // chimney cap top
+  };
+}
+
 interface GameCanvasProps {
   agents: any[];
   world: any;
@@ -306,12 +328,23 @@ export const GameCanvas = React.memo(function GameCanvas({
           };
         });
 
+        const dayPhase = (worldRef.current as any)?.day_phase ?? 'morning';
+
+        // Synthetic 'chimney' locations — smoke emitters at chimney caps,
+        // phase-gated per building type (bakery mornings, homes evenings, ...)
+        const chimneyLocs: ParticleContext['locations'] = [];
+        for (const loc of locationsRef.current ?? []) {
+          if (!SMOKE_PHASES[loc.type]?.includes(dayPhase)) continue;
+          const anchor = chimneyAnchor(loc);
+          if (anchor) chimneyLocs.push({ id: loc.id, type: 'chimney', x: anchor.x, y: anchor.y });
+        }
+
         const ctx: ParticleContext = {
           agents: agentData,
           weather: (worldRef.current as any)?.weather ?? 'sunny',
-          dayPhase: (worldRef.current as any)?.day_phase ?? 'morning',
+          dayPhase,
           season: (worldRef.current as any)?.time?.season ?? 'spring',
-          locations: [], // TODO: pass location data if location-type triggers are used
+          locations: chimneyLocs,
         };
 
         // Camera center for world-space emitters
