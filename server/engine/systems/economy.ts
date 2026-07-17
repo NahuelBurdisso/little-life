@@ -595,12 +595,12 @@ export function economyTick(): void {
     if (ratio > CONFIG.ECONOMY.INFLATION_THRESHOLD) {
       logActivity({
         type: 'system',
-        templateData: { message: `Money supply check: inflation detected (ratio ${ratio.toFixed(2)}). Total: ${totalMoney}, target: ${targetTotal}` },
+        templateData: { message: `Money supply check: inflation detected (ratio ${ratio.toFixed(2)}). Total: ${Math.round(totalMoney)}, target: ${Math.round(targetTotal)}` },
       });
     } else if (ratio < CONFIG.ECONOMY.DEFLATION_THRESHOLD) {
       logActivity({
         type: 'system',
-        templateData: { message: `Money supply check: deflation detected (ratio ${ratio.toFixed(2)}). Total: ${totalMoney}, target: ${targetTotal}` },
+        templateData: { message: `Money supply check: deflation detected (ratio ${ratio.toFixed(2)}). Total: ${Math.round(totalMoney)}, target: ${Math.round(targetTotal)}` },
       });
     }
   }

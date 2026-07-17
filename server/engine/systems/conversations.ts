@@ -1262,10 +1262,13 @@ async function processTimedOutEntry(
   // Build a prioritized list of categories to try
   const categoriesToTry: string[] = [];
 
-  // Negative/conflict categories (highest priority — drama first)
-  if (friendship < 0) categoriesToTry.push('tense_encounter');
-  if (friendship < 20 && mood < 40) categoriesToTry.push('passive_aggressive');
-  if (friendship < 10 && mood < 50) categoriesToTry.push('snide_remark');
+  // Negative/conflict categories (highest priority — drama first).
+  // Require an actually negative relationship: neutral strangers (friendship ~0)
+  // should get neutral small talk, not hostility — otherwise every new pair
+  // meeting at low mood reads as "passive-aggressive exchange" in the feed.
+  if (friendship < -10) categoriesToTry.push('tense_encounter');
+  if (friendship < -10 && mood < 40) categoriesToTry.push('passive_aggressive');
+  if (friendship < -20 && mood < 50) categoriesToTry.push('snide_remark');
 
   // Contextual categories (interesting situations)
   if (mood < 30) categoriesToTry.push('complaint_mood');
