@@ -225,9 +225,9 @@ export class LightingSystem {
       this.streetLights.push({
         x: tile.x * 32 + 16,
         y: tile.y * 32 + 16,
-        radius: 40,
+        radius: 64,
         color: 0xFFE0A0,
-        intensity: 0.25,
+        intensity: 0.38,
         flicker: 0.06,
       });
     }
