@@ -210,6 +210,9 @@ export class BuildingRenderer {
     const palette = INTERIOR_PALETTE[loc.type] ?? { floor: DEFAULT_FLOOR, wall: DEFAULT_WALL };
     const walls = new PIXI.Graphics();
 
+    // ── 0. Drop shadow — offset rect under building grounds it on the terrain ──
+    walls.rect(x + 4, y + 4, width, height).fill({ color: 0x1a1208, alpha: 0.35 });
+
     // ── 1. Chimney rects — drawn BEFORE floor so walls overlap base naturally ──
     if (CHIMNEY_TYPES.has(loc.type)) {
       this.drawChimney(walls, loc.type, x, y, width);
