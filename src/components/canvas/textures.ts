@@ -15,6 +15,17 @@ const TERRAIN_URLS: Record<string, string> = {
   stone_plaza: '/sprites/tiles/terrain_stone_plaza.png',
 };
 
+/**
+ * Tileable interior floor surfaces. Authored near-white and greyscale so a
+ * PixiJS `tint` recolours them to each building type's palette instead of
+ * needing one texture per type.
+ */
+const FLOOR_URLS: Record<string, string> = {
+  wood:  '/sprites/tiles/floor_wood.png',
+  tile:  '/sprites/tiles/floor_tile.png',
+  stone: '/sprites/tiles/floor_stone.png',
+};
+
 const WALL_URLS: Record<string, string> = {
   // Wall/door sprites intentionally unused — procedural Graphics handles building
   // walls. Keep the map here so getWallTexture() still returns null cleanly.
@@ -52,6 +63,11 @@ async function loadTexture(url: string): Promise<PIXI.Texture> {
     cache.set(url, tex);
     inflight.delete(url);
     return tex;
+  }).catch(err => {
+    // Drop the rejected promise, or one transient failure pins this key to its
+    // colour fallback for the rest of the session with no chance to retry.
+    inflight.delete(url);
+    throw err;
   });
   inflight.set(url, p);
   return p;
@@ -59,6 +75,11 @@ async function loadTexture(url: string): Promise<PIXI.Texture> {
 
 export function getTerrainTexture(key: string): Promise<PIXI.Texture> | null {
   const url = TERRAIN_URLS[key];
+  return url ? loadTexture(url) : null;
+}
+
+export function getFloorTexture(key: string): Promise<PIXI.Texture> | null {
+  const url = FLOOR_URLS[key];
   return url ? loadTexture(url) : null;
 }
 
@@ -76,6 +97,7 @@ export function getFurnitureTexture(key: string): Promise<PIXI.Texture> | null {
 export async function preloadAllWorldTextures(): Promise<void> {
   const all = [
     ...Object.values(TERRAIN_URLS),
+    ...Object.values(FLOOR_URLS),
     ...Object.values(WALL_URLS),
     ...Object.values(FURNITURE_URLS),
   ];

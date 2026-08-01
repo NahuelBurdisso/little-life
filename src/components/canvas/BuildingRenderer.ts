@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
-import { getFurnitureTexture } from "./textures";
+import { getFurnitureTexture, getFloorTexture } from "./textures";
 
 const TILE_SIZE = 32;
 
@@ -48,6 +48,24 @@ const INTERIOR_PALETTE: Record<string, { floor: number; wall: number }> = {
 // Fallback for any type not in the table above (open areas never reach this path)
 const DEFAULT_FLOOR = 0x5a4a3a;
 const DEFAULT_WALL  = 0x4a3f2e;
+
+/**
+ * Floor material per building type. The textures are greyscale, so the
+ * building's own `palette.floor` tints them — one texture serves every type
+ * that shares a material.
+ */
+const FLOOR_MATERIAL: Record<string, string> = {
+  home:      'wood',
+  shop:      'wood',
+  tavern:    'wood',
+  divebar:   'wood',
+  pawnshop:  'wood',
+  bakery:    'wood',
+  town_hall: 'wood',
+  clinic:    'tile',
+  prison:    'tile',
+  workshop:  'stone',
+};
 
 // ── Door styles per building type (proposal-visual.md §4) ────────────────────
 const DOOR_STYLE: Record<string, { color: number; w: number; h: number }> = {
@@ -160,19 +178,38 @@ const FURNITURE_STYLE = new PIXI.TextStyle({
 interface BuildingEntry {
   id: number;
   type: string;
-  wallGraphic: PIXI.Graphics;
+  /** Whole building shell (base + floor sprite + walls), or the patch for open areas. */
+  wallGraphic: PIXI.Container;
   interiorContainer: PIXI.Container | null;
   label: PIXI.Text;
   position: { x: number; y: number; width: number; height: number };
   entryPoint: { x: number; y: number };
 }
 
+const TOOLTIP_STYLE = new PIXI.TextStyle({
+  fontFamily: "monospace",
+  fontSize: 8,
+  fill: 0xe8e0d0,
+  lineHeight: 11,
+});
+
+/** "town_hall" -> "Town Hall" */
+function prettyType(type: string): string {
+  return type.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
 export class BuildingRenderer {
   private container: PIXI.Container;
   private buildingLayer: PIXI.Container;
   private labelLayer: PIXI.Container;
+  /** Hover tooltip. Its own layer so `init()` clearing the labels cannot free it. */
+  private tooltipLayer: PIXI.Container;
+  private tooltipBg: PIXI.Graphics;
+  private tooltipText: PIXI.Text;
 
   private buildings: Map<number, BuildingEntry> = new Map();
+  /** How many agents each building currently holds, from the last `update()`. */
+  private occupantCounts: Map<number, number> = new Map();
 
   // Zone/furniture label visibility state (toggled by zoom level)
   private zoneLabelsVisible = true;
@@ -186,14 +223,80 @@ export class BuildingRenderer {
 
   constructor(parent: PIXI.Container) {
     this.container = new PIXI.Container();
-    this.container.eventMode = 'none'; // transparent to clicks
+    // 'passive', not 'none': PixiJS treats 'none' as "ignore events, *even on
+    // children*", which silently disabled the per-building hover that fades the
+    // interior in. Agent picking is unaffected either way — InteractionLayer
+    // listens on the raw canvas element, not through the PixiJS event graph.
+    this.container.eventMode = 'passive';
     this.buildingLayer = new PIXI.Container();
     this.labelLayer = new PIXI.Container();
 
+    this.tooltipLayer = new PIXI.Container();
+    this.tooltipLayer.visible = false;
+    this.tooltipBg = new PIXI.Graphics();
+    this.tooltipText = new PIXI.Text({ text: '', style: TOOLTIP_STYLE.clone() });
+    this.tooltipLayer.addChild(this.tooltipBg, this.tooltipText);
+
     this.container.addChild(this.buildingLayer);
     this.container.addChild(this.labelLayer);
+    this.container.addChild(this.tooltipLayer);
 
     parent.addChild(this.container);
+  }
+
+  /**
+   * Show the hover card above a building: what it is and how busy it is. Anchored
+   * to the building's top edge in world space, then counter-scaled by `setZoom`
+   * along with the name labels so it stays legible at any zoom.
+   */
+  private showTooltip(id: number): void {
+    const entry = this.buildings.get(id);
+    if (!entry) return;
+    const n = this.occupantCounts.get(id) ?? 0;
+    const who = n === 0 ? 'empty' : n === 1 ? '1 person inside' : `${n} people inside`;
+    // Derived outdoor spots are named after their type ("Town Square"), so the
+    // second line would just repeat the first.
+    const kind = prettyType(entry.type);
+    const sub = kind === entry.label.text ? who : `${kind} · ${who}`;
+    this.tooltipText.text = `${entry.label.text}\n${sub}`;
+
+    const pad = 4;
+    const w = this.tooltipText.width + pad * 2;
+    const h = this.tooltipText.height + pad * 2;
+    this.tooltipBg.clear();
+    this.tooltipBg.roundRect(0, 0, w, h, 3).fill({ color: 0x14100c, alpha: 0.88 });
+    this.tooltipBg.roundRect(0, 0, w, h, 3).stroke({ width: 1, color: 0x7a6f5a, alpha: 0.9 });
+    this.tooltipText.position.set(pad, pad);
+
+    // The layer is scaled, so place its origin such that the *scaled* card is
+    // centred on the building and clears its top edge.
+    const s = this.tooltipLayer.scale.x;
+    this.tooltipLayer.position.set(
+      entry.position.x + entry.position.width / 2 - (w * s) / 2,
+      entry.position.y - h * s - 6,
+    );
+    this.tooltipLayer.visible = true;
+  }
+
+  private hideTooltip(): void {
+    this.tooltipLayer.visible = false;
+  }
+
+  /** Wire hover on a building's hit graphic: fade the interior in, show the card. */
+  private bindHover(g: PIXI.Container, id: number): void {
+    g.eventMode = 'static';
+    g.cursor = 'default';
+    g.on('pointerover', () => {
+      this.hoveredBuildingId = id;
+      this.syncInteriorVisibility();
+      this.showTooltip(id);
+    });
+    g.on('pointerout', () => {
+      if (this.hoveredBuildingId !== id) return;
+      this.hoveredBuildingId = null;
+      this.syncInteriorVisibility();
+      this.hideTooltip();
+    });
   }
 
   /**
@@ -205,6 +308,8 @@ export class BuildingRenderer {
     this.lastCameraScale = cameraScale;
     const s = Math.min(2, Math.max(0.45, 1 / cameraScale));
     for (const child of this.labelLayer.children) child.scale.set(s);
+    this.tooltipLayer.scale.set(s);
+    if (this.hoveredBuildingId !== null) this.showTooltip(this.hoveredBuildingId);
 
     // Interior zone/furniture labels are simulation detail — only readable
     // when zoomed in. At wide zoom they render as pixel noise, so hide them.
@@ -233,6 +338,8 @@ export class BuildingRenderer {
     for (const child of this.labelLayer.removeChildren()) child.destroy({ children: true, style: true });
     this.hoveredBuildingId = null;
     this.occupiedBuildingIds.clear();
+    this.occupantCounts.clear();
+    this.hideTooltip();
 
     for (const loc of locations) {
       // Main Street's footprint *is* the road, already drawn by TilemapRenderer.
@@ -263,11 +370,16 @@ export class BuildingRenderer {
    */
   update(agentLocations: Map<number, number | null>): void {
     const newOccupied = new Set<number>();
+    this.occupantCounts.clear();
     for (const locId of agentLocations.values()) {
-      if (locId !== null) newOccupied.add(locId);
+      if (locId === null) continue;
+      newOccupied.add(locId);
+      this.occupantCounts.set(locId, (this.occupantCounts.get(locId) ?? 0) + 1);
     }
     this.occupiedBuildingIds = newOccupied;
     this.syncInteriorVisibility();
+    // The hovered building's headcount changes as agents come and go.
+    if (this.hoveredBuildingId !== null) this.showTooltip(this.hoveredBuildingId);
   }
 
   destroy(): void {
@@ -289,33 +401,71 @@ export class BuildingRenderer {
     }
   }
 
+  /**
+   * Drop a tiled floor texture into `shell` between the base fill and the walls.
+   *
+   * Async: the texture may still be loading, so this returns immediately and
+   * inserts the sprite once resolved. Until then (or forever, if the load fails)
+   * the flat `base` floor rect underneath is what shows, which is the same thing
+   * the renderer drew before textures existed.
+   */
+  private addFloorSurface(
+    shell: PIXI.Container,
+    type: string,
+    tint: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): void {
+    const material = FLOOR_MATERIAL[type];
+    if (!material) return;
+    const p = getFloorTexture(material);
+    if (!p) return;
+    p.then((tex) => {
+      if (shell.destroyed) return;
+      const sprite = new PIXI.TilingSprite({ texture: tex, width, height });
+      sprite.position.set(x, y);
+      sprite.tint = tint;
+      // Index 1 = directly above `base`, below `walls`, regardless of which
+      // building's texture resolves first.
+      shell.addChildAt(sprite, 1);
+    }).catch(() => {
+      /* flat base floor stays; nothing else to do */
+    });
+  }
+
   private addBuilding(loc: LocationData): void {
     const { x, y, width, height } = loc.position;
 
     const palette = INTERIOR_PALETTE[loc.type] ?? { floor: DEFAULT_FLOOR, wall: DEFAULT_WALL };
+
+    // The building is drawn as three stacked pieces so the tiled floor surface
+    // can sit between the flat floor colour and the walls/door/windows. A single
+    // Graphics would force the async-loaded texture on top of everything.
+    const shell = new PIXI.Container();
+    const base = new PIXI.Graphics();
     const walls = new PIXI.Graphics();
 
     // ── 0a. Ground-contact apron — worn-earth ring plants the building in the
     // terrain instead of floating on untouched grass (fresh-eyes audit r14) ──
-    walls.rect(x - 5, y - 5, width + 10, height + 10).fill({ color: 0x6b5a3a, alpha: 0.35 });
+    base.rect(x - 5, y - 5, width + 10, height + 10).fill({ color: 0x6b5a3a, alpha: 0.35 });
 
     // ── 0b. Drop shadow — offset rect under building grounds it on the terrain ──
-    walls.rect(x + 4, y + 4, width, height).fill({ color: 0x1a1208, alpha: 0.35 });
+    base.rect(x + 4, y + 4, width, height).fill({ color: 0x1a1208, alpha: 0.35 });
 
     // ── 1. Chimney rects — drawn BEFORE floor so walls overlap base naturally ──
     if (CHIMNEY_TYPES.has(loc.type)) {
-      this.drawChimney(walls, loc.type, x, y, width);
+      this.drawChimney(base, loc.type, x, y, width);
     }
 
-    // ── 2. Floor rect ──────────────────────────────────────────────────────────
-    walls.rect(x, y, width, height).fill({ color: palette.floor, alpha: 1.0 });
+    // ── 2. Floor rect. Doubles as the fallback surface if the tiled floor
+    // texture below fails to load. ────────────────────────────────────────────
+    base.rect(x, y, width, height).fill({ color: palette.floor, alpha: 1.0 });
 
-    // ── 2a. Floor plank lines — faint horizontal courses break the flat color
-    // field so interiors read as built floors, not diagram fills (r24) ──
-    const plankColor = darken(palette.floor, 0.8);
-    for (let py = y + 8; py < y + height - 6; py += 8) {
-      walls.rect(x + 2, py, width - 4, 1).fill({ color: plankColor, alpha: 0.35 });
-    }
+    shell.addChild(base);
+    this.addFloorSurface(shell, loc.type, palette.floor, x, y, width, height);
+    shell.addChild(walls);
 
     // ── 2b. South wall face band — darkened wall-color strip along bottom edge
     // implies vertical height so buildings read as masses, not painted rects
@@ -353,21 +503,13 @@ export class BuildingRenderer {
     // ── 7. Sign plate above door ───────────────────────────────────────────────
     this.drawSign(walls, loc.type, x, y, width, ex);
 
-    // Enable pointer events on building container for hover (task 3)
-    walls.eventMode = 'static';
-    walls.cursor = 'default';
-    walls.on('pointerover', () => {
-      this.hoveredBuildingId = loc.id;
-      this.syncInteriorVisibility();
-    });
-    walls.on('pointerout', () => {
-      if (this.hoveredBuildingId === loc.id) {
-        this.hoveredBuildingId = null;
-        this.syncInteriorVisibility();
-      }
-    });
+    // Hover the whole footprint, not just the drawn wall strokes: `walls` only
+    // fills its trim/door/window rects now that the floor moved to `base`, so
+    // hit-testing it would leave the middle of every building dead.
+    shell.hitArea = new PIXI.Rectangle(x, y, width, height);
+    this.bindHover(shell, loc.id);
 
-    this.buildingLayer.addChild(walls);
+    this.buildingLayer.addChild(shell);
 
     // ── 8. Interior zones ──────────────────────────────────────────────────────
     const interiorContainer = new PIXI.Container();
@@ -464,7 +606,7 @@ export class BuildingRenderer {
     this.buildings.set(loc.id, {
       id: loc.id,
       type: loc.type,
-      wallGraphic: walls,
+      wallGraphic: shell,
       interiorContainer,
       label,
       position: loc.position,
@@ -565,6 +707,7 @@ export class BuildingRenderer {
     // treatment (fresh-eyes audit r30).
     patch.roundRect(x + 2, y + 2, width - 4, height - 4, 4)
       .stroke({ width: 4, color: darken(color, 0.7), alpha: 0.25 });
+    this.bindHover(patch, loc.id);
     this.buildingLayer.addChild(patch);
 
     // Town square landmark: a stone well/fountain at the center gives the
@@ -618,7 +761,9 @@ export class BuildingRenderer {
   }
 
   private destroyEntry(entry: BuildingEntry): void {
-    entry.wallGraphic.destroy();
+    // `children: true` — the shell holds the base Graphics, the tiled floor
+    // sprite and the walls; a bare destroy() would orphan all three.
+    entry.wallGraphic.destroy({ children: true });
     entry.interiorContainer?.destroy({ children: true, style: true });
     entry.label.destroy({ style: true });
   }
