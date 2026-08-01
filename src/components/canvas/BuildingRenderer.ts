@@ -206,6 +206,8 @@ export class BuildingRenderer {
   private tooltipLayer: PIXI.Container;
   private tooltipBg: PIXI.Graphics;
   private tooltipText: PIXI.Text;
+  /** Outline drawn around the hovered building. World-space, so never scaled. */
+  private hoverOutline: PIXI.Graphics;
 
   private buildings: Map<number, BuildingEntry> = new Map();
   /** How many agents each building currently holds, from the last `update()`. */
@@ -237,7 +239,12 @@ export class BuildingRenderer {
     this.tooltipText = new PIXI.Text({ text: '', style: TOOLTIP_STYLE.clone() });
     this.tooltipLayer.addChild(this.tooltipBg, this.tooltipText);
 
+    this.hoverOutline = new PIXI.Graphics();
+    this.hoverOutline.eventMode = 'none';
+    this.hoverOutline.visible = false;
+
     this.container.addChild(this.buildingLayer);
+    this.container.addChild(this.hoverOutline);
     this.container.addChild(this.labelLayer);
     this.container.addChild(this.tooltipLayer);
 
@@ -282,6 +289,23 @@ export class BuildingRenderer {
     this.tooltipLayer.visible = false;
   }
 
+  /**
+   * Warm outline around the hovered building. The interior fade and the card
+   * both take a beat to read; a hard edge on the footprint is the immediate
+   * "yes, this one" feedback that tells you the cursor is actually on something.
+   */
+  private showHoverOutline(id: number): void {
+    const entry = this.buildings.get(id);
+    if (!entry) return;
+    const { x, y, width, height } = entry.position;
+    this.hoverOutline.clear();
+    this.hoverOutline.rect(x - 3, y - 3, width + 6, height + 6)
+      .stroke({ width: 2, color: 0xf0d890, alpha: 0.85 });
+    this.hoverOutline.rect(x - 1, y - 1, width + 2, height + 2)
+      .stroke({ width: 1, color: 0x2a2016, alpha: 0.5 });
+    this.hoverOutline.visible = true;
+  }
+
   /** Wire hover on a building's hit graphic: fade the interior in, show the card. */
   private bindHover(g: PIXI.Container, id: number): void {
     g.eventMode = 'static';
@@ -290,12 +314,14 @@ export class BuildingRenderer {
       this.hoveredBuildingId = id;
       this.syncInteriorVisibility();
       this.showTooltip(id);
+      this.showHoverOutline(id);
     });
     g.on('pointerout', () => {
       if (this.hoveredBuildingId !== id) return;
       this.hoveredBuildingId = null;
       this.syncInteriorVisibility();
       this.hideTooltip();
+      this.hoverOutline.visible = false;
     });
   }
 
@@ -340,6 +366,7 @@ export class BuildingRenderer {
     this.occupiedBuildingIds.clear();
     this.occupantCounts.clear();
     this.hideTooltip();
+    this.hoverOutline.visible = false;
 
     for (const loc of locations) {
       // Main Street's footprint *is* the road, already drawn by TilemapRenderer.
@@ -695,6 +722,114 @@ export class BuildingRenderer {
     }
   }
 
+  /**
+   * Two rows of covered market stalls with a walkway between them. Stall count
+   * follows the square's width, so a small market gets two stalls and a large
+   * one gets a proper row rather than the props stretching to fit.
+   */
+  private drawMarketStalls(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
+    const STALL_W = 26, STALL_H = 18, STEP = 38;
+    const AWNINGS = [0xb04a3a, 0x3a6ab0, 0x4a8a52, 0xb08a3a];
+    const cols = Math.floor((w - 24 + (STEP - STALL_W)) / STEP);
+    if (cols < 1 || h < STALL_H * 2 + 24) return;
+    // Centre the row rather than left-aligning it: an off-centre gap at the
+    // right edge reads as "the props ran out".
+    const startX = x + (w - (cols * STEP - (STEP - STALL_W))) / 2;
+
+    for (const [rowIdx, sy] of [[0, y + 10], [1, y + h - 10 - STALL_H]] as const) {
+      for (let i = 0; i < cols; i++) {
+        const sx = startX + i * STEP;
+        const awning = AWNINGS[(i + rowIdx) % AWNINGS.length];
+
+        g.rect(sx + 2, sy + 2, STALL_W, STALL_H).fill({ color: 0x1a1208, alpha: 0.3 });
+        g.rect(sx, sy + 7, STALL_W, STALL_H - 7).fill({ color: 0x8a6a42 });
+        g.rect(sx, sy + 7, STALL_W, STALL_H - 7).stroke({ width: 1, color: 0x3a2a18, alpha: 0.9 });
+        // Striped awning over the counter.
+        for (let s = 0; s < 4; s++) {
+          g.rect(sx + s * 6.5, sy, 6.5, 7).fill({ color: s % 2 === 0 ? awning : 0xe8ddc0 });
+        }
+        g.rect(sx, sy, STALL_W, 7).stroke({ width: 1, color: 0x3a2a18, alpha: 0.7 });
+        // Goods on the counter.
+        for (let d = 0; d < 3; d++) {
+          g.circle(sx + 6 + d * 7, sy + 12, 2).fill({ color: [0xc8683a, 0x6a9a3a, 0xd0b040][d] });
+        }
+      }
+    }
+  }
+
+  /** Fenced yard furniture: rails, hay bales and a water trough. */
+  private drawFarmyardProps(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
+    // Post-and-rail fence around the perimeter.
+    for (const railY of [y + 5, y + h - 5]) {
+      g.rect(x + 4, railY - 1, w - 8, 2).fill({ color: 0x6a5236, alpha: 0.9 });
+    }
+    for (let px = x + 4; px <= x + w - 8; px += 26) {
+      g.rect(px + 1, y + 3, 3, h - 6).fill({ color: 0x1a1208, alpha: 0.18 });
+      g.rect(px, y + 2, 3, h - 4).fill({ color: 0x7a6242 });
+    }
+
+    // Hay bales stacked in the upper-left, clear of the fence line.
+    for (const [bx, by] of [[x + 14, y + 16], [x + 40, y + 16], [x + 27, y + 34]]) {
+      if (bx + 22 > x + w - 8 || by + 16 > y + h - 8) continue;
+      g.rect(bx + 2, by + 2, 22, 16).fill({ color: 0x1a1208, alpha: 0.28 });
+      g.roundRect(bx, by, 22, 16, 3).fill({ color: 0xc9a94e });
+      g.roundRect(bx, by, 22, 16, 3).stroke({ width: 1, color: 0x8a6f2a, alpha: 0.9 });
+      for (let b = 1; b < 3; b++) {
+        g.rect(bx + b * 7, by + 1, 1, 14).fill({ color: 0x8a6f2a, alpha: 0.6 });
+      }
+    }
+
+    // Water trough on the right.
+    const tx = x + w - 46, ty = y + h - 30;
+    if (tx > x + 8) {
+      g.rect(tx + 2, ty + 2, 32, 13).fill({ color: 0x1a1208, alpha: 0.28 });
+      g.rect(tx, ty, 32, 13).fill({ color: 0x5a4632 });
+      g.rect(tx + 2, ty + 2, 28, 9).fill({ color: 0x4a6a72 });
+      g.rect(tx, ty, 32, 13).stroke({ width: 1, color: 0x2a2016, alpha: 0.9 });
+    }
+  }
+
+  /**
+   * Crates, barrels and refuse pushed against the alley's long walls, so the
+   * middle stays clear — agents path down alleys and props in the lane would
+   * look like they were walking through them.
+   */
+  private drawAlleyProps(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
+    const horizontal = w >= h;
+    const span = horizontal ? w : h;
+    // Deterministic per-alley variation without an rng: the alley's own origin.
+    let seed = ((x * 73856093) ^ (y * 19349663)) >>> 0;
+    const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 0x100000000;
+
+    for (let d = 16; d < span - 16; d += 22) {
+      const nearSide = next() < 0.5;
+      // Offset from the near wall, always inside the 8px margin.
+      const off = nearSide ? 5 : (horizontal ? h : w) - 19;
+      const px = horizontal ? x + d : x + off;
+      const py = horizontal ? y + off : y + d;
+      const roll = next();
+
+      if (roll < 0.45) {
+        g.rect(px + 2, py + 2, 14, 14).fill({ color: 0x1a1208, alpha: 0.3 });
+        g.rect(px, py, 14, 14).fill({ color: 0x7a5c38 });
+        g.rect(px, py, 14, 14).stroke({ width: 1, color: 0x3a2a18, alpha: 0.9 });
+        g.moveTo(px, py).lineTo(px + 14, py + 14).stroke({ width: 1, color: 0x4a3520, alpha: 0.7 });
+        g.moveTo(px + 14, py).lineTo(px, py + 14).stroke({ width: 1, color: 0x4a3520, alpha: 0.7 });
+      } else if (roll < 0.8) {
+        g.ellipse(px + 8, py + 9, 6, 7).fill({ color: 0x1a1208, alpha: 0.3 });
+        g.ellipse(px + 6, py + 7, 6, 7).fill({ color: 0x6a4a2e });
+        g.ellipse(px + 6, py + 7, 6, 7).stroke({ width: 1, color: 0x3a2a18, alpha: 0.9 });
+        for (const hy of [py + 4, py + 10]) {
+          g.moveTo(px + 1, hy).lineTo(px + 11, hy).stroke({ width: 1, color: 0x3a2a18, alpha: 0.6 });
+        }
+      } else {
+        // Refuse — a couple of dark scraps on the ground.
+        g.ellipse(px + 5, py + 7, 5, 3).fill({ color: 0x33291c, alpha: 0.55 });
+        g.ellipse(px + 11, py + 10, 3, 2).fill({ color: 0x33291c, alpha: 0.45 });
+      }
+    }
+  }
+
   private addOpenArea(loc: LocationData): void {
     const { x, y, width, height } = loc.position;
     const color = OPEN_AREA_COLORS[loc.type] ?? 0x888888;
@@ -709,6 +844,18 @@ export class BuildingRenderer {
       .stroke({ width: 4, color: darken(color, 0.7), alpha: 0.25 });
     this.bindHover(patch, loc.id);
     this.buildingLayer.addChild(patch);
+
+    // Derived areas (market square, farmyard, back alley) had nothing but this
+    // tinted rect and a label, so they read as unfinished ground rather than
+    // places. Give each the props that name it.
+    if (loc.type === 'market_square' || loc.type === 'farmyard' || loc.type === 'alley') {
+      const props = new PIXI.Graphics();
+      if (loc.type === 'market_square') this.drawMarketStalls(props, x, y, width, height);
+      else if (loc.type === 'farmyard') this.drawFarmyardProps(props, x, y, width, height);
+      else this.drawAlleyProps(props, x, y, width, height);
+      props.eventMode = 'none';
+      this.buildingLayer.addChild(props);
+    }
 
     // Town square landmark: a stone well/fountain at the center gives the
     // open space a focal point instead of reading as an empty patch.
