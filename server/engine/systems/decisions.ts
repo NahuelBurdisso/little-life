@@ -14,7 +14,9 @@ import {
   worldState,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
-import { findAvailableZone } from '../../lib/interiorGrid';
+import { findAvailableZone, zoneSlotOffset, fallbackInteriorTile } from '../../lib/interiorGrid';
+import { isSeatedZone } from '../../data/interiors';
+import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
@@ -60,6 +62,11 @@ interface ScoredAction {
 
 // Tracks consecutive work skips per agent to detect work_issue pattern
 const workSkipCount = new Map<number, number>();
+
+/** Drop per-agent work-skip counters for a world replace (agent ids are reused). */
+export function clearWorkSkipCounts(): void {
+  workSkipCount.clear();
+}
 
 // --- Helpers ---
 
@@ -144,6 +151,29 @@ function addNoise(score: number): number {
   return score * noise;
 }
 
+/** Crowd size past which a venue is "busy" and extra bodies stop mattering. */
+const GATHERING_SATURATION = 4;
+/** Score added to a saturated venue for an agent of average warmth. */
+const GATHERING_MAX_BONUS = 22;
+
+/**
+ * How much more inviting a social venue looks for already having people in it.
+ *
+ * Venue scores were computed as if the town were empty, so every agent picked
+ * independently and the square never accumulated anyone — it read as abandoned
+ * even at peak hours. The pull also applies to agents already there, which is
+ * what makes a gathering last instead of dissolving on the next decision tick.
+ *
+ * Square-root falloff keeps a packed tavern from outranking everything else,
+ * and the warmth scaling means recluses are nudged, not herded.
+ */
+export function gatheringBonus(occupants: number, warmth: number): number {
+  if (occupants <= 0) return 0;
+  const crowd = Math.min(occupants, GATHERING_SATURATION) / GATHERING_SATURATION;
+  const sociability = 0.4 + (Math.max(0, Math.min(100, warmth)) / 100) * 1.2;
+  return GATHERING_MAX_BONUS * Math.sqrt(crowd) * sociability;
+}
+
 function isEvening(hour: number): boolean {
   return hour >= 17 && hour < 22;
 }
@@ -176,15 +206,20 @@ function checkEmergency(
   if (agentNeeds.energy < critical) crises.push({ need: 'energy', value: agentNeeds.energy });
   if (agentNeeds.social < critical) crises.push({ need: 'social', value: agentNeeds.social });
 
-  if (agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD) {
-    return {
-      action: 'idle',
-      score: 9999,
-      targetLocationId: agent.home,
-    };
+  // Mood is a weighted average of the other needs, so a critical mood almost always
+  // means a critical hunger/energy too. Checking it FIRST sent starving agents home
+  // to idle instead of eating — and the 120-tick idle duration below pinned them
+  // there while hunger kept falling. Real need crises win; despair is the fallback.
+  if (crises.length === 0) {
+    if (agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD) {
+      return {
+        action: 'idle',
+        score: 9999,
+        targetLocationId: agent.home,
+      };
+    }
+    return null;
   }
-
-  if (crises.length === 0) return null;
 
   crises.sort((a, b) => a.value - b.value);
   const worst = crises[0];
@@ -528,6 +563,11 @@ function scoreFreeTimeActions(
     // Favor obligation: agents who owe favors seek out their benefactors
     socScore += getFavorSocialModifier(agent.id, other.id);
 
+    // Clique pull: people spend their free time inside their own circle and
+    // drift away from other circles. This is what turns an evenly warm
+    // friendship graph into visibly separate groups.
+    socScore += cliqueSocialModifier(agent.id, other.id);
+
     // Coworker bonding: agents at same workplace socialize more
     if (agent.workplace && agent.workplace === other.workplace) {
       socScore += 12; // base coworker bonus
@@ -597,11 +637,21 @@ function scoreFreeTimeActions(
     }
   }
 
+  // Who is already where — the raw material for the crowd pull below.
+  const occupancy = new Map<number, number>();
+  for (const other of otherAgents) {
+    if (other.id === agent.id || !other.is_active || other.current_location == null) continue;
+    occupancy.set(other.current_location, (occupancy.get(other.current_location) ?? 0) + 1);
+  }
+  const crowdPull = (locationId: number) =>
+    gatheringBonus(occupancy.get(locationId) ?? 0, personality?.warmth ?? 50);
+
   // Tavern — attraction driven by personality engine
   const tavern = nearestLocation(agent.position, allLocations, 'tavern');
   if (tavern) {
     let tavernScore = (100 - agentNeeds.fun) * 0.8 + (100 - agentNeeds.social) * 0.6;
     tavernScore += mods?.tavernAttraction ?? (evening ? 15 : 0);
+    tavernScore += crowdPull(tavern.id);
     scores.push({ action: 'socializing', score: addNoise(tavernScore), targetLocationId: tavern.id });
   }
 
@@ -617,6 +667,7 @@ function scoreFreeTimeActions(
     let walkScore = 35 + (agentNeeds.fun < 60 ? 10 : 0);
     // Afternoon promenade: agents low on social gravitate to the square
     if (world.time.hour >= 14 && world.time.hour < 17 && agentNeeds.social < 70) walkScore += 15;
+    walkScore += crowdPull(square.id);
     scores.push({ action: 'socializing', score: addNoise(walkScore), targetLocationId: square.id });
   }
 
@@ -1049,6 +1100,26 @@ export function tick(world: WorldRow): void {
     // Skip agents whose current action is still in progress
     if (!isActionComplete(agent, totalTicks)) continue;
 
+    // Jailed agents serve the sentence. This sits above every scoring tier on
+    // purpose — the emergency override scores 9999 and would otherwise send a
+    // starving prisoner walking out of the cell to find food.
+    if (getAgentStates(agent.id).includes('arrested')) {
+      const prisonLoc = allLocations.find(l => l.type === 'prison');
+      if (prisonLoc) {
+        db.update(agents).set({
+          current_action: { type: 'idle' },
+          position: { x: prisonLoc.entry_point.x, y: prisonLoc.entry_point.y },
+          current_destination: null,
+          current_location: prisonLoc.id,
+          action_started: totalTicks,
+          action_duration: 60,
+          action_queue: [],
+          current_path: null,
+        }).where(eq(agents.id, agent.id)).run();
+      }
+      continue;
+    }
+
     // Plan generation: trigger when waking up OR when plan is stale during daytime.
     // The wake-up path catches the normal case; the stale-plan path catches agents
     // who missed a sleep→wake cycle (e.g., sick, depressed, or stuck agents).
@@ -1221,6 +1292,7 @@ export function tick(world: WorldRow): void {
     let zoneTarget: { x: number; y: number } | null = null;
     let matchedZoneId: string | undefined;
     let matchedBuildingType: string | undefined;
+    let seatedZone = false;
     if (decision.targetLocationId) {
       const loc = allLocations.find((l) => l.id === decision!.targetLocationId);
       if (loc) {
@@ -1231,22 +1303,53 @@ export function tick(world: WorldRow): void {
         const destY = loc.entry_point.y;
 
         const locType = loc.type as string;
-        const zone = findAvailableZone(locType, decision!.action, loc.id);
+        // Zone activities ride on `action: 'idle'` with the real intent in `source`
+        // ('fish', 'garden', 'perform', ...). Passing the action alone sent every
+        // activity to whichever zone happened to allow 'idle'.
+        // `agent.id` is passed so the agent is not counted against the capacity of
+        // the zone it is already standing in — otherwise a single-occupant zone
+        // (home:bed) blocks its own occupant on every re-decision.
+        const zone = findAvailableZone(locType, decision!.source ?? decision!.action, loc.id, agent.id);
         if (zone) {
           const locPos = loc.position as { x: number; y: number; width: number; height: number };
+          const slot = zoneSlotOffset(agent.id);
           zoneTarget = {
-            x: locPos.x + zone.center[0] * 32 + 16,
-            y: locPos.y + zone.center[1] * 32 + 16,
+            x: locPos.x + zone.center[0] * 32 + 16 + slot.dx,
+            y: locPos.y + zone.center[1] * 32 + 16 + slot.dy,
           };
           matchedZoneId = zone.id;
           matchedBuildingType = locType;
+          seatedZone = isSeatedZone(locType, zone.id);
+        } else {
+          // No zone matched (plenty of action/building pairs have no mapping —
+          // 'idle' in a shop, 'resting' anywhere). Standing them on a floor tile
+          // keeps them inside; the alternative is the entry_point, which is a
+          // tile outside the south wall, so they'd loiter on the doorstep.
+          const tile = fallbackInteriorTile(locType, agent.id);
+          if (tile) {
+            const locPos = loc.position as { x: number; y: number; width: number; height: number };
+            const slot = zoneSlotOffset(agent.id);
+            zoneTarget = {
+              x: locPos.x + tile[0] * 32 + 16 + slot.dx,
+              y: locPos.y + tile[1] * 32 + 16 + slot.dy,
+            };
+            matchedBuildingType = locType;
+          }
         }
 
-        destination = {
-          x: destX,
-          y: destY,
-          locationId: loc.id,
-        };
+        // Every zone is genuinely full and the agent is already inside: keep them
+        // where they stand. Re-routing to the entry_point would park them in the
+        // doorway for the whole action.
+        const alreadyHere = agent.current_location === loc.id;
+        if (!zone && alreadyHere) {
+          destination = null;
+        } else {
+          destination = {
+            x: destX,
+            y: destY,
+            locationId: loc.id,
+          };
+        }
       }
     }
 
@@ -1265,8 +1368,19 @@ export function tick(world: WorldRow): void {
     // If a zone target exists, embed its coordinates into the queued action so that
     // movement.ts can teleport the agent to the exact zone position on arrival.
     const baseAction = buildAction(decision);
+    // `pose` is a cosmetic hint for the renderer. It rides on the action rather
+    // than being derived client-side because the zone id is stripped from
+    // `current_action` by the time movement.ts finishes the interior hop, and it
+    // survives every one of those rewrites (they all spread the queued action).
     const finalAction = zoneTarget
-      ? { ...baseAction, zoneX: zoneTarget.x, zoneY: zoneTarget.y, targetZone: matchedZoneId, targetBuildingType: matchedBuildingType }
+      ? {
+          ...baseAction,
+          zoneX: zoneTarget.x,
+          zoneY: zoneTarget.y,
+          targetZone: matchedZoneId,
+          targetBuildingType: matchedBuildingType,
+          ...(seatedZone ? { pose: 'sitting' } : {}),
+        }
       : baseAction;
 
     const needsToTravel =
@@ -1691,6 +1805,8 @@ export function tick(world: WorldRow): void {
         if (loc?.type === 'prison') continue;
       }
 
+      if (getAgentStates(other.id).includes('arrested')) continue;
+
       const negFacts = getNegativeFactCount(other.id);
 
       // Check if constable has direct knowledge of crimes by this target (from cached data)
@@ -1713,17 +1829,34 @@ export function tick(world: WorldRow): void {
       const prison = allLocations.find(l => l.type === 'prison');
       if (!prison) continue;
 
-      // Arrest: teleport criminal to prison entrance, then idle for 480 ticks (8 hours)
+      // Sentence length scales with how much dirt the town has on them:
+      // 8h base, +2h per negative fact past the arrest threshold, capped at 2 days.
+      const sentence = Math.min(2880, 480 + (negFacts - arrestThreshold) * 120);
+
+      // Arrest: teleport criminal to prison, then hold them for the sentence.
+      // The `arrested` state is what actually confines them — the guard at the
+      // top of the decision loop keeps re-idling them until it expires.
       db.update(agents).set({
         current_action: { type: 'idle' },
         position: { x: prison.entry_point.x, y: prison.entry_point.y },
         current_destination: null,
         current_location: prison.id,
         action_started: totalTicks,
-        action_duration: 480,
+        action_duration: sentence,
         action_queue: [],
         current_path: null,
       }).where(eq(agents.id, other.id)).run();
+
+      db.insert(agentStates).values({
+        agent_id: other.id,
+        type: 'arrested',
+        severity: Math.min(1, sentence / 2880),
+        started_at: totalTicks,
+        duration: sentence,
+        target_agent_id: agent.id,
+        source: 'arrest',
+        metadata: { prison_id: prison.id, sentence },
+      }).run();
 
       // Log the arrest
       const [ordA, ordB] = [Math.min(agent.id, other.id), Math.max(agent.id, other.id)];
@@ -1746,7 +1879,10 @@ export function tick(world: WorldRow): void {
         type: 'drama',
         initiator: agent.id,
         target: other.id,
-        templateData: { description: `${agent.name} arrested ${other.name}!` },
+        severity: Math.min(1, sentence / 2880),
+        templateData: {
+          description: `${agent.name} arrested ${other.name}! Sentence: ${Math.round(sentence / 60)} hours.`,
+        },
       });
 
       // Create arrest gossip fact

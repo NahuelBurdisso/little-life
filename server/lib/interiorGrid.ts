@@ -111,9 +111,18 @@ export class ZoneOccupancy {
     return set ? Array.from(set) : [];
   }
 
-  isFull(building: string, zone: string, maxOccupants: number): boolean {
+  /**
+   * `excludeAgentId` is what stops an agent from being blocked by itself. A
+   * sleeper already standing in its own `bed` (maxOccupants 1) re-evaluates
+   * `sleeping` every few ticks; without the exclusion the zone reads as full,
+   * the decision engine finds no zone, and routes the agent to the building
+   * entry_point instead — which is why agents ended up sleeping on the doorstep.
+   */
+  isFull(building: string, zone: string, maxOccupants: number, excludeAgentId?: number): boolean {
     const k = this.key(building, zone);
-    const count = this.zones.get(k)?.size ?? 0;
+    const set = this.zones.get(k);
+    if (!set) return maxOccupants <= 0;
+    const count = excludeAgentId !== undefined && set.has(excludeAgentId) ? set.size - 1 : set.size;
     return count >= maxOccupants;
   }
 
@@ -202,6 +211,19 @@ export const ZONE_WAIT_TIMEOUT_TICKS = 20;
  * Fallback zone map: when a primary zone is full, try these alternates.
  * Key format: "buildingType:zoneId"
  */
+/**
+ * Decision-engine action names -> the verb used in `ZoneDef.allowedActions`.
+ * The two vocabularies drifted apart (gerund vs infinitive), which silently made
+ * every `socializing` lookup — and the second sleeper in a home — resolve to no zone.
+ */
+const ACTION_ZONE_ALIASES: Record<string, string> = {
+  socializing: 'socialize',
+  sleeping: 'sleep',
+  eating: 'eat',
+  working: 'work',
+  shopping: 'buy',
+};
+
 const ZONE_FALLBACKS: Record<string, string[]> = {
   'tavern:tables': ['bar'],          // tables full → try bar
   'tavern:booth': ['tables'],        // booth full → try tables
@@ -218,6 +240,7 @@ export function findAvailableZone(
   buildingType: string,
   actionType: string,
   locationId?: number,
+  requesterId?: number,
 ): ZoneDef | null {
   const zones = INTERIOR_ZONES[buildingType] as ZoneDef[] | undefined;
   if (!zones || zones.length === 0) return null;
@@ -234,20 +257,25 @@ export function findAvailableZone(
     if (allowedZoneIds) {
       for (const zoneId of allowedZoneIds) {
         const zone = zones.find(z => z.id === zoneId);
-        if (zone && !zoneOccupancy.isFull(occKey, zone.id, zone.maxOccupants)) {
+        if (zone && !zoneOccupancy.isFull(occKey, zone.id, zone.maxOccupants, requesterId)) {
           return zone;
         }
       }
     }
   }
 
-  // Zones that support the requested action
-  const matching = zones.filter(z => z.allowedActions.includes(actionType));
+  // Zones that support the requested action. Zone data uses infinitive verbs
+  // ('socialize', 'eat', 'sleep', 'work') while the decision engine speaks in
+  // gerunds, so the two vocabularies have to be reconciled or nothing ever matches.
+  const alias = ACTION_ZONE_ALIASES[actionType];
+  const matching = zones.filter(
+    z => z.allowedActions.includes(actionType) || (alias !== undefined && z.allowedActions.includes(alias)),
+  );
   if (matching.length === 0) return null;
 
   // Try primary matches first (prefer non-full zones)
   for (const zone of matching) {
-    if (!zoneOccupancy.isFull(occKey, zone.id, zone.maxOccupants)) {
+    if (!zoneOccupancy.isFull(occKey, zone.id, zone.maxOccupants, requesterId)) {
       return zone;
     }
   }
@@ -261,7 +289,7 @@ export function findAvailableZone(
         const fallbackZone = zones.find(z => z.id === fallbackId);
         if (
           fallbackZone &&
-          !zoneOccupancy.isFull(occKey, fallbackZone.id, fallbackZone.maxOccupants)
+          !zoneOccupancy.isFull(occKey, fallbackZone.id, fallbackZone.maxOccupants, requesterId)
         ) {
           return fallbackZone;
         }
@@ -279,6 +307,50 @@ export function findAvailableZone(
  */
 export function occupancyKey(buildingType: string, locationId?: number | null): string {
   return locationId != null ? `${buildingType}#${locationId}` : buildingType;
+}
+
+/**
+ * Deterministic sub-tile offset from a zone center, so the occupants of a
+ * multi-occupant zone (tavern tables seat 4, the plaza 10) do not all land on
+ * the single pixel that is the zone center and render as one sprite.
+ *
+ * Kept under half a tile: the offset never leaves the zone's own tile, so it
+ * cannot push an agent through a wall or out of the zone it was assigned.
+ */
+export function zoneSlotOffset(agentId: number): { dx: number; dy: number } {
+  const h = Math.imul(agentId, 2654435761) >>> 0;
+  return {
+    dx: ((h % 3) - 1) * 9,
+    dy: ((Math.floor(h / 3) % 3) - 1) * 9,
+  };
+}
+
+/**
+ * A walkable interior tile to stand on when no zone matched the action.
+ *
+ * Without this the decision engine leaves the agent on the building's
+ * `entry_point`, which sits one tile *outside* the south wall — so every action
+ * with no zone mapping ('idle' in a shop, 'resting' anywhere) rendered as an
+ * agent loitering on the doorstep, outside the building they are supposedly in.
+ *
+ * Picks a floor tile (never the door tile itself, so the doorway stays clear),
+ * spread deterministically by agent id so a crowd does not pile onto one tile.
+ * Returns null for open areas, which have no grid and no doorway to block.
+ */
+export function fallbackInteriorTile(
+  buildingType: string,
+  agentId: number,
+): [number, number] | null {
+  const info = getInteriorGrid(buildingType);
+  if (!info) return null;
+  const floors: [number, number][] = [];
+  for (let row = 0; row < info.height; row++) {
+    for (let col = 0; col < info.width; col++) {
+      if (info.raw[row][col] === 0) floors.push([col, row]);
+    }
+  }
+  if (floors.length === 0) return info.doorTile;
+  return floors[(Math.imul(agentId, 2654435761) >>> 0) % floors.length];
 }
 
 /**

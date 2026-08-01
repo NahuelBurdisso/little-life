@@ -3,6 +3,9 @@
 
 const TILE_SIZE = 32;
 
+/** Inset of the drawn zone rect inside its tile footprint, per side. */
+const ZONE_INSET = 4;
+
 function tilesToRelPos(tiles: [number, number][]): { x: number; y: number; width: number; height: number } {
   const xs = tiles.map(t => t[0]);
   const ys = tiles.map(t => t[1]);
@@ -11,10 +14,10 @@ function tilesToRelPos(tiles: [number, number][]): { x: number; y: number; width
   const maxX = Math.max(...xs);
   const maxY = Math.max(...ys);
   return {
-    x: minX * TILE_SIZE + 8,
-    y: minY * TILE_SIZE + 8,
-    width: (maxX - minX + 1) * TILE_SIZE - 16,
-    height: (maxY - minY + 1) * TILE_SIZE - 16,
+    x: minX * TILE_SIZE + ZONE_INSET,
+    y: minY * TILE_SIZE + ZONE_INSET,
+    width: (maxX - minX + 1) * TILE_SIZE - ZONE_INSET * 2,
+    height: (maxY - minY + 1) * TILE_SIZE - ZONE_INSET * 2,
   };
 }
 
@@ -99,8 +102,12 @@ export const INTERIOR_GRIDS: Record<string, number[][]> = {
   town_hall: [
     [1, 1, 1, 1, 1, 1],
     [1, 2, 0, 2, 0, 1],   // [1,1] Mayor's Desk, [3,1] Meeting Table
-    [1, 0, 0, 0, 2, 1],   // [4,2] Filing Cabinet
     [1, 0, 0, 0, 0, 1],
+    // Filing Cabinet, moved from [4,2] to [4,3]. At [4,2] it walled [4,1] in on
+    // all four sides ([3,1] table, [5,1] wall, [4,0] wall, [4,2] cabinet) — the
+    // only unreachable floor tile in any interior, and it is a member of
+    // meeting_table.tiles.
+    [1, 0, 0, 0, 2, 1],
     [1, 1, 1, 3, 1, 1],
   ],
 
@@ -396,12 +403,12 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       name: 'Records',
       label: 'Records',
       tiles: [[3, 2], [4, 2], [3, 3], [4, 3]],
-      center: [3, 2],          // floor tile ✓, Chebyshev 1 from furniture [4,2] ✓
+      center: [3, 2],          // floor tile ✓, Chebyshev 1 from furniture [4,3] ✓
       maxOccupants: 2,
       color: 0x4A6741,
       allowedActions: ['work', 'research'],
       visibility: 0.5,
-      furniture: { label: 'Filing Cabinet', tile: [4, 2] },  // grid value = 2 ✓
+      furniture: { label: 'Filing Cabinet', tile: [4, 3] },  // grid value = 2 ✓
       relativePosition: { x: 88, y: 48, width: 72, height: 48 },
     },
   ],
@@ -654,6 +661,23 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
   ],
 };
 
+// `relativePosition` is render-only, and the literals above were hand-authored
+// independently of `tiles`. The two drifted: in every enclosed building the rects
+// were laid out over the whole footprint while `tiles` skip the wall ring, so an
+// agent standing on a zone tile was drawn *outside* the zone rect (shop:counter
+// was off by a full tile in both axes). Deriving the rect from the tiles makes
+// the drawn zone and the walkable zone the same thing by construction.
+//
+// `center` is folded into the box because several zones ('shop:counter' and
+// friends) list a furniture tile in `tiles` and put their center on the
+// adjacent walkable tile — the rect has to cover the spot the agent stands on,
+// not just the object they stand at.
+for (const zones of Object.values(INTERIOR_ZONES)) {
+  for (const zone of zones) {
+    zone.relativePosition = tilesToRelPos([...zone.tiles, zone.center]);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ACTION_ZONE_REQUIREMENTS
 // Maps action types to required zones per building type.
@@ -678,3 +702,26 @@ export const ACTION_ZONE_REQUIREMENTS: Record<string, Record<string, string[]>> 
   gambling: { tavern: ['tables'], divebar: ['tables'] },
   comfort: { park: ['benches'] },
 };
+
+// ---------------------------------------------------------------------------
+// SEATED_ZONES
+// Zones whose furniture is something you sit on. Purely cosmetic: the client
+// renders a seated pose for agents parked here, which is what separates the
+// tavern regulars slumped at the bar from the ones standing around it.
+// Keys are "buildingType:zoneId" because ids repeat across buildings.
+// ---------------------------------------------------------------------------
+
+const SEATED_ZONES = new Set<string>([
+  'home:living',
+  'tavern:bar', 'tavern:tables', 'tavern:booth',
+  'divebar:bar', 'divebar:tables', 'divebar:booth',
+  'clinic:reception',
+  'town_hall:mayors_desk', 'town_hall:meeting_table', 'town_hall:public_seats',
+  'park:benches',
+  'town_square:seating',
+  'farm:rest_spot',
+]);
+
+export function isSeatedZone(buildingType: string, zoneId: string): boolean {
+  return SEATED_ZONES.has(`${buildingType}:${zoneId}`);
+}

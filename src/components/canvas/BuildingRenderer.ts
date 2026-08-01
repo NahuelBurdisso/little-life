@@ -66,6 +66,33 @@ const DOOR_STYLE: Record<string, { color: number; w: number; h: number }> = {
 // Building types that get a chimney rect (proposal-visual.md §4 chimneys)
 const CHIMNEY_TYPES = new Set(['tavern', 'bakery', 'workshop', 'divebar', 'home']);
 
+/**
+ * World-x of each lit window on a building's south facade, with the ones that
+ * would collide with the door already dropped.
+ *
+ * Exported because LightingSystem has to put its warm night glow on these exact
+ * rects, and the two had drifted apart: the glow used a flat ±20px from the door
+ * while the windows sit at ±0.22×width, which is 15px off on a 160px-wide shop
+ * and 22px off on the 192px tavern — the light pooled between the windows
+ * instead of behind them.
+ */
+export function southWindowXs(loc: {
+  type: string;
+  position: { x: number; y: number; width: number; height: number };
+  entry_point: { x: number; y: number };
+}): number[] {
+  const { x, width, y, height } = loc.position;
+  const doorW = (DOOR_STYLE[loc.type] ?? { w: 12 }).w;
+  const doorOnSouth = Math.abs(loc.entry_point.y - (y + height)) < 6;
+  const xs = width < 70 ? [x + width / 2] : [x + width * 0.28, x + width * 0.72];
+  return xs.filter(
+    (wx) => !doorOnSouth || Math.abs(wx - loc.entry_point.x) >= doorW / 2 + 10,
+  );
+}
+
+/** Distance from the south edge up to the vertical centre of a window rect. */
+export const WINDOW_CENTER_ABOVE_SOUTH_EDGE = 6;
+
 /** Per-channel multiply darken for hex colors (used for south wall face band). */
 function darken(color: number, factor: number): number {
   const r = Math.round(((color >> 16) & 0xff) * factor);
@@ -95,12 +122,15 @@ export interface LocationData {
   current_occupants: number[];
 }
 
-import { OPEN_AREA_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
+import { OUTDOOR_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
 
 const OPEN_AREA_COLORS: Record<string, number> = {
   farm: 0x6b7c3a,
   town_square: 0x8a7a5a,
   park: 0x4a6b3a,
+  market_square: 0x9a8562,
+  farmyard: 0x7a6a42,
+  alley: 0x4a4238,
 };
 
 const LABEL_STYLE = new PIXI.TextStyle({
@@ -146,6 +176,8 @@ export class BuildingRenderer {
 
   // Zone/furniture label visibility state (toggled by zoom level)
   private zoneLabelsVisible = true;
+  /** Last scale handed to `setZoom`, so `init` can restore it on rebuilt labels. */
+  private lastCameraScale = 1;
 
   // Track hover state for zone-rect suppression (task 3)
   private hoveredBuildingId: number | null = null;
@@ -170,6 +202,7 @@ export class BuildingRenderer {
    * Zoomed in: labels shrink (down to 0.45x) instead of dominating.
    */
   setZoom(cameraScale: number): void {
+    this.lastCameraScale = cameraScale;
     const s = Math.min(2, Math.max(0.45, 1 / cameraScale));
     for (const child of this.labelLayer.children) child.scale.set(s);
 
@@ -193,18 +226,34 @@ export class BuildingRenderer {
       this.destroyEntry(entry);
     }
     this.buildings.clear();
-    this.buildingLayer.removeChildren();
-    this.labelLayer.removeChildren();
+    // Destroy, don't just detach: the town-square well graphic is added to the
+    // building layer without a `buildings` entry, so `destroyEntry` never frees
+    // it and a bare `removeChildren` leaks one Graphics per re-init.
+    for (const child of this.buildingLayer.removeChildren()) child.destroy({ children: true, style: true });
+    for (const child of this.labelLayer.removeChildren()) child.destroy({ children: true, style: true });
     this.hoveredBuildingId = null;
     this.occupiedBuildingIds.clear();
 
     for (const loc of locations) {
-      if (OPEN_AREA_TYPES.has(loc.type)) {
+      // Main Street's footprint *is* the road, already drawn by TilemapRenderer.
+      if (loc.type === 'mainstreet') continue;
+      // OUTDOOR_TYPES, not OPEN_AREA_TYPES: the derived locations (alley,
+      // farmyard, market_square) have no template so they were absent from
+      // OPEN_AREA_TYPES and fell through to `addBuilding`, which drew an opaque
+      // roofed rect with walls and a door. Measured over 30 seeds, that covered
+      // 30.5% of all road tiles.
+      if (OUTDOOR_TYPES.has(loc.type)) {
         this.addOpenArea(loc);
       } else {
         this.addBuilding(loc);
       }
     }
+
+    // Labels were just recreated at scale 1 with default visibility. `setZoom`
+    // early-outs on unchanged zone visibility, so without this a re-init after
+    // the user zoomed leaves labels mis-sized until they zoom again.
+    this.zoneLabelsVisible = true;
+    this.setZoom(this.lastCameraScale);
   }
 
   /**
@@ -222,7 +271,7 @@ export class BuildingRenderer {
   }
 
   destroy(): void {
-    this.container.destroy({ children: true });
+    this.container.destroy({ children: true, style: true });
     this.buildings.clear();
   }
 
@@ -291,10 +340,7 @@ export class BuildingRenderer {
     // ── 5b. Windows on the south facade band — warm-lit apertures break the
     // solid wall face so buildings read as inhabited (fresh-eyes audit r21).
     // Skipped where they'd collide with a south-facing door. ──
-    const doorOnSouth = Math.abs(ey - (y + height)) < 6;
-    const windowXs = width < 70 ? [x + width / 2] : [x + width * 0.28, x + width * 0.72];
-    for (const wx of windowXs) {
-      if (doorOnSouth && Math.abs(wx - ex) < doorDef.w / 2 + 10) continue;
+    for (const wx of southWindowXs(loc)) {
       walls.rect(Math.round(wx - 5), y + height - 10, 10, 8).fill({ color: 0x1a1510 });
       walls.rect(Math.round(wx - 4), y + height - 9, 8, 6).fill({ color: 0xd8c07a, alpha: 0.9 });
     }
@@ -338,8 +384,14 @@ export class BuildingRenderer {
       zg.stroke({ color: 0x3a3028, width: 0.5, alpha: 0.5 });
       interiorContainer.addChild(zg);
 
-      // Zone label
-      const zoneLabel = new PIXI.Text({ text: zone.name, style: ZONE_LABEL_STYLE });
+      // Zone label. Wrapped to the zone rect: most zones are a single 32px tile
+      // and names like "Prep Table" render ~60px wide, so unwrapped labels spilled
+      // across their neighbours and the interior read as one smear of text.
+      const zoneStyle = ZONE_LABEL_STYLE.clone();
+      zoneStyle.wordWrap = true;
+      zoneStyle.wordWrapWidth = zone.relativePosition.width;
+      zoneStyle.breakWords = true;
+      const zoneLabel = new PIXI.Text({ text: zone.name, style: zoneStyle });
       zoneLabel.anchor.set(0.5, 0.5);
       zoneLabel.x = zx + zone.relativePosition.width / 2;
       zoneLabel.y = zy + zone.relativePosition.height / 2;
@@ -351,11 +403,19 @@ export class BuildingRenderer {
       if ((zone as any).furniture) {
         const furn = (zone as any).furniture as { label: string; tile: [number, number] };
 
+        // `[-1,-1]` is the "no furniture cell in this interior grid" sentinel
+        // (homes are all-walkable). Rendering it literally placed the sprite and
+        // label one tile above and left of the building's top-left corner —
+        // outside the building. Fall back to the zone center, which is where the
+        // agent using the furniture actually stands.
+        const [ftx, fty] =
+          furn.tile[0] < 0 || furn.tile[1] < 0 ? zone.center : furn.tile;
+
         // Sprite for mapped furniture labels (bed, patient bed) — loaded async.
         const spriteKey = FURNITURE_SPRITE[furn.label];
         if (spriteKey) {
-          const px = x + furn.tile[0] * TILE_SIZE;
-          const py = y + furn.tile[1] * TILE_SIZE;
+          const px = x + ftx * TILE_SIZE;
+          const py = y + fty * TILE_SIZE;
           getFurnitureTexture(spriteKey)
             ?.then((texture) => {
               if (interiorContainer.destroyed) return;
@@ -367,14 +427,26 @@ export class BuildingRenderer {
               interiorContainer.addChild(sprite);
             })
             .catch(() => {
-              // No-op — label stays as-is.
+              // No-op — the zone label still names the area.
             });
+          continue;
         }
 
-        const furnText = new PIXI.Text({ text: furn.label, style: FURNITURE_STYLE });
+        // Text only for furniture with no sprite. Drawing both stacked the label
+        // on top of its own picture, and for single-tile zones the zone name sits
+        // at the same point (shop:counter drew "Counter" twice, pixel-aligned).
+        // 14 of the 30-odd furniture entries repeat their zone's name verbatim
+        // ('Oven', 'Prep Table', 'Forge', ...) — the zone label already says it.
+        if (furn.label === zone.name) continue;
+
+        const furnStyle = FURNITURE_STYLE.clone();
+        furnStyle.wordWrap = true;
+        furnStyle.wordWrapWidth = TILE_SIZE;
+        furnStyle.breakWords = true;
+        const furnText = new PIXI.Text({ text: furn.label, style: furnStyle });
         furnText.anchor.set(0.5, 0.5);
-        furnText.x = x + furn.tile[0] * TILE_SIZE + TILE_SIZE / 2;
-        furnText.y = y + furn.tile[1] * TILE_SIZE + TILE_SIZE / 2;
+        furnText.x = x + ftx * TILE_SIZE + TILE_SIZE / 2;
+        furnText.y = y + fty * TILE_SIZE + TILE_SIZE / 2;
         furnText.alpha = 0.6;
         interiorContainer.addChild(furnText);
       }
@@ -383,7 +455,7 @@ export class BuildingRenderer {
     this.buildingLayer.addChild(interiorContainer);
 
     // Name label centered below the building
-    const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE });
+    const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE.clone() });
     label.anchor.set(0.5, 0);
     label.x = x + width / 2;
     label.y = y + height + 2;
@@ -528,7 +600,7 @@ export class BuildingRenderer {
       this.buildingLayer.addChild(well);
     }
 
-    const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE });
+    const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE.clone() });
     label.anchor.set(0.5, 0.5);
     label.x = x + width / 2;
     label.y = y + height / 2;
@@ -547,7 +619,7 @@ export class BuildingRenderer {
 
   private destroyEntry(entry: BuildingEntry): void {
     entry.wallGraphic.destroy();
-    entry.interiorContainer?.destroy({ children: true });
-    entry.label.destroy();
+    entry.interiorContainer?.destroy({ children: true, style: true });
+    entry.label.destroy({ style: true });
   }
 }

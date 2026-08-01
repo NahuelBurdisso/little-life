@@ -11,7 +11,7 @@ import { simEvents } from '../../lib/simEvents';
 import { getInteriorGrid, zoneOccupancy, occupancyKey, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
 import { INTERIOR_ZONES } from '../../data/interiors';
 import { executeZoneAction } from './zoneActions';
-import { OPEN_AREA_TYPES } from '../../lib/worldgen/buildingTemplates';
+import { ENCLOSED_BUILDING_TYPES } from '../../lib/worldgen/buildingTemplates';
 
 // --- Types ---
 
@@ -32,10 +32,44 @@ const lastRecalcTick = new Map<number, number>();
 // Cached terrain cost map — rebuilt when season changes
 let cachedCostMap: Float32Array | null = null;
 let cachedSeason: string = '';
+/** Bumped by invalidateCostMap(); the cache is only valid for the current value. */
+let costMapGeneration = 0;
+let cachedGeneration = -1;
+
+/** Drop the cached cost map. Must be called whenever the world is replaced. */
+export function invalidateCostMap(): void {
+  cachedCostMap = null;
+  cachedSeason = '';
+  costMapGeneration++;
+}
+
+/**
+ * Drop per-agent movement bookkeeping. Must be called whenever the world is
+ * replaced: agent ids restart at 1 (SQLite reuses rowids after a DELETE) and
+ * `totalTicks` resets to 0, so a stale `lastRecalcTick` of e.g. 5000 makes
+ * `totalTicks - lastRecalc` negative forever and permanently disables
+ * stuck-path recovery for the new agent that inherited the id.
+ */
+export function clearMovementState(): void {
+  lastRecalcTick.clear();
+  stuckTracker.clear();
+}
 
 function getWorldCostMap(world: WorldRow, allLocations: LocationRow[]): Float32Array {
   const season = world.time.season;
-  if (cachedCostMap && cachedSeason === season) return cachedCostMap;
+  // This is called several times per agent per tick, so the cache key has to be
+  // cheaper than the lookup it guards — joining ~50 location ids into a string
+  // was not. A generation counter plus a length check covers the original bug
+  // (a map built for a differently-sized world was read out of range, feeding
+  // `undefined` into the A* cost arithmetic).
+  if (
+    cachedCostMap &&
+    cachedSeason === season &&
+    cachedGeneration === costMapGeneration &&
+    cachedCostMap.length === world.map_width * world.map_height
+  ) {
+    return cachedCostMap;
+  }
 
   const map = new Float32Array(world.map_width * world.map_height).fill(1.0);
   const openAreas = allLocations.filter(l => ['farm', 'park', 'town_square'].includes(l.type));
@@ -48,6 +82,7 @@ function getWorldCostMap(world: WorldRow, allLocations: LocationRow[]): Float32A
   }
   cachedCostMap = map;
   cachedSeason = season;
+  cachedGeneration = costMapGeneration;
   return map;
 }
 
@@ -116,7 +151,12 @@ function getMinDuration(actionType: string): number {
 }
 
 function isClosedBuilding(locType: string): boolean {
-  return !OPEN_AREA_TYPES.has(locType);
+  // Positive membership, not `!OPEN_AREA_TYPES.has(...)`. The derived locations
+  // (mainstreet, alley, farmyard, market_square) are open ground but have no
+  // template, so the negated test called them closed buildings. Every agent
+  // standing on Main Street was then routed via the strip's midpoint first —
+  // 76% of measured routes off that footprint detoured, mean 10 wasted tiles.
+  return ENCLOSED_BUILDING_TYPES.has(locType);
 }
 
 /**
@@ -204,9 +244,12 @@ function handleArrival(
           );
 
           if (interiorPath && interiorPath.length > 0) {
-            // Set the agent walking along the interior path to the zone center
-            // The destination is the last waypoint (zone center in world coords)
-            const finalWp = interiorPath[interiorPath.length - 1];
+            // Set the agent walking along the interior path to the zone.
+            // The A* target is the bare zone center, which every occupant of a
+            // multi-occupant zone shares; `zoneX/zoneY` is that same point plus
+            // the agent's slot offset, so land on it instead of stacking.
+            const finalWp: number[] = [zoneX, zoneY];
+            interiorPath[interiorPath.length - 1] = finalWp;
             // Strip zone metadata from the action — it will be set as the queued action on inner arrival
             const { zoneX: _zx, zoneY: _zy, targetZone: _tz, targetBuildingType: _tb, ...cleanAction } = nextAction as any;
             const interiorAction = {
@@ -263,8 +306,10 @@ function handleArrival(
       // Strip interior metadata from the action
       const { _interiorArrivalZone, _interiorArrivalBuilding, ...cleanAction } = nextAction as any;
       const resolvedAction = cleanAction.type ? cleanAction : { type: 'idle' };
-      // Execute zone-specific effects (need deltas, item production)
-      executeZoneAction(resolvedAction.type, agent.id);
+      // Execute zone-specific effects (need deltas, item production).
+      // Keyed on the zone ACTIVITY ('fish', 'garden', ...), not the action type —
+      // zone activities all ride on `type: 'idle'` with the intent in `zoneActivity`.
+      executeZoneAction(resolvedAction.zoneActivity ?? resolvedAction.type, agent.id);
       db.update(agents)
         .set({
           current_destination: null,
@@ -318,8 +363,9 @@ export function tick(world: WorldRow): void {
         // Transition complete — remove transition metadata
         const { _transitioning, _transitionTicks, _fromX, _fromY, _toX, _toY, ...cleanAction } = action;
         // Execute zone-specific effects on transition completion
-        if (cleanAction.type) {
-          executeZoneAction(cleanAction.type, agent.id);
+        const zoneKey = cleanAction.zoneActivity ?? cleanAction.type;
+        if (zoneKey) {
+          executeZoneAction(zoneKey, agent.id);
         }
         db.update(agents).set({
           position: { x: action._toX, y: action._toY },
@@ -522,7 +568,8 @@ export function tick(world: WorldRow): void {
 
             path = [...exitWorldPath, ...(outerPath ?? [[destPoint.x, destPoint.y]])];
           } else {
-            // No interior grid (e.g. home) — use old behavior: route from door
+            // An enclosed type with no INTERIOR_GRIDS entry — route from the door.
+            // (`home` is no longer an example: it has a 3×3 interior grid now.)
             const doorX = insideBuilding.entry_point.x;
             const doorY = insideBuilding.entry_point.y;
             const costMap = getWorldCostMap(world, allLocations);

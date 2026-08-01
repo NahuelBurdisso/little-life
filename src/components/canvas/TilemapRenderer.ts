@@ -4,7 +4,7 @@ import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getTerrainTexture } from "./textures";
 
-import { OPEN_AREA_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
+import { OPEN_AREA_TYPES, OUTDOOR_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
 
 /** Map zone ids to terrain texture keys. Falls back to colored fill when unmapped. */
 const ZONE_TEXTURE: Record<string, string> = {
@@ -29,9 +29,13 @@ export function activityDotColor(agent: any): number {
   const actionType: string =
     typeof action === 'string' ? action :
     typeof action === 'object' && action !== null ? (action.type ?? '') : '';
+  // The verb-like labels (cook, garden, fish…) live here, not in `type`: the
+  // server's action types are the closed set in server/lib/types.ts.
+  const zoneActivity: string =
+    typeof action === 'object' && action !== null ? (action.zoneActivity ?? '') : '';
 
   // Sleeping/resting states
-  if (actionType === 'sleep' || actionType === 'rest' || actionType === 'nap') {
+  if (actionType === 'sleeping' || zoneActivity === 'rest') {
     return 0x5a7ac8; // blue
   }
   // Conflict/stress — check active states first
@@ -40,16 +44,15 @@ export function activityDotColor(agent: any): number {
   );
   if (
     states.includes('angry') || states.includes('stressed') ||
-    states.includes('conflict') || actionType === 'fight' || actionType === 'argue'
+    states.includes('conflict')
   ) {
     return 0xcc4444; // red
   }
   // Active / working
   if (
-    actionType === 'work' || actionType === 'craft' || actionType === 'farm' ||
-    actionType === 'bake' || actionType === 'serve' || actionType === 'treat' ||
-    actionType === 'guard' || actionType === 'stock' || actionType === 'cook' ||
-    actionType === 'forge' || actionType === 'garden' || actionType === 'fish'
+    actionType === 'working' ||
+    zoneActivity === 'jog' || zoneActivity === 'garden' || zoneActivity === 'fish' ||
+    zoneActivity === 'forage' || zoneActivity === 'perform'
   ) {
     return 0x4a9e6b; // green
   }
@@ -77,6 +80,11 @@ export class TilemapRenderer {
   /** Monotonic generation counter — async texture loads compare against this
    *  to detect "I'm stale because resize() was called again". */
   private bgGeneration = 0;
+  /** Same guard as `bgGeneration`, for the layers with async texture upgrades:
+   *  a redraw while a texture fetch is in flight would otherwise let the stale
+   *  callback add a duplicate tile group to the freshly cleared container. */
+  private zoneGeneration = 0;
+  private roadGeneration = 0;
 
   constructor(_app: PIXI.Application) {
     this.container = new PIXI.Container();
@@ -125,8 +133,10 @@ export class TilemapRenderer {
    * Idempotent — re-running replaces prior patches.
    */
   setOpenAreaZones(locations: any[]): void {
-    for (const child of this.openAreaContainer.children) child.destroy();
-    this.openAreaContainer.removeChildren();
+    // Detach first: `destroy()` splices the child out of `children`, so
+    // iterating the live array skips every second entry and leaks it.
+    for (const child of this.openAreaContainer.removeChildren()) child.destroy();
+    const myGeneration = ++this.zoneGeneration;
 
     if (!Array.isArray(locations)) return;
 
@@ -167,7 +177,11 @@ export class TilemapRenderer {
           const tilesSnapshot = zone.tiles.slice();
           getTerrainTexture(textureKey)
             ?.then((texture) => {
-              if (container.destroyed) return;
+              if (container.destroyed || this.zoneGeneration !== myGeneration) return;
+              // Take the fallback's slot rather than appending: zones drawn
+              // later in the same pass are already above it, and adding to the
+              // top would let this one cover them once the texture resolves.
+              const slot = container.getChildIndex(fallback);
               container.removeChild(fallback);
               fallback.destroy();
               const tileGroup = new PIXI.Container();
@@ -179,7 +193,7 @@ export class TilemapRenderer {
                 sprite.height = TILE_SIZE;
                 tileGroup.addChild(sprite);
               }
-              container.addChild(tileGroup);
+              container.addChildAt(tileGroup, Math.min(slot, container.children.length));
             })
             .catch(() => {
               // Fallback stays.
@@ -204,8 +218,9 @@ export class TilemapRenderer {
    * Idempotent — re-running replaces prior paths.
    */
   setDoorPaths(locations: any[], roadTiles: Array<{ x: number; y: number }>): void {
-    for (const child of this.doorPathContainer.children) child.destroy();
-    this.doorPathContainer.removeChildren();
+    // Detach first: `destroy()` splices the child out of `children`, so
+    // iterating the live array skips every second entry and leaks it.
+    for (const child of this.doorPathContainer.removeChildren()) child.destroy();
     if (!Array.isArray(locations) || !Array.isArray(roadTiles) || roadTiles.length === 0) return;
 
     const g = new PIXI.Graphics();
@@ -214,7 +229,10 @@ export class TilemapRenderer {
     const PATH_ALPHA = 0.5;
 
     for (const loc of locations) {
-      if (OPEN_AREA_TYPES.has(loc.type)) continue;
+      // OUTDOOR_TYPES: the derived locations were drawing a footpath from their
+      // door to the nearest road — including Main Street, which drew a path to
+      // itself.
+      if (OUTDOOR_TYPES.has(loc.type)) continue;
       const pos = loc.position;
       const ep = loc.entry_point;
       if (!pos?.width || !ep) continue;
@@ -260,8 +278,10 @@ export class TilemapRenderer {
    * Idempotent — re-running replaces prior road graphics.
    */
   setRoadTiles(tiles: Array<{ x: number; y: number }>): void {
-    for (const child of this.roadContainer.children) child.destroy();
-    this.roadContainer.removeChildren();
+    // Detach first: `destroy()` splices the child out of `children`, so
+    // iterating the live array skips every second entry and leaks it.
+    for (const child of this.roadContainer.removeChildren()) child.destroy();
+    const myGeneration = ++this.roadGeneration;
 
     if (!Array.isArray(tiles) || tiles.length === 0) return;
 
@@ -313,7 +333,7 @@ export class TilemapRenderer {
     const tilesSnapshot = tiles.slice();
     getTerrainTexture('road')
       ?.then((texture) => {
-        if (container.destroyed) return;
+        if (container.destroyed || this.roadGeneration !== myGeneration) return;
         container.removeChild(fallback);
         fallback.destroy();
         const tileGroup = new PIXI.Container();
@@ -339,8 +359,9 @@ export class TilemapRenderer {
    * Idempotent — re-running replaces prior terrain graphics.
    */
   setTerrainTiles(tiles: Array<{ x: number; y: number; kind: string }>): void {
-    for (const child of this.terrainContainer.children) child.destroy();
-    this.terrainContainer.removeChildren();
+    // Detach first: `destroy()` splices the child out of `children`, so
+    // iterating the live array skips every second entry and leaks it.
+    for (const child of this.terrainContainer.removeChildren()) child.destroy();
 
     if (!Array.isArray(tiles) || tiles.length === 0) return;
 
@@ -372,20 +393,35 @@ export class TilemapRenderer {
   }
 
   updateOccupancy(agents: any[], locations: any[]): void {
-    for (const child of this.occupancyContainer.children) child.destroy();
-    this.occupancyContainer.removeChildren();
+    // Detach first: `destroy()` splices the child out of `children`, so
+    // iterating the live array skips every second entry and leaks it.
+    for (const child of this.occupancyContainer.removeChildren()) child.destroy();
+
+    // Occupancy comes from the live agent list, not `loc.current_occupants`:
+    // `locations.getAll` is fetched once and never invalidated, so that column
+    // is a permanently empty snapshot and these dots never rendered at all.
+    const byLocation = new Map<number, any[]>();
+    for (const agent of agents) {
+      const locId = agent.current_location;
+      if (locId == null) continue;
+      const list = byLocation.get(locId);
+      if (list) list.push(agent);
+      else byLocation.set(locId, [agent]);
+    }
 
     for (const loc of locations) {
-      const occupants = loc.current_occupants ?? [];
+      const occupants = byLocation.get(loc.id) ?? [];
       if (occupants.length === 0) continue;
       const dotCount = Math.min(occupants.length, 5);
       const pos = loc.position ?? { x: 0, y: 0, width: 0, height: 0 };
       const centerX = pos.x + pos.width / 2;
-      const y = pos.y + pos.height + 14;
+      // Clear of the building name label, which BuildingRenderer anchors at
+      // `height + 2` and runs ~10px tall — at +14 the dots clipped its descenders
+      // from behind (the tilemap layer draws under the label layer).
+      const y = pos.y + pos.height + 20;
       const startX = centerX - (dotCount * 6) / 2;
       for (let i = 0; i < dotCount; i++) {
-        const occupantId = occupants[i];
-        const agent = agents.find((a: any) => a.id === occupantId);
+        const agent = occupants[i];
         // Activity-colored dots (proposal-readability.md §3d):
         //   green = active/working, yellow = idle/socializing,
         //   blue = sleeping/resting, red = stressed/conflict
@@ -452,6 +488,22 @@ export class TilemapRenderer {
         });
       }
     }
+    // Impassable perimeter. `generateCollisionGridForLocations` blocks the
+    // outermost tile ring, but nothing drew it, so agents stopped dead at an
+    // invisible wall one tile inside the visible edge. Dark overgrowth band +
+    // an inner shadow so the boundary reads as a treeline rather than lawn.
+    const R = TILE_SIZE;
+    for (const [bx, by, bw, bh] of [
+      [0, 0, this.mapWidth, R],
+      [0, this.mapHeight - R, this.mapWidth, R],
+      [0, 0, R, this.mapHeight],
+      [this.mapWidth - R, 0, R, this.mapHeight],
+    ]) {
+      noise.rect(bx, by, bw, bh).fill({ color: 0x1e3318, alpha: 0.85 });
+    }
+    noise.rect(R, R, this.mapWidth - 2 * R, this.mapHeight - 2 * R)
+      .stroke({ width: 3, color: 0x16260f, alpha: 0.45 });
+
     this.grassNoise = noise;
     this.container.addChildAt(noise, 1);
 

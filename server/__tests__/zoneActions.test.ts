@@ -53,6 +53,22 @@ describe('findAvailableZone', () => {
     expect(zone).toBeNull();
   });
 
+  it('does not count the requesting agent against its own zone', () => {
+    // Agent 1 is already asleep in home #10's bed (maxOccupants 1). Re-deciding
+    // 'sleeping' must return that same bed, not null: returning null made the
+    // decision engine route the agent to the building entry_point, so agents
+    // spent the night lying on their own doorstep.
+    zoneOccupancy.enter(1, occupancyKey('home', 10), 'bed');
+    const zone = findAvailableZone('home', 'sleeping', 10, 1);
+    expect(zone).not.toBeNull();
+    expect(zone!.id).toBe('bed');
+  });
+
+  it('still blocks a different agent from an occupied single-occupant zone', () => {
+    zoneOccupancy.enter(1, occupancyKey('home', 10), 'bed');
+    expect(findAvailableZone('home', 'sleeping', 10, 2)).toBeNull();
+  });
+
   it('tracks occupancy per building instance when a location id is given', () => {
     // Agent 1 sleeps in home #10 — bed bucket for home #10 is full
     zoneOccupancy.enter(1, occupancyKey('home', 10), 'bed');

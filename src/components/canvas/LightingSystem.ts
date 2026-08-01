@@ -1,6 +1,8 @@
 import {
   Application, Container, Graphics, RenderTexture, Sprite,
 } from 'pixi.js';
+import { OUTDOOR_TYPES } from '../../../server/lib/worldgen/buildingTemplates';
+import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,13 @@ interface LocationData {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SCALE = 8;  // Lightmap at 1/8 resolution
+
+// Radial gradient approximation: concentric circles with decreasing alpha.
+// Alphas accumulate additively toward the center, giving a roughly quadratic
+// falloff — the old 3-step version produced visible hard rings where pools met
+// dark ground (fresh-eyes audit r27). Module scope: `render` walks every light
+// every frame, so a literal inside that loop allocated N arrays per frame.
+const RING_ALPHAS = [0.35, 0.25, 0.18, 0.12, 0.07, 0.04];
 
 const PHASE_AMBIENT: Record<string, AmbientProfile> = {
   dawn:      { r: 255, g: 212, b: 160, brightness: 0.65 },
@@ -84,7 +93,10 @@ const BUILDING_LIGHT: Record<string, {
   pawnshop:  { color: 0xFFE8C0, radius: 40, intensity: 0.4, flicker: 0.05, needsOccupants: false, nightOnly: false },
 };
 
-const OPEN_AREA_TYPES = new Set(['farm', 'park', 'town_square', 'mainstreet', 'alley']);
+// Was a hand-maintained local copy that had drifted: it omitted `farmyard` and
+// `market_square`, so those got building lights and window glow despite having
+// no walls. Shared with the generator and the other renderers now.
+const OPEN_AREA_TYPES = OUTDOOR_TYPES;
 
 // ─── Window Glow ─────────────────────────────────────────────────────────────
 // Small warm rects flanking the door on building facades.
@@ -94,10 +106,6 @@ const WINDOW_GLOW_COLOR = 0xFFD9A0;
 const WINDOW_GLOW_RADIUS = 14;
 const WINDOW_GLOW_INTENSITY = 0.35;
 const WINDOW_GLOW_FLICKER = 0.06;
-// Lateral offset from door center to each window light (px in world space)
-const WINDOW_OFFSET_X = 20;
-// Vertical offset above door center
-const WINDOW_OFFSET_Y = 8;
 // Which building types render window glow (all enclosed buildings)
 const WINDOW_GLOW_TYPES = new Set([
   'home', 'shop', 'tavern', 'clinic', 'town_hall',
@@ -179,6 +187,8 @@ export class LightingSystem {
   private streetLights: LightSource[] = [];
   private agentLights: LightSource[] = [];
   private eventLights: LightSource[] = [];
+  /** Scratch buffer for `render`'s combined light list — reused every frame. */
+  private allLights: LightSource[] = [];
 
   // Lightning state
   private lightningTimer = 0;
@@ -247,6 +257,15 @@ export class LightingSystem {
     const hour = world.time?.hour ?? 12;
     this.isNightish = phase === 'night' || phase === 'evening' || phase === 'dawn';
 
+    // `locations.getAll` is fetched once and never invalidated, so
+    // `loc.current_occupants` is a permanently empty snapshot — gating on it
+    // meant homes never lit up and never showed window glow. The agent list is
+    // live, so derive occupancy from it.
+    const occupiedLocations = new Set<number>();
+    for (const a of agents) {
+      if (a.current_location != null) occupiedLocations.add(a.current_location);
+    }
+
     // Ambient transition
     if (phase !== this.lastPhase) {
       this.lastPhase = phase;
@@ -299,7 +318,7 @@ export class LightingSystem {
 
       // Check conditions
       if (def.nightOnly && !this.isNightish) continue;
-      if (def.needsOccupants && (loc.current_occupants?.length ?? 0) === 0) continue;
+      if (def.needsOccupants && !occupiedLocations.has(loc.id)) continue;
 
       // Non-nightOnly lights: gate by operating hours AND require it to be
       // dark enough (evening/dawn/night) to avoid visible blobs at full
@@ -333,7 +352,7 @@ export class LightingSystem {
         // Gate: home requires occupants; all others always glow at night
         const bgDef = BUILDING_LIGHT[loc.type];
         const needsOcc = bgDef?.needsOccupants ?? false;
-        if (needsOcc && (loc.current_occupants?.length ?? 0) === 0) continue;
+        if (needsOcc && !occupiedLocations.has(loc.id)) continue;
 
         // Also respect operating hours for non-residential types that have them
         if (loc.operating_hours && loc.type !== 'home') {
@@ -341,27 +360,21 @@ export class LightingSystem {
           if (hour < open || hour >= close) continue;
         }
 
-        const ex = loc.entry_point.x;
-        const ey = loc.entry_point.y - WINDOW_OFFSET_Y;
+        // Glow sits on the window rects BuildingRenderer actually drew, including
+        // dropping the ones it suppressed for colliding with the door.
+        const ey =
+          loc.position.y + loc.position.height - WINDOW_CENTER_ABOVE_SOUTH_EDGE;
 
-        // Left window
-        this.buildingLights.push({
-          x: ex - WINDOW_OFFSET_X,
-          y: ey,
-          radius: WINDOW_GLOW_RADIUS * weatherMod.radiusMul,
-          color: WINDOW_GLOW_COLOR,
-          intensity: WINDOW_GLOW_INTENSITY,
-          flicker: WINDOW_GLOW_FLICKER * weatherMod.flickerMul,
-        });
-        // Right window
-        this.buildingLights.push({
-          x: ex + WINDOW_OFFSET_X,
-          y: ey,
-          radius: WINDOW_GLOW_RADIUS * weatherMod.radiusMul,
-          color: WINDOW_GLOW_COLOR,
-          intensity: WINDOW_GLOW_INTENSITY,
-          flicker: WINDOW_GLOW_FLICKER * weatherMod.flickerMul,
-        });
+        for (const wx of southWindowXs(loc)) {
+          this.buildingLights.push({
+            x: wx,
+            y: ey,
+            radius: WINDOW_GLOW_RADIUS * weatherMod.radiusMul,
+            color: WINDOW_GLOW_COLOR,
+            intensity: WINDOW_GLOW_INTENSITY,
+            flicker: WINDOW_GLOW_FLICKER * weatherMod.flickerMul,
+          });
+        }
       }
     }
 
@@ -535,12 +548,14 @@ export class LightingSystem {
       lmx + lmr > -pad && lmx - lmr < targetW + pad &&
       lmy + lmr > -pad && lmy - lmr < targetH + pad;
 
-    const allLights = [
-      ...this.buildingLights,
-      ...this.agentLights,
-      ...this.eventLights,
-      ...(this.isNightish ? this.streetLights : []),
-    ];
+    // Refilled in place rather than spread into a fresh array: this runs every
+    // frame and the light lists can be hundreds of entries long.
+    const allLights = this.allLights;
+    allLights.length = 0;
+    for (const l of this.buildingLights) allLights.push(l);
+    for (const l of this.agentLights) allLights.push(l);
+    for (const l of this.eventLights) allLights.push(l);
+    if (this.isNightish) for (const l of this.streetLights) allLights.push(l);
 
     for (const light of allLights) {
       const lx = toLmX(light.x);
@@ -563,11 +578,6 @@ export class LightingSystem {
       const fb = Math.round(cb * intensity);
       const fillColor = rgbToHex(fr, fg, fb);
 
-      // Radial gradient approximation: 6 concentric circles with decreasing
-      // alpha. Alphas accumulate additively toward the center, giving a
-      // roughly quadratic falloff — the old 3-step version produced visible
-      // hard rings where pools met dark ground (fresh-eyes audit r27).
-      const RING_ALPHAS = [0.35, 0.25, 0.18, 0.12, 0.07, 0.04];
       for (let i = 0; i < RING_ALPHAS.length; i++) {
         this.lightGfx.circle(lx, ly, (lr * (i + 1)) / RING_ALPHAS.length)
           .fill({ color: fillColor, alpha: RING_ALPHAS[i] });

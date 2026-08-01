@@ -58,6 +58,46 @@ describe('zone furniture tile validity', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2b. relativePosition (drawn rect) agrees with tiles (where agents stand)
+// ---------------------------------------------------------------------------
+
+describe('zone relativePosition matches zone tiles', () => {
+  it('the drawn rect stays inside the tile footprint and contains the center tile', () => {
+    const TILE = 32;
+    for (const [type, zones] of Object.entries(INTERIOR_ZONES)) {
+      for (const zone of zones) {
+        // `center` counts as part of the footprint: some zones list a furniture
+        // tile in `tiles` and stand the agent on the adjacent walkable tile.
+        const box = [...zone.tiles, zone.center as [number, number]];
+        const xs = box.map(t => t[0]);
+        const ys = box.map(t => t[1]);
+        const bx = Math.min(...xs) * TILE;
+        const by = Math.min(...ys) * TILE;
+        const bw = (Math.max(...xs) - Math.min(...xs) + 1) * TILE;
+        const bh = (Math.max(...ys) - Math.min(...ys) + 1) * TILE;
+        const r = zone.relativePosition;
+
+        expect(r.x >= bx && r.y >= by, `${type}:${zone.id} rect starts outside its tiles`).toBe(true);
+        expect(
+          r.x + r.width <= bx + bw && r.y + r.height <= by + bh,
+          `${type}:${zone.id} rect overflows its tiles`,
+        ).toBe(true);
+
+        // An agent assigned to this zone stands on the center tile's midpoint —
+        // it has to be inside the rect that is drawn to represent the zone.
+        const cx = zone.center[0] * TILE + TILE / 2;
+        const cy = zone.center[1] * TILE + TILE / 2;
+        expect(
+          cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height,
+          `${type}:${zone.id} center (${cx},${cy}) falls outside its drawn rect ` +
+          `(${r.x},${r.y},${r.width}x${r.height})`,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Chebyshev distance(center, furniture.tile) <= 1
 // ---------------------------------------------------------------------------
 
@@ -221,6 +261,16 @@ describe('door reachability', () => {
           seen.has(zone.center.join(',')),
           `${type}:${zone.id} center [${zone.center}] unreachable from door`,
         ).toBe(true);
+        // Every *floor* tile of the zone too, not just the center. Checking only
+        // the center passed while town_hall's [4,1] — a member of
+        // meeting_table.tiles — was sealed in on all four sides by furniture.
+        for (const [c, r] of zone.tiles) {
+          if (grid[r]?.[c] !== 0) continue;   // furniture/wall tiles are meant to be solid
+          expect(
+            seen.has(`${c},${r}`),
+            `${type}:${zone.id} floor tile [${c},${r}] unreachable from door`,
+          ).toBe(true);
+        }
       }
     }
   });
