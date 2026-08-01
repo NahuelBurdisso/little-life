@@ -355,8 +355,15 @@ export class TilemapRenderer {
   }
 
   /**
-   * Draw terrain variety tiles (dirt patches, flowers, tall grass) as colored overlays.
-   * Idempotent — re-running replaces prior terrain graphics.
+   * Draw terrain variety tiles (dirt patches, flowers, tall grass, and the trees,
+   * bushes and rocks derived from them). Idempotent — re-running replaces prior
+   * terrain graphics.
+   *
+   * Trees and bushes are *derived* client-side from the `tall_grass` tiles rather
+   * than being their own worldgen kind, and rocks from `dirt_patch`. Worldgen has
+   * already guaranteed those tiles miss every road, footprint and doorway, so the
+   * props inherit that placement safety — and worlds generated before props
+   * existed grow them without a regenerate.
    */
   setTerrainTiles(tiles: Array<{ x: number; y: number; kind: string }>): void {
     // Detach first: `destroy()` splices the child out of `children`, so
@@ -366,9 +373,14 @@ export class TilemapRenderer {
     if (!Array.isArray(tiles) || tiles.length === 0) return;
 
     const g = new PIXI.Graphics();
-    for (const tile of tiles) {
+    // Painter's order: a prop on a lower row must overlap the one above it, or
+    // the higher tree's canopy sits on top of the nearer tree's trunk.
+    const ordered = [...tiles].sort((a, b) => a.y - b.y || a.x - b.x);
+
+    for (const tile of ordered) {
       const px = tile.x * TILE_SIZE;
       const py = tile.y * TILE_SIZE;
+      const h = (tile.x * 73856093) ^ (tile.y * 19349663);
 
       if (tile.kind === 'flowers') {
         // Small pink dots at tile center for a subtle flower look
@@ -376,20 +388,77 @@ export class TilemapRenderer {
         g.circle(px + TILE_SIZE / 2 - 4, py + TILE_SIZE / 2 - 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
         g.circle(px + TILE_SIZE / 2 + 4, py + TILE_SIZE / 2 + 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
         g.circle(px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 5, 2.5).fill({ color: 0xd98aaa, alpha: 0.3 });
-      } else if (tile.kind === 'tall_grass' || tile.kind === 'dirt_patch') {
-        // Deterministic per-tile jitter: vary patch size and offset so scatter
-        // reads as organic growth instead of a grid of stamped squares
-        // (fresh-eyes audit r26).
-        const h = (tile.x * 73856093) ^ (tile.y * 19349663);
-        const size = TILE_SIZE * (0.6 + ((h >>> 3) % 40) / 100); // 60-100%
-        const ox = ((h >>> 8) % (TILE_SIZE - size + 1));
-        const oy = ((h >>> 13) % (TILE_SIZE - size + 1));
-        const color = tile.kind === 'tall_grass' ? 0x3a5a2a : 0x5a4a2e;
-        const alpha = tile.kind === 'tall_grass' ? 0.3 : 0.4;
-        g.roundRect(px + ox, py + oy, size, size, 4).fill({ color, alpha });
+      } else if (tile.kind === 'tall_grass') {
+        // ~30% of tall grass grows into a tree, ~35% into a bush, rest stays as
+        // the flat blotch — a mix of heights keeps the fields from reading as a
+        // uniform stamp.
+        const roll = (h >>> 3) % 100;
+        if (roll < 42) this.drawTree(g, px, py, h);
+        else if (roll < 82) this.drawBush(g, px, py, h);
+        else this.drawBlotch(g, px, py, h, 0x3a5a2a, 0.3);
+      } else if (tile.kind === 'dirt_patch') {
+        this.drawBlotch(g, px, py, h, 0x5a4a2e, 0.4);
+        // A boulder on some patches gives the bare earth a reason to be bare.
+        if ((h >>> 17) % 100 < 22) this.drawRock(g, px, py, h);
       }
     }
     this.terrainContainer.addChild(g);
+  }
+
+  /**
+   * Flat ground stain, size/offset jittered so scatter reads as organic growth.
+   * Elliptical, not a rounded rect: at 20-32px a radius-4 corner is barely a
+   * corner, so the old version stamped visible squares onto the grass.
+   */
+  private drawBlotch(g: PIXI.Graphics, px: number, py: number, h: number, color: number, alpha: number): void {
+    const size = TILE_SIZE * (0.6 + ((h >>> 3) % 40) / 100); // 60-100%
+    const ox = (h >>> 8) % (TILE_SIZE - size + 1);
+    const oy = (h >>> 13) % (TILE_SIZE - size + 1);
+    g.ellipse(px + ox + size / 2, py + oy + size / 2, size / 2, size * 0.4).fill({ color, alpha });
+  }
+
+  /**
+   * A small deciduous tree, rooted at the bottom of its tile so the canopy leans
+   * up into the tile above. Kept under ~26px tall: taller canopies reach far
+   * enough to clip the south wall of a building on the row above.
+   */
+  private drawTree(g: PIXI.Graphics, px: number, py: number, h: number): void {
+    const cx = px + TILE_SIZE / 2 + (((h >>> 5) % 7) - 3);
+    const rootY = py + TILE_SIZE - 4;
+    const r = 8 + ((h >>> 9) % 3); // canopy radius 8-10
+
+    g.ellipse(cx + 3, rootY + 1, r * 0.9, r * 0.34).fill({ color: 0x1a2412, alpha: 0.3 });
+    g.rect(cx - 2, rootY - 9, 4, 9).fill({ color: 0x4a3520 });
+    // Three overlapping lobes make a fuller silhouette than one circle.
+    g.circle(cx - r * 0.55, rootY - 13, r * 0.75).fill({ color: 0x2c4620 });
+    g.circle(cx + r * 0.55, rootY - 13, r * 0.75).fill({ color: 0x2c4620 });
+    g.circle(cx, rootY - 17, r).fill({ color: 0x35542a });
+    // Sun-hit highlight, up-left to match the drop shadows cast down-right.
+    g.circle(cx - r * 0.35, rootY - 19, r * 0.45).fill({ color: 0x4d7336, alpha: 0.85 });
+  }
+
+  /** Low shrub — two lobes and a contact shadow. */
+  private drawBush(g: PIXI.Graphics, px: number, py: number, h: number): void {
+    const cx = px + TILE_SIZE / 2 + (((h >>> 5) % 9) - 4);
+    const cy = py + TILE_SIZE / 2 + (((h >>> 11) % 9) - 4);
+    const r = 5 + ((h >>> 15) % 3);
+
+    g.ellipse(cx + 2, cy + r * 0.7, r * 1.2, r * 0.4).fill({ color: 0x1a2412, alpha: 0.25 });
+    g.circle(cx - r * 0.5, cy, r * 0.85).fill({ color: 0x2f4a24 });
+    g.circle(cx + r * 0.5, cy, r * 0.85).fill({ color: 0x2f4a24 });
+    g.circle(cx, cy - r * 0.4, r * 0.8).fill({ color: 0x3d6029 });
+    g.circle(cx - r * 0.3, cy - r * 0.6, r * 0.35).fill({ color: 0x51793a, alpha: 0.8 });
+  }
+
+  /** Weathered boulder sitting in a dirt patch. */
+  private drawRock(g: PIXI.Graphics, px: number, py: number, h: number): void {
+    const cx = px + TILE_SIZE / 2 + (((h >>> 21) % 7) - 3);
+    const cy = py + TILE_SIZE / 2 + (((h >>> 25) % 7) - 3);
+    const r = 4 + ((h >>> 19) % 3);
+
+    g.ellipse(cx + 2, cy + r * 0.6, r * 1.1, r * 0.35).fill({ color: 0x1a2412, alpha: 0.25 });
+    g.ellipse(cx, cy, r, r * 0.8).fill({ color: 0x6b6459 });
+    g.ellipse(cx - r * 0.25, cy - r * 0.25, r * 0.5, r * 0.35).fill({ color: 0x8b8377 });
   }
 
   updateOccupancy(agents: any[], locations: any[]): void {
