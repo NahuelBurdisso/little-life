@@ -395,7 +395,11 @@ export function buildAgentSystemPrompt(
     else if (p.warmth && p.warmth > 70) toneHint = ' Be genuine and caring.';
     else if (p.aggression && p.aggression > 60) toneHint = " Don't hold back.";
   }
-  const instruction = `Reply in 1-2 sentences. Natural speech, not prose. You can be rude, evasive, flirty, or dismissive — whatever fits your personality.${toneHint}`;
+  // Spelled out because "natural speech, not prose" alone didn't hold: the model
+  // spent much of its 80-token cap on "(You shift slightly…)" directions, quotes
+  // and emoji, then got cut off mid-sentence. The sanitiser strips what slips
+  // through, but every token spent on a direction is one not spent on speech.
+  const instruction = `Reply in 1-2 sentences. Only the words you say aloud: no actions, no parentheses, no asterisks, no quotes, no emoji. You can be rude, evasive, flirty, or dismissive — whatever fits your personality.${toneHint}`;
 
   const sections = [header, middle, instruction].filter(Boolean);
   return sections.join('\n\n');

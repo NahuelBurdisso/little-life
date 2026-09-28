@@ -31,6 +31,12 @@ export interface OllamaChatRequest {
 
 export interface OllamaChatResponse {
   text: string;
+  /**
+   * The model stopped because it ran out of `num_predict` / `max_tokens`, not
+   * because it finished (Ollama `done_reason: "length"`, OpenAI
+   * `finish_reason: "length"`). Dialogue uses it to drop a half-sentence.
+   */
+  truncated?: boolean;
 }
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
@@ -96,7 +102,7 @@ async function callOllamaBackend(
       throw new Error("Ollama response missing message content");
     }
 
-    return { text: content };
+    return { text: content, truncated: data.done_reason === 'length' };
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
@@ -160,7 +166,7 @@ async function callOpenAIChat(
       throw new Error("OpenAI response missing message content");
     }
 
-    return { text: content };
+    return { text: content, truncated: data.choices?.[0]?.finish_reason === 'length' };
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);

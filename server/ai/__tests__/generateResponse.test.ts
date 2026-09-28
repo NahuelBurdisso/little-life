@@ -85,6 +85,17 @@ describe('generateResponse', () => {
     expect(vi.mocked(addMessage).mock.calls[0][2]).toMatch(FALLBACK_PATTERN);
   });
 
+  it('drops the unfinished sentence of a reply the token cap cut off', async () => {
+    vi.mocked(callOllamaChat).mockResolvedValueOnce({
+      text: 'Every old house has a secret. There is always a story just beneath the surface of',
+      truncated: true,
+    } as never);
+
+    await generateResponse(1, 1);
+
+    expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Every old house has a secret.');
+  });
+
   it('does not call the LLM for a conversation that already ended', async () => {
     vi.mocked(getConversationContext).mockResolvedValue(context('ended'));
 

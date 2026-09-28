@@ -56,10 +56,13 @@ export async function generateResponse(
   // stored or shown: stage directions, quotes, emoji and placeholders stored
   // raw would also be fed back as conversation history and teach the next turn
   // to do the same.
-  const clean = (raw: string) => sanitizeDialogue(raw, {
+  // `truncated` (the token cap stopped the model mid-reply) lets it drop the
+  // half-sentence the cap left behind — 8 of 104 playtest lines ended mid-clause.
+  const clean = (raw: string, truncated?: boolean) => sanitizeDialogue(raw, {
     speakerName: speaker.name,
     listenerName: otherAgent.name,
     townNames: townNames ?? [],
+    truncated,
   });
 
   const hasSituationalPrompt = !!situationalPrompt;
@@ -116,7 +119,7 @@ export async function generateResponse(
         },
       });
       rawText = result.text;
-      responseText = clean(result.text);
+      responseText = clean(result.text, result.truncated);
       // Only autoplay's analyze() drains perf records, so recording while it is
       // disabled just grows an array that is never reset.
       if (CONFIG.AUTOPLAY.ENABLED) {
@@ -196,7 +199,7 @@ export async function generateResponse(
         // "Succeeded" means the retry produced text we actually used. A call
         // that returned but was still too short falls through to the fallback,
         // so booking it as a success overstated the retry's hit rate.
-        const cleaned = nudge.text ? clean(nudge.text) : '';
+        const cleaned = nudge.text ? clean(nudge.text, nudge.truncated) : '';
         if (cleaned.length >= 2) {
           responseText = cleaned;
           nudgeSucceeded = true;
