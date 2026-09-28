@@ -48,25 +48,6 @@ export function weightedRandom<T>(
   return items[items.length - 1].value;
 }
 
-export function groupBy<T>(
-  arr: T[],
-  keyFn: (item: T) => string | null,
-): Map<string | null, T[]> {
-  const map = new Map<string | null, T[]>();
-
-  for (const item of arr) {
-    const key = keyFn(item);
-    const group = map.get(key);
-    if (group) {
-      group.push(item);
-    } else {
-      map.set(key, [item]);
-    }
-  }
-
-  return map;
-}
-
 export function pixelToTile(
   pos: { x: number; y: number },
   tileSize: number,
@@ -74,15 +55,5 @@ export function pixelToTile(
   return {
     x: Math.floor(pos.x / tileSize),
     y: Math.floor(pos.y / tileSize),
-  };
-}
-
-export function tileToPixel(
-  tile: { x: number; y: number },
-  tileSize: number,
-): { x: number; y: number } {
-  return {
-    x: tile.x * tileSize + tileSize / 2,
-    y: tile.y * tileSize + tileSize / 2,
   };
 }

@@ -169,17 +169,6 @@ export function calculateCompatibility(a: PersonalityProfile, b: PersonalityProf
 
 // Decision system scoring modifier helpers
 
-export function warmthMultiplier(warmth: number): number {
-  return 0.7 + (warmth / 100) * 0.6; // 0.7x at 0, 1.3x at 100
-}
-
-export function neuroticismMoodFactor(neuroticism: number, mood: number): number {
-  // High neuroticism amplifies mood's effect on decisions
-  const moodEffect = (50 - mood) / 50; // -1 to 1 (negative when mood > 50)
-  const amplification = 1 + (neuroticism / 100) * Math.abs(moodEffect);
-  return amplification;
-}
-
 export function loyaltyBonus(loyalty: number, targetFriendship: number): number {
   if (loyalty < 50 || targetFriendship < 50) return 0;
   return (loyalty / 100) * (targetFriendship / 100) * 30; // up to +30
@@ -194,49 +183,6 @@ export function curiosityNoveltyBonus(curiosity: number, interactionCount: numbe
   if (curiosity < 50) return 0;
   const novelty = Math.max(0, 20 - interactionCount); // higher for strangers
   return (curiosity / 100) * novelty; // up to +20
-}
-
-// ─── Conversation Context Types ──────────────────────────────────────────────
-
-export interface ConversationContext {
-  isRomantic: boolean;
-  isConflict: boolean;
-  witnessedVice: boolean;
-}
-
-export function generateToneModifiers(
-  personality: PersonalityProfile,
-  context: ConversationContext,
-): string[] {
-  const modifiers: string[] = [];
-
-  if (personality.aggression > 60) {
-    modifiers.push('Be confrontational and direct. Don\'t hold back.');
-  } else if (personality.aggression < 30) {
-    modifiers.push('You avoid direct conflict. Express displeasure passively or through implication.');
-  }
-
-  if (context.isRomantic) {
-    if (personality.sensuality > 60) {
-      modifiers.push('Be openly flirtatious and suggestive. You\'re comfortable with intimacy.');
-    } else if (personality.sensuality < 30) {
-      modifiers.push('Romance makes you uncomfortable. Deflect or change the subject.');
-    }
-  }
-
-  if (personality.honesty > 70) {
-    modifiers.push('You\'re blunt. Say exactly what you think, even if it\'s hurtful.');
-  } else if (personality.honesty < 30) {
-    modifiers.push('You hide your real feelings. Lie if it serves you. Be evasive.');
-  }
-
-  if (context.witnessedVice && personality.morality > 70) {
-    modifiers.push('You judge this behavior harshly. Make your disapproval clear.');
-  } else if (personality.morality < 30) {
-    modifiers.push('You don\'t see anything wrong with bending rules. Morality is flexible.');
-  }
-
-  return modifiers;
 }
 
 // ─── Situational Prompt Types ────────────────────────────────────────────────

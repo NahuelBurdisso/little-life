@@ -92,14 +92,3 @@ export function getFurnitureTexture(key: string): Promise<PIXI.Texture> | null {
   const url = FURNITURE_URLS[key];
   return url ? loadTexture(url) : null;
 }
-
-/** Preload everything. Returns once all textures resolved (or failed). */
-export async function preloadAllWorldTextures(): Promise<void> {
-  const all = [
-    ...Object.values(TERRAIN_URLS),
-    ...Object.values(FLOOR_URLS),
-    ...Object.values(WALL_URLS),
-    ...Object.values(FURNITURE_URLS),
-  ];
-  await Promise.allSettled(all.map(loadTexture));
-}

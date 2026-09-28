@@ -92,15 +92,6 @@ export function getDefaultRules(): Record<string, boolean | number | string> {
   return defaults;
 }
 
-export function getRuleValue(
-  rules: Record<string, any> | undefined,
-  key: string,
-): boolean | number | string {
-  if (rules && key in rules) return rules[key];
-  const param = CONFIG_REGISTRY.find(p => p.key === key);
-  return param?.default ?? '';
-}
-
 export function getCategories(): string[] {
   return [...new Set(CONFIG_REGISTRY.map(p => p.category))];
 }

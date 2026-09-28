@@ -161,13 +161,6 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
 };
 
 /**
- * Return true if a template exists for the given key.
- */
-export function hasTemplate(templateKey: string): boolean {
-  return templateKey in TEMPLATES;
-}
-
-/**
  * Pick a random variant for the given template key and fill it with context.
  * Falls back to joining context values with " — " for unknown keys.
  */
