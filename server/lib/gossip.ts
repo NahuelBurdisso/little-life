@@ -60,8 +60,11 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   gambling_loss: (s, _t, ctx) =>
     ctx?.detail ? `${s} lost ${ctx.detail} gambling at the tavern` :
     `${s} lost big gambling at the tavern`,
+  // `detail` is a predicate ("got into a heated confrontation with Tom") so the
+  // rumor reads as a claim about the subject that gossip lines can splice after
+  // "that". The old "Rumor about X: <detail>" shape was a label, not a claim.
   rumor: (s, _t, ctx) =>
-    ctx?.detail ? `Rumor about ${s}: ${ctx.detail}` :
+    ctx?.detail ? `${s} ${ctx.detail}${ctx.witness ? `, according to ${ctx.witness}` : ''}` :
     `There are rumors going around about ${s}`,
   seduction: (s, t, ctx) =>
     ctx?.detail ? `${s} is manipulating ${t ?? 'someone'} — ${ctx.detail}` :

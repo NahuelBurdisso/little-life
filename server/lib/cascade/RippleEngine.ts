@@ -485,7 +485,8 @@ export class RippleEngine {
             behaviors,
             metadata.victimId ?? null,
             metadata.perpetratorId ?? null,
-            { ruleId: rule.id, chainId, locationId: metadata.locationId },
+            // source + payload: what the witness actually saw, for the rumor text.
+            { ruleId: rule.id, chainId, locationId: metadata.locationId, source: rule.source, payload },
           );
         }
       }
