@@ -22,7 +22,9 @@ const FALLBACK_PATTERN = /smiled and nodded|paused thoughtfully|Hmm, interesting
 function context(status = 'active') {
   return {
     conversation: { id: 1, participants: [1, 2], messages: [], status },
-    speaker: { id: 1, name: 'Rosa' },
+    speaker: { id: 1, name: 'Rosa Delgado' },
+    otherAgent: { id: 2, name: 'Lucia Romano' },
+    townNames: ['Rosa Delgado', 'Lucia Romano', 'Diego Alvarez'],
     memories: [],
   } as never;
 }
@@ -56,6 +58,31 @@ describe('generateResponse', () => {
     await generateResponse(1, 1);
 
     expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('The harvest looks better than last year, honestly.');
+  });
+
+  it('stores the sanitised reply, not the raw model text', async () => {
+    vi.mocked(callOllamaChat).mockResolvedValueOnce({
+      text: '(You glance at the door.) "Oh, Diego, you seem deep in thought today." 😉',
+    } as never);
+
+    await generateResponse(1, 1);
+
+    expect(callOllamaChat).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Oh, Lucia, you seem deep in thought today.');
+  });
+
+  it('treats a reply that was only a stage direction as empty: nudge, then fallback', async () => {
+    vi.mocked(callOllamaChat)
+      .mockResolvedValueOnce({ text: '(Rosa smiles and looks away.)' } as never)
+      .mockResolvedValueOnce({ text: '*shrugs*' } as never);
+
+    await generateResponse(1, 1);
+
+    expect(callOllamaChat).toHaveBeenCalledTimes(2);
+    // The retry shows the model what it actually wrote, not the emptied text.
+    const nudgeMessages = vi.mocked(callOllamaChat).mock.calls[1][0].messages;
+    expect(nudgeMessages.at(-2)).toEqual({ role: 'assistant', content: '(Rosa smiles and looks away.)' });
+    expect(vi.mocked(addMessage).mock.calls[0][2]).toMatch(FALLBACK_PATTERN);
   });
 
   it('does not call the LLM for a conversation that already ended', async () => {

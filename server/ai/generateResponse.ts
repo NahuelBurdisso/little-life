@@ -2,6 +2,7 @@ import { callOllamaChat } from './ollama';
 import { buildConversationPrompt, ConversationPromptParams } from './prompts';
 import { analyzeSentiment } from './sentiment';
 import { extractTopics } from './topics';
+import { sanitizeDialogue } from './sanitizeDialogue';
 import {
   getConversationContext,
   addMessage,
@@ -48,7 +49,18 @@ export async function generateResponse(
     speakerGoals,
     enrichment,
     goalStakes,
+    townNames,
   } = context;
+
+  // Everything the model says passes through the sanitiser before it is judged,
+  // stored or shown: stage directions, quotes, emoji and placeholders stored
+  // raw would also be fed back as conversation history and teach the next turn
+  // to do the same.
+  const clean = (raw: string) => sanitizeDialogue(raw, {
+    speakerName: speaker.name,
+    listenerName: otherAgent.name,
+    townNames: townNames ?? [],
+  });
 
   const hasSituationalPrompt = !!situationalPrompt;
 
@@ -82,6 +94,8 @@ export async function generateResponse(
 
   // 3. Call Ollama with retry
   let responseText: string | null = null;
+  // The model's own words, kept only to show it what was rejected on a retry.
+  let rawText: string | null = null;
   const contextItemCount = memories.length + (gossipFacts?.length ?? 0) + (situationalPrompt ? 1 : 0) + (statePrompts?.length ?? 0);
 
   for (let attempt = 0; attempt < CONFIG.AI.RETRY_ATTEMPTS; attempt++) {
@@ -101,7 +115,8 @@ export async function generateResponse(
           repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
         },
       });
-      responseText = result.text;
+      rawText = result.text;
+      responseText = clean(result.text);
       // Only autoplay's analyze() drains perf records, so recording while it is
       // disabled just grows an array that is never reset.
       if (CONFIG.AUTOPLAY.ENABLED) {
@@ -136,8 +151,10 @@ export async function generateResponse(
     }
   }
 
-  // 3b. Validate response quality
-  if (responseText) {
+  // 3b. Validate response quality. A reply the sanitiser emptied (it was all
+  // stage direction) is judged here like any too-short reply: one nudge retry,
+  // then the canned fallback — the same path an empty model reply ends up on.
+  if (rawText !== null && responseText !== null) {
     const trimmed = responseText.trim();
     const lastMsg = conversation.messages.length > 0
       ? (conversation.messages[conversation.messages.length - 1] as Record<string, any>)?.text as string | undefined
@@ -165,8 +182,8 @@ export async function generateResponse(
           system,
           messages: [
             ...promptMessages,
-            { role: 'assistant' as const, content: trimmed },
-            { role: 'user' as const, content: `Please respond in character as ${speaker.name}. Say something natural in 1-2 sentences.` },
+            { role: 'assistant' as const, content: rawText.trim() },
+            { role: 'user' as const, content: `Please respond in character as ${speaker.name}. Say something natural in 1-2 sentences — only the words you say aloud, no actions or parentheses.` },
           ],
           priority: 'critical',
           options: {
@@ -179,8 +196,9 @@ export async function generateResponse(
         // "Succeeded" means the retry produced text we actually used. A call
         // that returned but was still too short falls through to the fallback,
         // so booking it as a success overstated the retry's hit rate.
-        if (nudge.text && nudge.text.trim().length >= 2) {
-          responseText = nudge.text;
+        const cleaned = nudge.text ? clean(nudge.text) : '';
+        if (cleaned.length >= 2) {
+          responseText = cleaned;
           nudgeSucceeded = true;
         }
       } catch {

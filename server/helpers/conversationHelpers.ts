@@ -205,6 +205,13 @@ export async function getConversationContext(conversationId: number, speakerId: 
     ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality as any)
     : [];
 
+  // Every townsperson's name, so the dialogue sanitiser can spot a reply that
+  // opens by addressing someone who isn't in the conversation. Read per turn
+  // rather than cached: a ~13-row select is cheaper than keeping a per-world
+  // cache honest across world replaces and newcomers. Inactive agents stay in —
+  // greeting the dead by name is just as wrong.
+  const townNames = db.select({ name: agents.name }).from(agents).all().map((a) => a.name);
+
   return {
     conversation,
     speaker,
@@ -222,6 +229,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     speakerGoals,
     enrichment,
     goalStakes,
+    townNames,
   };
 }
 
