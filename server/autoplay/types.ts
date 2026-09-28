@@ -232,12 +232,3 @@ export interface AutoPlayReport {
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-
-export interface AutoPlayConfig {
-  ENABLED: boolean;
-  WINDOW_SIZE: number;
-  BOREDOM_THRESHOLD: number;
-  AUTO_NUDGE: boolean;
-  MAX_NUDGES_PER_DAY: number;
-  HISTORY_WINDOWS: number;
-}

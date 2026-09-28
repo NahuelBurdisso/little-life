@@ -204,9 +204,6 @@ export function reconstructZoneOccupancy(
 // Zone capacity helpers
 // ---------------------------------------------------------------------------
 
-/** How many ticks an agent waits before giving up on a full zone */
-export const ZONE_WAIT_TIMEOUT_TICKS = 20;
-
 /**
  * Fallback zone map: when a primary zone is full, try these alternates.
  * Key format: "buildingType:zoneId"
@@ -351,17 +348,6 @@ export function fallbackInteriorTile(
   }
   if (floors.length === 0) return info.doorTile;
   return floors[(Math.imul(agentId, 2654435761) >>> 0) % floors.length];
-}
-
-/**
- * Convenience wrapper matching the (actionType, buildingType) argument order
- * used in some call sites.
- */
-export function resolveZoneForAction(
-  actionType: string,
-  buildingType: string,
-): ZoneDef | null {
-  return findAvailableZone(buildingType, actionType);
 }
 
 // ---------------------------------------------------------------------------

@@ -24,15 +24,6 @@ export interface Memory {
   parent_ids: number[];
 }
 
-export interface NewMemory {
-  agentId: number;
-  type: MemoryType;
-  description: string;
-  importance: number;
-  emotional_valence: number;
-  metadata?: Record<string, unknown>;
-}
-
 export interface RetrievalResult {
   memory: Memory;
   score: number;

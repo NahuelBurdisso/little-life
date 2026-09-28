@@ -35,9 +35,6 @@ export interface ZoneDef {
   relativePosition: { x: number; y: number; width: number; height: number };
 }
 
-// Backward compat alias — BuildingRenderer still references this type name
-export type BuildingZone = ZoneDef;
-
 // ---------------------------------------------------------------------------
 // INTERIOR_GRIDS
 // 2D arrays: row-major, outer index = row (y), inner index = col (x)

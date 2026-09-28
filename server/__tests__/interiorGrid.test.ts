@@ -151,7 +151,8 @@ describe('getInteriorGrid', () => {
   });
 
   it('door column matches each building entry_point offset', () => {
-    // Derived from server/data/maps.ts entry_point - building.x
+    // Originally derived from the hand-authored map (entry_point - building.x);
+    // pinned here now that worldgen places buildings procedurally.
     const expected: Record<string, number> = {
       shop: 2, tavern: 3, clinic: 2, bakery: 2, workshop: 2, town_hall: 3, prison: 2,
     };

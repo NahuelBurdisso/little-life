@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { findAvailableZone, resolveZoneForAction, zoneOccupancy, occupancyKey } from '../lib/interiorGrid';
+import { findAvailableZone, zoneOccupancy, occupancyKey } from '../lib/interiorGrid';
 
 describe('findAvailableZone', () => {
   beforeEach(() => {
@@ -88,17 +88,5 @@ describe('findAvailableZone', () => {
     const zone = findAvailableZone('shop', 'browse');
     expect(zone).not.toBeNull();
     expect(zone!.id).toBe('display');
-  });
-});
-
-describe('resolveZoneForAction', () => {
-  beforeEach(() => {
-    zoneOccupancy.clear();
-  });
-
-  it('delegates to findAvailableZone', () => {
-    const zone = resolveZoneForAction('sleep', 'home');
-    expect(zone).not.toBeNull();
-    expect(zone!.id).toBe('bed');
   });
 });
