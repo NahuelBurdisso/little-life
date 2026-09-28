@@ -236,6 +236,31 @@ describe('social home placement through initialize', () => {
     expect(dbHomes()).toEqual(homesOf(base.locations));
   });
 
+  /**
+   * The preview runs on every wizard edit, so a field placement doesn't read
+   * (an over-long bio) must not fail it, and one it does need (a blank name)
+   * degrades to a homes-only preview instead of a Zod error on World Layout.
+   */
+  it('previewWorld tolerates invalid agent fields', async () => {
+    const { seed, base, placed } = await relabellingSeed();
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const input = (agents: unknown[]) => ({
+      ...cfg(seed),
+      agentCount: MINIMAL_AGENTS.length,
+      agents: agents as any,
+      relationships: [...RIVALS, { agentAName: '', junk: true }],
+    });
+
+    const longBio = MINIMAL_AGENTS.map((a, i) => (i === 2 ? { ...a, bio: 'x'.repeat(600) } : a));
+    const soc = await caller.previewWorld(input(longBio));
+    expect(homesOf(soc.locations)).toEqual(homesOf(placed.locations));
+
+    const blankName = MINIMAL_AGENTS.map((a, i) => (i === 2 ? { ...a, name: '' } : a));
+    const fallback = await caller.previewWorld(input(blankName));
+    expect(homesOf(fallback.locations)).toEqual(homesOf(base.locations));
+  });
+
   it('seeds the rivals into the placed homes', async () => {
     const { seed, placed } = await relabellingSeed();
 
