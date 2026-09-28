@@ -32,6 +32,18 @@ import { acquireEmbeddingSlot, type LLMPriority } from '../../ai/llmSemaphore';
 const READ_PRIORITY: LLMPriority = 'normal';
 const WRITE_PRIORITY: LLMPriority = 'low';
 
+/**
+ * How long to stop trying `/api/embed` after it answered "no such endpoint".
+ * Not forever: Ollama also answers 404 for an unknown or not-yet-pulled model,
+ * and the server may be upgraded under a running game.
+ */
+export const BATCH_ENDPOINT_RETRY_MS = 10 * 60_000;
+
+/** Statuses meaning the batch endpoint itself is missing, not a passing failure. */
+const ENDPOINT_MISSING_STATUSES = new Set([404, 405, 501]);
+
+class EndpointMissingError extends Error {}
+
 interface WriteQueueEntry {
   text: string;
   resolve: (vec: Float32Array) => void;
@@ -44,7 +56,8 @@ export class EmbeddingBatcher implements EmbeddingProvider {
   private inFlight: Map<string, Promise<Float32Array>> = new Map();
   private writeQueue: WriteQueueEntry[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  private batchSupported: boolean | null = null;
+  /** `/api/embed` is skipped until this time (ms); 0 = try it. */
+  private batchEndpointSkipUntil = 0;
 
   constructor(baseUrl: string = OLLAMA_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -148,22 +161,26 @@ export class EmbeddingBatcher implements EmbeddingProvider {
     }
   }
 
-  /** Try batch endpoint first; fall back to sequential directEmbed calls */
+  /**
+   * Try the batch endpoint first; fall back to sequential directEmbed calls
+   * only when the server says it has no such endpoint.
+   *
+   * The first failure of any kind used to disable `/api/embed` for the life of
+   * the process, so one timeout at startup (Ollama still loading the model)
+   * put every later batch on the one-request-per-text path. A timeout or
+   * network error now just fails this batch — the fallback would hit the same
+   * sick server N times over, each with its own timeout, inside one slot.
+   */
   private async batchEmbed(texts: string[]): Promise<Float32Array[]> {
-    if (this.batchSupported !== false) {
+    if (Date.now() >= this.batchEndpointSkipUntil) {
       try {
-        const result = await this.tryBatchEndpoint(texts);
-        this.batchSupported = true;
-        return result;
+        return await this.tryBatchEndpoint(texts);
       } catch (err) {
-        if (this.batchSupported === null) {
-          // First attempt failed — mark as unsupported and fall through
-          console.warn('[EmbeddingBatcher] /api/embed not available, falling back to sequential');
-          this.batchSupported = false;
-        } else {
-          // Was previously working, surface the error
-          throw err;
-        }
+        if (!(err instanceof EndpointMissingError)) throw err;
+        console.warn(
+          `[EmbeddingBatcher] ${err.message}; falling back to sequential for ${BATCH_ENDPOINT_RETRY_MS / 60_000} min`,
+        );
+        this.batchEndpointSkipUntil = Date.now() + BATCH_ENDPOINT_RETRY_MS;
       }
     }
 
@@ -205,7 +222,8 @@ export class EmbeddingBatcher implements EmbeddingProvider {
     }
 
     if (!res.ok) {
-      throw new Error(`/api/embed responded ${res.status}`);
+      const message = `/api/embed responded ${res.status}`;
+      throw ENDPOINT_MISSING_STATUSES.has(res.status) ? new EndpointMissingError(message) : new Error(message);
     }
 
     const data = (await res.json()) as { embeddings?: number[][] };

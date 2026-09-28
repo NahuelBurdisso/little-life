@@ -16,7 +16,7 @@ vi.mock('../../../ai/llmSemaphore', () => ({
   acquireLLMSlot: (priority: string) => acquireLLMSlot(priority),
 }));
 
-import { EmbeddingBatcher } from '../EmbeddingBatcher';
+import { EmbeddingBatcher, BATCH_ENDPOINT_RETRY_MS } from '../EmbeddingBatcher';
 
 const fetchMock = vi.fn();
 
@@ -83,19 +83,52 @@ describe('EmbeddingBatcher and the embedding pool', () => {
   });
 
   it('releases the slot when a write batch fails', async () => {
-    const batcher = new EmbeddingBatcher('http://embed.test');
-    // First batch succeeds so the batch endpoint is known to work; the second
-    // one's failure then surfaces instead of falling back.
-    fetchMock.mockResolvedValueOnce(jsonResponse({ embeddings: [[1]] }));
-    await batcher.embedForWrite(['ok']);
-    release.mockClear();
-
     fetchMock.mockRejectedValueOnce(new Error('socket hang up'));
-    const vecs = await batcher.embedForWrite(['a', 'b']);
+
+    const vecs = await new EmbeddingBatcher('http://embed.test').embedForWrite(['a', 'b']);
 
     expect(vecs).toHaveLength(2);
     expect(vecs.every((v) => v.every((x) => x === 0))).toBe(true);
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps using the batch endpoint after a network error', async () => {
+    // One startup timeout used to disable /api/embed for the whole process.
+    const batcher = new EmbeddingBatcher('http://embed.test');
+    fetchMock.mockRejectedValueOnce(new Error('The operation was aborted'));
+    await batcher.embedForWrite(['a']);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ embeddings: [[7]] }));
+    const [vec] = await batcher.embedForWrite(['b']);
+
+    expect(vec[0]).toBe(7);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'http://embed.test/api/embed',
+      'http://embed.test/api/embed',
+    ]);
+  });
+
+  it('skips a missing batch endpoint for a while, then tries it again', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const urls = () => fetchMock.mock.calls.map(([url]) => String(url).replace('http://embed.test', ''));
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/api/embed')
+        ? jsonResponse({}, 404)
+        : jsonResponse({ embedding: [1] }),
+    );
+    const batcher = new EmbeddingBatcher('http://embed.test');
+
+    await batcher.embedForWrite(['a']);
+    expect(urls()).toEqual(['/api/embed', '/api/embeddings']);
+
+    fetchMock.mockClear();
+    await batcher.embedForWrite(['b']);
+    expect(urls()).toEqual(['/api/embeddings']); // still inside the skip window
+
+    fetchMock.mockClear();
+    now.mockReturnValue(1_000_000 + BATCH_ENDPOINT_RETRY_MS);
+    await batcher.embedForWrite(['c']);
+    expect(urls()[0]).toBe('/api/embed'); // retried
   });
 
   it('runs the sequential fallback one request at a time inside that single slot', async () => {
