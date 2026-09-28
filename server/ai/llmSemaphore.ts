@@ -23,9 +23,14 @@ const PRIORITY_ORDER: Record<LLMPriority, number> = {
   low: 2,       // goal reviews, pivots, self-descriptions, embeddings
 };
 
-const MAX_CONCURRENT = 6; // Tuned for Ollama on RTX 3090 with NUM_PARALLEL=1
-                          // Higher than 1 because Ollama still queues internally,
-                          // and we want the HTTP pipeline filled (not idle between calls).
+// Empirically tuned for an RTX 3090 24GB: deep enough to keep Ollama's internal
+// batching fed without pushing per-request latency past the conversation timeout.
+//
+// This deliberately does NOT assume any particular OLLAMA_NUM_PARALLEL — nothing
+// in this repo sets it, so whatever the server was started with applies. If you
+// run Ollama with a low NUM_PARALLEL, requests above it simply queue inside
+// Ollama instead of here; this limit only bounds how many we hand it at once.
+const MAX_CONCURRENT = 8;
 
 let active = 0;
 const waiting: QueueEntry[] = [];
@@ -71,10 +76,20 @@ function releaseSlot(): void {
 export async function acquireLLMSlot(priority: LLMPriority = 'normal'): Promise<() => void> {
   totalAcquired++;
 
+  // One-shot release: a double call (e.g. a `finally` plus an explicit release
+  // on an error path) used to decrement `active` twice and permanently
+  // over-subscribe the pool, since nothing ever raises it back.
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    releaseSlot();
+  };
+
   if (active < MAX_CONCURRENT) {
     active++;
     if (active > peakActive) peakActive = active;
-    return releaseSlot;
+    return release;
   }
 
   // Wait for a slot
@@ -84,7 +99,7 @@ export async function acquireLLMSlot(priority: LLMPriority = 'normal'): Promise<
     if (waiting.length > peakQueue) peakQueue = waiting.length;
   });
 
-  return releaseSlot;
+  return release;
 }
 
 /** Non-blocking stats snapshot for diagnostics / activity log */
@@ -102,12 +117,4 @@ export function getLLMStats() {
       low: waiting.filter(w => w.priority === 'low').length,
     },
   };
-}
-
-/** Reset stats (useful for testing) */
-export function resetLLMStats(): void {
-  totalAcquired = 0;
-  totalWaited = 0;
-  peakActive = 0;
-  peakQueue = 0;
 }

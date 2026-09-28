@@ -1,3 +1,5 @@
+import { CONFIG } from '../constants';
+
 export const DECAY_RATE = 0.995;
 export const SCORE_WEIGHTS = { recency: 1, importance: 1, relevance: 1 };
 export const CACHE_CAPACITY_PER_AGENT = 1000;
@@ -22,5 +24,5 @@ export const TYPE_PRIORITY: Record<string, number> = {
   experience: 1,
   opinion: 1,
 };
-export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
-export const OLLAMA_EMBED_MODEL = 'mxbai-embed-large';
+export const OLLAMA_BASE_URL = CONFIG.AI.EMBED_BASE_URL;
+export const OLLAMA_EMBED_MODEL = CONFIG.AI.EMBEDDING_MODEL;

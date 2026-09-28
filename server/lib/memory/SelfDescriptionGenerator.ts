@@ -71,7 +71,7 @@ Write a 2-3 sentence summary of how ${agent.name} currently sees themselves — 
 
     try {
       const response = await callOllamaChat({
-        model: CONFIG.AI.CHAT_MODEL,
+        model: CONFIG.AI.LIGHT_MODEL,
         system,
         messages: [{ role: 'user', content: `Summarize ${agent.name}'s current self-concept.` }],
         priority: 'low',

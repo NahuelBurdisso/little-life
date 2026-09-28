@@ -2,6 +2,6 @@ import { callOllamaEmbedding } from './ollama';
 import { writeEmbedding } from '../helpers/embeddingHelpers';
 
 export async function generateEmbeddingForMemory(memoryId: number, text: string): Promise<void> {
-  const result = await callOllamaEmbedding(text, process.env.OLLAMA_BASE_URL);
+  const result = await callOllamaEmbedding(text);
   writeEmbedding(memoryId, Float32Array.from(result));
 }
