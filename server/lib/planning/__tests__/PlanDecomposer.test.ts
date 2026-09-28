@@ -3,9 +3,11 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 vi.mock('../../../ai/ollama', () => ({ callOllamaChat: vi.fn() }));
 vi.mock('../../activityLogger', () => ({ logActivity: vi.fn(), pruneActivityLog: vi.fn() }));
 
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../../../db';
 import { agents, locations } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
+import { logActivity } from '../../activityLogger';
 import {
   PlanLLMGate,
   PLAN_OUTAGE_THRESHOLD,
@@ -236,31 +238,98 @@ describe('plan execution when block decomposition fails', () => {
 // Timing of actions that arrive late
 // ---------------------------------------------------------------------------
 
+/** Set the day-1 clock to `m` minutes after midnight. */
+function clockAt(m: number) {
+  hour = Math.floor(m / 60);
+  minute = m % 60;
+}
+
+const oneHourAction = () =>
+  vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: `Bake loaves | ${bakery} | 60 minutes` }) as never);
+
 describe('plan execution when actions arrive after a delay', () => {
   it('starts the first action when the actions arrive, not when the block activated', async () => {
     const { queue, act } = setup();
-    // Activation at tick 600; the first decomposition attempt fails.
+    // Activation at 10:00; the first decomposition attempt fails.
+    clockAt(600);
     fail();
     act(600);
     await settled(queue);
 
     // 45 game minutes later the backoff is over and the retry succeeds with a
     // single 60-minute action.
-    minute = 45;
+    clockAt(645);
     wall += 3600_000;
-    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: `Bake loaves | ${bakery} | 60 minutes` }) as never);
+    oneHourAction();
     act(645);
     await settled(queue);
 
     // First pass with actions, another 30 minutes on. Stamped at activation,
     // the 60-minute action would count 105 minutes elapsed here and the block
     // would complete on the spot.
-    minute = 15;
-    hour = 11;
-    const first = act(675);
-    expect(first).toMatchObject({ action: expect.any(String), source: 'plan:decomposed' });
+    clockAt(675);
+    expect(act(675)).toMatchObject({ source: 'plan:decomposed' });
+    clockAt(734);
     expect(act(734)).toMatchObject({ source: 'plan:decomposed' }); // 59 min in: still going
+    clockAt(735);
     expect(act(735)).toBeNull(); // 60 min in: done, block completed
+  });
+});
+
+describe('plan action timing at tick_speed 4', () => {
+  it('measures action durations in game minutes, not ticks', async () => {
+    const { queue, act } = setup();
+    // At speed 4 every tick moves the clock 4 game minutes. Tick t ↔ 10:00 + 4(t - 150).
+    const pass = (t: number) => {
+      clockAt(600 + 4 * (t - 150));
+      return act(t);
+    };
+
+    oneHourAction();
+    pass(150); // activation, decomposition out
+    await settled(queue);
+
+    expect(pass(150)).toMatchObject({ source: 'plan:decomposed' }); // 10:00, action starts
+    expect(pass(164)).toMatchObject({ source: 'plan:decomposed' }); // 10:56: 14 ticks, 56 min
+    // 11:00: only 15 ticks have passed, but it is 60 game minutes. Counting
+    // ticks, the action would run until tick 210 — 14:00 on the town clock.
+    expect(pass(165)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bugs in our own code before the call
+// ---------------------------------------------------------------------------
+
+describe('decomposition when a DB lookup throws', () => {
+  it('backs off and reports once instead of retrying every pass', async () => {
+    const { queue, gate, act } = setup();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logActivity).mockClear();
+    // A corrupt JSON column: drizzle's JSON.parse throws while reading the agent row.
+    db.run(sql`UPDATE agents SET traits = 'not json' WHERE id = ${agentId}`);
+    try {
+      act();
+      await settled(queue);
+
+      expect(callOllamaChat).not.toHaveBeenCalled();
+      expect(backingOff(gate, agentId)).toBe(true);
+      expect(errorSpy).toHaveBeenCalled();
+
+      // Later passes inside the backoff don't queue the doomed job again.
+      for (let m = 1; m < PLAN_RETRY_BACKOFF_MINUTES[0]; m += 5) {
+        minute = m;
+        expect(act()).toBeNull();
+        expect(queue.isPending(agentId, 'decompose:block_0')).toBe(false);
+      }
+      const reported = vi.mocked(logActivity).mock.calls.filter(([p]) => p.type === 'error');
+      expect(reported).toHaveLength(1);
+      // Our bug, not an outage: another agent is still admitted.
+      const other = gate.tryAcquire(agentId + 1000, gameMinuteOf({ day: 1, hour, minute }));
+      expect(other).not.toBeNull();
+    } finally {
+      db.update(agents).set({ traits: ['kind'] }).where(eq(agents.id, agentId)).run();
+    }
   });
 });
 
