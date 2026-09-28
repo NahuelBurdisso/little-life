@@ -8,7 +8,6 @@ import {
   conversations,
   conversationQueue,
   worldState,
-  worldEvents,
   economyTransactions,
 } from '../db/schema';
 import { logActivity } from '../lib/activityLogger';
@@ -17,49 +16,10 @@ import { emitter } from '../engine/emitter';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
 import { zoneOccupancy } from '../lib/interiorGrid';
+import { startWorldEvent } from '../engine/systems/events';
+import { isWorldEventType } from '../data/worldEventCatalog';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
-
-const EVENT_DEFS: Record<
-  string,
-  {
-    name: string;
-    description: string;
-    duration: number;
-    effects: Record<string, number>;
-  }
-> = {
-  festival: {
-    name: 'Town Festival',
-    description: 'Everyone gathers in the square for food and music!',
-    duration: 4,
-    effects: { social_boost: 20, fun_boost: 15, shop_prices: 0.7 },
-  },
-  market_day: {
-    name: 'Market Day',
-    description: 'Special prices at all shops today.',
-    duration: 8,
-    effects: { shop_prices: 0.5 },
-  },
-  storm: {
-    name: 'Heavy Storm',
-    description: 'A fierce storm rolls in. Best to stay indoors.',
-    duration: 3,
-    effects: { mood_outdoor: -15, force_indoors: 1 },
-  },
-  sickness: {
-    name: 'Flu Outbreak',
-    description: 'A cold is spreading. Energy drains faster.',
-    duration: 24,
-    effects: { energy_drain: 1.5, doctor_demand: 2 },
-  },
-  harvest: {
-    name: 'Harvest Bounty',
-    description: 'The farm is overflowing! Food prices drop.',
-    duration: 12,
-    effects: { farm_production: 2.0, food_prices: 0.6 },
-  },
-};
 
 function getActionType(currentAction: Record<string, any> | null): string | null {
   if (!currentAction) return null;
@@ -256,51 +216,11 @@ export const nudgeRouter = router({
         // ─── trigger_event ─────────────────────────────────────────────────
         case 'trigger_event': {
           const { eventType } = action;
-          const eventDef = EVENT_DEFS[eventType];
-          if (!eventDef) {
+          if (!isWorldEventType(eventType)) {
             return { success: false, reason: `Unknown event type: ${eventType}` };
           }
-
-          const activeEvents = db
-            .select()
-            .from(worldEvents)
-            .where(eq(worldEvents.is_active, true))
-            .all();
-
-          if (activeEvents.some((e) => e.type === eventType)) {
-            return {
-              success: false,
-              reason: `A "${eventDef.name}" event is already active`,
-            };
-          }
-
-          if (activeEvents.length >= CONFIG.EVENTS.MAX_CONCURRENT_EVENTS) {
-            return {
-              success: false,
-              reason: `Maximum concurrent events reached (${CONFIG.EVENTS.MAX_CONCURRENT_EVENTS})`,
-            };
-          }
-
-          db.insert(worldEvents)
-            .values({
-              type: eventType,
-              name: eventDef.name,
-              description: eventDef.description,
-              started_at: now,
-              duration: eventDef.duration,
-              effects: eventDef.effects,
-              location_id: null,
-              triggered_by: 'player',
-              is_active: true,
-            })
-            .run();
-
-          logActivity({
-            type: 'player_event',
-            templateData: { description: `Player triggered: ${eventDef.name}` },
-          });
-
-          emitter.markDirty('world.state');
+          const result = startWorldEvent(eventType, { triggeredBy: 'player' });
+          if (!result.ok) return { success: false, reason: result.reason };
           emitter.flush();
           return { success: true };
         }
@@ -555,19 +475,13 @@ export const nudgeRouter = router({
             .run();
 
           // Trigger new_arrival world event
-          db.insert(worldEvents)
-            .values({
-              type: 'new_arrival',
-              name: 'New Arrival',
-              description: `${name} has moved to town!`,
-              started_at: now,
-              duration: 1,
-              effects: {},
-              location_id: availableHome.id,
-              triggered_by: 'player',
-              is_active: true,
-            })
-            .run();
+          startWorldEvent('new_arrival', {
+            triggeredBy: 'player',
+            description: `${name} has moved to town!`,
+            locationId: availableHome.id,
+            enforceLimits: false,
+            announce: false, // player_introduce below is the feed entry
+          });
 
           logActivity({
             type: 'player_introduce',

@@ -346,9 +346,7 @@ export function needsTick(): void {
     if (eventEffects.energy_drain) {
       updatedNeeds.energy -= (eventEffects.energy_drain - 1) * 2 * gameHoursElapsed;
     }
-    if (eventEffects.mood_outdoor && !isIndoors) {
-      // Applied later as mood modifier; store for mood calc
-    }
+    // mood_outdoor / mood_boost are applied in the mood recalculation (Step 11).
     // Romance boost from events (weddings, full moon, starry night) → social/fun boost
     if (eventEffects.romance_boost) {
       if (actionType === 'socializing' || actionType === 'talking') {
@@ -375,8 +373,11 @@ export function needsTick(): void {
       (sum, m) => sum + m.value,
       0
     );
-    // World event mood effects (outdoor penalty from storms, etc.)
-    const eventMoodEffect = (!isIndoors && eventEffects.mood_outdoor) ? eventEffects.mood_outdoor : 0;
+    // World event mood effects: outdoor-only (storms, starry nights) plus
+    // town-wide (scandal, blessing).
+    const eventMoodEffect =
+      ((!isIndoors && eventEffects.mood_outdoor) ? eventEffects.mood_outdoor : 0) +
+      (eventEffects.mood_boost ?? 0);
 
     // Mood momentum: yesterday's average mood affects today's baseline
     const moodMomentum = getMoodMomentum(agent.id);

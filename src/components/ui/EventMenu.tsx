@@ -1,5 +1,8 @@
 import { trpc } from "../../lib/trpc";
 import { weatherEmoji } from "../../lib/formatters";
+import { PLAYER_EVENT_TYPES, WORLD_EVENTS } from "../../../server/data/worldEventCatalog";
+
+type PlayerEventType = (typeof PLAYER_EVENT_TYPES)[number];
 
 interface EventMenuProps {
   isOpen: boolean;
@@ -7,17 +10,25 @@ interface EventMenuProps {
   activeEvents: any[];
 }
 
-// Durations mirror `world.triggerEvent`'s EVENT_DEFS, which is the endpoint
-// these cards call. Keep them in step when the server-side defs change.
-const EVENT_CARDS = [
-  { type: "festival", icon: "🎉", name: "Town Festival", duration: "6 hours", description: "Everyone gathers for food and music!" },
-  { type: "market_day", icon: "🏪", name: "Market Day", duration: "8 hours", description: "Special prices at all shops." },
-  { type: "storm", icon: "⛈️", name: "Storm", duration: "3 hours", description: "Everyone heads indoors." },
-  { type: "sickness", icon: "🤒", name: "Flu Outbreak", duration: "24 hours", description: "Energy drains faster." },
-  { type: "harvest", icon: "🌾", name: "Harvest Bounty", duration: "12 hours", description: "Farm production doubles!" },
-  { type: "scandal", icon: "🗞️", name: "Town Scandal", duration: "4 hours", description: "A shocking rumor puts everyone on edge." },
-  { type: "blessing", icon: "🌤️", name: "Beautiful Day", duration: "6 hours", description: "Everyone feels lighter." },
-] as const;
+// Name and duration come from the shared catalog so the card always matches what
+// `world.triggerEvent` actually starts; only the icon and blurb are UI-side.
+const CARD_UI: Record<PlayerEventType, { icon: string; blurb: string }> = {
+  festival: { icon: "🎉", blurb: "Everyone gathers for food and music!" },
+  market_day: { icon: "🏪", blurb: "Special prices at all shops." },
+  storm: { icon: "⛈️", blurb: "Everyone heads indoors." },
+  sickness: { icon: "🤒", blurb: "Energy drains faster." },
+  harvest: { icon: "🌾", blurb: "Farm production doubles!" },
+  scandal: { icon: "🗞️", blurb: "Rumors spread twice as fast; the town is on edge." },
+  blessing: { icon: "🌤️", blurb: "Everyone's mood lifts." },
+};
+
+const EVENT_CARDS = PLAYER_EVENT_TYPES.map((type) => ({
+  type,
+  icon: CARD_UI[type].icon,
+  name: WORLD_EVENTS[type].name,
+  duration: `${WORLD_EVENTS[type].durationHours} hours`,
+  description: CARD_UI[type].blurb,
+}));
 
 const WEATHERS = ["sunny", "cloudy", "rainy", "stormy", "foggy", "snowy", "windy", "hot"] as const;
 

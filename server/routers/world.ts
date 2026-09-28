@@ -1,12 +1,12 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
-import { worldState, worldEvents, agents } from '../db/schema';
+import { worldState, worldEvents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
 import { getLLMStats } from '../ai/llmSemaphore';
-import { logActivity } from '../lib/activityLogger';
-import { simEvents } from '../lib/simEvents';
+import { startWorldEvent } from '../engine/systems/events';
+import { PLAYER_EVENT_TYPES } from '../data/worldEventCatalog';
 
 export const worldRouter = router({
   getState: publicProcedure.query(() => {
@@ -27,52 +27,12 @@ export const worldRouter = router({
 
   /** Player-triggered world event injection */
   triggerEvent: publicProcedure
-    .input(z.object({
-      type: z.enum(['festival', 'storm', 'market_day', 'sickness', 'harvest', 'scandal', 'blessing']),
-    }))
+    .input(z.object({ type: z.enum(PLAYER_EVENT_TYPES) }))
     .mutation(({ input }) => {
-      const world = db.select().from(worldState).get();
-      if (!world) return { ok: false, error: 'No world state' };
-
-      const EVENT_DEFS: Record<string, { name: string; description: string; duration: number; effects: Record<string, unknown> }> = {
-        festival: { name: 'Town Festival', description: 'A grand celebration fills the streets with music and laughter!', duration: 6, effects: { social_boost: 20, fun_boost: 15 } },
-        storm: { name: 'Sudden Storm', description: 'Dark clouds roll in and rain hammers the town.', duration: 3, effects: { mood_outdoor: -15 } },
-        market_day: { name: 'Market Day', description: 'Merchants arrive with discounted goods!', duration: 8, effects: { shop_prices: 0.5 } },
-        sickness: { name: 'Flu Outbreak', description: 'A flu spreads through town. Stay healthy!', duration: 24, effects: { energy_drain: 1.5 } },
-        harvest: { name: 'Bountiful Harvest', description: 'The harvest is exceptional this season!', duration: 12, effects: { farm_production: 2.0 } },
-        scandal: { name: 'Town Scandal', description: 'A shocking rumor sweeps through town, putting everyone on edge.', duration: 4, effects: { trust_penalty: -5 } },
-        blessing: { name: 'Beautiful Day', description: 'The weather is perfect. Everyone feels lighter.', duration: 6, effects: { mood_boost: 10 } },
-      };
-
-      const def = EVENT_DEFS[input.type];
-      if (!def) return { ok: false, error: 'Unknown event type' };
-
-      db.insert(worldEvents).values({
-        type: input.type,
-        name: def.name,
-        description: def.description,
-        started_at: world.time!.totalTicks,
-        duration: def.duration,
-        effects: def.effects,
-        location_id: null,
-        triggered_by: 'player',
-        is_active: true,
-      }).run();
-
-      logActivity({
-        type: 'player_event',
-        templateData: { description: `${def.name}: ${def.description}` },
-      });
-
-      // Notify all agents
-      const activeAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
-      for (const agent of activeAgents) {
-        simEvents.emit('event:world', { agentId: agent.id, event: `${def.name}: ${def.description}` });
-      }
-
-      emitter.markDirty('world.state');
+      const result = startWorldEvent(input.type, { triggeredBy: 'player' });
+      if (!result.ok) return { ok: false, error: result.reason };
       emitter.flush();
-      return { ok: true, event: def.name };
+      return { ok: true, event: result.event.name };
     }),
 
   /** Change weather directly */

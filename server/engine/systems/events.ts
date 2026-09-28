@@ -6,6 +6,7 @@ import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
 import { simEvents } from '../../lib/simEvents';
+import { WORLD_EVENTS, type WorldEventDef, type WorldEventType } from '../../data/worldEventCatalog';
 
 // Season-based weather weights (including snowy for winter, windy for autumn)
 const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
@@ -15,153 +16,77 @@ const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
   winter: { sunny: 10, cloudy: 20, rainy: 5, stormy: 8, foggy: 15, snowy: 30, windy: 12 },
 };
 
-// Random event definitions
-const EVENT_DEFINITIONS = [
-  {
-    type: 'festival',
-    name: 'Town Festival',
-    description: 'The town is celebrating with music, food, and games!',
-    duration: 4,
-    effects: { social_boost: 20, fun_boost: 15, shop_prices: 0.7 },
-    weight: 10,
-    condition: (phase: string) => phase === 'afternoon' || phase === 'evening',
-  },
-  {
-    type: 'market_day',
-    name: 'Market Day',
-    description: 'Merchants have set up stalls with discounted goods.',
-    duration: 8,
-    effects: { shop_prices: 0.5 },
-    weight: 15,
-    condition: (phase: string) => phase === 'morning',
-  },
-  {
-    type: 'storm',
-    name: 'Heavy Storm',
-    description: 'A heavy storm is battering the town. Best stay indoors!',
-    duration: 3,
-    effects: { mood_outdoor: -15, force_indoors: 1 },
-    weight: 8,
-    condition: (_phase: string, weather: string) =>
-      weather === 'cloudy' || weather === 'rainy',
-  },
-  {
-    type: 'sickness',
-    name: 'Flu Outbreak',
-    description: 'A flu outbreak is spreading through town. Visit the doctor!',
-    duration: 24,
-    effects: { energy_drain: 1.5, doctor_demand: 2 },
-    weight: 5,
-    condition: (_phase: string, _weather: string, season: string) =>
-      season === 'winter' || season === 'autumn',
-  },
-  {
-    type: 'harvest',
-    name: 'Harvest Bounty',
-    description: 'An abundant harvest has brought plenty of food to town.',
-    duration: 12,
-    effects: { farm_production: 2.0, food_prices: 0.6 },
-    weight: 10,
-    condition: (_phase: string, _weather: string, season: string) =>
-      season === 'summer' || season === 'autumn',
-  },
-  {
-    type: 'traveling_merchant',
-    name: 'Traveling Merchant',
-    description: 'A mysterious merchant has arrived with rare and exotic wares.',
-    duration: 6,
-    effects: { shop_prices: 0.8, fun_boost: 5 },
-    weight: 8,
-    condition: (phase: string) => phase === 'morning' || phase === 'afternoon',
-  },
-  {
-    type: 'town_meeting',
-    name: 'Town Meeting',
-    description: 'The mayor has called a town meeting to discuss important matters.',
-    duration: 2,
-    effects: { social_boost: 10 },
-    weight: 7,
-    condition: (phase: string) => phase === 'evening',
-  },
-  {
-    type: 'wedding',
-    name: 'Wedding Celebration',
-    description: 'Love is in the air! A couple is getting married and the whole town is invited.',
-    duration: 6,
-    effects: { social_boost: 25, fun_boost: 20, romance_boost: 10 },
-    weight: 3,
-    condition: (phase: string, _weather: string) =>
-      phase === 'afternoon' || phase === 'evening',
-  },
-  {
-    type: 'fire_outbreak',
-    name: 'Building Fire',
-    description: 'A fire has broken out! Townspeople rush to help contain the blaze.',
-    duration: 2,
-    effects: { mood_outdoor: -10, social_boost: 15 },
-    weight: 4,
-    condition: (_phase: string, _weather: string, season: string) =>
-      season === 'summer' || season === 'autumn',
-  },
-  {
-    type: 'mysterious_stranger',
-    name: 'Mysterious Stranger',
-    description: 'A hooded figure has been spotted around town, whispering secrets to those who listen.',
-    duration: 8,
-    effects: { gossip_boost: 2.0 },
-    weight: 5,
-    condition: (phase: string) => phase === 'evening' || phase === 'night',
-  },
-  {
-    type: 'competition',
-    name: 'Town Competition',
-    description: 'A friendly competition has been organized — fishing, cooking, or crafts!',
-    duration: 4,
-    effects: { fun_boost: 25, social_boost: 10 },
-    weight: 8,
-    condition: (phase: string, weather: string) =>
-      (phase === 'morning' || phase === 'afternoon') && weather !== 'stormy',
-  },
-  {
-    type: 'full_moon',
-    name: 'Full Moon Night',
-    description: 'The full moon bathes the town in silver light. Romance and mischief fill the air.',
-    duration: 6,
-    effects: { romance_boost: 15, fun_boost: 5, mood_outdoor: 5 },
-    weight: 6,
-    condition: (phase: string) => phase === 'night',
-  },
-  {
-    type: 'heatwave',
-    name: 'Scorching Heatwave',
-    description: 'An oppressive heatwave grips the town. Everyone seeks shade and cool drinks.',
-    duration: 10,
-    effects: { energy_drain: 1.3, mood_outdoor: -8, fun_boost: -5 },
-    weight: 7,
-    condition: (_phase: string, weather: string, season: string) =>
-      season === 'summer' && weather === 'sunny',
-  },
-  {
-    type: 'bountiful_catch',
-    name: 'Bountiful Catch',
-    description: 'The river is teeming with fish! Anglers are having a field day.',
-    duration: 8,
-    effects: { farm_production: 1.5, fun_boost: 10 },
-    weight: 6,
-    condition: (_phase: string, _weather: string, season: string) =>
-      season === 'spring' || season === 'summer',
-  },
-  {
-    type: 'starry_night',
-    name: 'Spectacular Starry Night',
-    description: 'The sky is crystal clear, revealing a breathtaking display of stars.',
-    duration: 4,
-    effects: { mood_outdoor: 10, romance_boost: 5, fun_boost: 8 },
-    weight: 5,
-    condition: (phase: string, weather: string) =>
-      phase === 'night' && weather === 'sunny',
-  },
-];
+type WorldEventRow = typeof worldEvents.$inferSelect;
+
+export type StartWorldEventResult =
+  | { ok: true; event: WorldEventRow }
+  | { ok: false; reason: string };
+
+export interface StartWorldEventOptions {
+  /** Stored in `world_events.triggered_by`: 'player', 'random', 'autoplay', 'death:<id>', ... */
+  triggeredBy: string;
+  /** Per-instance overrides (e.g. "Funeral of Rosa"). Duration and effects always come from the catalog. */
+  name?: string;
+  description?: string;
+  locationId?: number | null;
+  /**
+   * Refuse when the same type is already running or MAX_CONCURRENT_EVENTS is
+   * reached. Off for events other systems must record regardless (funerals).
+   */
+  enforceLimits?: boolean;
+  /** Feed entry + `event:world` memory for every agent. Off when the caller logs its own. */
+  announce?: boolean;
+}
+
+/**
+ * The one way a world event starts. Player triggers, nudges, the autoplay
+ * nudger, random rolls and life events all used to insert rows by hand with
+ * their own copy of the definitions — and their own bugs (a 120-hour autoplay
+ * "2 hour" event with no effects, a 240-hour funeral meant to last 4).
+ */
+export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptions): StartWorldEventResult {
+  const world = db.select().from(worldState).get();
+  if (!world?.time) return { ok: false, reason: 'No world state' };
+  const def: WorldEventDef = WORLD_EVENTS[type];
+  const name = opts.name ?? def.name;
+  const description = opts.description ?? def.description;
+
+  if (opts.enforceLimits ?? true) {
+    const active = db.select({ type: worldEvents.type }).from(worldEvents).where(eq(worldEvents.is_active, true)).all();
+    if (active.some((e) => e.type === type)) {
+      return { ok: false, reason: `A "${name}" event is already active` };
+    }
+    if (active.length >= CONFIG.EVENTS.MAX_CONCURRENT_EVENTS) {
+      return { ok: false, reason: `Maximum concurrent events reached (${CONFIG.EVENTS.MAX_CONCURRENT_EVENTS})` };
+    }
+  }
+
+  const event = db.insert(worldEvents).values({
+    type,
+    name,
+    description,
+    started_at: world.time.totalTicks,
+    duration: def.durationHours,
+    effects: def.effects,
+    location_id: opts.locationId ?? null,
+    triggered_by: opts.triggeredBy,
+    is_active: true,
+  }).returning().get();
+
+  if (opts.announce ?? true) {
+    logActivity({
+      type: opts.triggeredBy === 'player' ? 'player_event' : 'world_event',
+      templateData: { description: `${name}: ${description}` },
+    });
+    const activeAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
+    for (const agent of activeAgents) {
+      simEvents.emit('event:world', { agentId: agent.id, event: `${name}: ${description}` });
+    }
+  }
+
+  emitter.markDirty('world.state');
+  return { ok: true, event };
+}
 
 export function eventsTick(): void {
   const world = db.select().from(worldState).get();
@@ -251,50 +176,18 @@ export function eventsTick(): void {
 
   // Filter to eligible events
   const activeTypes = new Set(currentActiveEvents.map((e) => e.type));
-  const eligible = EVENT_DEFINITIONS.filter(
-    (def) =>
-      !activeTypes.has(def.type) &&
-      def.condition(currentPhase, world.weather, world.time!.season),
-  );
+  const eligible = (Object.keys(WORLD_EVENTS) as WorldEventType[]).flatMap((type) => {
+    const random = (WORLD_EVENTS[type] as WorldEventDef).random;
+    return random && !activeTypes.has(type) && random.condition(currentPhase, world.weather, world.time!.season)
+      ? [{ value: type, weight: random.weight }]
+      : [];
+  });
 
   if (eligible.length === 0) {
     if (eventsChanged) emitter.markDirty('world.state');
     return;
   }
 
-  const chosen = weightedRandom(
-    eligible.map((def) => ({ value: def, weight: def.weight })),
-  );
-
-  // Insert world event
-  db.insert(worldEvents).values({
-    type: chosen.type,
-    name: chosen.name,
-    description: chosen.description,
-    started_at: world.time!.totalTicks,
-    duration: chosen.duration,
-    effects: chosen.effects,
-    location_id: null,
-    triggered_by: 'random',
-    is_active: true,
-  }).run();
-
-  // Log to activity log
-  logActivity({
-    type: 'world_event',
-    templateData: { description: `${chosen.name}: ${chosen.description}` },
-  });
-
-  // Emit world event for all active agents
-  const activeAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
-  const eventDescription = `${chosen.name}: ${chosen.description}`;
-  for (const agent of activeAgents) {
-    simEvents.emit('event:world', { agentId: agent.id, event: eventDescription });
-  }
-
-  eventsChanged = true;
-
-  if (eventsChanged) {
-    emitter.markDirty('world.state');
-  }
+  // Limits were checked above against the same active set.
+  startWorldEvent(weightedRandom(eligible), { triggeredBy: 'random', enforceLimits: false });
 }

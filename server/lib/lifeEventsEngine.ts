@@ -8,8 +8,9 @@
  */
 
 import { db } from '../db';
-import { agents, economy, locations, relationships, worldState, worldEvents, agentStates, conversations, conversationQueue } from '../db/schema';
+import { agents, economy, locations, relationships, worldState, agentStates, conversations, conversationQueue } from '../db/schema';
 import { logActivity } from './activityLogger';
+import { startWorldEvent } from '../engine/systems/events';
 import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { simEvents } from './simEvents';
@@ -319,17 +320,15 @@ function handleJobVacancy(ctx: DeathEffectContext): void {
 }
 
 function createFuneralEvent(ctx: DeathEffectContext): void {
-  db.insert(worldEvents).values({
-    type: 'funeral',
+  // Catalog duration is in game hours; this used to insert `duration: 240`
+  // commented "4 hours", which the expiry math read as 240 hours.
+  startWorldEvent('funeral', {
+    triggeredBy: `death:${ctx.agentId}`,
     name: `Funeral of ${ctx.agentName}`,
     description: `The town gathers to mourn ${ctx.agentName}. ${ctx.causeDescription}.`,
-    started_at: ctx.currentTick,
-    duration: 240, // 4 hours
-    effects: { social_boost: 15, mood_outdoor: -5 },
-    location_id: null,
-    triggered_by: `death:${ctx.agentId}`,
-    is_active: true,
-  }).run();
+    enforceLimits: false,
+    announce: false, // the death itself is the feed entry; memorials are written separately
+  });
 }
 
 function createMemorialMemories(ctx: DeathEffectContext): void {

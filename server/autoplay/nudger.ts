@@ -6,6 +6,8 @@ import {
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
 import type { Diagnosis, NudgeAction, AnalysisWindow } from './types';
+import { startWorldEvent } from '../engine/systems/events';
+import { isWorldEventType } from '../data/worldEventCatalog';
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 4, high: 3, medium: 2, low: 1,
@@ -203,22 +205,10 @@ export class SmartNudger {
 
         case 'trigger_event': {
           const { eventType } = action.params;
-          // Check max concurrent
-          const activeEvents = db.select({ id: worldEvents.id }).from(worldEvents)
-            .where(eq(worldEvents.is_active, true)).all();
-          if (activeEvents.length >= CONFIG.EVENTS.MAX_CONCURRENT_EVENTS) break;
-
-          db.insert(worldEvents).values({
-            type: eventType,
-            name: eventType.replace(/_/g, ' '),
-            description: `Auto-triggered by engagement system`,
-            started_at: tick,
-            duration: 120, // 2 game hours
-            effects: {},
-            location_id: null,
-            triggered_by: 'autoplay',
-            is_active: true,
-          }).run();
+          // Same path as a player trigger: catalog duration/effects and the
+          // duplicate/concurrency limits. This used to insert `effects: {}` with
+          // `duration: 120` — 120 game hours, not the 2 its comment claimed.
+          if (isWorldEventType(eventType)) startWorldEvent(eventType, { triggeredBy: 'autoplay' });
           break;
         }
 
