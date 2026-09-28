@@ -81,16 +81,19 @@ export class PlanExecutor {
       block.status = 'active';
       this.cache.set(agentId, plan);
 
-      // Init execution state for this block
-      const execState: PlanExecutionState = {
-        currentBlockId: block.id,
+      // Drop the previous block's execution state, but do NOT start this
+      // block's clock yet. It used to be stamped here, at activation; the
+      // actions only arrive once decomposition answers, which can be a retry
+      // after a 30+ game-minute backoff, and by then action 0's duration had
+      // already "elapsed" on that stale stamp — the first action was skipped
+      // and a single-action block completed on the spot. Step 5 stamps the
+      // clock on the first pass that actually has actions to run.
+      this.cache.setExecState(agentId, {
+        currentBlockId: null,
         currentActionIndex: 0,
         blockStartedAt: currentTick,
         actionStartedAt: currentTick,
-      };
-      this.cache.setExecState(agentId, execState);
-
-      return this._awaitDecomposition(agentId, block, gameMinute);
+      });
     }
 
     // 4. Block is active but decomposition not done yet
@@ -98,7 +101,9 @@ export class PlanExecutor {
       return this._awaitDecomposition(agentId, block, gameMinute);
     }
 
-    // 5. Get or repair exec state
+    // 5. Get or repair exec state. A state for another block (or none, right
+    //    after activation) means this is the first pass with this block's
+    //    actions: the block and its first action start now.
     let execState = this.cache.getExecState(agentId);
     if (!execState || execState.currentBlockId !== block.id) {
       execState = {
