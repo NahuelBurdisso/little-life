@@ -10,14 +10,15 @@ import { agents, locations } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
 import { logActivity } from '../../activityLogger';
 import {
-  PlanGenerator,
+  PlanLLMGate,
   PLAN_RETRY_BACKOFF_MINUTES,
   PLAN_RETRY_FLOOR_SECONDS,
   PLAN_OUTAGE_THRESHOLD,
   PLAN_OUTAGE_PROBE_SECONDS,
   gameMinuteOf,
   type GameClock,
-} from '../PlanGenerator';
+} from '../PlanLLMGate';
+import { PlanGenerator } from '../PlanGenerator';
 import { PlanLLMQueue } from '../PlanLLMQueue';
 import { PlanExecutor } from '../PlanExecutor';
 import type { DailyPlan, PlanExecutionState } from '../types';
@@ -112,13 +113,17 @@ let wall: number;
 /** RNG fed to the jitter; 0.5 means "no jitter". */
 let rand: number;
 
+/** The gate of the most recent `setup()` (backoff, breaker, epoch). */
+let gate: PlanLLMGate;
+
 function setup() {
   const cache = makeCache();
   const queue = new PlanLLMQueue();
-  const gen = new PlanGenerator(cache, queue, memory, () => gameMinuteOf(clock), {
+  gate = new PlanLLMGate(() => gameMinuteOf(clock), {
     wallNow: () => wall,
     random: () => rand,
   });
+  const gen = new PlanGenerator(cache, queue, memory, gate);
   return { cache, queue, gen };
 }
 
@@ -195,7 +200,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       expect(gen.queueGeneration(agentId, at(8, m))).toBe(false);
     }
     expect(callOllamaChat).toHaveBeenCalledTimes(1);
-    expect(gen.getRetryAt(agentId)).toBe(gameMinuteOf(at(8)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
+    expect(gate.getRetryAt(agentId)).toBe(gameMinuteOf(at(8)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
   });
 
   it('treats unparseable output as a failure too', async () => {
@@ -226,7 +231,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     const plan = cache.get(agentId)!;
     expect(plan.source).toBe('llm');
     expect(plan.blocks.map((b) => b.broad_action)).toContain('Bake bread');
-    expect(gen.getRetryAt(agentId)).toBeNull();
+    expect(gate.getRetryAt(agentId)).toBeNull();
     // A real plan for today is final: later asks run no LLM call.
     gen.queueGeneration(agentId, at(10));
     await settled(queue);
@@ -263,7 +268,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       expect(gen.queueGeneration(agentId, clock)).toBe(true);
       await settled(queue);
       expected = PLAN_RETRY_BACKOFF_MINUTES[Math.min(i, PLAN_RETRY_BACKOFF_MINUTES.length - 1)];
-      expect(gen.getRetryAt(agentId)).toBe(gameMinuteOf(clock) + expected);
+      expect(gate.getRetryAt(agentId)).toBe(gameMinuteOf(clock) + expected);
     }
   });
 
@@ -275,7 +280,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       fail();
       gen.queueGeneration(agentId, clock);
       await settled(queue);
-      waits.push(gen.getRetryAt(agentId)! - gameMinuteOf(clock));
+      waits.push(gate.getRetryAt(agentId)! - gameMinuteOf(clock));
     }
     expect(waits).toEqual([PLAN_RETRY_BACKOFF_MINUTES[0] * 0.8, PLAN_RETRY_BACKOFF_MINUTES[0] * 1.2]);
   });
@@ -288,7 +293,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     });
     gen.queueGeneration(agentId, at(8));
     await settled(queue);
-    expect(gen.getRetryAt(agentId)).toBe(gameMinuteOf(at(9)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
+    expect(gate.getRetryAt(agentId)).toBe(gameMinuteOf(at(9)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
   });
 
   it('forgets backoffs on clear() (world replace)', async () => {
@@ -298,7 +303,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     await settled(queue);
     expect(gen.queueGeneration(agentId, clock)).toBe(false);
 
-    gen.clear();
+    gate.clear();
     succeed();
     expect(gen.queueGeneration(agentId, clock)).toBe(true);
     await settled(queue);
@@ -312,7 +317,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     );
     gen.queueGeneration(agentId, clock);
     await vi.waitFor(() => expect(callOllamaChat).toHaveBeenCalledTimes(1));
-    gen.clear();
+    gate.clear();
     release();
     await settled(queue);
     expect(cache.set).not.toHaveBeenCalled();
@@ -336,11 +341,11 @@ describe('PlanGenerator outage breaker', () => {
   it('trips after consecutive failures across agents and reports it to the feed once', async () => {
     const { queue, gen } = setup();
     await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD - 1);
-    expect(gen.isOutage()).toBe(false);
+    expect(gate.isOutage()).toBe(false);
     expect(feedErrors()).toHaveLength(0);
 
     await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD, PLAN_OUTAGE_THRESHOLD - 1);
-    expect(gen.isOutage()).toBe(true);
+    expect(gate.isOutage()).toBe(true);
     expect(feedErrors()).toHaveLength(1);
 
     // An agent with no backoff of its own is still refused while the breaker is open.
@@ -374,7 +379,7 @@ describe('PlanGenerator outage breaker', () => {
     succeed();
     expect(gen.queueGeneration(ids[0], clock)).toBe(true);
     await settled(queue, ids[0]);
-    expect(gen.isOutage()).toBe(false);
+    expect(gate.isOutage()).toBe(false);
     succeed();
     expect(gen.queueGeneration(ids[1], clock)).toBe(true);
     await settled(queue, ids[1]);
@@ -399,6 +404,74 @@ describe('PlanGenerator outage breaker', () => {
     fail();
     expect(gen.queueGeneration(ids[0], clock)).toBe(true);
     await settled(queue, ids[0]);
+  });
+});
+
+describe('PlanGenerator replan under failure', () => {
+  const event = { agentId: 0, type: 'conversation' as const, description: 'had a fight', sentiment: -0.9, isDramatic: true };
+  // parsePlanBlocks wants at least 3 blocks.
+  const REPLAN_OUTPUT = '10:00-13:00 | Sulk at home | Home\n13:00-17:00 | Walk it off | Home\n17:00-21:00 | Read | Home';
+
+  function withActivePlan(cache: ReturnType<typeof makeCache>): DailyPlan {
+    const plan: DailyPlan = {
+      day: 1,
+      generated_at: 0,
+      needs_snapshot: { hunger: 50, energy: 50, social: 50 },
+      source: 'llm',
+      blocks: [
+        { id: 'block_0', start_hour: 7, end_hour: 9, broad_action: 'Breakfast', location_hint: 'Home', status: 'completed' },
+        { id: 'block_1', start_hour: 9, end_hour: 17, broad_action: 'Bake bread', location_hint: 'Bakery', status: 'active' },
+      ],
+    };
+    cache.set(agentId, plan);
+    cache.set.mockClear();
+    return plan;
+  }
+
+  async function replanSettled(queue: PlanLLMQueue) {
+    await vi.waitFor(() => expect(queue.isPending(agentId, 'replan')).toBe(false));
+  }
+
+  it('keeps the running block intact and backs off when the LLM fails', async () => {
+    const { cache, queue, gen } = setup();
+    const plan = withActivePlan(cache);
+    fail('timed out');
+    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
+    await replanSettled(queue);
+
+    expect(plan.blocks[1].status).toBe('active');
+    expect(cache.set).not.toHaveBeenCalled();
+    expect(gate.getRetryAt(agentId)).not.toBeNull();
+
+    // Inside the backoff, further replans don't reach the LLM.
+    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10, 5)), 22);
+    await replanSettled(queue);
+    expect(callOllamaChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a replan that lands after a world replace', async () => {
+    const { cache, queue, gen } = setup();
+    withActivePlan(cache);
+    let release!: () => void;
+    vi.mocked(callOllamaChat).mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ text: REPLAN_OUTPUT } as never); }),
+    );
+    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    gate.clear();
+    release();
+    await replanSettled(queue);
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
+  it('still applies a replan in the normal case', async () => {
+    const { cache, queue, gen } = setup();
+    withActivePlan(cache);
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: REPLAN_OUTPUT }) as never);
+    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
+    await replanSettled(queue);
+    expect(cache.get(agentId)!.blocks.map((b) => b.broad_action)).toEqual(['Breakfast', 'Sulk at home', 'Walk it off', 'Read']);
+    expect(gate.getRetryAt(agentId)).toBeNull();
   });
 });
 

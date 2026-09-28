@@ -10,7 +10,7 @@ import { db } from '../../../db';
 import { agents, locations } from '../../../db/schema';
 import { callOllamaChat, callOllamaEmbedding } from '../../../ai/ollama';
 import { tick as decisionsTick } from '../decisions';
-import { planCache, planGenerator, planLLMQueue } from '../../../lib/planning/instance';
+import { planCache, planLLMGate, planLLMQueue } from '../../../lib/planning/instance';
 
 const tag = `storm-${Date.now()}`;
 let agentId: number;
@@ -86,7 +86,7 @@ beforeAll(() => {
 
   planCache.clear();
   planLLMQueue.clear();
-  planGenerator.clear();
+  planLLMGate.clear();
 });
 
 afterAll(() => {

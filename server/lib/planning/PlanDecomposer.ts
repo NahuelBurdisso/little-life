@@ -5,8 +5,9 @@ import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
 import { buildDecompositionPrompt } from './planPrompts';
-import { parseDecomposedActions } from './planParser';
+import { parseDecomposedActions, isUnparsedDecomposition } from './planParser';
 import type { DailyPlan } from './types';
+import type { PlanLLMGate } from './PlanLLMGate';
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for the injected singletons
@@ -19,7 +20,13 @@ interface IPlanCache {
 }
 
 interface IPlanLLMQueue {
-  enqueue(agentId: number, job: () => Promise<void>): void;
+  enqueue(agentId: number, job: () => Promise<void>, key?: string): boolean;
+  isPending(agentId: number, key: string): boolean;
+}
+
+/** Queue dedupe key for one block's decomposition. */
+function decomposeKey(blockId: string): string {
+  return `decompose:${blockId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,12 +37,40 @@ export class PlanDecomposer {
   constructor(
     private readonly cache: IPlanCache,
     private readonly queue: IPlanLLMQueue,
+    /** Shared with PlanGenerator: per-agent backoff, outage breaker, world epoch. */
+    private readonly gate: PlanLLMGate,
   ) {}
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  queueDecomposition(agentId: number, blockId: string): void {
-    this.queue.enqueue(agentId, () => this.decompose(agentId, blockId));
+  /**
+   * Ask for `blockId` to be broken into concrete actions. Safe to call on every
+   * decision pass: a no-op while that block's job is queued or running, while
+   * the agent is backing off after an LLM failure, and while the outage
+   * breaker is open. Returns whether a job was queued.
+   */
+  queueDecomposition(agentId: number, blockId: string, gameMinute: number): boolean {
+    if (this.queue.isPending(agentId, decomposeKey(blockId))) return false;
+    const ticket = this.gate.tryAcquire(agentId, gameMinute);
+    if (!ticket) return false;
+    const accepted = this.queue.enqueue(
+      agentId,
+      async () => {
+        try {
+          await this.decompose(agentId, blockId);
+        } finally {
+          this.gate.release(ticket);
+        }
+      },
+      decomposeKey(blockId),
+    );
+    if (!accepted) this.gate.release(ticket);
+    return accepted;
+  }
+
+  /** Whether a decomposition of `blockId` is queued or running. */
+  isPending(agentId: number, blockId: string): boolean {
+    return this.queue.isPending(agentId, decomposeKey(blockId));
   }
 
   // ── Private: decompose ─────────────────────────────────────────────────────
@@ -139,17 +174,49 @@ export class PlanDecomposer {
       validAgents: validAgentNames.filter((n) => n !== agentRow.name),
     });
 
-    // 8. Call LLM
-    const response = await callOllamaChat({
-      model: CONFIG.AI.LIGHT_MODEL,
-      system: prompt.system,
-      messages: [{ role: 'user', content: prompt.user }],
-      priority: 'normal',
-      options: { temperature: 0.7, num_predict: 256 },
-    });
+    // 8. Call LLM. A failure is recorded with the shared gate, which backs this
+    //    agent off (and trips the outage breaker when it's town-wide); the
+    //    executor yields to the utility layer meanwhile and asks again once the
+    //    gate reopens.
+    const epoch = this.gate.epoch;
+    let actions: ReturnType<typeof parseDecomposedActions>;
+    try {
+      const response = await callOllamaChat({
+        model: CONFIG.AI.LIGHT_MODEL,
+        system: prompt.system,
+        messages: [{ role: 'user', content: prompt.user }],
+        priority: 'normal',
+        options: { temperature: 0.7, num_predict: 256 },
+      });
+      // 9. Parse decomposed actions
+      actions = parseDecomposedActions(response.text, validLocations, validAgentNames);
+    } catch (err) {
+      if (epoch !== this.gate.epoch) return;
+      const reason = err instanceof Error ? err.message : String(err);
+      this.gate.recordFailure(agentId, reason);
+      console.warn(`[PlanDecomposer] ${agentRow.name} block ${blockId} failed: ${reason}`);
+      return;
+    }
 
-    // 9. Parse decomposed actions
-    const actions = parseDecomposedActions(response.text, validLocations, validAgentNames);
+    // World replaced while we waited: the agent id may now belong to a
+    // different townsperson, whose plan must not receive these actions.
+    if (epoch !== this.gate.epoch) return;
+    // The plan was replaced (replan, new day) while we waited. Writing our
+    // stale copy back would undo that; the new plan's blocks get their own
+    // decomposition.
+    if (this.cache.get(agentId) !== plan) return;
+
+    // Nothing usable. The parser's answer to unreadable output is one hour of
+    // 'idle', which used to be stored as the block's actions and pinned the
+    // agent in the plan layer's idle (score 6000) for that hour. Count it as a
+    // failed call instead: nothing is written, the executor yields to the
+    // utility layer, and the retry waits out the backoff.
+    if (isUnparsedDecomposition(actions)) {
+      this.gate.recordFailure(agentId, 'unparseable decomposition output');
+      console.warn(`[PlanDecomposer] ${agentRow.name} block ${blockId}: no usable actions`);
+      return;
+    }
+    this.gate.recordSuccess(agentId);
 
     // 10. Resolve locations: fuzzy match target_location → resolved_location_id
     for (const action of actions) {

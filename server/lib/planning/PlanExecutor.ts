@@ -1,5 +1,11 @@
 import type { DailyPlan, PlanBlock, PlanExecutionState } from './types';
-import type { PlanDecomposer } from './PlanDecomposer';
+import { gameMinuteOf } from './PlanLLMGate';
+
+/** The PlanDecomposer surface the executor uses. */
+interface IPlanDecomposer {
+  queueDecomposition(agentId: number, blockId: string, gameMinute: number): boolean;
+  isPending(agentId: number, blockId: string): boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Structural interface for the injected cache singleton
@@ -35,7 +41,7 @@ const PLAN_SCORE = 6000;
 export class PlanExecutor {
   constructor(
     private readonly cache: IPlanCache,
-    private readonly decomposer: PlanDecomposer,
+    private readonly decomposer: IPlanDecomposer,
   ) {}
 
   getPlannedAction(
@@ -43,6 +49,7 @@ export class PlanExecutor {
     currentHour: number,
     currentTick: number,
     currentDay?: number,
+    currentMinute = 0,
   ): ScoredAction | null {
     // 1. Get plan — null means no plan generated yet
     const plan = this.cache.get(agentId);
@@ -63,13 +70,16 @@ export class PlanExecutor {
     const block = this._resolveBlock(plan, agentId, currentHour);
     if (!block) return null;
 
+    const gameMinute = gameMinuteOf({
+      day: currentDay ?? plan.day,
+      hour: currentHour,
+      minute: currentMinute,
+    });
+
     // 3. Newly-found pending block → activate it
     if (block.status === 'pending') {
       block.status = 'active';
       this.cache.set(agentId, plan);
-
-      // Queue decomposition (async, will fill decomposed_actions later)
-      this.decomposer.queueDecomposition(agentId, block.id);
 
       // Init execution state for this block
       const execState: PlanExecutionState = {
@@ -80,13 +90,12 @@ export class PlanExecutor {
       };
       this.cache.setExecState(agentId, execState);
 
-      // Return idle while LLM decomposes
-      return this._idleAction(block);
+      return this._awaitDecomposition(agentId, block, gameMinute);
     }
 
     // 4. Block is active but decomposition not done yet
     if (!block.decomposed_actions || block.decomposed_actions.length === 0) {
-      return this._idleAction(block);
+      return this._awaitDecomposition(agentId, block, gameMinute);
     }
 
     // 5. Get or repair exec state
@@ -141,6 +150,24 @@ export class PlanExecutor {
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * The block has no concrete actions yet. (Re-)ask for them — a no-op while a
+   * job is out, while the agent backs off after an LLM failure, and while the
+   * outage breaker is open — then hold the agent in an idle only if the
+   * answer is actually on its way.
+   *
+   * This used to return the idle unconditionally. When the decomposition call
+   * failed, nothing ever asked again and the block sat 'active' with no
+   * actions, so the plan layer's idle (score 6000, above everything but
+   * emergencies) pinned the agent in place until the block's hours ran out —
+   * with Ollama down, that was most of the day. Returning null instead hands
+   * the agent to needs/schedule scoring until decomposition succeeds.
+   */
+  private _awaitDecomposition(agentId: number, block: PlanBlock, gameMinute: number): ScoredAction | null {
+    this.decomposer.queueDecomposition(agentId, block.id, gameMinute);
+    return this.decomposer.isPending(agentId, block.id) ? this._idleAction(block) : null;
+  }
 
   /**
    * Resolves the best block for the current hour, handling stale active blocks.

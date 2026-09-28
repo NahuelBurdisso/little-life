@@ -12,6 +12,7 @@ import { getAgentHobbies } from '../hobbyEngine';
 import { getReputation, getReputationLabel } from '../reputationEngine';
 import { getMoodMomentum } from '../moodMomentum';
 import { describeEvent } from '../memory/descriptionTemplates';
+import { gameMinuteOf, type GameClock, type PlanLLMGate } from './PlanLLMGate';
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for injected singletons
@@ -28,70 +29,10 @@ interface IPlanLLMQueue {
   enqueue(agentId: number, job: () => Promise<void>, key?: string): boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Game clock + retry backoff
-// ---------------------------------------------------------------------------
-
-export interface GameClock {
-  day: number;
-  hour: number;
-  minute: number;
-}
-
-/**
- * Absolute game minutes since day 1, 00:00.
- *
- * Backoffs are measured in game time rather than `totalTicks` (one tick is
- * `tick_speed` game minutes, so tick counts drift when the sim runs fast) or
- * wall-clock (a paused or slowed world would burn through the wait without the
- * town living through it).
- */
-export function gameMinuteOf(t: GameClock): number {
-  return ((t.day - 1) * 24 + t.hour) * 60 + t.minute;
-}
-
-/**
- * Game minutes to wait before asking the LLM for this agent's plan again after
- * the n-th consecutive failure (the last entry repeats). Short at first so a
- * blip — one timeout under load — costs little, growing so that a dead Ollama
- * costs each agent roughly one doomed request per four game hours instead of
- * one per decision pass.
- */
-export const PLAN_RETRY_BACKOFF_MINUTES = [30, 60, 120, 240] as const;
-
-/**
- * Real-time floor under the game-time backoff, in seconds, same indexing.
- *
- * Game time alone is not enough: at tick_speed 4, 30 game minutes pass in 7.5
- * real seconds, well inside the 60 s LLM timeout. Against a *hung* Ollama (one
- * that accepts the connection and never answers) every agent would then keep
- * one doomed plan call parked on a semaphore slot at all times. A retry needs
- * both clocks to have run out: the game one keeps the cadence sensible from the
- * town's point of view, the wall one bounds the load on the real LLM.
- */
-export const PLAN_RETRY_FLOOR_SECONDS = [30, 60, 120, 300] as const;
-
-/**
- * ±fraction applied to each backoff. An outage fails every agent within a
- * few seconds of each other; without jitter they would all retry in the same
- * game minute and hit the recovering LLM as one burst.
- */
-export const PLAN_RETRY_JITTER = 0.2;
-
-/**
- * Global circuit breaker. After this many plan failures in a row across ALL
- * agents (no success in between) the LLM is treated as down: plan requests are
- * refused town-wide, and every `PLAN_OUTAGE_PROBE_SECONDS` a single request is
- * let through as a probe. Its success closes the breaker; its failure keeps it
- * open for another window. The per-agent backoff alone would still let each of
- * ~13 agents send its own doomed request per window; the breaker turns an
- * outage into at most one in-flight plan call.
- */
-export const PLAN_OUTAGE_THRESHOLD = 3;
-export const PLAN_OUTAGE_PROBE_SECONDS = 60;
-
 /** Dedupe key for daily-plan jobs in the per-agent LLM queue. */
 const GENERATE_KEY = 'generate';
+/** Dedupe key for replan jobs: one pending rewrite per agent is plenty. */
+const REPLAN_KEY = 'replan';
 
 interface PlanningContext {
   agentRow: {
@@ -158,59 +99,13 @@ interface AgentSchedule {
 // ---------------------------------------------------------------------------
 
 export class PlanGenerator {
-  /**
-   * Per-agent LLM failure streak and the game minute before which no new plan
-   * request is queued. Cleared on the first successful plan and on world
-   * replace (worldCaches.ts): after a replace the clock restarts at day 1, so a
-   * surviving `retryAt` would gag that agent id for days.
-   */
-  private backoff = new Map<number, { failures: number; retryAt: number; retryAtMs: number }>();
-
-  /**
-   * LLM-wide failure streak for the circuit breaker (see
-   * PLAN_OUTAGE_THRESHOLD). Deliberately NOT reset by `clear()`: an outage is a
-   * property of the LLM, not of the world, and a fresh world asking 13 agents'
-   * worth of plans from a dead Ollama is exactly the storm this prevents.
-   * `reported` makes the activity feed say so once per outage.
-   */
-  private outage = { failures: 0, openUntilMs: 0, reported: false };
-
-  /**
-   * Identity of the one probe request allowed through while the breaker is
-   * open, or null. Released in the job's `finally` so a probe that ends without
-   * reaching the LLM (plan already present, world replaced) can't wedge the
-   * breaker shut; `clear()` releases it too, since the queue drops queued jobs
-   * on a world replace and their `finally` never runs.
-   */
-  private probe: object | null = null;
-
-  private readonly wallNow: () => number;
-  private readonly random: () => number;
-
-  /**
-   * Bumped by `clear()`. A generate job that was awaiting the LLM across a
-   * world replace compares it after the await and drops its result, instead of
-   * writing the old world's plan onto a new agent that reuses the rowid.
-   */
-  private epoch = 0;
-
   constructor(
     private readonly cache: IPlanCache,
     private readonly queue: IPlanLLMQueue,
     private readonly memoryService: IMemoryService,
-    /**
-     * Current absolute game minute (see `gameMinuteOf`). Read when a request
-     * fails, not when it is queued: an LLM timeout can take a long time of
-     * game time at high tick speeds, and a backoff measured from the queue
-     * time could already have expired by the time the failure lands.
-     */
-    private readonly now: () => number,
-    /** Injectable wall clock (ms) and RNG, for tests. */
-    opts: { wallNow?: () => number; random?: () => number } = {},
-  ) {
-    this.wallNow = opts.wallNow ?? Date.now;
-    this.random = opts.random ?? Math.random;
-  }
+    /** Shared LLM admission control: per-agent backoff, breaker, world epoch. */
+    private readonly gate: PlanLLMGate,
+  ) {}
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -221,58 +116,49 @@ export class PlanGenerator {
    * open. Returns whether a job was actually queued.
    */
   queueGeneration(agentId: number, time: GameClock): boolean {
-    const wall = this.wallNow();
-    const gate = this.backoff.get(agentId);
-    if (gate && (gameMinuteOf(time) < gate.retryAt || wall < gate.retryAtMs)) return false;
-
-    let probe: object | null = null;
-    if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
-      if (wall < this.outage.openUntilMs || this.probe) return false;
-      probe = {};
-    }
-
+    const ticket = this.gate.tryAcquire(agentId, gameMinuteOf(time));
+    if (!ticket) return false;
     const accepted = this.queue.enqueue(
       agentId,
       async () => {
         try {
           await this.generate(agentId, time.day);
         } finally {
-          if (probe && this.probe === probe) this.probe = null;
+          this.gate.release(ticket);
         }
       },
       GENERATE_KEY,
     );
-    if (accepted && probe) this.probe = probe;
+    if (!accepted) this.gate.release(ticket);
     return accepted;
   }
 
-  /** Game minute before which no plan request is queued, or null. */
-  getRetryAt(agentId: number): number | null {
-    return this.backoff.get(agentId)?.retryAt ?? null;
-  }
-
-  /** Whether the global breaker currently counts the LLM as down. */
-  isOutage(): boolean {
-    return this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
-  }
-
-  /** Drop all per-world state. Called from `clearPerWorldCaches`. */
-  clear(): void {
-    this.backoff.clear();
-    this.probe = null;
-    this.epoch++;
-  }
-
+  /**
+   * Rewrite the rest of today's plan after a significant event. Optional
+   * polish, so it is simply skipped while the gate refuses LLM traffic for
+   * this agent rather than queued for later.
+   */
   queueReplan(
     agentId: number,
     event: ReplanEvent,
     currentHour: number,
-    currentTick: number,
+    gameMinute: number,
     sleepTime: number,
   ): void {
-    this.queue.enqueue(agentId, () =>
-      this.replan(agentId, event, currentHour, currentTick, sleepTime),
+    const ticket = this.gate.tryAcquire(agentId, gameMinute);
+    if (!ticket) return;
+    const accepted = this.queue.enqueue(
+      agentId,
+      async () => {
+        try {
+          await this.replan(agentId, event, currentHour, sleepTime);
+        } finally {
+          this.gate.release(ticket);
+        }
+      },
+      REPLAN_KEY,
     );
+    if (!accepted) this.gate.release(ticket);
   }
 
   // ── Private: generate ──────────────────────────────────────────────────────
@@ -290,16 +176,16 @@ export class PlanGenerator {
       return;
     }
 
-    const epoch = this.epoch;
+    const epoch = this.gate.epoch;
     let blocks: PlanBlock[];
     try {
       blocks = await this.requestPlanBlocks(agentId, currentDay, ctx);
     } catch (err) {
-      if (epoch !== this.epoch) return;
+      if (epoch !== this.gate.epoch) return;
       this.fallBack(agentId, currentDay, ctx, err instanceof Error ? err.message : String(err));
       return;
     }
-    if (epoch !== this.epoch) return;
+    if (epoch !== this.gate.epoch) return;
 
     // An empty parse means the model answered with something we could not read.
     // Asking again right away mostly gets the same kind of answer, so this is a
@@ -309,11 +195,7 @@ export class PlanGenerator {
       return;
     }
 
-    this.backoff.delete(agentId);
-    if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
-      console.log('[PlanGenerator] LLM answered again; plan requests resume');
-    }
-    this.outage = { failures: 0, openUntilMs: 0, reported: false };
+    this.gate.recordSuccess(agentId);
     const { agentRow, currentNeeds } = ctx;
 
     // 13. Create DailyPlan and cache it
@@ -549,21 +431,7 @@ export class PlanGenerator {
    * front of conversations (B6).
    */
   private fallBack(agentId: number, currentDay: number, ctx: PlanningContext, reason: string): void {
-    const prev = this.backoff.get(agentId);
-    const failures = (prev?.failures ?? 0) + 1;
-    const step = Math.min(failures, PLAN_RETRY_BACKOFF_MINUTES.length) - 1;
-    const jitter = 1 + (this.random() * 2 - 1) * PLAN_RETRY_JITTER;
-    const wait = Math.round(PLAN_RETRY_BACKOFF_MINUTES[step] * jitter);
-    const wall = this.wallNow();
-    this.backoff.set(agentId, {
-      failures,
-      retryAt: this.now() + wait,
-      retryAtMs: wall + Math.round(PLAN_RETRY_FLOOR_SECONDS[step] * 1000 * jitter),
-    });
-
-    this.outage.failures++;
-    const tripped = this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
-    if (tripped) this.outage.openUntilMs = wall + PLAN_OUTAGE_PROBE_SECONDS * 1000;
+    const { failures, wait } = this.gate.recordFailure(agentId, reason);
 
     // Don't clobber a real plan for today with a fallback. Only reachable if a
     // caller forces a regeneration over an LLM plan; today nothing does.
@@ -586,24 +454,6 @@ export class PlanGenerator {
       `[PlanGenerator] Plan LLM failed for ${ctx.agentRow.name} (attempt ${failures}): ${reason}; ` +
         `using schedule plan, retry in ${wait} game min`,
     );
-    // One activity-feed entry per outage, raised when the breaker trips and
-    // re-armed by the next successful plan. Per-agent entries flooded the feed
-    // with a dozen identical errors every time Ollama went away; a lone blip
-    // that one agent's retry absorbs isn't worth the player's attention at all.
-    if (tripped && !this.outage.reported) {
-      this.outage.reported = true;
-      try {
-        logActivity({
-          type: 'error',
-          templateData: {
-            system: 'planning',
-            message: `Daily plans are failing (${reason}); townsfolk follow their routines until the LLM answers again`,
-          },
-        });
-      } catch {
-        // Reporting must never turn a handled failure into an unhandled one.
-      }
-    }
   }
 
   // ── Private: replan ────────────────────────────────────────────────────────
@@ -612,7 +462,6 @@ export class PlanGenerator {
     agentId: number,
     event: ReplanEvent,
     currentHour: number,
-    _currentTick: number,
     sleepTime: number,
   ): Promise<void> {
     // 1. Read current plan from cache (at execution time)
@@ -659,12 +508,11 @@ export class PlanGenerator {
       (b) => b.end_hour > currentHour && b.status !== 'completed',
     );
 
-    // 4. Mark active block as interrupted
-    for (const block of remainingBlocks) {
-      if (block.status === 'active') {
-        block.status = 'interrupted';
-      }
-    }
+    // 4. (The active block used to be marked 'interrupted' here, before the LLM
+    //    call. On success it is dropped from the merged plan anyway; on failure
+    //    the mutation leaked into the cached plan object and silently killed a
+    //    block that was still running. Nothing is touched until the rewrite
+    //    has actually arrived.)
 
     // 5. Get location names
     const locationRows = db.select({ name: locations.name }).from(locations).all();
@@ -702,17 +550,39 @@ export class PlanGenerator {
       validLocations,
     });
 
-    // 7. Call LLM
-    const response = await callOllamaChat({
-      model: CONFIG.AI.LIGHT_MODEL,
-      system: prompt.system,
-      messages: [{ role: 'user', content: prompt.user }],
-      priority: 'normal',
-      options: { temperature: 0.7, num_predict: 512 },
-    });
+    // 7. Call LLM. Failures keep the existing plan and count against the gate
+    //    like any other planning failure.
+    const epoch = this.gate.epoch;
+    let newBlocks: PlanBlock[];
+    try {
+      const response = await callOllamaChat({
+        model: CONFIG.AI.LIGHT_MODEL,
+        system: prompt.system,
+        messages: [{ role: 'user', content: prompt.user }],
+        priority: 'normal',
+        options: { temperature: 0.7, num_predict: 512 },
+      });
+      // 8. Parse new blocks
+      newBlocks = parsePlanBlocks(response.text, validLocations);
+    } catch (err) {
+      if (epoch !== this.gate.epoch) return;
+      const reason = err instanceof Error ? err.message : String(err);
+      this.gate.recordFailure(agentId, reason);
+      console.warn(`[PlanGenerator] replan failed for agent ${agentRow.name} (${reason}), keeping existing plan`);
+      return;
+    }
+    // World replaced while we waited: the agent id may now belong to someone else.
+    if (epoch !== this.gate.epoch) return;
+    // The plan changed under us (new day, another replan): merging into the
+    // stale copy would overwrite the newer plan.
+    if (this.cache.get(agentId) !== existingPlan) return;
 
-    // 8. Parse new blocks
-    const newBlocks = parsePlanBlocks(response.text, validLocations);
+    // The LLM answered, which is all the gate tracks. An unparseable replan is
+    // NOT counted as a failure: parsePlanBlocks demands at least 3 blocks, so
+    // an evening replan with only two hours left is rejected by design, and
+    // counting that against the gate would back healthy agents off and could
+    // even trip the town-wide outage breaker.
+    this.gate.recordSuccess(agentId);
 
     // 9. If parse fails, keep existing plan as-is
     if (newBlocks.length === 0) {

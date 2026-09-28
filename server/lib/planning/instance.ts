@@ -1,31 +1,34 @@
 import { planCache } from './PlanCache';
 import { planLLMQueue } from './PlanLLMQueue';
-import { PlanGenerator, gameMinuteOf } from './PlanGenerator';
+import { PlanGenerator } from './PlanGenerator';
 import { PlanDecomposer } from './PlanDecomposer';
 import { PlanExecutor } from './PlanExecutor';
 import { ReplanEvaluator } from './ReplanEvaluator';
+import { PlanLLMGate, gameMinuteOf } from './PlanLLMGate';
 import { memoryService } from '../memory/instance';
 import { db } from '../../db';
 import { worldState } from '../../db/schema';
 
 export { planCache, planLLMQueue };
 
-export const planGenerator = new PlanGenerator(planCache, planLLMQueue, memoryService, () => {
+function worldTime(): { day?: number; hour?: number; minute?: number } | undefined {
   const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  const t = world?.time as { day?: number; hour?: number; minute?: number } | undefined;
+  return world?.time as { day?: number; hour?: number; minute?: number } | undefined;
+}
+
+function currentGameMinute(): number {
+  const t = worldTime();
   return gameMinuteOf({ day: t?.day ?? 1, hour: t?.hour ?? 0, minute: t?.minute ?? 0 });
-});
-export const planDecomposer = new PlanDecomposer(planCache, planLLMQueue);
+}
+
+/** One gate for every planning LLM call: plans, decompositions and replans. */
+export const planLLMGate = new PlanLLMGate(currentGameMinute);
+export const planGenerator = new PlanGenerator(planCache, planLLMQueue, memoryService, planLLMGate);
+export const planDecomposer = new PlanDecomposer(planCache, planLLMQueue, planLLMGate);
 export const planExecutor = new PlanExecutor(planCache, planDecomposer);
 export const replanEvaluator = new ReplanEvaluator(
   planCache,
   planGenerator,
-  () => {
-    const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-    return (world?.time as any)?.hour ?? 12;
-  },
-  () => {
-    const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-    return (world?.time as any)?.totalTicks ?? 0;
-  },
+  () => worldTime()?.hour ?? 12,
+  currentGameMinute,
 );

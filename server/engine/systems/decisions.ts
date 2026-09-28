@@ -1220,7 +1220,7 @@ export function tick(world: WorldRow): void {
 
     // Phase 1b: Plan layer (score 6000 — above free-time, below emergency)
     if (!decision) {
-      const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day);
+      const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day, world.time.minute);
       if (planned) {
         decision = planned;
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePlanBlocks, parseDecomposedActions, inferActionType } from '../planParser.js';
+import { parsePlanBlocks, parseDecomposedActions, inferActionType, isUnparsedDecomposition } from '../planParser.js';
 
 const LOCATIONS = ['Home', 'Bakery', 'Town Square', 'Park', 'Market', 'Library'];
 const AGENTS = ['Alice', 'Bob', 'Charlie'];
@@ -288,5 +288,18 @@ describe('inferActionType', () => {
     expect(inferActionType('sit at workbench')).toBe('idle');
     // "bedrock" should NOT match "bed"
     expect(inferActionType('stand on bedrock')).toBe('idle');
+  });
+});
+
+describe('isUnparsedDecomposition', () => {
+  it('flags the parser idle fallback for empty or unreadable output', () => {
+    expect(isUnparsedDecomposition(parseDecomposedActions('', LOCATIONS, AGENTS))).toBe(true);
+    expect(isUnparsedDecomposition(parseDecomposedActions('no pipes here at all', LOCATIONS, AGENTS))).toBe(true);
+    expect(isUnparsedDecomposition([])).toBe(true);
+  });
+
+  it('does not flag real actions, even a parsed idle one', () => {
+    expect(isUnparsedDecomposition(parseDecomposedActions('Buy bread | Bakery | 10 minutes', LOCATIONS, AGENTS))).toBe(false);
+    expect(isUnparsedDecomposition(parseDecomposedActions('Stand on bedrock | Park | 30 minutes', LOCATIONS, AGENTS))).toBe(false);
   });
 });

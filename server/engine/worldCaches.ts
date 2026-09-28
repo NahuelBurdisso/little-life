@@ -42,7 +42,7 @@ import { clearHungerTracking } from '../lib/lifeEventsEngine';
 import { resetChronicleCache } from '../lib/chronicle';
 import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
-import { planGenerator, planLLMQueue } from '../lib/planning/instance';
+import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 
 export function clearPerWorldCaches(): void {
   // Tick-valued trackers
@@ -57,13 +57,16 @@ export function clearPerWorldCaches(): void {
   // refresh in goal-review prompts.
   pivotEvaluator.clear();
   goalReviewer.clear();
-  // Plan-request backoff is stamped in absolute game minutes, and the clock
+  // Planning LLM backoff is stamped in absolute game minutes, and the clock
   // restarts at day 1 after a replace: a surviving stamp would keep that agent
-  // id from ever asking the LLM for a plan for days of game time. The queue's
-  // dedupe keys go too, or a request stuck in flight from the old world would
-  // block the new agent that inherits its rowid. (setup.ts also clears the
-  // queue directly; doing it twice is harmless.)
-  planGenerator.clear();
+  // id from asking the LLM for days of game time. Clearing also bumps the
+  // gate's world epoch, so plan/decompose/replan jobs still awaiting the LLM
+  // drop their results instead of writing them onto a new agent with the same
+  // rowid. The queue's dedupe keys go too, or a request stuck in flight from
+  // the old world would block that new agent. (setup.ts also clears the queue
+  // directly; doing it twice is harmless.) Replan cooldowns are game minutes
+  // as well and are cleared by setup.ts via replanEvaluator.clear().
+  planLLMGate.clear();
   planLLMQueue.clear();
 
   // Per-agent identity-bound caches

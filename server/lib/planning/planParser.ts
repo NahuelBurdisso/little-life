@@ -141,6 +141,23 @@ function extractTopic(description: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Whether `parseDecomposedActions` returned its idle fallback, i.e. it could
+ * not read a single action out of the LLM's answer. Parsed lines always carry
+ * a target location, so a lone locationless 'idle' only comes from the
+ * fallback. PlanDecomposer treats that as a failed call (backoff, retry)
+ * rather than pinning the agent in an hour of plan-layer idle.
+ */
+export function isUnparsedDecomposition(actions: DecomposedAction[]): boolean {
+  return (
+    actions.length === 0 ||
+    (actions.length === 1 &&
+      actions[0].action_type === 'idle' &&
+      actions[0].description === 'idle' &&
+      actions[0].target_location === undefined)
+  );
+}
+
 export function parseDecomposedActions(
   raw: string,
   validLocations: string[],
