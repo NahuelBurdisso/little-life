@@ -471,8 +471,9 @@ export class TilemapRenderer {
    * `bush` and `rock` are props placed explicitly by worldgen (trees Poisson-
    * spaced). `tall_grass` is legacy — no longer generated, but worlds saved
    * before worldgen v2 still carry it, and it keeps deriving its trees, bushes
-   * and blotches client-side exactly as before. Rocks are also still derived
-   * from ~22% of dirt tiles. Worldgen guarantees every terrain tile misses
+   * and blotches client-side exactly as before. Legacy worlds (no `rock` tile
+   * anywhere) also still derive rocks from ~22% of dirt tiles; v2 worlds place
+   * their own rocks beside dirt, so they don't. Worldgen guarantees every terrain tile misses
    * roads, footprints and doorways, so derived props inherit that safety.
    *
    * Two passes: all flat ground first, then every prop sorted by row, so a
@@ -493,6 +494,9 @@ export class TilemapRenderer {
     type PropKind = 'tree' | 'bush' | 'rock';
     const props: Array<{ x: number; y: number; kind: PropKind; h: number }> = [];
     const dirt: Array<{ x: number; y: number }> = [];
+    // A tile list with no `rock` at all predates worldgen v2 (which emits rocks
+    // explicitly): only then keep growing boulders out of dirt patches.
+    const deriveDirtRocks = !tiles.some((t) => t.kind === 'rock');
 
     // ── Ground pass ──
     for (const tile of ordered) {
@@ -518,8 +522,10 @@ export class TilemapRenderer {
         else this.drawBlotch(g, px, py, h, 0x3a5a2a, 0.3);
       } else if (tile.kind === 'dirt_patch') {
         dirt.push(tile);
-        // A boulder on some patches gives the bare earth a reason to be bare.
-        if ((h >>> 17) % 100 < 22) props.push({ x: tile.x, y: tile.y, kind: 'rock', h });
+        // A boulder on some patches gives the bare earth a reason to be bare —
+        // legacy worlds only. Worldgen v2 places explicit `rock` tiles, mostly
+        // beside dirt, so deriving more here would double them up.
+        if (deriveDirtRocks && (h >>> 17) % 100 < 22) props.push({ x: tile.x, y: tile.y, kind: 'rock', h });
       } else if (tile.kind === 'tree' || tile.kind === 'bush' || tile.kind === 'rock') {
         props.push({ x: tile.x, y: tile.y, kind: tile.kind, h });
       }
