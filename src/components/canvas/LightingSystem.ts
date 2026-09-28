@@ -1,7 +1,12 @@
 import {
   Application, Container, Graphics, RenderTexture, Sprite,
 } from 'pixi.js';
+// OUTDOOR_TYPES, not OPEN_AREA_TYPES: a hand-maintained local copy had drifted
+// (it omitted `farmyard` and `market_square`, so those got building lights and
+// window glow despite having no walls), and the real OPEN_AREA_TYPES misses the
+// derived open-ground types — see buildingTemplates.ts.
 import { OUTDOOR_TYPES } from '../../../server/lib/worldgen/buildingTemplates';
+import { carriesLantern } from './lanterns';
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
 import {
   type AmbientProfile, PHASE_AMBIENT, computeAmbient, ambientKey, weatherMod,
@@ -54,11 +59,6 @@ const BUILDING_LIGHT: Record<string, {
   divebar:   { color: 0xFFAA44, radius: 56, intensity: 0.7, flicker: 0.15, needsOccupants: false, nightOnly: true },
   pawnshop:  { color: 0xFFE8C0, radius: 40, intensity: 0.4, flicker: 0.05, needsOccupants: false, nightOnly: false },
 };
-
-// Was a hand-maintained local copy that had drifted: it omitted `farmyard` and
-// `market_square`, so those got building lights and window glow despite having
-// no walls. Shared with the generator and the other renderers now.
-const OPEN_AREA_TYPES = OUTDOOR_TYPES;
 
 // ─── Window Glow ─────────────────────────────────────────────────────────────
 // Small warm rects flanking the door on building facades.
@@ -244,7 +244,7 @@ export class LightingSystem {
     // ── Building lights ────────────────────────────────────────────────
     this.buildingLights = [];
     for (const loc of locations) {
-      if (OPEN_AREA_TYPES.has(loc.type)) {
+      if (OUTDOOR_TYPES.has(loc.type)) {
         // Town square gets ambient light at night
         if (loc.type === 'town_square' && this.isNightish) {
           const cx = loc.position.x + loc.position.width / 2;
@@ -293,7 +293,7 @@ export class LightingSystem {
     // ── Window glow: two small warm lights flanking door, night only ────
     if (this.isNightish) {
       for (const loc of locations) {
-        if (OPEN_AREA_TYPES.has(loc.type)) continue;
+        if (OUTDOOR_TYPES.has(loc.type)) continue;
         if (!WINDOW_GLOW_TYPES.has(loc.type)) continue;
 
         // Gate: home requires occupants; all others always glow at night
@@ -357,21 +357,15 @@ export class LightingSystem {
     }
 
     // ── Agent lights (lanterns at night) ────────────────────────────────
-    // Only for agents out in the open. An agent inside a building is drawn in
-    // the interior and is already covered by the building's own light, so a
-    // lantern there was a second warm blob inside the walls — on every sleeper
-    // at home, all night. Open areas (square, park, farmyard...) still count as
-    // outdoors, which is why this is a type check and not `current_location == null`.
+    // Only for agents out in the open — see `carriesLantern`.
     const locTypeById = new Map<number, string>();
     for (const loc of locations) locTypeById.set(loc.id, loc.type);
     this.agentLights = [];
     this.agentLightIds = [];
     if (this.isNightish) {
       for (const agent of agents) {
-        if (agent.current_location != null) {
-          const locType = locTypeById.get(agent.current_location);
-          if (locType === undefined || !OPEN_AREA_TYPES.has(locType)) continue;
-        }
+        const locType = agent.current_location == null ? null : locTypeById.get(agent.current_location);
+        if (!carriesLantern(locType)) continue;
         const baseRadius = 24;
         let color = 0xFFE0A0;
         let intensity = 0.3;
