@@ -9,7 +9,15 @@ import { db } from '../../../db';
 import { agents, locations } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
 import { logActivity } from '../../activityLogger';
-import { PlanGenerator, PLAN_RETRY_BACKOFF_MINUTES, gameMinuteOf, type GameClock } from '../PlanGenerator';
+import {
+  PlanGenerator,
+  PLAN_RETRY_BACKOFF_MINUTES,
+  PLAN_RETRY_FLOOR_SECONDS,
+  PLAN_OUTAGE_THRESHOLD,
+  PLAN_OUTAGE_PROBE_SECONDS,
+  gameMinuteOf,
+  type GameClock,
+} from '../PlanGenerator';
 import { PlanLLMQueue } from '../PlanLLMQueue';
 import { PlanExecutor } from '../PlanExecutor';
 import type { DailyPlan, PlanExecutionState } from '../types';
@@ -40,18 +48,21 @@ function insertLocation(name: string): number {
   }).returning({ id: locations.id }).get().id;
 }
 
+/** Our agents; `agentId` is the one most tests use. */
+let ids: number[] = [];
 let agentId: number;
 let workplaceName: string;
 
 beforeAll(() => {
   // The worker DB is shared with other files, so use unique names and only
-  // ever refer to our own rows by id.
+  // ever refer to our own rows by id. Inactive so no other file's decisions
+  // pass picks them up.
   const tag = `plangen-${Date.now()}`;
   const home = insertLocation(`${tag} Home`);
   workplaceName = `${tag} Bakery`;
   const work = insertLocation(workplaceName);
-  agentId = db.insert(agents).values({
-    name: `${tag} Rosa`,
+  ids = ['Rosa', 'Tom', 'Ada', 'Lin'].map((n) => db.insert(agents).values({
+    name: `${tag} ${n}`,
     bio: 'baker',
     traits: ['kind'],
     personality: null,
@@ -71,8 +82,9 @@ beforeAll(() => {
     home,
     workplace: work,
     created_at: 0,
-    is_active: true,
-  }).returning({ id: agents.id }).get().id;
+    is_active: false,
+  }).returning({ id: agents.id }).get().id);
+  agentId = ids[0];
 });
 
 function makeCache() {
@@ -95,18 +107,36 @@ const memory = {
 /** Mutable game clock shared by the generator's `now` and the queue calls. */
 let clock: GameClock;
 const at = (hour: number, minute = 0): GameClock => ({ day: 1, hour, minute });
+/** Mutable wall clock (ms). */
+let wall: number;
+/** RNG fed to the jitter; 0.5 means "no jitter". */
+let rand: number;
 
 function setup() {
   const cache = makeCache();
   const queue = new PlanLLMQueue();
-  const gen = new PlanGenerator(cache, queue, memory, () => gameMinuteOf(clock));
+  const gen = new PlanGenerator(cache, queue, memory, () => gameMinuteOf(clock), {
+    wallNow: () => wall,
+    random: () => rand,
+  });
   return { cache, queue, gen };
 }
 
-/** Wait for the agent's plan job to finish (the queue releases its key). */
-async function settled(queue: PlanLLMQueue) {
-  await vi.waitFor(() => expect(queue.isPending(agentId, 'generate')).toBe(false));
+/** Advance both clocks well past any per-agent backoff and breaker window. */
+function farLater() {
+  const m = gameMinuteOf(clock) + 24 * 60 - 1;
+  clock = { day: Math.floor(m / 1440) + 1, hour: Math.floor((m % 1440) / 60), minute: m % 60 };
+  wall += 3600_000;
 }
+
+/** Wait for an agent's plan job to finish (the queue releases its key). */
+async function settled(queue: PlanLLMQueue, id = agentId) {
+  await vi.waitFor(() => expect(queue.isPending(id, 'generate')).toBe(false));
+}
+
+const feedErrors = () => vi.mocked(logActivity).mock.calls.filter(([p]) => p.type === 'error');
+const fail = (msg = 'down') => vi.mocked(callOllamaChat).mockImplementationOnce(() => { throw new Error(msg); });
+const succeed = () => vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: GOOD_PLAN }) as never);
 
 const GOOD_PLAN = '07:00-09:00 | Have breakfast | Home\n09:00-17:00 | Bake bread | Bakery\n17:00-21:00 | Read | Home';
 
@@ -118,10 +148,12 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
   clock = at(8);
+  wall = 1_000_000;
+  rand = 0.5;
 });
 
 // ---------------------------------------------------------------------------
-// Tests
+// Per-agent behaviour
 // ---------------------------------------------------------------------------
 
 describe('PlanGenerator when the LLM fails (B6)', () => {
@@ -143,7 +175,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
 
   it('caches a schedule fallback plan on a thrown error and does not retry immediately', async () => {
     const { cache, queue, gen } = setup();
-    vi.mocked(callOllamaChat).mockImplementationOnce(() => { throw new Error('connect ECONNREFUSED'); });
+    fail('connect ECONNREFUSED');
 
     gen.queueGeneration(agentId, clock);
     await settled(queue);
@@ -153,7 +185,8 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     expect(plan.blocks.length).toBeGreaterThan(0);
     // Built from the agent's own schedule and workplace, not from the LLM.
     expect(plan.blocks).toContainEqual(expect.objectContaining({ broad_action: 'work', location_hint: workplaceName, start_hour: SCHEDULE.workStart }));
-    expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+    // One agent's single failure is not an outage: console only, no feed entry.
+    expect(feedErrors()).toHaveLength(0);
     // No 'plan' memory for a plan the agent never actually came up with.
     expect(memory.record).not.toHaveBeenCalled();
 
@@ -178,13 +211,14 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
 
   it('retries after the backoff and upgrades the fallback to an LLM plan', async () => {
     const { cache, queue, gen } = setup();
-    vi.mocked(callOllamaChat).mockImplementationOnce(() => { throw new Error('timed out'); });
+    fail('timed out');
     gen.queueGeneration(agentId, clock);
     await settled(queue);
     expect(cache.get(agentId)?.source).toBe('fallback');
 
-    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: GOOD_PLAN }) as never);
+    succeed();
     clock = at(8, PLAN_RETRY_BACKOFF_MINUTES[0]);
+    wall += PLAN_RETRY_FLOOR_SECONDS[0] * 1000;
     expect(gen.queueGeneration(agentId, clock)).toBe(true);
     await settled(queue);
 
@@ -199,21 +233,51 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     expect(callOllamaChat).toHaveBeenCalledTimes(2);
   });
 
-  it('grows the backoff on consecutive failures and logs one feed error per streak', async () => {
+  it('holds retries to a real-time floor even when game time races ahead', async () => {
+    // tick_speed 4: 30 game minutes are 7.5 real seconds, far shorter than the
+    // LLM timeout. A hung Ollama must not get a fresh request every 7.5 s.
     const { queue, gen } = setup();
-    const start = gameMinuteOf(clock);
-    let elapsed = 0;
+    fail('timed out');
+    gen.queueGeneration(agentId, clock);
+    await settled(queue);
+
+    clock = at(8, PLAN_RETRY_BACKOFF_MINUTES[0]);
+    wall += 7_500;
+    expect(gen.queueGeneration(agentId, clock)).toBe(false);
+
+    wall += PLAN_RETRY_FLOOR_SECONDS[0] * 1000;
+    fail();
+    expect(gen.queueGeneration(agentId, clock)).toBe(true);
+    await settled(queue);
+  });
+
+  it('grows the backoff on consecutive failures', async () => {
+    const { queue, gen } = setup();
+    let expected = 0;
     for (let i = 0; i < PLAN_RETRY_BACKOFF_MINUTES.length + 1; i++) {
-      vi.mocked(callOllamaChat).mockImplementationOnce(() => { throw new Error('down'); });
-      clock = at(8 + Math.floor(elapsed / 60), elapsed % 60);
+      fail();
+      // Past the per-agent floor and the breaker window, so only the
+      // backoff length itself is under test.
+      wall += 3600_000;
+      clock = at(8 + i * 4); // 4 h apart: longer than the longest backoff
       expect(gen.queueGeneration(agentId, clock)).toBe(true);
       await settled(queue);
-      const wait = PLAN_RETRY_BACKOFF_MINUTES[Math.min(i, PLAN_RETRY_BACKOFF_MINUTES.length - 1)];
-      expect(gen.getRetryAt(agentId)).toBe(start + elapsed + wait);
-      elapsed += wait;
+      expected = PLAN_RETRY_BACKOFF_MINUTES[Math.min(i, PLAN_RETRY_BACKOFF_MINUTES.length - 1)];
+      expect(gen.getRetryAt(agentId)).toBe(gameMinuteOf(clock) + expected);
     }
-    const feedErrors = vi.mocked(logActivity).mock.calls.filter(([p]) => p.type === 'error');
-    expect(feedErrors).toHaveLength(1);
+  });
+
+  it('jitters the backoff by up to ±20%', async () => {
+    const waits: number[] = [];
+    for (const r of [0, 1]) {
+      const { queue, gen } = setup();
+      rand = r;
+      fail();
+      gen.queueGeneration(agentId, clock);
+      await settled(queue);
+      waits.push(gen.getRetryAt(agentId)! - gameMinuteOf(clock));
+    }
+    expect(waits).toEqual([PLAN_RETRY_BACKOFF_MINUTES[0] * 0.8, PLAN_RETRY_BACKOFF_MINUTES[0] * 1.2]);
   });
 
   it('measures the backoff from when the failure lands, not from when it was queued', async () => {
@@ -229,13 +293,13 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
 
   it('forgets backoffs on clear() (world replace)', async () => {
     const { queue, gen } = setup();
-    vi.mocked(callOllamaChat).mockImplementationOnce(() => { throw new Error('down'); });
+    fail();
     gen.queueGeneration(agentId, clock);
     await settled(queue);
     expect(gen.queueGeneration(agentId, clock)).toBe(false);
 
     gen.clear();
-    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: GOOD_PLAN }) as never);
+    succeed();
     expect(gen.queueGeneration(agentId, clock)).toBe(true);
     await settled(queue);
   });
@@ -252,6 +316,89 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     release();
     await settled(queue);
     expect(cache.set).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Global circuit breaker
+// ---------------------------------------------------------------------------
+
+describe('PlanGenerator outage breaker', () => {
+  /** Fail one plan for each of agents [from, to). */
+  async function failAgents(gen: PlanGenerator, queue: PlanLLMQueue, to: number, from = 0) {
+    for (const id of ids.slice(from, to)) {
+      fail('ECONNREFUSED');
+      expect(gen.queueGeneration(id, clock)).toBe(true);
+      await settled(queue, id);
+    }
+  }
+
+  it('trips after consecutive failures across agents and reports it to the feed once', async () => {
+    const { queue, gen } = setup();
+    await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD - 1);
+    expect(gen.isOutage()).toBe(false);
+    expect(feedErrors()).toHaveLength(0);
+
+    await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD, PLAN_OUTAGE_THRESHOLD - 1);
+    expect(gen.isOutage()).toBe(true);
+    expect(feedErrors()).toHaveLength(1);
+
+    // An agent with no backoff of its own is still refused while the breaker is open.
+    expect(gen.queueGeneration(ids[3], clock)).toBe(false);
+    expect(callOllamaChat).toHaveBeenCalledTimes(PLAN_OUTAGE_THRESHOLD);
+  });
+
+  it('lets one probe through per window; its failure re-opens, its success closes', async () => {
+    const { queue, gen } = setup();
+    await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD);
+
+    // Window elapsed: exactly one probe gets through.
+    wall += PLAN_OUTAGE_PROBE_SECONDS * 1000;
+    let release!: () => void;
+    vi.mocked(callOllamaChat).mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { release = () => reject(new Error('still down')); }),
+    );
+    expect(gen.queueGeneration(ids[3], clock)).toBe(true);
+    // Agent 0's own floor has passed too, but a probe is already out.
+    expect(gen.queueGeneration(ids[0], at(10))).toBe(false);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    release();
+    await settled(queue, ids[3]);
+
+    // Probe failed: closed again for another window, and still one feed entry.
+    expect(gen.queueGeneration(ids[0], at(10))).toBe(false);
+    expect(feedErrors()).toHaveLength(1);
+
+    // Next window: the probe succeeds and everyone may ask again.
+    farLater();
+    succeed();
+    expect(gen.queueGeneration(ids[0], clock)).toBe(true);
+    await settled(queue, ids[0]);
+    expect(gen.isOutage()).toBe(false);
+    succeed();
+    expect(gen.queueGeneration(ids[1], clock)).toBe(true);
+    await settled(queue, ids[1]);
+
+    // A later outage is a new outage and gets its own feed entry.
+    farLater();
+    await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD);
+    expect(feedErrors()).toHaveLength(2);
+  });
+
+  it('releases the probe slot when the probe ends without reaching the LLM', async () => {
+    const { cache, queue, gen } = setup();
+    await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD);
+    // ids[3] already has a real plan for today, so its probe returns early.
+    cache.set(ids[3], { day: 1, generated_at: 0, blocks: [], needs_snapshot: { hunger: 50, energy: 50, social: 50 }, source: 'llm' });
+
+    wall += PLAN_OUTAGE_PROBE_SECONDS * 1000;
+    expect(gen.queueGeneration(ids[3], clock)).toBe(true);
+    await settled(queue, ids[3]);
+
+    farLater();
+    fail();
+    expect(gen.queueGeneration(ids[0], clock)).toBe(true);
+    await settled(queue, ids[0]);
   });
 });
 

@@ -59,6 +59,37 @@ export function gameMinuteOf(t: GameClock): number {
  */
 export const PLAN_RETRY_BACKOFF_MINUTES = [30, 60, 120, 240] as const;
 
+/**
+ * Real-time floor under the game-time backoff, in seconds, same indexing.
+ *
+ * Game time alone is not enough: at tick_speed 4, 30 game minutes pass in 7.5
+ * real seconds, well inside the 60 s LLM timeout. Against a *hung* Ollama (one
+ * that accepts the connection and never answers) every agent would then keep
+ * one doomed plan call parked on a semaphore slot at all times. A retry needs
+ * both clocks to have run out: the game one keeps the cadence sensible from the
+ * town's point of view, the wall one bounds the load on the real LLM.
+ */
+export const PLAN_RETRY_FLOOR_SECONDS = [30, 60, 120, 300] as const;
+
+/**
+ * ±fraction applied to each backoff. An outage fails every agent within a
+ * few seconds of each other; without jitter they would all retry in the same
+ * game minute and hit the recovering LLM as one burst.
+ */
+export const PLAN_RETRY_JITTER = 0.2;
+
+/**
+ * Global circuit breaker. After this many plan failures in a row across ALL
+ * agents (no success in between) the LLM is treated as down: plan requests are
+ * refused town-wide, and every `PLAN_OUTAGE_PROBE_SECONDS` a single request is
+ * let through as a probe. Its success closes the breaker; its failure keeps it
+ * open for another window. The per-agent backoff alone would still let each of
+ * ~13 agents send its own doomed request per window; the breaker turns an
+ * outage into at most one in-flight plan call.
+ */
+export const PLAN_OUTAGE_THRESHOLD = 3;
+export const PLAN_OUTAGE_PROBE_SECONDS = 60;
+
 /** Dedupe key for daily-plan jobs in the per-agent LLM queue. */
 const GENERATE_KEY = 'generate';
 
@@ -133,7 +164,28 @@ export class PlanGenerator {
    * replace (worldCaches.ts): after a replace the clock restarts at day 1, so a
    * surviving `retryAt` would gag that agent id for days.
    */
-  private backoff = new Map<number, { failures: number; retryAt: number }>();
+  private backoff = new Map<number, { failures: number; retryAt: number; retryAtMs: number }>();
+
+  /**
+   * LLM-wide failure streak for the circuit breaker (see
+   * PLAN_OUTAGE_THRESHOLD). Deliberately NOT reset by `clear()`: an outage is a
+   * property of the LLM, not of the world, and a fresh world asking 13 agents'
+   * worth of plans from a dead Ollama is exactly the storm this prevents.
+   * `reported` makes the activity feed say so once per outage.
+   */
+  private outage = { failures: 0, openUntilMs: 0, reported: false };
+
+  /**
+   * Identity of the one probe request allowed through while the breaker is
+   * open, or null. Released in the job's `finally` so a probe that ends without
+   * reaching the LLM (plan already present, world replaced) can't wedge the
+   * breaker shut; `clear()` releases it too, since the queue drops queued jobs
+   * on a world replace and their `finally` never runs.
+   */
+  private probe: object | null = null;
+
+  private readonly wallNow: () => number;
+  private readonly random: () => number;
 
   /**
    * Bumped by `clear()`. A generate job that was awaiting the LLM across a
@@ -153,20 +205,45 @@ export class PlanGenerator {
      * time could already have expired by the time the failure lands.
      */
     private readonly now: () => number,
-  ) {}
+    /** Injectable wall clock (ms) and RNG, for tests. */
+    opts: { wallNow?: () => number; random?: () => number } = {},
+  ) {
+    this.wallNow = opts.wallNow ?? Date.now;
+    this.random = opts.random ?? Math.random;
+  }
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
   /**
    * Ask for today's plan. Cheap to call on every decision pass: it is a no-op
-   * while a plan job for this agent is already queued or running, and while
-   * the agent is inside an LLM-failure backoff. Returns whether a job was
-   * actually queued.
+   * while a plan job for this agent is already queued or running, while the
+   * agent is inside an LLM-failure backoff, and while the global breaker is
+   * open. Returns whether a job was actually queued.
    */
   queueGeneration(agentId: number, time: GameClock): boolean {
+    const wall = this.wallNow();
     const gate = this.backoff.get(agentId);
-    if (gate && gameMinuteOf(time) < gate.retryAt) return false;
-    return this.queue.enqueue(agentId, () => this.generate(agentId, time.day), GENERATE_KEY);
+    if (gate && (gameMinuteOf(time) < gate.retryAt || wall < gate.retryAtMs)) return false;
+
+    let probe: object | null = null;
+    if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
+      if (wall < this.outage.openUntilMs || this.probe) return false;
+      probe = {};
+    }
+
+    const accepted = this.queue.enqueue(
+      agentId,
+      async () => {
+        try {
+          await this.generate(agentId, time.day);
+        } finally {
+          if (probe && this.probe === probe) this.probe = null;
+        }
+      },
+      GENERATE_KEY,
+    );
+    if (accepted && probe) this.probe = probe;
+    return accepted;
   }
 
   /** Game minute before which no plan request is queued, or null. */
@@ -174,9 +251,15 @@ export class PlanGenerator {
     return this.backoff.get(agentId)?.retryAt ?? null;
   }
 
+  /** Whether the global breaker currently counts the LLM as down. */
+  isOutage(): boolean {
+    return this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
+  }
+
   /** Drop all per-world state. Called from `clearPerWorldCaches`. */
   clear(): void {
     this.backoff.clear();
+    this.probe = null;
     this.epoch++;
   }
 
@@ -227,6 +310,10 @@ export class PlanGenerator {
     }
 
     this.backoff.delete(agentId);
+    if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
+      console.log('[PlanGenerator] LLM answered again; plan requests resume');
+    }
+    this.outage = { failures: 0, openUntilMs: 0, reported: false };
     const { agentRow, currentNeeds } = ctx;
 
     // 13. Create DailyPlan and cache it
@@ -464,9 +551,19 @@ export class PlanGenerator {
   private fallBack(agentId: number, currentDay: number, ctx: PlanningContext, reason: string): void {
     const prev = this.backoff.get(agentId);
     const failures = (prev?.failures ?? 0) + 1;
-    const wait =
-      PLAN_RETRY_BACKOFF_MINUTES[Math.min(failures, PLAN_RETRY_BACKOFF_MINUTES.length) - 1];
-    this.backoff.set(agentId, { failures, retryAt: this.now() + wait });
+    const step = Math.min(failures, PLAN_RETRY_BACKOFF_MINUTES.length) - 1;
+    const jitter = 1 + (this.random() * 2 - 1) * PLAN_RETRY_JITTER;
+    const wait = Math.round(PLAN_RETRY_BACKOFF_MINUTES[step] * jitter);
+    const wall = this.wallNow();
+    this.backoff.set(agentId, {
+      failures,
+      retryAt: this.now() + wait,
+      retryAtMs: wall + Math.round(PLAN_RETRY_FLOOR_SECONDS[step] * 1000 * jitter),
+    });
+
+    this.outage.failures++;
+    const tripped = this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
+    if (tripped) this.outage.openUntilMs = wall + PLAN_OUTAGE_PROBE_SECONDS * 1000;
 
     // Don't clobber a real plan for today with a fallback. Only reachable if a
     // caller forces a regeneration over an LLM plan; today nothing does.
@@ -485,13 +582,24 @@ export class PlanGenerator {
       });
     }
 
-    const message = `Plan LLM failed for ${ctx.agentRow.name} (attempt ${failures}): ${reason}; using schedule plan, retry in ${wait} game min`;
-    console.warn(`[PlanGenerator] ${message}`);
-    // One activity-feed entry per failure streak. While Ollama is down every
-    // agent fails every few game hours; the console carries the repeats.
-    if (failures === 1) {
+    console.warn(
+      `[PlanGenerator] Plan LLM failed for ${ctx.agentRow.name} (attempt ${failures}): ${reason}; ` +
+        `using schedule plan, retry in ${wait} game min`,
+    );
+    // One activity-feed entry per outage, raised when the breaker trips and
+    // re-armed by the next successful plan. Per-agent entries flooded the feed
+    // with a dozen identical errors every time Ollama went away; a lone blip
+    // that one agent's retry absorbs isn't worth the player's attention at all.
+    if (tripped && !this.outage.reported) {
+      this.outage.reported = true;
       try {
-        logActivity({ type: 'error', templateData: { system: 'planning', message } });
+        logActivity({
+          type: 'error',
+          templateData: {
+            system: 'planning',
+            message: `Daily plans are failing (${reason}); townsfolk follow their routines until the LLM answers again`,
+          },
+        });
       } catch {
         // Reporting must never turn a handled failure into an unhandled one.
       }
