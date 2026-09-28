@@ -306,9 +306,9 @@ function evaluateAbandonment(
       goal.status = newStatus;
 
       if (newStatus === 'completed') {
-        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined, victimId: agent.id });
+        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
       } else {
-        simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined });
+        simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
       }
 
       logActivity({
@@ -319,6 +319,22 @@ function evaluateAbandonment(
       break;
     }
   }
+}
+
+/**
+ * The cast of a goal event, in the cascade engine's vocabulary.
+ *
+ * These events used to name the goal's *target* as `perpetratorId` and the
+ * achiever as `victimId`, so every consumer read the roles backwards: witnesses
+ * spread rumors about the person who was protected or befriended, and
+ * favorEngine recorded a "protect" favor from the agent to themself. The agent
+ * pursuing the goal is the actor (`agentId`, which the engine also treats as
+ * the perpetrator); the goal's target is the other party, carried in `victimId`
+ * — the engine's only "other party" slot, and the field favorEngine already
+ * reads for the person who was helped.
+ */
+export function goalEventCast(goal: { target_id: number | null }): { victimId?: number } {
+  return goal.target_id != null ? { victimId: goal.target_id } : {};
 }
 
 // ─── evaluatePassiveProgress ──────────────────────────────────────────────────
@@ -349,7 +365,7 @@ function evaluatePassiveProgress(agent: any, goal: any, currentTick: number): vo
           .set({ progress: newProgress, status: 'completed', completed_at: currentTick })
           .where(eq(goals.id, goal.id))
           .run();
-        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined, victimId: agent.id });
+        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
         logActivity({
           type: 'goal_completed',
           initiator: agent.id,

@@ -881,17 +881,20 @@ export const rippleRules: RippleRule[] = [
     },
   },
 
-  // Revenge completed → target retaliates with their own revenge goal
+  // Revenge completed → target retaliates with their own revenge goal.
+  // goal:completed carries the achiever as agentId/perpetrator and the goal's
+  // target as victim (goals.ts goalEventCast), so the target is the `victim`
+  // here and the revenge is aimed back at the `perpetrator`.
   {
     id: 'revenge_breeds_revenge',
     source: 'goal:completed',
     sourceFilter: (payload) => payload?.goalType === 'revenge',
-    target: 'perpetrator',
+    target: 'victim',
     probability: 0.5,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.2 }],
     cooldownTicks: 720,
     effects: {
-      createGoal: { type: 'revenge', targetAgent: 'victim' },
+      createGoal: { type: 'revenge', targetAgent: 'perpetrator' },
       createState: 'angry',
       tensionDelta: 30,
     },
@@ -914,17 +917,18 @@ export const rippleRules: RippleRule[] = [
   },
 
   // Undermine completed → victim becomes stressed + may seek revenge
+  // (same cast as revenge_breeds_revenge: the undermined target is the victim).
   {
     id: 'undermine_victim_retaliation',
     source: 'goal:completed',
     sourceFilter: (payload) => payload?.goalType === 'undermine',
-    target: 'perpetrator',
+    target: 'victim',
     probability: 0.4,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.15 }],
     cooldownTicks: 720,
     effects: {
       createState: 'stressed',
-      createGoal: { type: 'investigate', targetAgent: 'victim' },
+      createGoal: { type: 'investigate', targetAgent: 'perpetrator' },
       tensionDelta: 20,
     },
   },

@@ -775,8 +775,13 @@ export class RippleEngine {
 
     // relationshipDelta
     if (fx.relationshipDelta) {
-      const targetId = metadata.perpetratorId ?? metadata.victimId;
-      if (targetId != null && targetId !== agentId) {
+      // The other party, not whoever is listed first: `perpetratorId` falls
+      // back to the acting agent when an event names no perpetrator, and
+      // `perpetratorId ?? victimId` then picked the agent themself and skipped
+      // the delta — e.g. protect_gratitude never reached the protected person.
+      const targetId = [metadata.perpetratorId, metadata.victimId]
+        .find(id => id != null && id !== agentId);
+      if (targetId != null) {
         const a = Math.min(agentId, targetId);
         const b = Math.max(agentId, targetId);
         const isA = agentId === a;
