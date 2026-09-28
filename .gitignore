@@ -1,7 +1,6 @@
 node_modules
 dist
 .env.local
-.convex
 assets-raw
 
 # Runtime SQLite state. server/db/index.ts creates the file on first boot and
