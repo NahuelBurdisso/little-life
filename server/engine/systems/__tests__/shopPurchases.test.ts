@@ -124,12 +124,12 @@ function ticks(n: number): void {
 }
 
 let n = 0;
-function scene(shopStock: Inv, buyerMoney = 100, buyerInv: Inv = []) {
+function scene(shopStock: Inv, buyerMoney = 100, buyerInv: Inv = [], shopType = 'shop') {
   n++;
   const home = insertLocation(`purchase home ${n}`, 'home', null);
   const owner = insertAgent(`Shopkeeper ${n}`, home);
   const buyer = insertAgent(`Buyer ${n}`, home);
-  const shop = insertLocation(`purchase shop ${n}`, 'shop', owner);
+  const shop = insertLocation(`purchase shop ${n}`, shopType, owner);
   insertEconomy(owner, 500, shopStock);
   insertEconomy(buyer, buyerMoney, buyerInv);
   return { owner, buyer, shop };
@@ -207,5 +207,28 @@ describe('shop purchases', () => {
 
     expect(purchasesBy(buyer)).toHaveLength(0);
     expect(econ(buyer).money).toBe(0);
+  });
+
+  it('eating at the clinic does not buy medicine', () => {
+    const { buyer, shop } = scene(stock({ medicine: 10 }), 100, [], 'clinic');
+    setAction(buyer, { type: 'eating', locationId: shop }, 100, shop);
+
+    ticks(5);
+
+    expect(purchasesBy(buyer)).toHaveLength(0);
+    expect(econ(buyer).money).toBe(100);
+  });
+
+  it('a tavern meal is food, never a drink standing in for it', () => {
+    // Drinks satisfy `fun`, not hunger — with the kitchen out there is no meal to buy.
+    const dry = scene(stock({ drink: 10 }), 100, [], 'tavern');
+    setAction(dry.buyer, { type: 'eating', locationId: dry.shop }, 100, dry.shop);
+    ticks(5);
+    expect(purchasesBy(dry.buyer)).toHaveLength(0);
+
+    const fed = scene(stock({ drink: 10, food_prepared: 10 }), 100, [], 'tavern');
+    setAction(fed.buyer, { type: 'eating', locationId: fed.shop }, 100, fed.shop);
+    ticks(5);
+    expect(purchasesBy(fed.buyer).map((t) => t.reason)).toEqual(['purchase:food_prepared']);
   });
 });

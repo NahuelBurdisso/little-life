@@ -60,6 +60,15 @@ const MEAL = '__meal__';
 /** A shopping trip skips an item the buyer already holds this many of. */
 const SHOPPING_STOCK_TARGET = 2;
 
+/** First item in `sells` that is a meal per ITEM_REGISTRY and that the shop has in stock. */
+function findMealItem(sells: readonly string[], ownerEcon: typeof economy.$inferSelect): string | null {
+  for (const item of sells) {
+    if (ITEM_REGISTRY[item]?.satisfies?.need !== 'hunger') continue;
+    if (getInventoryCount(ownerEcon.inventory as any[], item) > 0) return item;
+  }
+  return null;
+}
+
 function purchasesFor(agentId: number, actionKey: string): Set<string> {
   const entry = purchasesThisAction.get(agentId);
   if (entry && entry.actionKey === actionKey) return entry.handled;
@@ -394,27 +403,14 @@ export function economyTick(): void {
           const ownerEcon = econByAgent.get(eatLocation.owner);
           if (!ownerEcon) { continue; }
 
-          // Find best food item the shop sells and has in stock
-          let itemToBuy: string | null = null;
-          for (const sellItem of tradeRule.sells) {
-            const def = ITEM_REGISTRY[sellItem];
-            if (!def?.satisfies || def.satisfies.need !== 'hunger') continue;
-            if (getInventoryCount(ownerEcon.inventory as any[], sellItem) > 0) {
-              itemToBuy = sellItem;
-              break;
-            }
-          }
-          // Fallback: try any item the shop sells
-          if (!itemToBuy) {
-            for (const sellItem of tradeRule.sells) {
-              if (getInventoryCount(ownerEcon.inventory as any[], sellItem) > 0) {
-                itemToBuy = sellItem;
-                break;
-              }
-            }
-          }
-          // Out of stock or unaffordable: leave the meal unpaid for now and retry
-          // next tick — restocking (wholesale) or payday can land mid-meal.
+          // A meal is whatever the item data says feeds you: `satisfies.need ===
+          // 'hunger'` (food_raw, food_prepared, bread). There used to be a
+          // fallback to "any item the shop sells", which charged someone eating at
+          // the clinic for medicine and a tavern diner for a drink when the kitchen
+          // was out — a drink satisfies `fun`, not hunger, so it isn't a meal.
+          const itemToBuy = findMealItem(tradeRule.sells, ownerEcon);
+          // No meal in stock, or unaffordable: leave the meal unpaid for now and
+          // retry next tick — restocking (wholesale) or payday can land mid-meal.
           if (!itemToBuy) { continue; }
 
           const shopStock = getInventoryCount(ownerEcon.inventory as any[], itemToBuy);
