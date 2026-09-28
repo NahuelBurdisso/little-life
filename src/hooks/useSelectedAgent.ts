@@ -20,6 +20,5 @@ export function useSelectedAgent(agentId: string | null) {
     states: data?.states,
     conversationHistory: data?.conversationHistory,
     status,
-    isLoading: status === 'loading',
   };
 }
