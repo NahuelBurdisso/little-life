@@ -175,28 +175,69 @@ describe('social home placement through initialize', () => {
   const homesOf = (locs: Array<{ name: string; type: string; position: unknown }>) =>
     locs.filter((l) => l.type === 'home').map((l) => ({ name: l.name, position: l.position }));
 
-  it('seeds the rivals into the placed homes', async () => {
+  const cfg = (seed: string) => ({ sizeTier: 'auto' as const, overrides: {}, seed });
+
+  /**
+   * A seed where placement actually relabels, so the assertions could not pass
+   * with the social input dropped on the floor (or, for restart, applied).
+   */
+  async function relabellingSeed() {
     const { buildSocialEdges } = await import('../lib/worldgen/social');
     const edges = buildSocialEdges(RIVALS, null, MINIMAL_AGENTS);
     expect(edges).toEqual([{ a: 'Test Agent 1', b: 'Test Agent 5', kind: 'rival' }]);
-
-    // Pick a seed where placement actually relabels, so the assertion below
-    // could not pass with the social input dropped on the floor.
-    const cfg = (seed: string) => ({ sizeTier: 'auto' as const, overrides: {}, seed });
-    let seed: string | null = null;
-    let placed: ReturnType<typeof generateWorld> | null = null;
-    for (let i = 0; i < 20 && !seed; i++) {
+    for (let i = 0; i < 20; i++) {
       const s = `social-db-${i}`;
       const base = generateWorld(cfg(s), MINIMAL_AGENTS.length, { agents: MINIMAL_AGENTS });
       const soc = generateWorld(cfg(s), MINIMAL_AGENTS.length, {
         agents: MINIMAL_AGENTS, social: { edges },
       });
       if (JSON.stringify(homesOf(base.locations)) !== JSON.stringify(homesOf(soc.locations))) {
-        seed = s;
-        placed = soc;
+        return { seed: s, base, placed: soc };
       }
     }
-    expect(seed).not.toBeNull();
+    throw new Error('no seed in social-db-0..19 relabels the homes');
+  }
+
+  const dbHomes = () => homesOf(
+    db.select({ name: locations.name, type: locations.type, position: locations.position })
+      .from(locations).all());
+
+  /**
+   * A world saved before social placement existed has no `socialPlacement` key.
+   * Restarting it must rebuild the layout the player knows, not relabel it
+   * because the schema defaults the flag on — while a config saved since, which
+   * carries the key, restarts with placement.
+   */
+  it('restart keeps a legacy config (no socialPlacement key) on its old layout', async () => {
+    const { seed, base, placed } = await relabellingSeed();
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: cfg(seed),
+    } as any);
+
+    // New configs persist the flag explicitly, so they are never mistaken for
+    // legacy ones.
+    const saved = db.select({ setup_config: worldState.setup_config }).from(worldState).get()!
+      .setup_config as any;
+    expect(saved.worldgen.socialPlacement).toBe(true);
+    expect(dbHomes()).toEqual(homesOf(placed.locations));
+
+    await caller.restart();
+    expect(dbHomes()).toEqual(homesOf(placed.locations));
+
+    const { socialPlacement: _dropped, ...legacyWorldgen } = saved.worldgen;
+    db.update(worldState).set({ setup_config: { ...saved, worldgen: legacyWorldgen } }).run();
+    await caller.restart();
+    expect(dbHomes()).toEqual(homesOf(base.locations));
+  });
+
+  it('seeds the rivals into the placed homes', async () => {
+    const { seed, placed } = await relabellingSeed();
 
     const { setupRouter } = await import('../routers/setup');
     const caller = setupRouter.createCaller({} as any);
@@ -205,22 +246,22 @@ describe('social home placement through initialize', () => {
       relationships: RIVALS,
       world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
       rules: { startingMoney: 50, tickSpeed: 1 },
-      worldgen: cfg(seed!),
+      worldgen: cfg(seed),
     } as any);
 
     const rows = db.select({ name: locations.name, type: locations.type, position: locations.position })
       .from(locations).all();
-    expect(homesOf(rows)).toEqual(homesOf(placed!.locations));
+    expect(homesOf(rows)).toEqual(homesOf(placed.locations));
 
     // The wizard preview, given the same cast and relationships, shows the
     // same placement (both routes share `buildWorldgenSocial`).
     const preview = await caller.previewWorld({
-      ...cfg(seed!),
+      ...cfg(seed),
       agentCount: MINIMAL_AGENTS.length,
       agents: MINIMAL_AGENTS,
       relationships: RIVALS,
     });
-    expect(homesOf(preview.locations)).toEqual(homesOf(placed!.locations));
+    expect(homesOf(preview.locations)).toEqual(homesOf(placed.locations));
 
     // And the rivals really are neighbours: at or below the median pair distance.
     const door = (name: string) => {

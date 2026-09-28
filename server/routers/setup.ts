@@ -285,6 +285,12 @@ function buildWorldgenSocial(
   return { edges: buildSocialEdges(relationships, scenario, agents) };
 }
 
+/** Whether a raw, unparsed `setup_config` states `worldgen.socialPlacement`. */
+function hasSocialPlacementKey(raw: unknown): boolean {
+  const worldgen = (raw as { worldgen?: unknown } | null)?.worldgen;
+  return typeof worldgen === 'object' && worldgen !== null && 'socialPlacement' in worldgen;
+}
+
 // ─── Helper: seed world from config ──────────────────────────────────────────
 
 /**
@@ -1011,6 +1017,16 @@ export const setupRouter = router({
       throw new Error('No saved setup config — use Reset to Wizard instead');
     }
     const config = SetupConfigSchema.parse(world.setup_config);
+    // A config saved before social home placement existed has no
+    // `socialPlacement` key, and the schema's `.default(true)` would switch it
+    // on here — relabelling the homes of a world the player already knows, from
+    // the same seed. So the missing key is read off the raw JSON, before the
+    // parse filled it in, and means "off". Configs posted by the wizard since
+    // carry the key explicitly (the schema default writes it into the persisted
+    // config), so this only ever matches legacy saves.
+    if (!hasSocialPlacementKey(world.setup_config)) {
+      config.worldgen = { ...config.worldgen, socialPlacement: false };
+    }
 
     await replaceWorld(config);
 
