@@ -1,3 +1,5 @@
+import { thatSentence } from '../factText';
+
 type TemplateContext = Record<string, string | number>;
 
 type TemplateFn = (ctx: TemplateContext) => string;
@@ -44,13 +46,17 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I'm starting to feel ${ctx.sentiment} toward ${ctx.other}.`,
     (ctx) => `My feelings toward ${ctx.other} have shifted — I feel ${ctx.sentiment}.`,
   ],
+  // `content` is a whole fact clause ("Yuki and Thomas were once together —
+  // and it ended badly.") with its own punctuation, so it goes through
+  // thatSentence: "I told X about <clause>" was ungrammatical and the raw
+  // splice doubled the period in the memory the LLM later reads back.
   gossip_learned: [
-    (ctx) => `${ctx.source} told me that ${ctx.content}.`,
-    (ctx) => `I heard from ${ctx.source}: ${ctx.content}.`,
+    (ctx) => thatSentence(`${ctx.source} told me`, String(ctx.content)),
+    (ctx) => thatSentence(`I heard from ${ctx.source}`, String(ctx.content)),
   ],
   gossip_shared: [
-    (ctx) => `I told ${ctx.other} about ${ctx.content}.`,
-    (ctx) => `I shared with ${ctx.other} that ${ctx.content}.`,
+    (ctx) => thatSentence(`I told ${ctx.other}`, String(ctx.content)),
+    (ctx) => thatSentence(`I shared with ${ctx.other}`, String(ctx.content)),
   ],
   need_critical: [
     (ctx) => `I really need ${ctx.need}.`,
