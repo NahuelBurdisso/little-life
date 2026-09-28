@@ -234,7 +234,10 @@ export function addMessage(
   timestamp: number,
 ) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
-  if (!conversation) return null;
+  // A timeout force-end can land while taskRunner is mid-turn. Appending here
+  // kept the ended transcript growing and, because the caller saw a normal
+  // result, chained yet another critical-priority LLM turn onto a dead conversation.
+  if (!conversation || conversation.status === 'ended') return null;
 
   const messages = [
     ...(conversation.messages as Array<Record<string, unknown>>),

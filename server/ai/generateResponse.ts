@@ -27,6 +27,9 @@ export async function generateResponse(
     markConversationEnded(conversationId);
     return null;
   }
+  // Force-ended between turns: don't spend a critical LLM slot on a reply
+  // addMessage would refuse anyway.
+  if (context.conversation.status === 'ended') return null;
 
   const {
     conversation,
@@ -153,6 +156,9 @@ export async function generateResponse(
       // p95ResponseMs toward zero.
       const nudgeStart = performance.now();
       let nudgeSucceeded = false;
+      // Drop the rejected text now, so a failed retry reaches the fallback
+      // below instead of saving the very reply the validator just refused.
+      responseText = null;
       try {
         const nudge = await callOllamaChat({
           model: CONFIG.AI.CHAT_MODEL,
