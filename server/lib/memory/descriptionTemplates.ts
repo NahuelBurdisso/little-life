@@ -29,6 +29,16 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `${ctx.other} and I got cut off while talking about ${ctx.summary || 'things'}.`,
     (ctx) => `My conversation with ${ctx.other} about ${ctx.summary || 'things'} ended before we were done.`,
   ],
+  // Quote variants: the conversation's most loaded line (see conversationGist.ts)
+  // replaces the topic label. `who` is 'I' when the quote is the agent's own.
+  conversation_end_quote: [
+    (ctx) => (ctx.who === 'I' ? `I told ${ctx.other}, "${ctx.quote}"` : `${ctx.other} told me, "${ctx.quote}"`),
+    (ctx) => `Talking with ${ctx.other}, ${ctx.who === 'I' ? 'I' : 'they'} said, "${ctx.quote}"`,
+  ],
+  conversation_cut_short_quote: [
+    (ctx) => `${ctx.other} and I got cut off right after ${ctx.who === 'I' ? 'I' : 'they'} said, "${ctx.quote}"`,
+    (ctx) => `My conversation with ${ctx.other} ended before we were done. ${ctx.who === 'I' ? 'I' : 'They'} had just said, "${ctx.quote}"`,
+  ],
   state_triggered: [
     (ctx) => `I started feeling ${ctx.state}.`,
     (ctx) => `I'm ${ctx.state} now.`,

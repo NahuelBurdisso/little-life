@@ -901,6 +901,9 @@ async function processCompletedConversation(
       // Lets the memory stream record "we got cut off" instead of "we wrapped up
       // our conversation" for an exchange the turn budget amputated mid-flow.
       truncated: cutShort,
+      // The memory quotes the transcript's most loaded line instead of only
+      // naming the topic (see lib/memory/conversationGist.ts).
+      messages,
     });
 
     // Update needs: social boost + mood modifier

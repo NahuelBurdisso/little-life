@@ -30,7 +30,26 @@ export interface DialogueSanitizeOptions {
   truncated?: boolean;
 }
 
-export function firstName(fullName: string): string {
+// Canned lines used when the model produced nothing usable. They are narration,
+// not speech, so anything that mines transcripts for what was *said* (the
+// conversation-end memory) has to be able to recognise and skip them.
+const FALLBACK_REPLIES: Array<(name: string) => string> = [
+  (name) => `${name} smiled and nodded.`,
+  (name) => `${name} paused thoughtfully.`,
+  (name) => `"Hmm, interesting," ${name} said.`,
+  (name) => `${name} shrugged.`,
+];
+const FALLBACK_REPLY = /^(?:[\p{L}' -]+ (?:smiled and nodded|paused thoughtfully|shrugged)\.|"Hmm, interesting," [\p{L}' -]+ said\.)$/u;
+
+export function fallbackReply(speakerName: string): string {
+  return FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)](speakerName);
+}
+
+export function isFallbackReply(text: string): boolean {
+  return FALLBACK_REPLY.test(text.trim());
+}
+
+function firstName(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] ?? '';
 }
 

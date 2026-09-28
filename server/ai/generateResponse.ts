@@ -2,7 +2,7 @@ import { callOllamaChat } from './ollama';
 import { buildConversationPrompt, ConversationPromptParams } from './prompts';
 import { analyzeSentiment } from './sentiment';
 import { extractTopics } from './topics';
-import { sanitizeDialogue } from './sanitizeDialogue';
+import { sanitizeDialogue, fallbackReply } from './sanitizeDialogue';
 import {
   getConversationContext,
   addMessage,
@@ -223,13 +223,7 @@ export async function generateResponse(
 
   // 4. Fallback if LLM failed
   if (!responseText) {
-    const fallbacks = [
-      `${speaker.name} smiled and nodded.`,
-      `${speaker.name} paused thoughtfully.`,
-      `"Hmm, interesting," ${speaker.name} said.`,
-      `${speaker.name} shrugged.`,
-    ];
-    responseText = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    responseText = fallbackReply(speaker.name);
   }
 
   // 5. Analyze response

@@ -1,5 +1,6 @@
 import { simEvents } from '../simEvents';
 import { describeEvent } from './descriptionTemplates';
+import { pickConversationGist, type GistLine } from './conversationGist';
 import type { MemoryService } from './MemoryService';
 import { db } from '../../db';
 import { agents } from '../../db/schema';
@@ -30,6 +31,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       turns,
       sentiment,
       truncated,
+      messages,
     }: {
       agentId: number;
       otherName: string;
@@ -37,21 +39,45 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       turns: number;
       sentiment: number;
       truncated?: boolean;
+      messages?: GistLine[];
     }) => {
-      // A conversation the turn budget force-ended must not be remembered as one
-      // that "wrapped up" — the agent would later reason about it as finished
-      // business. Template conversations never set the flag.
-      const description = describeEvent(truncated ? 'conversation_cut_short' : 'conversation_end', {
-
-        other: otherName,
-        summary,
-        turns,
-      });
+      // Remember something that was actually said, not just the topic label.
+      // Only LLM conversations pass their transcript; template ones (and any
+      // transcript with nothing worth quoting) keep the topic templates.
+      const gist = messages?.length ? pickConversationGist(messages) : null;
+      let description: string;
+      if (gist) {
+        const who = gist.speakerId === agentId ? 'I' : 'they';
+        // In a group chat the quote belongs to one of several people.
+        const quotedName = who === 'they' && otherName.includes(' and ')
+          ? db.select({ name: agents.name }).from(agents).where(eq(agents.id, gist.speakerId)).get()?.name ?? otherName
+          : otherName;
+        description = describeEvent(truncated ? 'conversation_cut_short_quote' : 'conversation_end_quote', {
+          other: quotedName,
+          quote: gist.quote,
+          who,
+        });
+      } else {
+        // A conversation the turn budget force-ended must not be remembered as one
+        // that "wrapped up" — the agent would later reason about it as finished
+        // business. Template conversations never set the flag.
+        description = describeEvent(truncated ? 'conversation_cut_short' : 'conversation_end', {
+          other: otherName,
+          summary,
+          turns,
+        });
+      }
       memoryService.record(
         agentId,
         'conversation',
         description,
-        { subtype: 'conversation', summary, turns, ...(truncated ? { truncated: true } : {}) },
+        {
+          subtype: 'conversation',
+          summary,
+          turns,
+          ...(truncated ? { truncated: true } : {}),
+          ...(gist ? { quote: gist.quote, quote_by: gist.speakerId } : {}),
+        },
         sentiment,
       );
     },
