@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../db';
 import {
   activityLog,
@@ -13,10 +13,13 @@ import { and, eq, inArray } from 'drizzle-orm';
 import {
   clearGiftTracking,
   giveImpulsiveGift,
+  GIFT_COOLDOWN_MINUTES,
   IMPULSIVE_GIFT_COOLDOWN_MINUTES,
   IMPULSIVE_GIFT_MONEY_FLOOR,
 } from '../giftEngine';
 import { statesTick } from '../../engine/systems/states';
+import { simEvents } from '../simEvents';
+import { setEffectivePersonality } from '../states';
 
 /**
  * Playtest bug: `drunk` / `euphoric` rolled a $5-15 cash gift at 30% EVERY tick
@@ -269,5 +272,52 @@ describe('impulsive state gifts', () => {
     expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).not.toBeNull();
     clearGiftTracking();
     expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).not.toBeNull();
+  });
+});
+
+/**
+ * The conversation-gift cooldown compared Date.now() to "1440 ticks × 1000 ms" —
+ * 24 real minutes, which is a game day only at tick_speed 1. It is game time now.
+ */
+describe('conversation gift cooldown', () => {
+  beforeEach(() => {
+    clearGiftTracking();
+    clock += 10_000;
+    setClock(clock);
+    // Every roll passes: the gift chance is personality-driven and < 1.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  function talk(giver: number, receiver: number): void {
+    simEvents.emit('conversation:ended', { agentId: giver, perpetratorId: receiver, sentiment: 0.9, turns: 6 });
+  }
+
+  const conversationGiftsFrom = (agentId: number) =>
+    db.select().from(economyTransactions).where(and(
+      eq(economyTransactions.from_agent, agentId),
+      eq(economyTransactions.reason, 'gift'),
+    )).all();
+
+  it('allows one gift per game day, however little real time passes', () => {
+    const { giver, receiver } = pair(200);
+    setEffectivePersonality(giver, {
+      honesty: 50, aggression: 20, warmth: 100, impulsiveness: 50, vanity: 50,
+      curiosity: 50, loyalty: 50, morality: 80, sensuality: 50, neuroticism: 50,
+    });
+
+    talk(giver, receiver);
+    expect(conversationGiftsFrom(giver)).toHaveLength(1);
+
+    // Same game day: blocked.
+    setClock(clock + GIFT_COOLDOWN_MINUTES - 1);
+    talk(giver, receiver);
+    expect(conversationGiftsFrom(giver)).toHaveLength(1);
+
+    // A game day later — milliseconds of real time at a fast tick_speed. The
+    // wall-clock cooldown kept blocking here for 24 real minutes.
+    setClock(clock + GIFT_COOLDOWN_MINUTES);
+    talk(giver, receiver);
+    expect(conversationGiftsFrom(giver)).toHaveLength(2);
   });
 });

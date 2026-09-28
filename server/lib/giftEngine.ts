@@ -11,13 +11,17 @@ import { ITEM_REGISTRY } from '../data/economyData';
 // After positive conversations, warm/romantic agents may spontaneously gift items.
 // Gifts boost friendship and romance. Personality drives gift frequency.
 
-// Gift cooldown: prevent spam (1 gift per agent per game day at most)
-const lastGiftTick = new Map<number, number>();
-const GIFT_COOLDOWN_TICKS = 1440; // ~1 game day
+// Gift cooldown: prevent spam (1 gift per agent per game day at most).
+// Game minutes from the world clock. It used to compare Date.now() against
+// "1440 ticks × 1000 ms", i.e. 24 real minutes — a full game day at tick_speed 1
+// but only ~5 game hours at tick_speed 5, so the faster the player ran the game
+// the more often the same agent gifted per game day.
+const lastGiftMinute = new Map<number, number>();
+export const GIFT_COOLDOWN_MINUTES = 1440; // 1 game day
 
 /** Drop per-agent gift cooldowns for a world replace (agent ids are reused). */
 export function clearGiftTracking(): void {
-  lastGiftTick.clear();
+  lastGiftMinute.clear();
   lastImpulsiveGift.clear();
 }
 
@@ -158,10 +162,12 @@ function initGiftSystem(): void {
     const sentiment = payload.sentiment ?? 0;
     if (sentiment < 0.2) return; // only after positive conversations
 
-    // Check cooldown
+    // Check cooldown (game time). `now` stays wall-clock for the ledger row and
+    // inventory `acquiredAt`, which are wall-clock ms everywhere else.
     const now = Date.now();
-    const lastTick = lastGiftTick.get(payload.agentId);
-    if (lastTick && (now - lastTick) < GIFT_COOLDOWN_TICKS * 1000) return;
+    const nowMinute = currentGameMinute();
+    const lastMinute = lastGiftMinute.get(payload.agentId);
+    if (lastMinute !== undefined && nowMinute - lastMinute < GIFT_COOLDOWN_MINUTES) return;
 
     // Check personality
     const personality = getEffectivePersonality(payload.agentId);
@@ -222,7 +228,7 @@ function initGiftSystem(): void {
         timestamp: now,
       }).run();
 
-      lastGiftTick.set(payload.agentId, now);
+      lastGiftMinute.set(payload.agentId, nowMinute);
 
       // Relationship boost
       applyGiftRelationshipBoost(payload.agentId, otherId, giftAmount);
@@ -256,7 +262,7 @@ function initGiftSystem(): void {
     db.update(economy).set({ inventory: newGiverInv }).where(eq(economy.id, econ.id)).run();
     db.update(economy).set({ inventory: newReceiverInv }).where(eq(economy.id, recipientEcon.id)).run();
 
-    lastGiftTick.set(payload.agentId, now);
+    lastGiftMinute.set(payload.agentId, nowMinute);
 
     // Relationship boost
     const itemDef = ITEM_REGISTRY[giftItem];
