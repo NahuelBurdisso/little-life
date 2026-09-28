@@ -153,7 +153,7 @@ export class LightingSystem {
   // Lightning state
   private lightningTimer = 0;
   private lightningIntensity = 0;
-  private stormyNight = false;
+  private stormy = false;
 
   // Dimensions
   private lmW = 1;
@@ -420,7 +420,12 @@ export class LightingSystem {
     // poll (~1 Hz), so advancing a 180-*frame* timer here meant a night storm
     // needed ~3 real minutes before lightning could even become eligible, and
     // then only had a 2% chance per poll — it effectively never struck.
-    this.stormyNight = world.weather === 'stormy' && this.isNightish;
+    //
+    // Any phase, not just night: this is the only lightning now (WeatherEffects
+    // used to add its own white overlay, doubling every flash at night and
+    // supplying the daytime ones). A day storm's ambient is at half brightness,
+    // so the flash to white still reads.
+    this.stormy = world.weather === 'stormy';
   }
 
   /**
@@ -483,7 +488,7 @@ export class LightingSystem {
     let aB = Math.round(this.currentAmbient.b * b);
 
     // Storm lightning: per-frame, so the 180 is the ~3s of frames it reads as.
-    if (this.stormyNight) {
+    if (this.stormy) {
       this.lightningTimer += 1;
       if (this.lightningTimer > 180 && Math.random() < 0.02) {
         this.lightningIntensity = 1.0;

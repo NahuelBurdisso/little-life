@@ -5,8 +5,6 @@ interface Particle {
   vx: number;
   vy: number;
   life: number;
-  /** Lightning sizes itself to the canvas, so it must never be handed out again. */
-  pooled: boolean;
 }
 
 export class WeatherEffects {
@@ -57,12 +55,8 @@ export class WeatherEffects {
       p.life -= delta;
 
       if (p.life <= 0 || p.graphic.y > height + 20 || p.graphic.x > width + 20) {
-        if (p.pooled) {
-          p.graphic.visible = false;
-          this.pool.push(p.graphic);
-        } else {
-          p.graphic.destroy();
-        }
+        p.graphic.visible = false;
+        this.pool.push(p.graphic);
         this.particles.splice(i, 1);
       }
     }
@@ -92,11 +86,10 @@ export class WeatherEffects {
         this.spawnRain(width, 8);
         break;
       case "stormy":
+        // Rain only. Lightning belongs to LightingSystem, which flashes the
+        // lightmap itself; this class used to add a second, unsynchronised
+        // white overlay, so a stormy night flashed twice.
         this.spawnRain(width, 16);
-        // Occasional lightning flash
-        if (Math.random() < 0.05) {
-          this.flashLightning(width, height);
-        }
         break;
       case "foggy":
         this.spawnFog(width, height, 2);
@@ -127,7 +120,6 @@ export class WeatherEffects {
         vx: -1 - Math.random(),
         vy: 8 + Math.random() * 4,
         life: 120,
-        pooled: true,
       });
     }
   }
@@ -145,25 +137,8 @@ export class WeatherEffects {
         vx: 0.3 + Math.random() * 0.3,
         vy: -0.1 + Math.random() * 0.2,
         life: 300,
-        pooled: true,
       });
     }
-  }
-
-  private flashLightning(width: number, height: number) {
-    // Not pooled: this rect is sized to the canvas, so a recycled one would be
-    // the wrong size after a resize — and it would also hand a rain streak's
-    // geometry to the flash, since the pool is shared across the weather.
-    const flash = new Graphics();
-    flash.rect(0, 0, width, height).fill({ color: 0xffffff, alpha: 0.3 });
-    this.container.addChild(flash);
-    this.particles.push({
-      graphic: flash,
-      vx: 0,
-      vy: 0,
-      life: 3,
-      pooled: false,
-    });
   }
 
   private spawnSnow(width: number, count: number) {
@@ -179,7 +154,6 @@ export class WeatherEffects {
         vx: -0.5 + Math.random() * 1.0, // gentle drift
         vy: 1.5 + Math.random() * 1.5,   // slow fall
         life: 250,
-        pooled: true,
       });
     }
   }
@@ -198,7 +172,6 @@ export class WeatherEffects {
         vx: 6 + Math.random() * 4, // fast horizontal
         vy: -1 + Math.random() * 2, // slight vertical drift
         life: 120,
-        pooled: true,
       });
     }
   }
@@ -217,7 +190,6 @@ export class WeatherEffects {
         vx: Math.sin(g.y * 0.1) * 0.3, // wavering
         vy: -0.3 - Math.random() * 0.3, // rising
         life: 200,
-        pooled: true,
       });
     }
   }
