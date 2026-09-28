@@ -5,8 +5,9 @@ import { rippleRules as RIPPLE_RULES } from './rippleRules';
 import { simEvents } from '../simEvents';
 import { db } from '../../db';
 import { agents, agentStates, needs, economy, relationships, worldState, goals, locations } from '../../db/schema';
-import { eq, and } from 'drizzle-orm';
-import { createFact } from '../gossip';
+import { eq, and, desc } from 'drizzle-orm';
+import { createFact, getAgentName, jealousRumorContext, type FactContext } from '../gossip';
+import { describeWitnessedAct } from './WitnessAmplifier';
 import { logActivity } from '../activityLogger';
 import crypto from 'crypto';
 
@@ -493,6 +494,44 @@ export class RippleEngine {
     }
   }
 
+  /**
+   * Who a `createFact: 'rumor'` rule's rumor is about, and what it says, taken
+   * from the event that fired the rule. Null when the event carries nothing to
+   * say, and the caller keeps the old generic "There are rumors going around".
+   *
+   * Jealousy is special-cased: `jealousy_gossip` fires on the jealous agent's own
+   * `state:triggered`, so the default subject was the jealous agent themself —
+   * a rumor about the gossip, by the gossip. The state row knows the rival.
+   */
+  private describeRumor(
+    rule: RippleRule,
+    agentId: number,
+    metadata: CascadeMetadata,
+    payload: any,
+  ): { subjectId: number; targetId: number | null; context: FactContext | undefined } | null {
+    if (rule.source === 'state:triggered' && payload?.state === 'jealous') {
+      const jealous = db.select({ target: agentStates.target_agent_id, metadata: agentStates.metadata })
+        .from(agentStates)
+        .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, 'jealous')))
+        .orderBy(desc(agentStates.started_at))
+        .get();
+      const meta = (jealous?.metadata ?? {}) as { rivalId?: number; loveInterestId?: number };
+      const rivalId = meta.rivalId ?? jealous?.target ?? null;
+      if (rivalId == null || rivalId === agentId) return null;
+      const loveId = meta.loveInterestId ?? null;
+      return {
+        subjectId: rivalId,
+        targetId: loveId,
+        context: jealousRumorContext(loveId != null ? getAgentName(loveId) : undefined),
+      };
+    }
+
+    const victimId = metadata.victimId ?? null;
+    const act = describeWitnessedAct(rule.source, payload, victimId != null ? getAgentName(victimId) : undefined);
+    if (!act) return null;
+    return { subjectId: metadata.perpetratorId ?? agentId, targetId: victimId, context: { detail: act } };
+  }
+
   // ─── DB helper methods ────────────────────────────────────────────────────────
 
   private buildContext(payload: any): RippleContext {
@@ -623,7 +662,7 @@ export class RippleEngine {
     rule: RippleRule,
     agentId: number,
     metadata: CascadeMetadata,
-    _payload: any,
+    payload: any,
   ): void {
     const fx = rule.effects;
     const currentTick = this.getCurrentTick();
@@ -687,7 +726,11 @@ export class RippleEngine {
     }
 
     // createFact
-    if (fx.createFact) {
+    const rumor = fx.createFact === 'rumor' ? this.describeRumor(rule, agentId, metadata, payload) : null;
+    if (rumor) {
+      // Only the teller knows it at first; the rumor is theirs to spread.
+      createFact('rumor', rumor.subjectId, rumor.targetId, 2, [agentId], `cascade:${rule.id}`, rumor.context);
+    } else if (fx.createFact) {
       const targetId = metadata.perpetratorId ?? metadata.victimId ?? null;
       createFact(
         fx.createFact,

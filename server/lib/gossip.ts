@@ -111,6 +111,16 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} is hoarding supplies`,
 };
 
+/**
+ * What a jealous agent says about their rival. The jealousy trigger knows who
+ * the rival is and who they are both after, so the rumor can name it instead
+ * of the contentless "There are rumors going around about X". Undefined when
+ * the love interest is unknown — createFact then falls back to that generic line.
+ */
+export function jealousRumorContext(loveInterestName: string | undefined): FactContext | undefined {
+  return loveInterestName ? { detail: `is only stringing ${loveInterestName} along` } : undefined;
+}
+
 // ─── getAgentName ─────────────────────────────────────────────────────────────
 
 export function getAgentName(agentId: number): string {

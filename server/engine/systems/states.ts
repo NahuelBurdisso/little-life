@@ -25,7 +25,7 @@ import {
   setEffectivePersonality,
 } from '../../lib/states';
 import { emitter } from '../emitter';
-import { createFact, deactivateStaleFacts } from '../../lib/gossip';
+import { createFact, deactivateStaleFacts, getAgentName, jealousRumorContext } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
@@ -2002,7 +2002,11 @@ function processStateEffects(
         if (rivalId && personality && personality.morality < 40 && personality.honesty < 30) {
           const elapsed = currentTick - state.started_at;
           if (elapsed > 720 && Math.random() < 0.005) {
-            createFact('rumor', rivalId, null, 2, [agent.id], 'fabricated');
+            // Name the love interest the jealousy is about, so the rumor says
+            // something; without one it stays the generic "rumors about X".
+            const loveInterestId = meta.loveInterestId as number | undefined;
+            createFact('rumor', rivalId, loveInterestId ?? null, 2, [agent.id], 'fabricated',
+              jealousRumorContext(loveInterestId != null ? getAgentName(loveInterestId) : undefined));
           }
         }
         break;
