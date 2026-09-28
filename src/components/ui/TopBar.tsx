@@ -23,13 +23,21 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
+  // Both replace the world wholesale, but the server's `markAllDirty` only
+  // reaches queries a subscription hook is wired to — `locations.getAll` isn't,
+  // so the old town's buildings and relationship graph lingered on screen.
+  // Invalidate the entire cache instead. App also catches this via the clock
+  // running backwards, but that can't see a restart made while `totalTicks` is
+  // still 0, and this is the direct path for the tab that asked for it.
+  const utils = trpc.useUtils();
+
   const restartMutation = trpc.setup.restart.useMutation({
-    onSuccess: () => { setIsResetting(false); setConfirmAction(null); },
+    onSuccess: () => { setIsResetting(false); setConfirmAction(null); utils.invalidate(); },
     onError: () => { setIsResetting(false); },
   });
 
   const resetToWizardMutation = trpc.setup.resetToWizard.useMutation({
-    onSuccess: () => { setIsResetting(false); setConfirmAction(null); },
+    onSuccess: () => { setIsResetting(false); setConfirmAction(null); utils.invalidate(); },
     onError: () => { setIsResetting(false); },
   });
 

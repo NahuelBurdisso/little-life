@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { trpc } from "./lib/trpc";
+import { isWorldReplaced } from "./lib/worldIdentity";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
@@ -81,6 +82,24 @@ export default function App() {
   // Context menu state
   const [contextMenuAgent, setContextMenuAgent] = useState<string | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+
+  // A world replace (TopBar Restart, a Restart from another tab, a reseed script)
+  // is announced on the dirty channels, but those only invalidate the queries
+  // each hook is wired to. `locations.getAll` is on no channel at all, so the old
+  // town's buildings stayed on the map until a page reload, and every other
+  // unwired query kept describing the old world. Agent ids restart at 1, so a
+  // selected id silently re-points at a different townsperson — drop it.
+  const totalTicks = world?.time?.totalTicks ?? null;
+  const lastTotalTicksRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isWorldReplaced(lastTotalTicksRef.current, totalTicks)) {
+      utils.invalidate();
+      setSelectedAgentId(null);
+      setContextMenuAgent(null);
+      setContextMenuPos(null);
+    }
+    lastTotalTicksRef.current = totalTicks;
+  }, [totalTicks, utils]);
 
   // Close modals on Escape
   useEffect(() => {
