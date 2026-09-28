@@ -8,6 +8,7 @@ import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 import { simEvents } from '../../lib/simEvents';
 import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
 import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
+import { aggregateEventEffects } from '../../data/worldEventCatalog';
 
 // Track which agents already have an active critical need event to avoid spamming
 const criticalNeedFired = new Map<number, Set<string>>();
@@ -133,18 +134,10 @@ export function needsTick(): void {
   const currentTime =
     world.time!.day * 24 * 60 + world.time!.hour * 60 + world.time!.minute;
 
-  // Load active world events and extract their effects for need modifiers
+  // Load active world events and extract their effects for need modifiers.
+  // The catalog decides how each key stacks: boosts add, energy_drain multiplies.
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
-  const eventEffects: Record<string, number> = {};
-  for (const event of activeEvents) {
-    if (event.effects && typeof event.effects === 'object') {
-      for (const [key, value] of Object.entries(event.effects)) {
-        if (typeof value === 'number') {
-          eventEffects[key] = (eventEffects[key] ?? 0) + value;
-        }
-      }
-    }
-  }
+  const eventEffects = aggregateEventEffects(activeEvents.map((e) => e.effects));
 
   for (const agent of activeAgents) {
     const agentNeeds = needsByAgent.get(agent.id);
@@ -343,7 +336,7 @@ export function needsTick(): void {
     if (eventEffects.fun_boost) {
       updatedNeeds.fun += eventEffects.fun_boost * gameHoursElapsed * 0.1;
     }
-    if (eventEffects.energy_drain) {
+    if (eventEffects.energy_drain !== 1) {
       updatedNeeds.energy -= (eventEffects.energy_drain - 1) * 2 * gameHoursElapsed;
     }
     // mood_outdoor / mood_boost are applied in the mood recalculation (Step 11).

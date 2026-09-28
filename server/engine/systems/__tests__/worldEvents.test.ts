@@ -4,7 +4,9 @@ import { worldEvents, worldState } from '../../../db/schema';
 import { CONFIG } from '../../../lib/constants';
 import { startWorldEvent } from '../events';
 import {
+  aggregateEventEffects,
   EVENT_EFFECT_KEYS,
+  EVENT_EFFECT_STACKING,
   PLAYER_EVENT_TYPES,
   WORLD_EVENTS,
   type WorldEventType,
@@ -48,11 +50,63 @@ describe('world event catalog', () => {
     }
   });
 
+  it('gives every effect key a stacking rule', () => {
+    for (const key of EVENT_EFFECT_KEYS) {
+      expect(['add', 'multiply'], key).toContain(EVENT_EFFECT_STACKING[key]);
+    }
+  });
+
   it('keeps durations in game hours', () => {
     for (const [type, def] of Object.entries(WORLD_EVENTS)) {
       expect(def.durationHours, type).toBeGreaterThan(0);
       expect(def.durationHours, type).toBeLessThanOrEqual(24);
     }
+  });
+});
+
+describe('aggregateEventEffects', () => {
+  it('returns the identity for every key when no event is active', () => {
+    const fx = aggregateEventEffects([]);
+    expect(fx.social_boost).toBe(0);
+    expect(fx.mood_boost).toBe(0);
+    expect(fx.energy_drain).toBe(1);
+    expect(fx.shop_prices).toBe(1);
+    expect(fx.gossip_boost).toBe(1);
+  });
+
+  it('multiplies energy_drain across events instead of summing it', () => {
+    // B15: needs.ts summed 1.5 + 1.3 = 2.8, i.e. (2.8 - 1) × 2 = 3.6 energy/h
+    // lost during a flu + heatwave instead of (1.95 - 1) × 2 = 1.9.
+    const fx = aggregateEventEffects([
+      WORLD_EVENTS.sickness.effects,
+      WORLD_EVENTS.heatwave.effects,
+    ]);
+    expect(fx.energy_drain).toBeCloseTo(1.95);
+  });
+
+  it('adds deltas and multiplies factors in the same fold', () => {
+    const fx = aggregateEventEffects([
+      WORLD_EVENTS.festival.effects, // social 20, fun 15, shop × 0.7
+      WORLD_EVENTS.market_day.effects, // shop × 0.5
+      WORLD_EVENTS.heatwave.effects, // fun -5, mood_outdoor -8
+      WORLD_EVENTS.starry_night.effects, // fun 8, mood_outdoor 10
+    ]);
+    expect(fx.social_boost).toBe(20);
+    expect(fx.fun_boost).toBe(15 - 5 + 8);
+    expect(fx.mood_outdoor).toBe(2);
+    expect(fx.shop_prices).toBeCloseTo(0.35);
+  });
+
+  it('ignores unknown keys, non-numbers and null rows from the DB', () => {
+    const fx = aggregateEventEffects([
+      null,
+      'nope',
+      { legacy_key: 5, gossip_boost: 'x', fun_boost: Number.NaN },
+      { gossip_boost: 2 },
+    ]);
+    expect(fx).not.toHaveProperty('legacy_key');
+    expect(fx.gossip_boost).toBe(2);
+    expect(fx.fun_boost).toBe(0);
   });
 });
 

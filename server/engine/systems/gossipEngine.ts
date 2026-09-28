@@ -25,6 +25,7 @@ import { eq, and } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
 import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
+import { aggregateEventEffects } from '../../data/worldEventCatalog';
 
 interface AgentInfo {
   id: number;
@@ -81,11 +82,7 @@ export function gossipTick(currentTick: number): void {
 
   // Check for gossip_boost from active events (e.g., mysterious_stranger)
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
-  let gossipMultiplier = 1.0;
-  for (const event of activeEvents) {
-    const effects = event.effects as Record<string, number> | null;
-    if (effects?.gossip_boost) gossipMultiplier *= effects.gossip_boost;
-  }
+  const gossipMultiplier = aggregateEventEffects(activeEvents.map((e) => e.effects)).gossip_boost;
 
   // Build location groups
   const locationGroups = new Map<number, AgentInfo[]>();

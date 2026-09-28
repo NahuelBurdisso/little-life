@@ -10,6 +10,7 @@ import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, rem
 import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { simEvents } from '../../lib/simEvents';
 import { getReputationPriceModifier } from '../../lib/reputationEngine';
+import { aggregateEventEffects } from '../../data/worldEventCatalog';
 
 // --- Module-level state for batching and milestones ---
 
@@ -41,23 +42,6 @@ function checkMilestone(agentId: number, money: number): void {
 
 type EconRecord = typeof economy.$inferSelect;
 
-export function mergeEventEffects(
-  events: (typeof worldEvents.$inferSelect)[],
-): Record<string, number> {
-  const effects: Record<string, number> = {};
-  for (const event of events) {
-    if (event.effects && typeof event.effects === 'object') {
-      for (const [key, value] of Object.entries(event.effects)) {
-        if (typeof value === 'number') {
-          // Multiply stacking effects
-          effects[key] = (effects[key] ?? 1) * value;
-        }
-      }
-    }
-  }
-  return effects;
-}
-
 // --- Main tick ---
 
 export function economyTick(): void {
@@ -69,7 +53,7 @@ export function economyTick(): void {
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
   const allLocations = db.select().from(locations).all();
 
-  const eventEffects = mergeEventEffects(activeEvents);
+  const eventEffects = aggregateEventEffects(activeEvents.map((e) => e.effects));
   setEventPriceModifiers(eventEffects); // Apply event price modifiers (market_day, festival, harvest)
   const season = world.time!.season as Season;
   const currentHour = world.time!.hour;

@@ -15,14 +15,20 @@
  * Every effect key a system actually reads. Typing `effects` against this list
  * turns an effect nobody consumes into a compile error instead of a no-op.
  *
- * Additive (summed across active events, systems/needs.ts):
- *   social_boost, fun_boost, romance_boost — need gain per game hour (× 0.1 / 0.05)
- *   energy_drain  — multiplier-style: (value - 1) × 2 energy lost per game hour
- *   mood_outdoor  — mood delta for agents outside a building
- *   mood_boost    — mood delta for everyone
- * Multiplicative (multiplied across active events):
+ * Additive (summed across active events, identity 0):
+ *   social_boost, fun_boost, romance_boost — need gain per game hour (× 0.1 / 0.05),
+ *                   systems/needs.ts
+ *   mood_outdoor  — mood delta for agents outside a building, systems/needs.ts
+ *   mood_boost    — mood delta for everyone, systems/needs.ts
+ * Multiplicative (multiplied across active events, identity 1):
+ *   energy_drain  — systems/needs.ts: (value - 1) × 2 energy lost per game hour
  *   shop_prices, food_prices, farm_production — lib/economyEngine.ts
  *   gossip_boost  — gossip spread chance, systems/gossipEngine.ts
+ *
+ * Every reader must aggregate through `aggregateEventEffects` below. Each
+ * system used to fold the active events itself and they disagreed: needs.ts
+ * summed everything, so a flu (energy_drain 1.5) during a heatwave (1.3) read
+ * as a 2.8× drain instead of 1.95×, while economy.ts multiplied everything.
  *
  * Behaviour that depends on *which* event is active (storms send people
  * indoors, festivals pull them to the square, ...) is keyed on the event type
@@ -42,6 +48,53 @@ export const EVENT_EFFECT_KEYS = [
 ] as const;
 export type EventEffectKey = (typeof EVENT_EFFECT_KEYS)[number];
 export type EventEffects = Partial<Record<EventEffectKey, number>>;
+
+/**
+ * How each key stacks when several events are active at once. A delta ("+10
+ * social per hour") adds; a factor ("prices × 0.7") multiplies — summing two
+ * factors would turn two discounts into a surcharge (0.7 + 0.5 = 1.2).
+ * Typed as a full record so a new key without a rule is a compile error.
+ */
+export const EVENT_EFFECT_STACKING: Record<EventEffectKey, 'add' | 'multiply'> = {
+  social_boost: 'add',
+  fun_boost: 'add',
+  romance_boost: 'add',
+  mood_outdoor: 'add',
+  mood_boost: 'add',
+  energy_drain: 'multiply',
+  shop_prices: 'multiply',
+  food_prices: 'multiply',
+  farm_production: 'multiply',
+  gossip_boost: 'multiply',
+};
+
+/** Every key present, at its identity (0 / 1) when no active event sets it. */
+export type AggregatedEventEffects = Record<EventEffectKey, number>;
+
+/**
+ * Fold the `effects` of the active events into one value per key.
+ *
+ * Takes the raw column values (JSON from the DB, so `unknown`): keys that are
+ * not in the catalog — rows written before a key was renamed or dropped — and
+ * non-numeric values are ignored, since no system reads them. Returning the
+ * identity for absent keys lets readers apply a value unconditionally.
+ */
+export function aggregateEventEffects(effectsList: Iterable<unknown>): AggregatedEventEffects {
+  const result = {} as AggregatedEventEffects;
+  for (const key of EVENT_EFFECT_KEYS) {
+    result[key] = EVENT_EFFECT_STACKING[key] === 'add' ? 0 : 1;
+  }
+  for (const effects of effectsList) {
+    if (!effects || typeof effects !== 'object') continue;
+    for (const [key, value] of Object.entries(effects)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      if (!Object.prototype.hasOwnProperty.call(EVENT_EFFECT_STACKING, key)) continue;
+      const k = key as EventEffectKey;
+      result[k] = EVENT_EFFECT_STACKING[k] === 'add' ? result[k] + value : result[k] * value;
+    }
+  }
+  return result;
+}
 
 export interface WorldEventDef {
   name: string;
