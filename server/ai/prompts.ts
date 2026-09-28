@@ -511,28 +511,82 @@ export function buildConversationPrompt(
     : null;
   const lastSentiment = lastMsg?.sentiment as number | undefined;
 
-  userParts.push(buildTurnInstruction(
+  const turnInstruction = buildTurnInstruction(
     messageCount, maxTurns, otherAgent.name, conversation.topic,
     friendship, isFirstMeeting, romance, lastSentiment,
-  ));
+  );
+  const repetitionHint = buildRepetitionHint(
+    conversation.messages as Array<{ speakerId: number; text: string }>,
+    speaker.id,
+  );
 
-  // Build message array
+  // Build message array. Consecutive same-role messages are merged: the turn
+  // instruction below always follows the other person's line, and Gemma-style
+  // chat templates expect strict user/assistant alternation.
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+  const push = (role: "user" | "assistant", content: string) => {
+    const last = messages[messages.length - 1];
+    if (last && last.role === role) last.content += `\n\n${content}`;
+    else messages.push({ role, content });
+  };
 
   // First message is context
-  messages.push({ role: "user", content: userParts.join('\n') });
+  push("user", userParts.join('\n'));
 
-  // Add recent conversation history (last 6 messages)
+  // Add recent conversation history (last 6 messages). The other person's lines
+  // carry their name: unlabelled "user" turns read to the model as an anonymous
+  // chat user, which is how "thank you for asking, [Your Name]" got written to
+  // someone the prompt had named three lines earlier.
   const recentMessages = conversation.messages.slice(-6) as Array<{
     speakerId: number;
     text: string;
   }>;
+  const otherFirstName = otherAgent.name.split(' ')[0];
 
   for (const msg of recentMessages) {
-    const role: "user" | "assistant" =
-      msg.speakerId === speaker.id ? "assistant" : "user";
-    messages.push({ role, content: msg.text });
+    if (msg.speakerId === speaker.id) push("assistant", msg.text);
+    else push("user", `${otherFirstName}: ${msg.text}`);
   }
 
+  // The turn instruction goes LAST, right before generation. It used to sit in
+  // the first message above the history, where later-turn guidance ("wrap up",
+  // "they seem upset") drowned under six lines of chat — conversations looped on
+  // the same openers and questions.
+  push("user", `[Your turn] ${[turnInstruction, repetitionHint].filter(Boolean).join(' ')} Reply with only your spoken words.`);
+
   return { system, messages };
+}
+
+/**
+ * Name the speaker's own recent openers and questions so they don't loop on
+ * them. Playtest: 14 of 104 lines asked "how are you doing (really)", and one
+ * agent opened every line with "Well, I…". Looks at the last two of the
+ * speaker's own lines only — a handful of tokens, not a transcript.
+ */
+function buildRepetitionHint(
+  messages: Array<{ speakerId: number; text: string }>,
+  speakerId: number,
+): string {
+  const own = messages.filter((m) => m.speakerId === speakerId).slice(-2);
+  const openers = new Set<string>();
+  const questions = new Set<string>();
+  for (const m of own) {
+    const text = (m.text ?? '').trim();
+    const opener = text.split(/\s+/).slice(0, 2).join(' ').replace(/[.!?…]+$/, '');
+    if (opener) openers.add(opener);
+    const asked = text.match(/[^.!?…]+\?/g);
+    const lastQuestion = asked?.[asked.length - 1]?.trim();
+    if (lastQuestion) {
+      const words = lastQuestion.split(/\s+/);
+      questions.add(words.length > 8 ? `${words.slice(0, 8).join(' ')}…` : lastQuestion);
+    }
+  }
+  const parts: string[] = [];
+  if (openers.size > 0) {
+    parts.push(`Don't start with ${[...openers].map((o) => `"${o}"`).join(' or ')} again.`);
+  }
+  if (questions.size > 0) {
+    parts.push(`Don't repeat your question ${[...questions].map((q) => `"${q}"`).join(' or ')}.`);
+  }
+  return parts.join(' ');
 }

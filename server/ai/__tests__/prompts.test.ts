@@ -133,7 +133,7 @@ describe('buildConversationPrompt', () => {
       },
     };
     const { messages } = buildConversationPrompt(params);
-    const userMsg = messages[0].content;
+    const userMsg = messages[messages.length - 1].content;
     expect(userMsg).toContain('Respond to Carlos');
   });
 
@@ -155,7 +155,66 @@ describe('buildConversationPrompt', () => {
       conversation: { ...baseParams.conversation, messages: msgs },
     };
     const { messages } = buildConversationPrompt(params);
-    const historyMessages = messages.slice(1);
-    expect(historyMessages.length).toBe(6);
+    const transcript = messages.map((m) => m.content).join('\n');
+    expect(transcript).not.toContain('Message 3');
+    for (let i = 4; i < 10; i++) expect(transcript).toContain(`Message ${i}`);
+  });
+
+  it('puts the turn instruction after the history, as the final user message', () => {
+    const msgs = [
+      { speakerId: 2, text: 'Evening, Ray.' },
+      { speakerId: 1, text: 'What do you want?' },
+      { speakerId: 2, text: 'Just a drink.' },
+    ];
+    const { messages } = buildConversationPrompt({
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs, max_turns: 10 },
+    });
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe('user');
+    expect(last.content).toContain('Carlos: Just a drink.\n\n[Your turn] Respond to Carlos');
+    expect(messages[0].content).not.toContain('Respond to');
+  });
+
+  it("labels the other person's lines with their name, not the speaker's own", () => {
+    const msgs = [
+      { speakerId: 2, text: 'How are you?' },
+      { speakerId: 1, text: 'Fine.' },
+    ];
+    const { messages } = buildConversationPrompt({
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs },
+    });
+    expect(messages[0].content).toContain('Carlos: How are you?');
+    expect(messages.find((m) => m.role === 'assistant')?.content).toBe('Fine.');
+  });
+
+  it('alternates user and assistant roles', () => {
+    const msgs = Array.from({ length: 5 }, (_, i) => ({ speakerId: i % 2 === 0 ? 2 : 1, text: `Line ${i}` }));
+    const { messages } = buildConversationPrompt({
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs },
+    });
+    for (let i = 1; i < messages.length; i++) {
+      expect(messages[i].role).not.toBe(messages[i - 1].role);
+    }
+  });
+
+  it('asks the speaker not to reuse their own recent openers and questions', () => {
+    const msgs = [
+      { speakerId: 1, text: 'Well, I suppose. How are you doing, really?' },
+      { speakerId: 2, text: 'Fine, fine.' },
+      { speakerId: 1, text: 'Well, I heard the mill is hiring.' },
+      { speakerId: 2, text: 'Is it?' },
+    ];
+    const { messages } = buildConversationPrompt({
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs },
+    });
+    const last = messages[messages.length - 1].content;
+    expect(last).toContain(`Don't start with "Well, I" again.`);
+    expect(last).toContain(`Don't repeat your question "How are you doing, really?"`);
+    // Only the speaker's own lines count — Carlos's "Is it?" is not Ray's question.
+    expect(last).not.toContain('Is it?"');
   });
 });
