@@ -144,6 +144,8 @@ export class LightingSystem {
   private buildingLights: LightSource[] = [];
   private streetLights: LightSource[] = [];
   private agentLights: LightSource[] = [];
+  /** Agent id for each entry of `agentLights`, same index. */
+  private agentLightIds: string[] = [];
   private eventLights: LightSource[] = [];
   /** Scratch buffer for `render`'s combined light list — reused every frame. */
   private allLights: LightSource[] = [];
@@ -355,9 +357,21 @@ export class LightingSystem {
     }
 
     // ── Agent lights (lanterns at night) ────────────────────────────────
+    // Only for agents out in the open. An agent inside a building is drawn in
+    // the interior and is already covered by the building's own light, so a
+    // lantern there was a second warm blob inside the walls — on every sleeper
+    // at home, all night. Open areas (square, park, farmyard...) still count as
+    // outdoors, which is why this is a type check and not `current_location == null`.
+    const locTypeById = new Map<number, string>();
+    for (const loc of locations) locTypeById.set(loc.id, loc.type);
     this.agentLights = [];
+    this.agentLightIds = [];
     if (this.isNightish) {
       for (const agent of agents) {
+        if (agent.current_location != null) {
+          const locType = locTypeById.get(agent.current_location);
+          if (locType === undefined || !OPEN_AREA_TYPES.has(locType)) continue;
+        }
         const baseRadius = 24;
         let color = 0xFFE0A0;
         let intensity = 0.3;
@@ -374,6 +388,11 @@ export class LightingSystem {
           intensity = 0.25;
         }
 
+        // The server position is only the fallback (and the first frame's
+        // value): `render` re-anchors each lantern to its sprite's interpolated
+        // position, since sprites lerp between ~1 Hz polls and a lantern pinned
+        // to the server position visibly ran ahead of its carrier.
+        this.agentLightIds.push(String(agent.id));
         this.agentLights.push({
           x: agent.position.x,
           y: agent.position.y,
@@ -420,8 +439,21 @@ export class LightingSystem {
     cameraScale: number,
     screenW: number,
     screenH: number,
+    /** Interpolated on-screen (world-space) position of an agent's sprite. */
+    agentPos?: (agentId: string) => { x: number; y: number } | undefined,
   ) {
     if (screenW < 1 || screenH < 1) return;
+
+    // Lanterns follow the sprite, not the last server position — see `update`.
+    // Written into the existing LightSource objects: this runs every frame.
+    if (agentPos) {
+      for (let i = 0; i < this.agentLights.length; i++) {
+        const p = agentPos(this.agentLightIds[i]);
+        if (!p) continue;
+        this.agentLights[i].x = p.x;
+        this.agentLights[i].y = p.y;
+      }
+    }
 
     // Ensure lightmap texture matches screen size
     const targetW = Math.ceil(screenW / SCALE);
