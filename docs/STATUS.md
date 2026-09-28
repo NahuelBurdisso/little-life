@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-28 — `tsc` 0 errors, vitest 43 files / 504 tests passing.
+**Last verified:** 2026-09-28 — `tsc` 0 errors, vitest 43 files / 503 tests passing.
 Branch `feat/living-agents-phase1`, working tree clean.
 
 ## Where the project is
@@ -19,7 +19,7 @@ Branch `feat/living-agents-phase1`, working tree clean.
 | Worldgen stages `interiors`, `names` | **Stubs**; output discarded by `pipeline.ts` |
 | Living-agents phase 3 (11 believability fixes + 3 deferred) | Done |
 | Chronicle / cliques / drama alerts / common knowledge | Done |
-| Autoplay profiler + auto-nudger | Working, no UI, ON by default (see B5) |
+| Autoplay profiler + auto-nudger | Working, no UI, **off by default** (opt-in: `autoplay.configure({ enabled: true })`) |
 | Visual polish (RimWorld art bible, 30 polish rounds, lighting, props) | Done |
 | Agent animation | Procedural bob/flip/pose only; no frame animation |
 
@@ -37,8 +37,6 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 
 ### Engine
 - **B3 [M]** `truncated` flag collected (`conversations.ts:~203`) but never passed on (`:~461`).
-- **B5 [M]** Autoplay ON by default (`server/lib/constants.ts:8,11`) while `tick.ts:~240`
-  says it's off. Nudger writes DB outside tick transactions. Decide & align.
 - **B6 [M]** Plan retry storm when LLM down: `PlanGenerator.ts:235` throws uncaught →
   no plan cached → decisions re-queue every pass (`decisions.ts:~1137`); `PlanLLMQueue` doesn't dedupe.
 - **B7 [M]** Unbounded growth: decisions loads *every* ended conversation each tick
@@ -49,9 +47,11 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
   drift cap re-baselines from drifted value (`personalityDrift.ts:26-33`).
 - **B10 [L]** Tick-count cadences drift at `tick_speed > 1` (`states.ts:222`, `tick.ts:230`);
   same-pair cooldown uses wall-clock (`decisions.ts:~1534`).
-- **B11 [L]** `resetChronicleCache`, `resetCliqueCache` not in `worldCaches.clearPerWorldCaches`.
 - **B12 [L]** `EmbeddingBatcher` bypasses the LLM semaphore (`EmbeddingBatcher.ts:158,187`).
 - **B13 [L]** Public-knowledge spread runs twice per tick (`states.ts:241` + `gossipEngine.ts:99-114`).
+- **B14 [M]** Comfort visits are fake: `lonelinessEngine.triggerComfortVisit` logs "X decided to
+  visit" to the feed but nothing moves X (the event it emitted had no listener).
+  Either route the visitor via decisions/planning or stop logging it.
 
 ### Client
 - **C2 [M]** TopBar restart (`TopBar.tsx:~26`) doesn't `utils.invalidate()` → old-world
@@ -69,17 +69,12 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 - **C8 [L]** Per-frame allocations: `BubbleSystem.update`, `ParticleEngine.update`,
   `drawAgentLinks`, `LightingSystem.render`; occupancy dots recreated at 1 Hz.
 
-## Dead code (safe to delete, verify with grep first)
+## Dead code
 
-- Abandoned data-driven interaction pipeline: `server/lib/{effectApplicator,outcomeResolver,witnessResolver,prerequisites,validators}.ts`,
-  `server/data/interactionRegistry.ts` (1233 lines, tests only).
-- `src/components/canvas/DayNightCycle.ts` (unused), `useAssetLoader` stub.
-- Unused endpoints: `agents.getAgent`, `activity.getByType`, `conversations.getOne`,
-  `relationships.getOne`, `economy.getAgentEconomy|getTransactions`, `knowledge.getAboutAgent`,
-  `locations.getOccupants`, `chronicle.onUpdate` (autoplay.* is intentional, no UI yet).
-- Events emitted with no listener: `agent:drunk`, `agent:lonely`, `comfort:visit_needed`,
-  `confrontation:witnessed`, `crime:released`, `goal:ambition_generated`.
-- `scripts/generate-map-json.cjs` reads deleted `data/maps/default.ts`.
+Swept 2026-09-28 (`c62a48a`, `1c7ca5f`, `6c876b0`, `d13157f`, `631a1c7`): ~3.4k lines of orphan
+modules, unused exports, tRPC procedures, listener-less events and obsolete scripts.
+Remaining, cosmetic only: ~75 exports used solely inside their own file (could drop `export`).
+Re-check with `npm run deadcode` (clean as of this sweep).
 
 ## Tech debt
 
@@ -94,9 +89,11 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 ## Fixed
 
 - 2026-09-28: B1+B2 `3ccf5ad`, B4 `64032b6`, C1 `0345aed` (with regression tests; C1 verified live).
+- 2026-09-28: B5 autoplay off by default `afa02d7`; B11 memo reset on world replace `a3f3f4f`.
 
 ## Next steps (suggested order)
 
-1. Decide autoplay default (B5) and give it a small UI or turn it off.
-2. Delete dead code; unify `EVENT_DEFS`.
-3. Bound growth (B7) — prune/limit ended conversations.
+1. Unify the three `EVENT_DEFS` and make `scandal`/`blessing`/`force_indoors` do something (C5).
+2. Bound growth (B7) — prune/limit ended conversations.
+3. Make comfort visits real or drop the feed line (B14).
+4. Small client fixes: C2 restart invalidation, C3 panel spinner, C4 weather lighting.

@@ -39,6 +39,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 npm run dev          # server (tsx watch, :3001) + vite (:5173)
 npm run check        # tsc --noEmit + vitest run  ← gate for every change
 npm test             # vitest only
+npm run deadcode     # orphan files + exports nothing uses (confirm with grep before deleting)
 npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
 npx tsx server/seed-world.ts       # reseed the running server's world
 node scripts/shot-gallery.mjs day  # Playwright screenshots of :5173 (needs dev running)

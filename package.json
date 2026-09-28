@@ -15,7 +15,8 @@
     "db:reset": "tsx server/db/seed.ts --reset",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit && vitest run"
+    "check": "tsc --noEmit && vitest run",
+    "deadcode": "node scripts/find-dead-code.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.95.2",
