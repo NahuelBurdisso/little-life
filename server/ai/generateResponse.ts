@@ -65,7 +65,12 @@ export async function generateResponse(
     truncated,
   });
 
-  const hasSituationalPrompt = !!situationalPrompt;
+  // Situational prompts (begging, jealousy, affair discovery) get a bigger cap.
+  // One value for both the first call and the nudge retry: the retry used the
+  // normal cap, so a dramatic reply the validator rejected came back cut short.
+  const maxTokens = situationalPrompt
+    ? CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL
+    : CONFIG.AI.CHAT_MAX_TOKENS;
 
   // 2. Build prompt
   const promptParams: ConversationPromptParams = {
@@ -112,9 +117,7 @@ export async function generateResponse(
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,
-          num_predict: hasSituationalPrompt
-            ? CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL
-            : CONFIG.AI.CHAT_MAX_TOKENS,
+          num_predict: maxTokens,
           repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
         },
       });
@@ -192,7 +195,7 @@ export async function generateResponse(
           options: {
             temperature: CONFIG.AI.CHAT_TEMPERATURE + 0.1,
             top_p: CONFIG.AI.CHAT_TOP_P,
-            num_predict: CONFIG.AI.CHAT_MAX_TOKENS,
+            num_predict: maxTokens,
             repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
           },
         });

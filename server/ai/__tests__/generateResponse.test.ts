@@ -16,6 +16,7 @@ vi.mock('../../helpers/conversationHelpers', () => ({
 import { generateResponse } from '../generateResponse';
 import { callOllamaChat } from '../ollama';
 import { getConversationContext, addMessage } from '../../helpers/conversationHelpers';
+import { CONFIG } from '../../lib/constants';
 
 const FALLBACK_PATTERN = /smiled and nodded|paused thoughtfully|Hmm, interesting|shrugged/;
 
@@ -94,6 +95,21 @@ describe('generateResponse', () => {
     await generateResponse(1, 1);
 
     expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Every old house has a secret.');
+  });
+
+  it('gives the nudge retry the same token cap as the situational first call', async () => {
+    vi.mocked(getConversationContext).mockResolvedValue({
+      ...(context() as object),
+      situationalPrompt: 'You owe them money and need more.',
+    } as never);
+    vi.mocked(callOllamaChat)
+      .mockResolvedValueOnce({ text: 'Ok' } as never)
+      .mockResolvedValueOnce({ text: 'Please, I just need a little more time to pay you back.' } as never);
+
+    await generateResponse(1, 1);
+
+    const caps = vi.mocked(callOllamaChat).mock.calls.map((c) => c[0].options?.num_predict);
+    expect(caps).toEqual([CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL, CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL]);
   });
 
   it('does not call the LLM for a conversation that already ended', async () => {
