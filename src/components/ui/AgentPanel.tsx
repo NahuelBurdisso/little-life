@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { trpc } from "../../lib/trpc";
 import { useSelectedAgent } from "../../hooks/useSelectedAgent";
 import { useConversations } from "../../hooks/useConversations";
 import { useAgents } from "../../hooks/useAgents";
@@ -66,17 +65,17 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
     setActiveTab("profile");
   }, [agentId]);
 
-  const { data, relationships, memories, isLoading } = useSelectedAgent(agentId);
+  const {
+    data,
+    relationships,
+    memories,
+    states: agentStates,
+    conversationHistory,
+    isLoading,
+  } = useSelectedAgent(agentId);
   const { world } = useWorldState();
   const { agents: allAgents } = useAgents();
   const { conversations: activeConversations } = useConversations();
-
-  const { data: conversationHistory } = trpc.conversations.getHistory.useQuery(
-    { agentId: Number(agentId), limit: 5 }
-  );
-  const { data: agentStates } = trpc.agents.getStates.useQuery(
-    { agentId: Number(agentId) }
-  );
 
   if (isLoading || !data?.agent) {
     return (
@@ -114,6 +113,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
   }
   const worldTick = world?.time?.totalTicks ?? 0;
   const tickSpeed = world?.tick_speed ?? 1;
+  const isPaused = world?.is_paused ?? false;
 
   const agentNameMap = new Map(allAgents.map((a: any) => [String(a.id), a.name]));
   const activeConvo = activeConversations.find((c: any) =>
@@ -341,6 +341,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
             memories={memories ?? []}
             worldTick={worldTick}
             tickSpeed={tickSpeed}
+            isPaused={isPaused}
           />
         )}
       </div>
