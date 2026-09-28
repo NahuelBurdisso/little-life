@@ -57,9 +57,9 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
         {isFallback && (
           <span
             className="text-[9px] px-1 py-0.5 rounded bg-amber-900/30 text-amber-400/80 font-normal"
-            title="The LLM planner didn't answer, so this is the agent's usual routine. It is replaced by a real plan once the planner is back."
+            title="The planner couldn't produce a plan for today (no answer from the LLM, or an answer it couldn't read), so this is the agent's usual routine. It is replaced by a real plan once the planner succeeds."
           >
-            routine · LLM offline
+            routine · planner unavailable
           </span>
         )}
       </div>
