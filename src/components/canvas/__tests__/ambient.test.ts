@@ -1,5 +1,71 @@
 import { describe, it, expect } from 'vitest';
-import { computeAmbient, ambientKey, PHASE_AMBIENT, weatherMod } from '../ambient';
+import {
+  computeAmbient, ambientKey, PHASE_AMBIENT, weatherMod,
+  advanceTransition, blendAmbient, chanceOverDelta, type AmbientProfile,
+} from '../ambient';
+
+/** Run a full transition at a given frame delta; returns frames taken and final ambient. */
+function runTransition(from: AmbientProfile, to: AmbientProfile, delta: number, stopAt = 1) {
+  const out = { ...from };
+  let progress = 0;
+  let elapsed = 0;
+  while (progress < stopAt) {
+    progress = advanceTransition(progress, delta);
+    blendAmbient(from, to, progress, out);
+    elapsed += delta;
+  }
+  return { elapsed, out };
+}
+
+describe('ambient transition timing', () => {
+  const from = PHASE_AMBIENT.afternoon;
+  const to = PHASE_AMBIENT.night;
+
+  it('takes the same wall-clock time at 30, 60 and 144 fps', () => {
+    // Within one frame of each other (float accumulation can cost a last step).
+    const at60 = runTransition(from, to, 1).elapsed;
+    expect(Math.abs(runTransition(from, to, 2).elapsed - at60)).toBeLessThanOrEqual(2);
+    expect(Math.abs(runTransition(from, to, 60 / 144).elapsed - at60)).toBeLessThanOrEqual(1);
+    expect(at60).toBeGreaterThanOrEqual(60);
+    expect(at60).toBeLessThanOrEqual(61);
+  });
+
+  it('is at the same point halfway through regardless of frame rate', () => {
+    const a = { ...from };
+    const b = { ...from };
+    blendAmbient(from, to, advanceTransition(0, 30), a);           // one 30-frame hitch
+    let p = 0;
+    for (let i = 0; i < 72; i++) p = advanceTransition(p, 60 / 144); // 72 frames at 144 Hz
+    blendAmbient(from, to, p, b);
+    expect(b.brightness).toBeCloseTo(a.brightness, 5);
+    expect(b.r).toBeCloseTo(a.r, 5);
+  });
+
+  it('lands exactly on the target', () => {
+    const { out } = runTransition(from, to, 1);
+    expect(out.r).toBeCloseTo(to.r, 9);
+    expect(out.g).toBeCloseTo(to.g, 9);
+    expect(out.b).toBeCloseTo(to.b, 9);
+    expect(out.brightness).toBeCloseTo(to.brightness, 9);
+  });
+
+  it('ignores negative deltas', () => {
+    expect(advanceTransition(0.5, -3)).toBe(0.5);
+  });
+});
+
+describe('chanceOverDelta', () => {
+  it('matches the per-frame chance at 60 fps and is 0 for no time', () => {
+    expect(chanceOverDelta(0.02, 1)).toBeCloseTo(0.02);
+    expect(chanceOverDelta(0.02, 0)).toBe(0);
+  });
+
+  it('keeps the per-second rate constant across frame rates', () => {
+    const perSecondAt60 = 1 - Math.pow(1 - chanceOverDelta(0.02, 1), 60);
+    const perSecondAt144 = 1 - Math.pow(1 - chanceOverDelta(0.02, 60 / 144), 144);
+    expect(perSecondAt144).toBeCloseTo(perSecondAt60, 10);
+  });
+});
 
 describe('computeAmbient', () => {
   it('dims the same phase when the weather turns bad', () => {

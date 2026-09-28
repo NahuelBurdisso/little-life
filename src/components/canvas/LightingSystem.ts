@@ -10,6 +10,7 @@ import { carriesLantern } from './lanterns';
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
 import {
   type AmbientProfile, PHASE_AMBIENT, computeAmbient, ambientKey, weatherMod,
+  advanceTransition, blendAmbient, chanceOverDelta,
 } from './ambient';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -137,6 +138,8 @@ export class LightingSystem {
 
   // Current state
   private currentAmbient: AmbientProfile = { ...PHASE_AMBIENT.morning };
+  /** Where the running transition started — see `blendAmbient`. */
+  private fromAmbient: AmbientProfile = { ...PHASE_AMBIENT.morning };
   private targetAmbient: AmbientProfile = { ...PHASE_AMBIENT.morning };
   private lerpProgress = 1.0;
 
@@ -230,11 +233,12 @@ export class LightingSystem {
     // Ambient transition. Keyed on phase, season AND weather — it used to be
     // keyed on phase alone, so changing the weather mid-phase didn't touch the
     // light until the next phase boundary. Retargeting mid-transition is safe:
-    // `render` eases from whatever `currentAmbient` is at that moment.
+    // the new transition starts from whatever `currentAmbient` is right now.
     const season = world.time?.season ?? 'spring';
     const key = ambientKey(phase, season, world.weather);
     if (key !== this.lastAmbientKey) {
       this.lastAmbientKey = key;
+      this.fromAmbient = { ...this.currentAmbient };
       this.targetAmbient = computeAmbient(phase, season, world.weather);
       this.lerpProgress = 0;
     }
@@ -438,6 +442,8 @@ export class LightingSystem {
     cameraScale: number,
     screenW: number,
     screenH: number,
+    /** Pixi `ticker.deltaTime`: 1 = one 60 fps frame. Drives every animation here. */
+    deltaFrames: number,
     /** Interpolated on-screen (world-space) position of an agent's sprite. */
     agentPos?: (agentId: string) => { x: number; y: number } | undefined,
   ) {
@@ -474,11 +480,8 @@ export class LightingSystem {
 
     // Lerp ambient toward target
     if (this.lerpProgress < 1) {
-      this.lerpProgress = Math.min(1, this.lerpProgress + 0.016); // ~60 frames
-      this.currentAmbient.r = lerp(this.currentAmbient.r, this.targetAmbient.r, this.lerpProgress);
-      this.currentAmbient.g = lerp(this.currentAmbient.g, this.targetAmbient.g, this.lerpProgress);
-      this.currentAmbient.b = lerp(this.currentAmbient.b, this.targetAmbient.b, this.lerpProgress);
-      this.currentAmbient.brightness = lerp(this.currentAmbient.brightness, this.targetAmbient.brightness, this.lerpProgress);
+      this.lerpProgress = advanceTransition(this.lerpProgress, deltaFrames);
+      blendAmbient(this.fromAmbient, this.targetAmbient, this.lerpProgress, this.currentAmbient);
     }
 
     // Compute final ambient color
@@ -487,10 +490,12 @@ export class LightingSystem {
     let aG = Math.round(this.currentAmbient.g * b);
     let aB = Math.round(this.currentAmbient.b * b);
 
-    // Storm lightning: per-frame, so the 180 is the ~3s of frames it reads as.
+    // Storm lightning, in 60 fps frame units: eligible after ~3 s, then a 2%
+    // chance per 60 fps frame — scaled by delta so the strike rate per second
+    // and the flash's fade time don't depend on the display's refresh rate.
     if (this.stormy) {
-      this.lightningTimer += 1;
-      if (this.lightningTimer > 180 && Math.random() < 0.02) {
+      this.lightningTimer += deltaFrames;
+      if (this.lightningTimer > 180 && Math.random() < chanceOverDelta(0.02, deltaFrames)) {
         this.lightningIntensity = 1.0;
         this.lightningTimer = 0;
       }
@@ -502,7 +507,7 @@ export class LightingSystem {
       aR = Math.round(lerp(aR, 255, li));
       aG = Math.round(lerp(aG, 255, li));
       aB = Math.round(lerp(aB, 255, li));
-      this.lightningIntensity = Math.max(0, this.lightningIntensity - 0.35);
+      this.lightningIntensity = Math.max(0, this.lightningIntensity - 0.35 * deltaFrames);
     }
 
     const ambientHex = rgbToHex(

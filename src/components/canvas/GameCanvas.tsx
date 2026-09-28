@@ -700,12 +700,12 @@ export const GameCanvas = React.memo(function GameCanvas({
     // interpolated world position (the link lines anchor to it the same way).
     const agentPos = (id: string) => spritePoolRef.current?.getSprite(id)?.container;
 
-    const lightTick = () => {
+    const lightTick = (ticker: { deltaTime: number }) => {
       const wc = worldContainerRef.current;
       if (!wc) return;
       const screenW = app.renderer.width;
       const screenH = app.renderer.height;
-      lighting.render(wc.x, wc.y, wc.scale.x, screenW, screenH, agentPos);
+      lighting.render(wc.x, wc.y, wc.scale.x, screenW, screenH, ticker.deltaTime, agentPos);
     };
 
     app.ticker.add(lightTick);
