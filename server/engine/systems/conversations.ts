@@ -474,9 +474,9 @@ export async function conversationsTick(): Promise<void> {
   }
 
   // Process completed LLM conversations
-  for (const { conversation, world } of completedConversations) {
+  for (const { conversation, world, truncated } of completedConversations) {
     try {
-      await processCompletedConversation(conversation, world);
+      await processCompletedConversation(conversation, world, truncated);
     } catch (err) {
       console.error('[conversations] Error processing completed conversation:', err);
     }
@@ -499,6 +499,7 @@ export async function conversationsTick(): Promise<void> {
 async function processCompletedConversation(
   conversation: ConversationRow,
   world: WorldRow,
+  truncated: boolean = false,
 ): Promise<void> {
   // Evict first, so every exit path below is covered. This is the terminal step
   // for the conversation — no further turns will be generated for it — and it
@@ -519,6 +520,13 @@ async function processCompletedConversation(
 
   const messages = fresh.messages as ConversationMessage[];
   const now = Date.now();
+
+  // Re-derive the cut-short verdict against the FRESH transcript. Step A judged
+  // it from the row it read inside the tick transaction, but the task runner
+  // keeps appending turns between that read and this one: a conversation that
+  // hit the wall-clock budget while its final turn was in flight arrives here
+  // with every turn it was allowed, and calling it "cut off" would be a lie.
+  const cutShort = truncated && messages.length < fresh.max_turns;
 
   // Calculate overall sentiment: average of all message sentiments
   let overallSentiment = 0;
@@ -867,6 +875,9 @@ async function processCompletedConversation(
       partnerState,
       romanceLevel,
       hadRecentConflict,
+      // Lets the memory stream record "we got cut off" instead of "we wrapped up
+      // our conversation" for an exchange the turn budget amputated mid-flow.
+      truncated: cutShort,
     });
 
     // Update needs: social boost + mood modifier
@@ -1266,6 +1277,7 @@ async function processCompletedConversation(
       romance: totalRomanceDelta,
       trust: totalTrustDelta,
     },
+    truncated: cutShort,
   });
 
   // Mark conversation as ended

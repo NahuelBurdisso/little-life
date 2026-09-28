@@ -29,14 +29,19 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       summary,
       turns,
       sentiment,
+      truncated,
     }: {
       agentId: number;
       otherName: string;
       summary: string;
       turns: number;
       sentiment: number;
+      truncated?: boolean;
     }) => {
-      const description = describeEvent('conversation_end', {
+      // A conversation the turn budget force-ended must not be remembered as one
+      // that "wrapped up" — the agent would later reason about it as finished
+      // business. Template conversations never set the flag.
+      const description = describeEvent(truncated ? 'conversation_cut_short' : 'conversation_end', {
 
         other: otherName,
         summary,
@@ -46,7 +51,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         agentId,
         'conversation',
         description,
-        { subtype: 'conversation', summary, turns },
+        { subtype: 'conversation', summary, turns, ...(truncated ? { truncated: true } : {}) },
         sentiment,
       );
     },

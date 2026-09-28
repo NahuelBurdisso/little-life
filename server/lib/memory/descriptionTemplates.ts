@@ -23,6 +23,10 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I had a conversation with ${ctx.other} about ${ctx.summary || 'things'}.`,
     (ctx) => `${ctx.other} and I wrapped up our conversation.`,
   ],
+  conversation_cut_short: [
+    (ctx) => `${ctx.other} and I got cut off while talking about ${ctx.summary || 'things'}.`,
+    (ctx) => `My conversation with ${ctx.other} about ${ctx.summary || 'things'} ended before we were done.`,
+  ],
   state_triggered: [
     (ctx) => `I started feeling ${ctx.state}.`,
     (ctx) => `I'm ${ctx.state} now.`,

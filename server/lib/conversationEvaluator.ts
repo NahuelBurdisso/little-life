@@ -4,6 +4,13 @@ interface EvaluationInput {
   topic: string | null;
   maxTurns: number;
   relationshipDeltas: { friendship: number; romance: number; trust: number };
+  /**
+   * The conversation was force-ended by the wall-clock turn budget before it
+   * reached `maxTurns`. Recorded in the breakdown only — NOT scored: the missing
+   * turns already cost it on `turn_engagement`, and docking it again would punish
+   * a slow LLM twice for the same thing.
+   */
+  truncated?: boolean;
 }
 
 interface EvaluationResult {
@@ -81,6 +88,10 @@ export function evaluateConversation(params: EvaluationInput): EvaluationResult 
       relationship_impact: Math.round(relationshipImpact * 100) / 100,
       turn_engagement: Math.round(turnEngagement * 100) / 100,
       topic_coherence: Math.round(topicCoherence * 100) / 100,
+      // The breakdown is the only per-conversation JSON the row carries, so this
+      // is where a cut-short exchange stays distinguishable from a natural one
+      // after the fact (diagnostics, autoplay collectors) without a schema change.
+      ...(params.truncated ? { truncated: 1 } : {}),
     },
   };
 }
