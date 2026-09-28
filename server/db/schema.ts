@@ -474,6 +474,10 @@ export const shared_knowledge = sqliteTable('shared_knowledge', {
   is_active: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   reliability: text('reliability').default('confirmed'),
   source: text('source').notNull(),
+  /** Set once most of the town knows: the secret has become common knowledge. */
+  is_public: integer('is_public', { mode: 'boolean' }).notNull().default(false),
+  /** Real ms at which it crossed the threshold, null while still a secret. */
+  revealed_at: integer('revealed_at'),
 }, (table) => [
   index('idx_shared_knowledge_subject').on(table.subject_id),
   index('idx_shared_knowledge_active').on(table.is_active),
@@ -535,6 +539,8 @@ export const goals = sqliteTable(
     status: text('status').notNull().default('active'),
     created_at: integer('created_at').notNull(),
     expires_at: integer('expires_at'),
+    /** Tick at which the goal reached a terminal status (completed/abandoned). */
+    completed_at: integer('completed_at'),
     // NEW columns for LLM-driven goals
     description: text('description'),
     strategy: text('strategy'),

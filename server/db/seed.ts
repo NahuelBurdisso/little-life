@@ -105,6 +105,8 @@ function seed() {
   // 2. Insert agents, build name -> ID map
   console.log('[seed] Inserting agents...');
   const agentMap = new Map<string, number>();
+  /** Who starts inside each location, flushed to `current_occupants` after the loop. */
+  const startOccupants = new Map<number, number[]>();
 
   for (const seed of AGENT_SEEDS) {
     const homeId = locationMap.get(seed.homeName);
@@ -157,8 +159,24 @@ function seed() {
       .get();
 
     agentMap.set(seed.name, inserted.id);
+    startOccupants.set(startLocationId, [
+      ...(startOccupants.get(startLocationId) ?? []),
+      inserted.id,
+    ]);
   }
   console.log(`[seed] Inserted ${agentMap.size} agents.`);
+
+  // 2b. Register the starting occupants. Locations are inserted with an empty
+  // `current_occupants` and movement.ts only maintains it on a location *change*,
+  // so without this every building reports itself empty until its occupants first
+  // walk somewhere else — including to the location panel and the loneliness
+  // check in states.ts.
+  for (const [locationId, occupantIds] of startOccupants) {
+    db.update(locations)
+      .set({ current_occupants: occupantIds })
+      .where(eq(locations.id, locationId))
+      .run();
+  }
 
   // 3. Insert needs + economy for each agent — varied starting conditions
   console.log('[seed] Inserting needs and economy...');

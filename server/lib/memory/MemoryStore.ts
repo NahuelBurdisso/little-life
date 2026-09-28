@@ -158,9 +158,15 @@ export class MemoryStore {
 
   /**
    * Deactivate a memory (soft delete).
+   *
+   * The embedding goes with it. Every read path filters on `is_active = 1`, so
+   * an inactive row's vector can never be retrieved again — but it is by far the
+   * largest column, and consolidation deactivates far more rows than it keeps.
+   * Left in place it grew to well over half the database. The text, importance
+   * and metadata stay, so the row remains readable as history.
    */
   deactivate(id: number): void {
-    db.update(memories).set({ is_active: 0 }).where(eq(memories.id, id)).run();
+    db.update(memories).set({ is_active: 0, embedding: null }).where(eq(memories.id, id)).run();
   }
 
   /**
@@ -168,7 +174,7 @@ export class MemoryStore {
    */
   deactivateBatch(ids: number[]): void {
     if (ids.length === 0) return;
-    db.update(memories).set({ is_active: 0 }).where(inArray(memories.id, ids)).run();
+    db.update(memories).set({ is_active: 0, embedding: null }).where(inArray(memories.id, ids)).run();
   }
 
   /**
