@@ -4,6 +4,7 @@ import { and, eq, lt } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
+import { hourChanged } from '../../lib/gameClock';
 import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
 import { simEvents } from '../../lib/simEvents';
@@ -156,7 +157,7 @@ export function pruneRelationshipEvents(): number {
 // --- Main Tick ---
 
 export function tick(
-  world: { tick_speed: number; time?: { totalTicks?: number } },
+  world: { tick_speed: number; pending_transitions?: Array<{ type?: unknown }> | null },
 ): void {
   const gameHoursElapsed = world.tick_speed / 60;
   const now = Date.now();
@@ -454,9 +455,11 @@ export function tick(
   }
 
   // --- 3. Relationship Decay ---
-  // Only run decay once per game hour (every 60 ticks) to avoid O(n²) work every tick.
-  const totalTicks = (world.time?.totalTicks ?? 0);
-  if (totalTicks % 60 !== 0) {
+  // Only run decay once per game hour to avoid O(n²) work every tick. Gated on
+  // the clock crossing an hour, not `totalTicks % 60`: counting ticks made the
+  // pass every 4 game hours at 4x and its cadence depend on when the world
+  // started.
+  if (!hourChanged(world.pending_transitions)) {
     if (dirty) emitter.markDirty('agents.all');
     return;
   }
@@ -464,12 +467,11 @@ export function tick(
   const gracePeriodMs =
     CONFIG.RELATIONSHIPS.DECAY_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
 
-  // Game hours since the *previous* decay pass, not since the previous tick.
-  // One tick advances the clock by `tick_speed` game minutes and this block runs
-  // every 60th tick, so 60 * tick_speed game minutes = `tick_speed` game hours.
-  // Section 1 above is per-tick and correctly uses `gameHoursElapsed`
-  // (= tick_speed / 60); reusing that value here made decay 60x too weak.
-  const gameHoursSinceLastPass = gameHoursElapsed * 60;
+  // Game hours since the *previous* decay pass, not since the previous tick:
+  // the pass runs once per game hour at every speed. Section 1 above is
+  // per-tick and correctly uses `gameHoursElapsed` (= tick_speed / 60); reusing
+  // that value here made decay 60x too weak.
+  const gameHoursSinceLastPass = 1;
 
   for (const [, rel] of relMap) {
     // Estranged pairs are exempt: decay pulls values toward 0, which would

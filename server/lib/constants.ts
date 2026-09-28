@@ -145,7 +145,7 @@ export const CONFIG = {
 
   // Events
   EVENTS: {
-    // Rolled once per game hour (events.ts gates on `minute === 0`), so 0.20 is
+    // Rolled once per game hour (events.ts gates on the clock crossing an hour), so 0.20 is
     // ~5 world events a day against the old ~1. The random pool in
     // data/worldEventCatalog.ts mixes good (festival, harvest, wedding,
     // competition) and bad (storm, flu outbreak, fire), gated by season and

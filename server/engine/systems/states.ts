@@ -31,6 +31,7 @@ import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
+import { dayChanged } from '../../lib/gameClock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -219,7 +220,10 @@ export function statesTick() {
   }
 
   // ── Blackmail self-expose: honest victims have a small daily chance to expose ──
-  if (currentTick % 1440 < 2) {
+  // Once per game day, on the day rollover. `currentTick % 1440 < 2` rolled on
+  // two consecutive ticks (doubling the chance) and every 1440 TICKS, which is
+  // every 4 game days at 4x.
+  if (dayChanged(world.pending_transitions)) {
     const blackmailFacts = db.select().from(shared_knowledge)
       .where(and(eq(shared_knowledge.type, 'blackmail'), eq(shared_knowledge.is_active, true)))
       .all();

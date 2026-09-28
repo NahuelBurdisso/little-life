@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
 import { worldEvents, worldState } from '../../../db/schema';
 import { CONFIG } from '../../../lib/constants';
-import { startWorldEvent } from '../events';
+import { eventsTick, startWorldEvent } from '../events';
+import { advanceClock, computeDayPhase, detectTransitions } from '../../tick';
 import {
   aggregateEventEffects,
   EVENT_EFFECT_KEYS,
@@ -163,4 +165,41 @@ describe('startWorldEvent', () => {
 
     expect(result.ok && result.event).toMatchObject({ name: 'Funeral of Rosa', duration: 4 });
   });
+});
+
+describe('eventsTick random-event roll', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // Drive the real clock through eventsTick the way tick.ts does: new time and
+  // this tick's transitions are in world_state before the phase runs.
+  function runHours(speed: number, startMinute: number, hours: number): number {
+    db.delete(worldEvents).run();
+    ensureWorld();
+    const world = db.select().from(worldState).get()!;
+    let time = { ...world.time, day: 1, hour: 8, minute: startMinute };
+    // No weather roll in the window, so the hourly gate is the only Math.random call.
+    db.update(worldState).set({ tick_speed: speed, weather_duration: 1_000_000 })
+      .where(eq(worldState.id, world.id)).run();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.999); // roll, but never start one
+
+    for (let i = 0; i < (hours * 60) / speed; i++) {
+      const next = advanceClock(time, speed);
+      const transitions = detectTransitions(time, computeDayPhase(time.hour), next, computeDayPhase(next.hour));
+      db.update(worldState).set({ time: next, pending_transitions: transitions })
+        .where(eq(worldState.id, world.id)).run();
+      eventsTick();
+      time = next;
+    }
+    const calls = random.mock.calls.length;
+    random.mockRestore();
+    return calls;
+  }
+
+  for (const speed of [1, 2, 4]) {
+    it(`rolls once per game hour at ${speed}x from an off-hour start`, () => {
+      // The old `minute === 0` gate never rolled at 2x/4x from :15 (17, 19, ... / 19, 23, ...).
+      expect(runHours(speed, 15, 6)).toBe(6);
+      expect(runHours(speed, 0, 6)).toBe(6);
+    });
+  }
 });

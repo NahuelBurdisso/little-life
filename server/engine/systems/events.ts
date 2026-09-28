@@ -2,6 +2,7 @@ import { db } from '../../db';
 import { worldState, worldEvents, agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
+import { hourChanged } from '../../lib/gameClock';
 import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
@@ -136,9 +137,10 @@ export function eventsTick(): void {
   }
 
   // --- 3. Random Events (once per game hour) ---
-  // Only fire on exact minute 0 to prevent multi-fire at high tick speeds
-  const isNewHour = world.time!.minute === 0;
-  if (!isNewHour) {
+  // Roll when the clock crosses an hour. This used to require `minute === 0`,
+  // which the clock never lands on at 2x (odd start) or 4x (start not a multiple
+  // of 4): random events silently stopped at any speed above 1.
+  if (!hourChanged(world.pending_transitions)) {
     if (eventsChanged) emitter.markDirty('world.state');
     return;
   }

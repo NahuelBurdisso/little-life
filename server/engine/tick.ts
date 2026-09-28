@@ -16,6 +16,7 @@ import { gossipTick } from './systems/gossipEngine';
 import { goalsTick } from './systems/goals';
 import { cascadeTick } from '../lib/cascade';
 import { CONFIG } from '../lib/constants';
+import { crossedBoundary, gameMinutes, hourChanged } from '../lib/gameClock';
 import { cacheAllAgentStates, clearAgentStatesCache, invalidateAgentStatesCache } from '../lib/states';
 import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
 import { perceptionSystem } from '../lib/perception/instance';
@@ -251,18 +252,22 @@ export async function gameTick(): Promise<void> {
       .run();
   }
 
-  // Perception scan every 10 ticks: agents observe and react to nearby agents
-  // Each step is guarded: unguarded, one throw here skipped the cache clear,
-  // tick finalize and emitter flush below.
+  // Perception scan every 10 game minutes: agents observe and react to nearby
+  // agents. Each step is guarded: unguarded, one throw here skipped the cache
+  // clear, tick finalize and emitter flush below.
+  //
+  // Cadences are game-time boundaries, not `totalTicks % N`: counting ticks ran
+  // these every 40 game minutes / 4 game hours at 4x, and nested the hourly
+  // checks inside the 10-tick gate.
   const totalTicks = worldWithNewTime.time.totalTicks;
-  if (totalTicks % 10 === 0) {
+  if (crossedBoundary(gameMinutes(oldTime), gameMinutes(newTime), 10)) {
     runGuarded('perception', () => perceptionSystem.scan(worldWithNewTime));
     runGuarded('tavern', () => tavernTick(totalTicks));
-    // Check loneliness every 60 ticks (~1 game hour)
-    if (totalTicks % 60 === 0) {
-      runGuarded('loneliness', () => lonelinessCheck(totalTicks));
-      runGuarded('confrontation', () => confrontationCheck(totalTicks));
-    }
+  }
+  // Loneliness and confrontation once per game hour.
+  if (hourChanged(transitions)) {
+    runGuarded('loneliness', () => lonelinessCheck(totalTicks));
+    runGuarded('confrontation', () => confrontationCheck(totalTicks));
   }
 
   // Record tick timing + LLM slot state for the autoplay profiler. Both the
@@ -281,7 +286,9 @@ export async function gameTick(): Promise<void> {
     } catch { /* fresh DB */ }
   }
 
-  // AutoPlay analysis window. `analyze` is not awaited, so a window that takes
+  // AutoPlay analysis window. Deliberately TICKS, not game time: the window is
+  // a profiler sample of the loop itself (tick durations, slot state), and its
+  // size is set in ticks from the autoplay router. `analyze` is not awaited, so a window that takes
   // longer than WINDOW_SIZE ticks would otherwise start a second run that
   // interleaves with the first over the same `perf.flush()` (which resets) and
   // history state. markDirty has to wait for the report it announces.

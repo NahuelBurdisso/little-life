@@ -9,6 +9,7 @@ import { simEvents } from '../../lib/simEvents';
 import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
 import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
+import { gameMinutes, hourChanged } from '../../lib/gameClock';
 
 // Track which agents already have an active critical need event to avoid spamming
 const criticalNeedFired = new Map<number, Set<string>>();
@@ -131,8 +132,8 @@ export function needsTick(): void {
     locationsById.set(loc.id, loc);
   }
 
-  const currentTime =
-    world.time!.day * 24 * 60 + world.time!.hour * 60 + world.time!.minute;
+  const currentTime = gameMinutes(world.time!);
+  const isNewHour = hourChanged(world.pending_transitions);
 
   // Load active world events and extract their effects for need modifiers.
   // The catalog decides how each key stacks: boosts add, energy_drain multiplies.
@@ -454,8 +455,10 @@ export function needsTick(): void {
     // Step 12.5: Track hunger-at-zero for death mechanic
     updateHungerTracking(agent.id, updatedNeeds.hunger);
 
-    // Step 12.6: Sample mood for momentum tracking (once per game hour)
-    if (world.time!.minute === 0) {
+    // Step 12.6: Sample mood for momentum tracking (once per game hour).
+    // `minute === 0` never matched at 2x/4x once the clock started on an odd
+    // (or non-multiple-of-4) minute, so momentum had no samples at all.
+    if (isNewHour) {
       sampleMood(agent.id, mood);
     }
 
