@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ReplanEvaluator } from '../ReplanEvaluator.js';
+import { ReplanEvaluator, REPLAN_COOLDOWN_MINUTES } from '../ReplanEvaluator.js';
 import type { ReplanEvent, PlanBlock } from '../types.js';
 import type { PersonalityProfile } from '../../personality.js';
 
@@ -149,5 +149,43 @@ describe('ReplanEvaluator.shouldReplan', () => {
     // sentiment = -0.8, |−0.8| = 0.8 > 0.375 → true
     const event = makeEvent({ sentiment: -0.8, isDramatic: false });
     expect(evaluator.shouldReplan(event, makeBlock(), DEFAULT_PERSONALITY)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cooldown (game minutes, not ticks)
+// ---------------------------------------------------------------------------
+
+describe('ReplanEvaluator cooldown', () => {
+  it('is measured in game minutes from the world clock', () => {
+    let gameMinute = 600;
+    const generator = { queueReplan: vi.fn() };
+    const evaluator = new ReplanEvaluator({ get: () => null }, generator, () => 10, () => gameMinute);
+    const fire = () => (evaluator as any)._handleEvent(makeEvent({ isDramatic: true }));
+
+    fire();
+    expect(generator.queueReplan).toHaveBeenCalledTimes(1);
+    // The 4th argument is the game minute, which the generator's LLM gate uses.
+    expect(generator.queueReplan.mock.calls[0][3]).toBe(600);
+
+    // The old cooldown counted ticks, whose game-time length depends on
+    // tick_speed. Only game minutes count now: one short of the cooldown is
+    // still inside it ...
+    gameMinute += REPLAN_COOLDOWN_MINUTES - 1;
+    fire();
+    expect(generator.queueReplan).toHaveBeenCalledTimes(1);
+
+    // ... and a full cooldown after the first replan the next one goes through.
+    gameMinute += 1;
+    fire();
+    expect(generator.queueReplan).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps cooldowns per agent', () => {
+    const generator = { queueReplan: vi.fn() };
+    const evaluator = new ReplanEvaluator({ get: () => null }, generator, () => 10, () => 600);
+    (evaluator as any)._handleEvent(makeEvent({ agentId: 1, isDramatic: true }));
+    (evaluator as any)._handleEvent(makeEvent({ agentId: 2, isDramatic: true }));
+    expect(generator.queueReplan).toHaveBeenCalledTimes(2);
   });
 });

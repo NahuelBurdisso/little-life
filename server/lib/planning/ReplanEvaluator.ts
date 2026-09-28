@@ -26,18 +26,25 @@ interface AgentSchedule {
 // ReplanEvaluator
 // ---------------------------------------------------------------------------
 
-/** Cooldown in ticks between replans for the same agent. */
-const REPLAN_COOLDOWN_TICKS = 30;
+/**
+ * Game minutes between replans for the same agent. This was 30 *ticks*, and a
+ * tick advances the clock by `tick_speed` game minutes, so the cooldown's
+ * length in town time depended on the speed setting: 120 game minutes at
+ * speed 4, 15 at speed 0.5. Measured on the world clock it is the same half
+ * hour of town life at any speed.
+ */
+export const REPLAN_COOLDOWN_MINUTES = 30;
 
 export class ReplanEvaluator {
-  /** Tracks the last tick at which each agent triggered a replan. */
+  /** Absolute game minute (see `gameMinuteOf`) of each agent's last replan. */
   private lastReplanAt = new Map<number, number>();
 
   constructor(
     private readonly cache: IPlanCache,
-    private readonly generator: PlanGenerator,
+    private readonly generator: Pick<PlanGenerator, 'queueReplan'>,
     private readonly getCurrentHour: () => number,
-    private readonly getCurrentTick: () => number,
+    /** Current absolute game minute. */
+    private readonly getGameMinute: () => number,
   ) {
     simEvents.on('plan:evaluate-replan', (payload: ReplanEvent) => {
       this._handleEvent(payload);
@@ -52,11 +59,11 @@ export class ReplanEvaluator {
 
   private _handleEvent(event: ReplanEvent): void {
     const { agentId } = event;
-    const currentTick = this.getCurrentTick();
+    const now = this.getGameMinute();
 
     // Check cooldown
     const lastAt = this.lastReplanAt.get(agentId) ?? -Infinity;
-    if (currentTick - lastAt < REPLAN_COOLDOWN_TICKS) {
+    if (now - lastAt < REPLAN_COOLDOWN_MINUTES) {
       return;
     }
 
@@ -102,13 +109,13 @@ export class ReplanEvaluator {
     }
 
     // Update cooldown and queue replan
-    this.lastReplanAt.set(agentId, currentTick);
+    this.lastReplanAt.set(agentId, now);
 
     this.generator.queueReplan(
       agentId,
       event,
       currentHour,
-      currentTick,
+      now,
       schedule.sleepTime,
     );
   }
