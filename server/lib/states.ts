@@ -1,5 +1,5 @@
 import { PersonalityProfile } from './personality';
-import { db } from '../db';
+import { db, getAgentStatesWriteVersion } from '../db';
 import { agentStates, agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -155,8 +155,21 @@ export const STATE_DEFINITIONS: Record<StateType, StateDefinition> = {
 // ─── Tick-level agentStates cache ─────────────────────────────────────────────
 
 let agentStatesCache: Map<number, string[]> | null = null;
+/**
+ * `getAgentStatesWriteVersion()` as of the last (re)build. The cache is built
+ * once after the states phase, but later phases in the same tick still start and
+ * end states — conversations (affair discovery), decisions, gossip, cascade,
+ * tavern, gifts, loneliness — and without this every getAgentStates() after such
+ * a write kept answering from the pre-write snapshot: a freshly-heartbroken agent
+ * read as fine, a just-arrested one could still be queued for a chat.
+ */
+let agentStatesCacheVersion = -1;
 
 export function cacheAllAgentStates(): void {
+  // Read the version BEFORE the select: a write racing in between (there is none
+  // today, better-sqlite3 is synchronous) would then force a rebuild rather than
+  // be absorbed silently.
+  agentStatesCacheVersion = getAgentStatesWriteVersion();
   const allStates = db
     .select({ agent_id: agentStates.agent_id, type: agentStates.type })
     .from(agentStates)
@@ -177,7 +190,12 @@ export function clearAgentStatesCache(): void {
 
 export function getAgentStates(agentId: number): StateType[] {
   if (agentStatesCache) {
-    return (agentStatesCache.get(agentId) ?? []) as StateType[];
+    // Rebuild the whole snapshot (one query) rather than drop it: dropping it
+    // would send every remaining read this tick down the per-agent fallback
+    // below — the query storm the cache exists to prevent. Writes after the
+    // states phase come a handful per tick, so this rebuilds at most that often.
+    if (getAgentStatesWriteVersion() !== agentStatesCacheVersion) cacheAllAgentStates();
+    return (agentStatesCache!.get(agentId) ?? []) as StateType[];
   }
   // Fallback to DB query if cache not initialized
   const states = db

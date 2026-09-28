@@ -114,6 +114,58 @@ function migrateSchema() {
   if (firstError !== null) throw firstError;
 }
 
+// ─── agent_states write counter ───────────────────────────────────────────
+// `lib/states.ts` keeps a per-tick snapshot of every agent's state types so the
+// dozens of getAgentStates() calls per phase don't each hit the DB. That snapshot
+// is only correct if it notices writes — and agent_states is written from ~45
+// call sites across a dozen modules (states, conversations, decisions, gossip,
+// cascade, tavern, gifts, loneliness, life events...). Routing all of them
+// through one helper would be a wide refactor that the next new writer silently
+// escapes, so instead the connection itself counts writes: TEMP triggers (local
+// to this connection, never persisted into the DB file, so other tools opening
+// it never see a trigger calling a function they lack) bump a JS counter on
+// every insert/delete, and on updates that change which agent/type a row is.
+// Readers compare the counter to the value they cached at and rebuild on change.
+// A rolled-back write still bumps it, which only costs a redundant rebuild.
+let agentStatesWriteVersion = 0;
+sqlite.function('ll_agent_states_written', { deterministic: false }, () => {
+  agentStatesWriteVersion++;
+  return null;
+});
+
+let agentStatesHookInstalled = false;
+function installAgentStatesWriteHook(): boolean {
+  if (agentStatesHookInstalled) return true;
+  try {
+    sqlite.exec(`
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_ai AFTER INSERT ON main.agent_states
+        BEGIN SELECT ll_agent_states_written(); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_ad AFTER DELETE ON main.agent_states
+        BEGIN SELECT ll_agent_states_written(); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_au AFTER UPDATE OF agent_id, type ON main.agent_states
+        BEGIN SELECT ll_agent_states_written(); END;
+    `);
+    agentStatesHookInstalled = true;
+  } catch {
+    // Table doesn't exist yet on a fresh DB — retried by initSchema() and lazily
+    // by the next getAgentStatesWriteVersion() call.
+  }
+  return agentStatesHookInstalled;
+}
+
+/**
+ * Monotonic count of writes to `agent_states` on this connection. Compare two
+ * readings to learn whether any state was inserted, ended or retyped in between.
+ *
+ * While the write hook can't be installed (no table yet) this returns a fresh
+ * value on every call, so a caller caching against it simply never trusts its
+ * cache — correct, just uncached — instead of trusting one it can't invalidate.
+ */
+export function getAgentStatesWriteVersion(): number {
+  if (!installAgentStatesWriteHook()) return ++agentStatesWriteVersion;
+  return agentStatesWriteVersion;
+}
+
 /**
  * Create the perf indexes and apply additive column migrations.
  *
@@ -122,6 +174,7 @@ function migrateSchema() {
  */
 export function initSchema(): void {
   createPerfIndexes();
+  installAgentStatesWriteHook();
   try {
     migrateSchema();
   } catch (err) {
