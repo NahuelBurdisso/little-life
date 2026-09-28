@@ -38,9 +38,99 @@ function checkMilestone(agentId: number, money: number): void {
   lastMilestoneLevel.set(agentId, currentLevel);
 }
 
+// --- Per-action purchase tracking ---
+
+/**
+ * agentId → what the agent already bought during its current action. The key
+ * is `type:action_started:place`: decisions/movement stamp `action_started` each
+ * time they (re)issue an action, so a new meal or a new trip — even at the same
+ * shop — starts with a clean slate, while the ticks of one action share it.
+ * In memory only: after a server restart an agent mid-meal may pay once more.
+ */
+const purchasesThisAction = new Map<number, { actionKey: string; handled: Set<string> }>();
+
+/** Drop per-action purchase tracking for a world replace (agent ids and ticks restart). */
+export function clearPurchaseTracking(): void {
+  purchasesThisAction.clear();
+}
+
+/** Sentinel in the handled set for "this eating action has paid for its meal". */
+const MEAL = '__meal__';
+
+/** A shopping trip skips an item the buyer already holds this many of. */
+const SHOPPING_STOCK_TARGET = 2;
+
+function purchasesFor(agentId: number, actionKey: string): Set<string> {
+  const entry = purchasesThisAction.get(agentId);
+  if (entry && entry.actionKey === actionKey) return entry.handled;
+  const fresh = { actionKey, handled: new Set<string>() };
+  purchasesThisAction.set(agentId, fresh);
+  return fresh.handled;
+}
+
 // --- Helpers ---
 
 type EconRecord = typeof economy.$inferSelect;
+
+/**
+ * Move one unit of `item` from the shop owner to the buyer at `price`, taxed,
+ * and record it in the ledger, the activity feed and `economy:purchase`.
+ * Mutates the cached econ rows so later steps of this tick see the new state.
+ */
+function sellOneItem(
+  world: typeof worldState.$inferSelect,
+  buyer: { id: number; name: string },
+  buyerEcon: EconRecord,
+  ownerId: number,
+  ownerEcon: EconRecord,
+  item: string,
+  price: number,
+  location: { id: number; name: string },
+  now: number,
+): void {
+  const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], item, 1);
+  const newBuyerInv = addToInventory(buyerEcon.inventory as any[], item, 1, now);
+  const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
+  const sellerReceives = price - tax;
+
+  db.update(economy).set({
+    inventory: newOwnerInv,
+    money: ownerEcon.money + sellerReceives,
+  }).where(eq(economy.id, ownerEcon.id)).run();
+  ownerEcon.inventory = newOwnerInv;
+  ownerEcon.money += sellerReceives;
+
+  db.update(economy).set({
+    inventory: newBuyerInv,
+    money: buyerEcon.money - price,
+  }).where(eq(economy.id, buyerEcon.id)).run();
+  buyerEcon.inventory = newBuyerInv;
+  buyerEcon.money -= price;
+
+  db.update(worldState).set({
+    tax_pool: world.tax_pool + tax,
+  }).where(eq(worldState.id, world.id)).run();
+  world.tax_pool += tax;
+
+  db.insert(economyTransactions).values({
+    from_agent: buyer.id,
+    to_agent: ownerId,
+    amount: price,
+    reason: `purchase:${item}`,
+    items_exchanged: [{ itemId: item, quantity: 1 }],
+    location_id: location.id,
+    timestamp: now,
+  }).run();
+
+  logActivity({
+    type: 'purchase',
+    initiator: buyer.id,
+    target: ownerId,
+    templateData: { agent: buyer.name, item, amount: price },
+  });
+  simEvents.emit('economy:purchase', { agentId: buyer.id, item, price, locationName: location.name });
+  checkMilestone(buyer.id, buyerEcon.money);
+}
 
 // --- Main tick ---
 
@@ -273,13 +363,20 @@ export function economyTick(): void {
   }
 
   // ========== 3. SHOP TRANSACTIONS ==========
-  // Process both explicit 'shopping' actions and 'eating' at shop/tavern locations
+  // Process both explicit 'shopping' actions and 'eating' at shop/tavern locations.
+  // Both used to buy EVERY tick for as long as the action lasted: a 20-tick meal
+  // at the shop was 20 "purchase food_raw" lines, and a playtest saw Dr. Sofia buy
+  // 23 items in a row until she hit $0. Purchases are now tracked per action (see
+  // purchasesThisAction): one meal per eating action, one of each item per trip.
   for (const agent of activeAgents) {
     const action = agent.current_action as any;
     if (!action) continue;
 
     // Auto-purchase food when eating at a shop or tavern
     if (action.type === 'eating' && agent.current_location != null) {
+      const handled = purchasesFor(agent.id, `eating:${agent.action_started}:${agent.current_location}`);
+      if (handled.has(MEAL)) continue;
+
       let eatLocation = locationCache.get(agent.current_location);
       if (!eatLocation) {
         const loc = db.select().from(locations).where(eq(locations.id, agent.current_location)).get();
@@ -316,55 +413,16 @@ export function economyTick(): void {
               }
             }
           }
+          // Out of stock or unaffordable: leave the meal unpaid for now and retry
+          // next tick — restocking (wholesale) or payday can land mid-meal.
           if (!itemToBuy) { continue; }
 
           const shopStock = getInventoryCount(ownerEcon.inventory as any[], itemToBuy);
           const price = Math.round(getMarketPrice(itemToBuy, season, shopStock) * getReputationPriceModifier(agent.id));
           if (buyerEcon.money < price) { continue; }
 
-          // Transfer item
-          const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], itemToBuy, 1);
-          const newBuyerInv = addToInventory(buyerEcon.inventory as any[], itemToBuy, 1, now);
-          const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
-          const sellerReceives = price - tax;
-
-          db.update(economy).set({
-            inventory: newOwnerInv,
-            money: ownerEcon.money + sellerReceives,
-          }).where(eq(economy.id, ownerEcon.id)).run();
-          ownerEcon.inventory = newOwnerInv;
-          ownerEcon.money += sellerReceives;
-
-          db.update(economy).set({
-            inventory: newBuyerInv,
-            money: buyerEcon.money - price,
-          }).where(eq(economy.id, buyerEcon.id)).run();
-          buyerEcon.inventory = newBuyerInv;
-          buyerEcon.money -= price;
-
-          db.update(worldState).set({
-            tax_pool: world.tax_pool + tax,
-          }).where(eq(worldState.id, world.id)).run();
-          world.tax_pool += tax;
-
-          db.insert(economyTransactions).values({
-            from_agent: agent.id,
-            to_agent: eatLocation.owner,
-            amount: price,
-            reason: `purchase:${itemToBuy}`,
-            items_exchanged: [{ itemId: itemToBuy, quantity: 1 }],
-            location_id: agent.current_location,
-            timestamp: now,
-          }).run();
-
-          logActivity({
-            type: 'purchase',
-            initiator: agent.id,
-            target: eatLocation.owner,
-            templateData: { agent: agent.name, item: itemToBuy, amount: price },
-          });
-          simEvents.emit('economy:purchase', { agentId: agent.id, item: itemToBuy, price, locationName: eatLocation.name });
-          checkMilestone(agent.id, buyerEcon.money);
+          sellOneItem(world, agent, buyerEcon, eatLocation.owner, ownerEcon, itemToBuy, price, eatLocation, now);
+          handled.add(MEAL);
         }
       }
       continue;
@@ -392,10 +450,22 @@ export function economyTick(): void {
     const ownerEcon = econByAgent.get(shopLocation.owner);
     if (!ownerEcon) continue;
 
-    const items: string[] = action.items ?? [];
+    const handled = purchasesFor(agent.id, `shopping:${agent.action_started}:${shopId}`);
+    // A Set so a list that names an item twice still buys it once per trip.
+    const items = new Set<string>(action.items ?? []);
 
     for (const item of items) {
-      // Check shop has stock
+      if (handled.has(item)) continue;
+
+      // Only buy what's needed: someone already carrying a couple of this item
+      // doesn't restock it. Marked handled so it isn't re-checked all trip.
+      if (getInventoryCount(buyerEcon.inventory as any[], item) >= SHOPPING_STOCK_TARGET) {
+        handled.add(item);
+        continue;
+      }
+
+      // Out of stock / unaffordable stay unhandled, so a restock or payday
+      // later in the same trip can still complete the purchase (once).
       const shopStock = getInventoryCount(ownerEcon.inventory as any[], item);
       if (shopStock <= 0) continue;
 
@@ -403,56 +473,8 @@ export function economyTick(): void {
       const price = Math.round(getMarketPrice(item, season, shopStock) * getReputationPriceModifier(agent.id));
       if (buyerEcon.money < price) continue;
 
-      // Transfer item: remove from shop, add to buyer
-      const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], item, 1);
-      const newBuyerInv = addToInventory(buyerEcon.inventory as any[], item, 1, now);
-
-      // Calculate tax
-      const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
-      const sellerReceives = price - tax;
-
-      // Update shop owner
-      db.update(economy).set({
-        inventory: newOwnerInv,
-        money: ownerEcon.money + sellerReceives,
-      }).where(eq(economy.id, ownerEcon.id)).run();
-      ownerEcon.inventory = newOwnerInv;
-      ownerEcon.money = ownerEcon.money + sellerReceives;
-
-      // Update buyer
-      db.update(economy).set({
-        inventory: newBuyerInv,
-        money: buyerEcon.money - price,
-      }).where(eq(economy.id, buyerEcon.id)).run();
-      buyerEcon.inventory = newBuyerInv;
-      buyerEcon.money = buyerEcon.money - price;
-
-      // Add tax to world taxPool
-      db.update(worldState).set({
-        tax_pool: world.tax_pool + tax,
-      }).where(eq(worldState.id, world.id)).run();
-      world.tax_pool = world.tax_pool + tax;
-
-      // Log transaction
-      db.insert(economyTransactions).values({
-        from_agent: agent.id,
-        to_agent: shopLocation.owner,
-        amount: price,
-        reason: `purchase:${item}`,
-        items_exchanged: [{ itemId: item, quantity: 1 }],
-        location_id: shopId,
-        timestamp: now,
-      }).run();
-
-      // Log to activity feed
-      logActivity({
-        type: 'purchase',
-        initiator: agent.id,
-        target: shopLocation.owner,
-        templateData: { agent: agent.name, item, amount: price },
-      });
-      simEvents.emit('economy:purchase', { agentId: agent.id, item, price, locationName: shopLocation.name });
-      checkMilestone(agent.id, buyerEcon.money);
+      sellOneItem(world, agent, buyerEcon, shopLocation.owner, ownerEcon, item, price, shopLocation, now);
+      handled.add(item);
     }
   }
 
@@ -600,6 +622,9 @@ export function economyTick(): void {
     const activeIds = new Set(activeAgents.map(a => a.id));
     for (const id of lastMilestoneLevel.keys()) {
       if (!activeIds.has(id)) lastMilestoneLevel.delete(id);
+    }
+    for (const id of purchasesThisAction.keys()) {
+      if (!activeIds.has(id)) purchasesThisAction.delete(id);
     }
   }
 
