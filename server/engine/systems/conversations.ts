@@ -28,6 +28,7 @@ import {
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and, desc, gt, lt, sql } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
+import { gameMinutes } from '../../lib/gameClock';
 import { clearConversationCache, fallbackDetector } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
@@ -371,7 +372,6 @@ export async function conversationsTick(): Promise<void> {
       .orderBy(desc(conversationQueue.priority))
       .all();
 
-    const time = world.time as { totalTicks: number };
     let currentActive = updatedActiveLLM.length;
     const fillEntries = [...updatedActiveLLM];
 
@@ -516,7 +516,7 @@ export async function conversationsTick(): Promise<void> {
               current_action: { type: 'walking', reason: 'approaching_conversation' },
               current_destination: { x: targetX, y: targetY },
               current_path: null,
-              action_started: time.totalTicks,
+              action_started: gameMinutes(world.time),
               action_duration: null,
             })
             .where(eq(agents.id, firstParticipant.id))
@@ -571,8 +571,11 @@ export async function conversationsTick(): Promise<void> {
               type: 'talking',
               conversationId,
             },
-            action_started: time.totalTicks,
-            action_duration: maxTurns * 2, // ticks, not milliseconds
+            action_started: gameMinutes(world.time),
+            // Game minutes, like every action duration. Informational only:
+            // isActionComplete never ends `talking` on a timer, the conversation
+            // system does.
+            action_duration: maxTurns * 2,
           })
           .where(eq(agents.id, participantId))
           .run();

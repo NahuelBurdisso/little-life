@@ -48,7 +48,8 @@ const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 
 // ─── Clock helpers ────────────────────────────────────────────────────────────
 
-function computeDayPhase(hour: number): DayPhase {
+/** Exported for tests. */
+export function computeDayPhase(hour: number): DayPhase {
   if (hour >= 5 && hour < 7) return 'dawn';
   if (hour >= 7 && hour < 12) return 'morning';
   if (hour >= 12 && hour < 17) return 'afternoon';
@@ -56,7 +57,8 @@ function computeDayPhase(hour: number): DayPhase {
   return 'night';
 }
 
-function advanceClock(time: WorldRow['time'], tickSpeed: number): WorldRow['time'] {
+/** Exported for tests. */
+export function advanceClock(time: WorldRow['time'], tickSpeed: number): WorldRow['time'] {
   let { day, hour, minute, totalTicks, seasonDay, season } = time;
 
   minute += tickSpeed;
@@ -78,7 +80,8 @@ function advanceClock(time: WorldRow['time'], tickSpeed: number): WorldRow['time
   return { day, hour, minute, totalTicks: totalTicks + 1, seasonDay, season };
 }
 
-function detectTransitions(
+/** Exported for tests. */
+export function detectTransitions(
   oldTime: WorldRow['time'],
   oldDayPhase: DayPhase,
   newTime: WorldRow['time'],

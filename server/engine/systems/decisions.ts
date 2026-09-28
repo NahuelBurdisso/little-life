@@ -19,6 +19,7 @@ import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
+import { gameMinutes } from '../../lib/gameClock';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
 import {
@@ -76,7 +77,14 @@ function pairKey(a: number, b: number): string {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
-function isActionComplete(agent: AgentRow, totalTicks: number): boolean {
+/**
+ * CLOCK: GAME MINUTES. `agents.action_started` is stamped with
+ * `gameMinutes(world.time)` and `action_duration` (ACTION_MIN_DURATIONS, jail
+ * sentences, ...) is in game minutes. It used to be `totalTicks` on both sides
+ * of the subtraction, which is fine at tick_speed 1 but at 4x turned a 360-minute
+ * night into 360 ticks = 24 game hours: the whole town slept round the clock.
+ */
+export function isActionComplete(agent: AgentRow, nowMinutes: number): boolean {
   if (agent.current_action == null) return true;
 
   const actionType =
@@ -108,7 +116,7 @@ function isActionComplete(agent: AgentRow, totalTicks: number): boolean {
 
   // Check duration-based completion
   if (agent.action_duration !== null) {
-    return (totalTicks - agent.action_started) >= agent.action_duration;
+    return (nowMinutes - agent.action_started) >= agent.action_duration;
   }
 
   // No duration set for non-walking action — treat as complete
@@ -214,7 +222,7 @@ function checkEmergency(
 
   // Mood is a weighted average of the other needs, so a critical mood almost always
   // means a critical hunger/energy too. Checking it FIRST sent starving agents home
-  // to idle instead of eating — and the 120-tick idle duration below pinned them
+  // to idle instead of eating — and the 120-minute idle duration below pinned them
   // there while hunger kept falling. Real need crises win; despair is the fallback.
   if (crises.length === 0) {
     if (agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD) {
@@ -1119,10 +1127,13 @@ export function tick(world: WorldRow): void {
   const currentWeather = worldRow?.weather ?? 'sunny';
 
   const totalTicks = world.time.totalTicks;
+  // Action stamps are game minutes (see isActionComplete); agent-state stamps
+  // (`agentStates.started_at`) are still ticks.
+  const nowMinutes = gameMinutes(world.time);
 
   for (const agent of activeAgents) {
     // Skip agents whose current action is still in progress
-    if (!isActionComplete(agent, totalTicks)) continue;
+    if (!isActionComplete(agent, nowMinutes)) continue;
 
     // Jailed agents serve the sentence. This sits above every scoring tier on
     // purpose — the emergency override scores 9999 and would otherwise send a
@@ -1135,7 +1146,7 @@ export function tick(world: WorldRow): void {
           position: { x: prisonLoc.entry_point.x, y: prisonLoc.entry_point.y },
           current_destination: null,
           current_location: prisonLoc.id,
-          action_started: totalTicks,
+          action_started: nowMinutes,
           action_duration: 60,
           action_queue: [],
           current_path: null,
@@ -1449,7 +1460,7 @@ export function tick(world: WorldRow): void {
         .set({
           current_action: { type: 'walking', to: { x: destination!.x, y: destination!.y } },
           current_destination: destination,
-          action_started: totalTicks,
+          action_started: nowMinutes,
           action_duration: null,
           action_queue: [finalAction],
           current_path: null,
@@ -1479,7 +1490,7 @@ export function tick(world: WorldRow): void {
         .set({
           current_action: safeAction,
           current_destination: null,
-          action_started: totalTicks,
+          action_started: nowMinutes,
           action_duration: safeDuration,
           current_path: null,
           action_queue: [],
@@ -1894,7 +1905,7 @@ export function tick(world: WorldRow): void {
         position: { x: prison.entry_point.x, y: prison.entry_point.y },
         current_destination: null,
         current_location: prison.id,
-        action_started: totalTicks,
+        action_started: nowMinutes,
         action_duration: sentence,
         action_queue: [],
         current_path: null,

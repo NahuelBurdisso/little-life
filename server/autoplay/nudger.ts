@@ -5,6 +5,7 @@ import {
 } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
+import { gameMinutes } from '../lib/gameClock';
 import type { Diagnosis, NudgeAction, AnalysisWindow } from './types';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
@@ -184,7 +185,8 @@ export class SmartNudger {
   private execute(action: NudgeAction) {
     try {
       const world = db.select().from(worldState).limit(1).get();
-      const tick = world?.time?.totalTicks ?? 0;
+      // `agents.action_started` is a game-minute stamp, not a tick (decisions.ts).
+      const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
 
       switch (action.type) {
         case 'suggest_talk': {
@@ -242,7 +244,7 @@ export class SmartNudger {
             current_action: { type: 'walking', to: { x: entry.x, y: entry.y } },
             current_destination: { x: entry.x, y: entry.y, locationId },
             current_path: null,
-            action_started: tick,
+            action_started: nowMinutes,
             action_duration: null,
           }).where(eq(agents.id, agentId)).run();
           break;

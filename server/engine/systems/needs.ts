@@ -411,14 +411,13 @@ export function needsTick(): void {
     // which carries the start-day offset and would put every agent past the gate on
     // the world's first tick.
     //
-    // WHY NOT `agents.action_started` (also a tick stamp): the decision engine
+    // WHY NOT `agents.action_started` (a game-minute stamp): the decision engine
     // rewrites `action_started` every time it re-issues an action, and it has no
     // "same action → keep the old stamp" short-circuit. `working` has an
-    // ACTION_MIN_DURATION of 60 ticks, so `isActionComplete` fires every 60 ticks,
-    // the schedule path re-decides `working`, and `action_started` is reset to
-    // `totalTicks`. `totalTicks - action_started` therefore tops out around 65 (60
-    // plus the 5-tick interior-transition padding in movement.ts) and can never
-    // reach the 360-tick gate. A counter that survives action re-issue is the only
+    // ACTION_MIN_DURATION of 60 game minutes, so `isActionComplete` fires every
+    // hour, the schedule path re-decides `working`, and `action_started` is reset
+    // to now. Its age therefore tops out around 65 minutes (60 plus the
+    // interior-transition padding in movement.ts) and can never reach 6 hours. A counter that survives action re-issue is the only
     // way to measure a genuinely long shift.
     const workTicks = updateWorkTracking(agent.id, actionType === 'working');
     if (workTicks > 360) { // 360 ticks = 6 game hours at tick_speed 1

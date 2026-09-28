@@ -56,13 +56,14 @@ function queuedResult(...involved: AgentRow[]): { success: true; queued?: true; 
  * while the conversation carried on without them. They pick up the queued
  * `talking` action once they're free.
  */
-function walkOrder(agent: AgentRow, to: { x: number; y: number }, now: number) {
+/** `nowGameMinutes`: `agents.action_started` is a game-minute stamp. */
+function walkOrder(agent: AgentRow, to: { x: number; y: number }, nowGameMinutes: number) {
   if (isTalking(agent)) return {};
   return {
     current_action: { type: 'walking', to },
     current_destination: to,
     current_path: null,
-    action_started: now,
+    action_started: nowGameMinutes,
     action_duration: null,
   };
 }
@@ -92,10 +93,10 @@ export const nudgeRouter = router({
       if (!world) throw new Error('World not initialized');
 
       // CLOCK: `now` is the TICK clock (`world.time.totalTicks`) — the right unit for
-      // `agents.action_started`, `activityLog.timestamp`, `worldEvents.started_at`.
+      // `activityLog.timestamp`, `worldEvents.started_at`.
       const now = (world.time as any).totalTicks as number;
       // CLOCK: GAME MINUTES (day*1440 + hour*60 + minute) — the unit `needs.last_updated`
-      // is written and read in. Not interchangeable with `now`: the two only agree at
+      // and `agents.action_started` are written and read in. Not interchangeable with `now`: the two only agree at
       // tick_speed 1 with startDay 0.
       const nowGameMinutes =
         (world.time as any).day * 1440 +
@@ -167,7 +168,7 @@ export const nudgeRouter = router({
           const existingQueueA = (agentA.action_queue as Record<string, any>[]) ?? [];
           db.update(agents)
             .set({
-              ...walkOrder(agentA, { x: midX, y: midY }, now),
+              ...walkOrder(agentA, { x: midX, y: midY }, nowGameMinutes),
               action_queue: [
                 { type: 'talking', target: agentBId },
                 ...existingQueueA,
@@ -179,7 +180,7 @@ export const nudgeRouter = router({
           const existingQueueB = (agentB.action_queue as Record<string, any>[]) ?? [];
           db.update(agents)
             .set({
-              ...walkOrder(agentB, { x: midX, y: midY }, now),
+              ...walkOrder(agentB, { x: midX, y: midY }, nowGameMinutes),
               action_queue: [
                 { type: 'talking', target: agentAId },
                 ...existingQueueB,
@@ -226,7 +227,7 @@ export const nudgeRouter = router({
                 locationId,
               },
               current_path: null,
-              action_started: now,
+              action_started: nowGameMinutes,
               action_duration: null,
             })
             .where(eq(agents.id, agentId))
@@ -433,7 +434,7 @@ export const nudgeRouter = router({
               current_destination: null,
               current_location: availableHome.id,
               current_action: { type: 'idle' },
-              action_started: now,
+              action_started: nowGameMinutes,
               action_duration: null,
               action_queue: [],
               current_path: null,
@@ -690,12 +691,12 @@ export const nudgeRouter = router({
           const queueB = (agentB.action_queue as Record<string, any>[]) ?? [];
 
           db.update(agents).set({
-            ...walkOrder(agentA, { x: midX, y: midY }, now),
+            ...walkOrder(agentA, { x: midX, y: midY }, nowGameMinutes),
             action_queue: [{ type: 'talking', target: bId }, ...queueA],
           }).where(eq(agents.id, aId)).run();
 
           db.update(agents).set({
-            ...walkOrder(agentB, { x: midX, y: midY }, now),
+            ...walkOrder(agentB, { x: midX, y: midY }, nowGameMinutes),
             action_queue: [{ type: 'talking', target: aId }, ...queueB],
           }).where(eq(agents.id, bId)).run();
 

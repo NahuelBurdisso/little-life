@@ -2,6 +2,7 @@ import { db } from '../server/db/index';
 import { worldState, agents, needs, conversations, conversationQueue, conversationSchedulerState, agentStates, memories, relationships, relationshipEvents, facts, economyTransactions, activityLog, economy, templateUsage, worldEvents, locations } from '../server/db/schema';
 import { eq } from 'drizzle-orm';
 import fs from 'fs';
+import { gameMinutes } from '../server/lib/gameClock';
 
 const world = db.select().from(worldState).all()[0];
 console.log("=== WORLD STATE ===");
@@ -49,17 +50,19 @@ console.log("Stats:", JSON.stringify(scheduler?.stats));
 console.log("\n=== AGENT STATUS ===");
 const allAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
 const totalTicks = (world?.time as any)?.totalTicks ?? 0;
+// `action_started` is a game-minute stamp (see isActionComplete in decisions.ts).
+const nowMinutes = world?.time ? gameMinutes(world.time as any) : 0;
 
 for (const a of allAgents) {
   const n = db.select().from(needs).where(eq(needs.agent_id, a.id)).all()[0];
   const states = db.select().from(agentStates).where(eq(agentStates.agent_id, a.id)).all();
   const e = db.select().from(economy).where(eq(economy.agent_id, a.id)).all()[0];
   const action = a.current_action as any;
-  const actionAge = totalTicks - (a.action_started ?? 0);
+  const actionAge = nowMinutes - (a.action_started ?? 0);
   const pos = a.position as any;
   console.log(a.name,
     "| action:", JSON.stringify(action),
-    "| age:", actionAge, "ticks",
+    "| age:", actionAge, "game min",
     "| pos:", pos?.x?.toFixed(0) + "," + pos?.y?.toFixed(0),
     "| dest:", a.current_destination ? "yes" : "no",
     "| loc:", a.current_location,
@@ -78,10 +81,10 @@ console.log("\n=== POTENTIAL ISSUES ===");
 
 // Stuck agents
 for (const a of allAgents) {
-  const actionAge = totalTicks - (a.action_started ?? 0);
+  const actionAge = nowMinutes - (a.action_started ?? 0);
   const actionType = (a.current_action as any)?.type;
   if (actionAge > 500 && actionType !== "sleeping") {
-    console.log("STUCK?", a.name, "action:", JSON.stringify(a.current_action), "for", actionAge, "ticks");
+    console.log("STUCK?", a.name, "action:", JSON.stringify(a.current_action), "for", actionAge, "game min");
   }
 }
 

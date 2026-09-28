@@ -3,6 +3,7 @@ import { agents, locations } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { CONFIG } from '../../lib/constants';
+import { gameMinutes } from '../../lib/gameClock';
 import { distance } from '../../lib/utils';
 import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
@@ -263,7 +264,7 @@ function handleArrival(
                 current_destination: { x: finalWp[0], y: finalWp[1] },
                 current_path: interiorPath,
                 current_action: { type: 'walking', to: { x: finalWp[0], y: finalWp[1] } },
-                action_started: world.time.totalTicks,
+                action_started: gameMinutes(world.time),
                 action_duration: null,
                 action_queue: [interiorAction],
               })
@@ -291,8 +292,11 @@ function handleArrival(
         current_destination: null,
         current_path: null,
         current_action: transitionAction,
-        action_started: world.time.totalTicks,
-        action_duration: minDuration > 0 ? minDuration + 5 : null, // add 5 ticks for transition
+        action_started: gameMinutes(world.time),
+        // Durations are game minutes (see isActionComplete in decisions.ts), but
+        // the lerp in tick() advances one step per TICK, so the 5-tick padding is worth
+        // 5 * tick_speed game minutes.
+        action_duration: minDuration > 0 ? minDuration + 5 * world.tick_speed : null,
         action_queue: queue,
       })
       .where(eq(agents.id, agent.id))
@@ -315,7 +319,7 @@ function handleArrival(
           current_destination: null,
           current_path: null,
           current_action: resolvedAction,
-          action_started: world.time.totalTicks,
+          action_started: gameMinutes(world.time),
           action_duration: minDuration > 0 ? minDuration : null,
           action_queue: queue,
         })
@@ -327,7 +331,7 @@ function handleArrival(
           current_destination: null,
           current_path: null,
           current_action: nextAction ?? { type: 'idle' },
-          action_started: world.time.totalTicks,
+          action_started: gameMinutes(world.time),
           action_duration: minDuration > 0 ? minDuration : null,
           action_queue: queue,
         })
@@ -394,7 +398,7 @@ export function tick(world: WorldRow): void {
             current_action: { type: 'idle' },
             current_destination: null,
             action_duration: 10,
-            action_started: world.time.totalTicks,
+            action_started: gameMinutes(world.time),
             current_path: null,
           }).where(eq(agents.id, agent.id)).run();
           stuckTracker.delete(agent.id);
