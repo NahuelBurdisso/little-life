@@ -1642,6 +1642,9 @@ async function processTimedOutEntry(
         ? (existingRel?.romance_ab ?? 0)
         : (existingRel?.romance_ba ?? 0),
       hadRecentConflict: false,
+      // Lets the memory quote a loaded template line (conversationGist.ts);
+      // plain small talk scores too low and keeps the topic template.
+      messages: conversationDoc.messages,
     });
   }
 

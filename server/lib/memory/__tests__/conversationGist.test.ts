@@ -92,6 +92,29 @@ describe('MemoryObserver — conversation:ended', () => {
     expect(description).toContain('"Oh. I feel the same way, Rosa. I have for months."');
   });
 
+  it('quotes a loaded template line but not template small talk', () => {
+    const [tense] = endedMemory({
+      agentId: ROSA,
+      otherName: 'Yuki Tanaka',
+      messages: [
+        { speakerId: YUKI, text: "Stay away from me, Rosa. I don't trust you anymore.", sentiment: -0.6 },
+        { speakerId: ROSA, text: 'Fine.', sentiment: -0.3 },
+      ],
+    });
+    expect(tense).toContain(`"Stay away from me, Rosa. I don't trust you anymore."`);
+
+    record.mockClear();
+    const [smallTalk] = endedMemory({
+      agentId: ROSA,
+      otherName: 'Yuki Tanaka',
+      messages: [
+        { speakerId: ROSA, text: 'Good morning, Yuki! Lovely weather today.', sentiment: 0.4 },
+        { speakerId: YUKI, text: 'Morning! Nice day for a walk.', sentiment: 0.3 },
+      ],
+    });
+    expect(smallTalk).not.toContain('"');
+  });
+
   it('falls back to the topic template without a transcript', () => {
     const [description, metadata] = endedMemory({ agentId: ROSA, otherName: 'Yuki Tanaka' });
     expect(description).toMatch(/Yuki Tanaka/);
