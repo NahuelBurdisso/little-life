@@ -42,6 +42,7 @@ import { clearHungerTracking } from '../lib/lifeEventsEngine';
 import { resetChronicleCache } from '../lib/chronicle';
 import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
+import { planGenerator, planLLMQueue } from '../lib/planning/instance';
 
 export function clearPerWorldCaches(): void {
   // Tick-valued trackers
@@ -56,6 +57,14 @@ export function clearPerWorldCaches(): void {
   // refresh in goal-review prompts.
   pivotEvaluator.clear();
   goalReviewer.clear();
+  // Plan-request backoff is stamped in absolute game minutes, and the clock
+  // restarts at day 1 after a replace: a surviving stamp would keep that agent
+  // id from ever asking the LLM for a plan for days of game time. The queue's
+  // dedupe keys go too, or a request stuck in flight from the old world would
+  // block the new agent that inherits its rowid. (setup.ts also clears the
+  // queue directly; doing it twice is harmless.)
+  planGenerator.clear();
+  planLLMQueue.clear();
 
   // Per-agent identity-bound caches
   clearPersonalityBaselines();

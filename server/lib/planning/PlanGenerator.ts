@@ -25,7 +25,59 @@ interface IPlanCache {
 }
 
 interface IPlanLLMQueue {
-  enqueue(agentId: number, job: () => Promise<void>): void;
+  enqueue(agentId: number, job: () => Promise<void>, key?: string): boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Game clock + retry backoff
+// ---------------------------------------------------------------------------
+
+export interface GameClock {
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+/**
+ * Absolute game minutes since day 1, 00:00.
+ *
+ * Backoffs are measured in game time rather than `totalTicks` (one tick is
+ * `tick_speed` game minutes, so tick counts drift when the sim runs fast) or
+ * wall-clock (a paused or slowed world would burn through the wait without the
+ * town living through it).
+ */
+export function gameMinuteOf(t: GameClock): number {
+  return ((t.day - 1) * 24 + t.hour) * 60 + t.minute;
+}
+
+/**
+ * Game minutes to wait before asking the LLM for this agent's plan again after
+ * the n-th consecutive failure (the last entry repeats). Short at first so a
+ * blip — one timeout under load — costs little, growing so that a dead Ollama
+ * costs each agent roughly one doomed request per four game hours instead of
+ * one per decision pass.
+ */
+export const PLAN_RETRY_BACKOFF_MINUTES = [30, 60, 120, 240] as const;
+
+/** Dedupe key for daily-plan jobs in the per-agent LLM queue. */
+const GENERATE_KEY = 'generate';
+
+interface PlanningContext {
+  agentRow: {
+    name: string;
+    age: number;
+    traits: unknown;
+    personality: unknown;
+    home: number;
+    workplace: number | null;
+    schedule: unknown;
+    self_description: string | null;
+  };
+  currentNeeds: { hunger: number; energy: number; social: number; mood: number; stress: number };
+  schedule: AgentSchedule;
+  validLocations: string[];
+  workplaceName: string | null;
+  homeName: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,16 +127,57 @@ interface AgentSchedule {
 // ---------------------------------------------------------------------------
 
 export class PlanGenerator {
+  /**
+   * Per-agent LLM failure streak and the game minute before which no new plan
+   * request is queued. Cleared on the first successful plan and on world
+   * replace (worldCaches.ts): after a replace the clock restarts at day 1, so a
+   * surviving `retryAt` would gag that agent id for days.
+   */
+  private backoff = new Map<number, { failures: number; retryAt: number }>();
+
+  /**
+   * Bumped by `clear()`. A generate job that was awaiting the LLM across a
+   * world replace compares it after the await and drops its result, instead of
+   * writing the old world's plan onto a new agent that reuses the rowid.
+   */
+  private epoch = 0;
+
   constructor(
     private readonly cache: IPlanCache,
     private readonly queue: IPlanLLMQueue,
     private readonly memoryService: IMemoryService,
+    /**
+     * Current absolute game minute (see `gameMinuteOf`). Read when a request
+     * fails, not when it is queued: an LLM timeout can take a long time of
+     * game time at high tick speeds, and a backoff measured from the queue
+     * time could already have expired by the time the failure lands.
+     */
+    private readonly now: () => number,
   ) {}
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  queueGeneration(agentId: number, currentDay: number, currentTick: number): void {
-    this.queue.enqueue(agentId, () => this.generate(agentId, currentDay, currentTick));
+  /**
+   * Ask for today's plan. Cheap to call on every decision pass: it is a no-op
+   * while a plan job for this agent is already queued or running, and while
+   * the agent is inside an LLM-failure backoff. Returns whether a job was
+   * actually queued.
+   */
+  queueGeneration(agentId: number, time: GameClock): boolean {
+    const gate = this.backoff.get(agentId);
+    if (gate && gameMinuteOf(time) < gate.retryAt) return false;
+    return this.queue.enqueue(agentId, () => this.generate(agentId, time.day), GENERATE_KEY);
+  }
+
+  /** Game minute before which no plan request is queued, or null. */
+  getRetryAt(agentId: number): number | null {
+    return this.backoff.get(agentId)?.retryAt ?? null;
+  }
+
+  /** Drop all per-world state. Called from `clearPerWorldCaches`. */
+  clear(): void {
+    this.backoff.clear();
+    this.epoch++;
   }
 
   queueReplan(
@@ -101,15 +194,111 @@ export class PlanGenerator {
 
   // ── Private: generate ──────────────────────────────────────────────────────
 
-  private async generate(
-    agentId: number,
-    currentDay: number,
-    _currentTick: number,
-  ): Promise<void> {
-    // 0. Skip if plan already exists for today (dedup against multiple queue calls)
+  private async generate(agentId: number, currentDay: number): Promise<void> {
+    // 0. Skip if a real plan already exists for today (dedup against a wake-up
+    //    request racing the stale-plan one). A fallback plan does not count:
+    //    replacing it is the whole point of retrying after the backoff.
     const existing = this.cache.get(agentId);
-    if (existing && existing.day >= currentDay) return;
+    if (existing && existing.day >= currentDay && existing.source !== 'fallback') return;
 
+    const ctx = this.loadContext(agentId);
+    if (!ctx) {
+      console.warn(`[PlanGenerator] agent ${agentId} not found`);
+      return;
+    }
+
+    const epoch = this.epoch;
+    let blocks: PlanBlock[];
+    try {
+      blocks = await this.requestPlanBlocks(agentId, currentDay, ctx);
+    } catch (err) {
+      if (epoch !== this.epoch) return;
+      this.fallBack(agentId, currentDay, ctx, err instanceof Error ? err.message : String(err));
+      return;
+    }
+    if (epoch !== this.epoch) return;
+
+    // An empty parse means the model answered with something we could not read.
+    // Asking again right away mostly gets the same kind of answer, so this is a
+    // failure like any other: fallback plan now, LLM again after the backoff.
+    if (blocks.length === 0) {
+      this.fallBack(agentId, currentDay, ctx, 'unparseable plan output');
+      return;
+    }
+
+    this.backoff.delete(agentId);
+    const { agentRow, currentNeeds } = ctx;
+
+    // 13. Create DailyPlan and cache it
+    const plan: DailyPlan = {
+      day: currentDay,
+      generated_at: Date.now(),
+      blocks,
+      needs_snapshot: {
+        hunger: currentNeeds.hunger,
+        energy: currentNeeds.energy,
+        social: currentNeeds.social,
+      },
+      source: 'llm',
+    };
+
+    this.cache.set(agentId, plan);
+
+    // 14. Record plan memory
+    const summary = `Day ${currentDay} plan: ${blocks.map((b) => b.broad_action).join(', ')}`;
+    this.memoryService.record(
+      agentId,
+      'plan',
+      summary,
+      { subtype: 'daily_plan', day: currentDay },
+      0,
+      4,
+    );
+
+    // 15. Generate anticipation memories for blocks involving other agents
+    const allAgentRows = db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(ne(agents.id, agentId))
+      .all();
+    const allAgentNames = allAgentRows.map((r) => r.name);
+
+    for (const block of plan.blocks) {
+      const mentionedAgent = allAgentNames.find((name) =>
+        block.broad_action.toLowerCase().includes(name.toLowerCase()),
+      );
+      if (mentionedAgent) {
+        const hour = block.start_hour;
+        const timeDesc = hour < 12 ? 'this morning' : hour < 17 ? 'this afternoon' : 'this evening';
+        this.memoryService.record(
+          agentId,
+          'observation',
+          describeEvent('anticipation', { agent: mentionedAgent, time: timeDesc, action: block.broad_action }),
+          { subtype: 'anticipation' },
+          0.2,
+          3,
+        );
+      }
+    }
+
+    console.log(
+      `[PlanGenerator] Agent ${agentRow.name} planned day ${currentDay}: ${blocks.length} blocks`,
+    );
+
+    logActivity({
+      type: 'plan_generated',
+      templateData: { agentName: agentRow.name, summary },
+      agents: [agentId],
+    });
+  }
+
+  /**
+   * Synchronous DB reads the prompt and the fallback plan both need. Kept out
+   * of the LLM try-block on purpose: a failure here is a bug, not an outage,
+   * and should surface through the queue's error log rather than be papered
+   * over with a fallback plan.
+   */
+  private loadContext(agentId: number): PlanningContext | null {
     // 1. Load agent row
     const agentRow = db
       .select({
@@ -126,10 +315,7 @@ export class PlanGenerator {
       .where(eq(agents.id, agentId))
       .get();
 
-    if (!agentRow) {
-      console.warn(`[PlanGenerator] agent ${agentId} not found`);
-      return;
-    }
+    if (!agentRow) return null;
 
     // 2. Load needs row
     const needsRow = db
@@ -145,12 +331,6 @@ export class PlanGenerator {
       .get();
 
     const currentNeeds = needsRow ?? { hunger: 50, energy: 50, social: 50, mood: 50, stress: 50 };
-
-    const agentEcon = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
-
-    const personality = agentRow.personality as PersonalityProfile | null;
-    const traits = agentRow.traits as string[];
-    const schedule = agentRow.schedule as AgentSchedule;
 
     // 3. Get all location names
     const locationRows = db.select({ name: locations.name }).from(locations).all();
@@ -174,6 +354,34 @@ export class PlanGenerator {
       .where(eq(locations.id, agentRow.home))
       .get();
     const homeName = homeRow?.name ?? 'Home';
+
+    return {
+      agentRow,
+      currentNeeds,
+      schedule: agentRow.schedule as AgentSchedule,
+      validLocations,
+      workplaceName,
+      homeName,
+    };
+  }
+
+  /**
+   * Everything that can fail because the LLM stack is down or slow: memory
+   * retrieval (embeddings go through Ollama too), the chat call itself (throws
+   * on HTTP errors and on `AI.TIMEOUT_MS`), and parsing. Returns the parsed
+   * blocks, empty when the output was unreadable.
+   */
+  private async requestPlanBlocks(
+    agentId: number,
+    currentDay: number,
+    ctx: PlanningContext,
+  ): Promise<PlanBlock[]> {
+    const { agentRow, currentNeeds, schedule, validLocations, workplaceName, homeName } = ctx;
+
+    const agentEcon = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
+
+    const personality = agentRow.personality as PersonalityProfile | null;
+    const traits = agentRow.traits as string[];
 
     // 6. Retrieve 3 recent reflections
     const reflectionResults = await this.memoryService.retrieve(
@@ -241,73 +449,53 @@ export class PlanGenerator {
     });
 
     // 11. Parse blocks
-    let blocks = parsePlanBlocks(response.text, validLocations);
+    return parsePlanBlocks(response.text, validLocations);
+  }
 
-    // 12. Fallback if parse fails
-    if (blocks.length === 0) {
-      blocks = this.generateFallbackBlocks(schedule, workplaceName);
+  /**
+   * The LLM could not produce a plan: cache a schedule-derived one for today
+   * and hold further requests for this agent off for a backoff window.
+   *
+   * Before this, a failure cached nothing, so the decisions phase saw the day
+   * as still unplanned and asked again on the very next pass — every planless
+   * agent re-requesting every pass, all of it queueing on the LLM semaphore in
+   * front of conversations (B6).
+   */
+  private fallBack(agentId: number, currentDay: number, ctx: PlanningContext, reason: string): void {
+    const prev = this.backoff.get(agentId);
+    const failures = (prev?.failures ?? 0) + 1;
+    const wait =
+      PLAN_RETRY_BACKOFF_MINUTES[Math.min(failures, PLAN_RETRY_BACKOFF_MINUTES.length) - 1];
+    this.backoff.set(agentId, { failures, retryAt: this.now() + wait });
+
+    // Don't clobber a real plan for today with a fallback. Only reachable if a
+    // caller forces a regeneration over an LLM plan; today nothing does.
+    const existing = this.cache.get(agentId);
+    if (!existing || existing.day < currentDay || existing.source === 'fallback') {
+      this.cache.set(agentId, {
+        day: currentDay,
+        generated_at: Date.now(),
+        blocks: this.generateFallbackBlocks(ctx.schedule, ctx.workplaceName),
+        needs_snapshot: {
+          hunger: ctx.currentNeeds.hunger,
+          energy: ctx.currentNeeds.energy,
+          social: ctx.currentNeeds.social,
+        },
+        source: 'fallback',
+      });
     }
 
-    // 13. Create DailyPlan and cache it
-    const plan: DailyPlan = {
-      day: currentDay,
-      generated_at: Date.now(),
-      blocks,
-      needs_snapshot: {
-        hunger: currentNeeds.hunger,
-        energy: currentNeeds.energy,
-        social: currentNeeds.social,
-      },
-    };
-
-    this.cache.set(agentId, plan);
-
-    // 14. Record plan memory
-    const summary = `Day ${currentDay} plan: ${blocks.map((b) => b.broad_action).join(', ')}`;
-    this.memoryService.record(
-      agentId,
-      'plan',
-      summary,
-      { subtype: 'daily_plan', day: currentDay },
-      0,
-      4,
-    );
-
-    // 15. Generate anticipation memories for blocks involving other agents
-    const allAgentRows = db
-      .select({ name: agents.name })
-      .from(agents)
-      .where(ne(agents.id, agentId))
-      .all();
-    const allAgentNames = allAgentRows.map((r) => r.name);
-
-    for (const block of plan.blocks) {
-      const mentionedAgent = allAgentNames.find((name) =>
-        block.broad_action.toLowerCase().includes(name.toLowerCase()),
-      );
-      if (mentionedAgent) {
-        const hour = block.start_hour;
-        const timeDesc = hour < 12 ? 'this morning' : hour < 17 ? 'this afternoon' : 'this evening';
-        this.memoryService.record(
-          agentId,
-          'observation',
-          describeEvent('anticipation', { agent: mentionedAgent, time: timeDesc, action: block.broad_action }),
-          { subtype: 'anticipation' },
-          0.2,
-          3,
-        );
+    const message = `Plan LLM failed for ${ctx.agentRow.name} (attempt ${failures}): ${reason}; using schedule plan, retry in ${wait} game min`;
+    console.warn(`[PlanGenerator] ${message}`);
+    // One activity-feed entry per failure streak. While Ollama is down every
+    // agent fails every few game hours; the console carries the repeats.
+    if (failures === 1) {
+      try {
+        logActivity({ type: 'error', templateData: { system: 'planning', message } });
+      } catch {
+        // Reporting must never turn a handled failure into an unhandled one.
       }
     }
-
-    console.log(
-      `[PlanGenerator] Agent ${agentRow.name} planned day ${currentDay}: ${blocks.length} blocks`,
-    );
-
-    logActivity({
-      type: 'plan_generated',
-      templateData: { agentName: agentRow.name, summary },
-      agents: [agentId],
-    });
   }
 
   // ── Private: replan ────────────────────────────────────────────────────────
@@ -325,6 +513,10 @@ export class PlanGenerator {
       console.warn(`[PlanGenerator] replan: no plan found for agent ${agentId}`);
       return;
     }
+    // A fallback plan is never executed (see DailyPlan.source), so rewriting its
+    // tail buys nothing — and it only exists because the LLM just failed for
+    // this agent, which makes another call here the most likely to fail too.
+    if (existingPlan.source === 'fallback') return;
 
     // 2. Load agent + needs
     const agentRow = db

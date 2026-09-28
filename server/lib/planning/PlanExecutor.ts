@@ -51,6 +51,14 @@ export class PlanExecutor {
     // 1b. Stale plan check — skip plans from previous days
     if (currentDay !== undefined && plan.day < currentDay) return null;
 
+    // 1c. Fallback plans (cached when the LLM failed) are not executed. Running a
+    // block means LLM decomposition, which is what just failed; the block would
+    // sit 'active' with no actions and hold the agent in the plan layer's idle
+    // at score 6000 for hours. Returning null hands the agent to the utility
+    // layer, which already follows the same work/sleep schedule the fallback
+    // blocks were derived from.
+    if (plan.source === 'fallback') return null;
+
     // 2. Find the appropriate block for the current hour
     const block = this._resolveBlock(plan, agentId, currentHour);
     if (!block) return null;

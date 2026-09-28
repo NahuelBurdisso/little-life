@@ -3,6 +3,17 @@ export interface DailyPlan {
   generated_at: number;
   blocks: PlanBlock[];
   needs_snapshot: { hunger: number; energy: number; social: number };
+  /**
+   * 'fallback' marks a schedule-derived plan cached because the LLM failed
+   * (threw, timed out, or returned nothing parseable). It exists so the day
+   * counts as planned — the decisions phase stops re-asking every pass — and so
+   * the UI timeline has something to show. The executor does not run it (its
+   * blocks would need LLM decomposition); the utility layer, which already
+   * follows the same schedule, drives the agent instead. It is upgraded to an
+   * LLM plan once the retry backoff expires. Absent on plans persisted before
+   * this field existed, which are all LLM plans.
+   */
+  source?: 'llm' | 'fallback';
 }
 
 export interface PlanBlock {

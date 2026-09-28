@@ -1155,14 +1155,20 @@ export function tick(world: WorldRow): void {
     const isDaytime = effSleepTime > wakeTime
       ? (world.time.hour >= wakeTime && world.time.hour < effSleepTime)
       : !(world.time.hour >= effSleepTime && world.time.hour < wakeTime);
-    const currentPlan = (agent as any).daily_plan as { day: number } | null;
+    const currentPlan = (agent as any).daily_plan as { day: number; source?: string } | null;
     const planIsStale = !currentPlan || currentPlan.day < (world.time.day ?? 1);
+    // A fallback plan (the LLM failed) is re-requested like a missing one so it
+    // gets upgraded once the LLM recovers. That makes this call fire on most
+    // passes for such agents, which is fine: queueGeneration is a no-op while a
+    // request is in flight or the agent's retry backoff is running.
+    const planIsFallback = currentPlan?.source === 'fallback';
+    const planClock = { day: world.time.day ?? 1, hour: world.time.hour, minute: world.time.minute };
 
     if (completedActionType === 'sleeping' && world.time.hour >= wakeTime) {
-      planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
-    } else if (isDaytime && planIsStale && completedActionType !== 'dead') {
+      planGenerator.queueGeneration(agent.id, planClock);
+    } else if (isDaytime && (planIsStale || planIsFallback) && completedActionType !== 'dead') {
       // Catch-all: agent has no plan for today but it's daytime — generate one now
-      planGenerator.queueGeneration(agent.id, world.time.day ?? 1, world.time.totalTicks);
+      planGenerator.queueGeneration(agent.id, planClock);
     }
 
     // Fetch per-agent data from pre-loaded Maps
