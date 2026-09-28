@@ -42,7 +42,6 @@ export const rippleRules: RippleRule[] = [
     source: 'state:triggered',
     sourceFilter: (payload) => payload?.state === 'heartbroken',
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.4,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.25 }],
     cooldownTicks: 240,
@@ -73,10 +72,10 @@ export const rippleRules: RippleRule[] = [
   {
     id: 'infatuation_jealousy',
     source: 'perception:observed',
-    sourceFilter: (payload) =>
-      typeof payload?.templateKey === 'string' &&
-      payload.templateKey.includes('crush') &&
-      payload.templateKey.includes('rival'),
+    // Perception emits `reaction.memory_template`; the jealousy reaction's key is
+    // `perception_jealousy`. No key ever contained both 'crush' and 'rival', so
+    // this rule could never fire.
+    sourceFilter: (payload) => payload?.templateKey === 'perception_jealousy',
     target: 'self',
     probability: 0.6,
     personalityGates: [
@@ -95,7 +94,6 @@ export const rippleRules: RippleRule[] = [
     source: 'state:triggered',
     sourceFilter: (payload) => payload?.state === 'jealous',
     target: 'self',
-    secondaryTarget: 'random_present',
     probability: 0.35,
     personalityGates: [
       { axis: 'aggression', direction: '+', weight: 0.2 },
@@ -143,7 +141,6 @@ export const rippleRules: RippleRule[] = [
     id: 'theft_confrontation',
     source: 'economy:theft_caught',
     target: 'victim',
-    secondaryTarget: 'perpetrator',
     probability: 0.5,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.2 }],
     cooldownTicks: 240,
@@ -260,7 +257,6 @@ export const rippleRules: RippleRule[] = [
     id: 'distress_begging',
     source: 'economy:distress',
     target: 'self',
-    secondaryTarget: 'random_present',
     probability: 0.3,
     personalityGates: [
       { axis: 'vanity', direction: '-', weight: 0.2 },
@@ -351,7 +347,8 @@ export const rippleRules: RippleRule[] = [
     id: 'insult_anger',
     source: 'interaction:completed',
     sourceFilter: (payload) => payload?.action === 'insult',
-    target: 'self',
+    // The insulted agent gets angry, not the one throwing the insult.
+    target: 'victim',
     probability: 0.6,
     personalityGates: [
       { axis: 'aggression', direction: '+', weight: 0.1 },
@@ -369,7 +366,6 @@ export const rippleRules: RippleRule[] = [
     source: 'state:triggered',
     sourceFilter: (payload) => payload?.state === 'angry',
     target: 'self',
-    secondaryTarget: 'random_present',
     probability: 0.25,
     personalityGates: [
       { axis: 'impulsiveness', direction: '+', weight: 0.2 },
@@ -392,7 +388,6 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) =>
       typeof payload?.content === 'string' && payload.content.includes('secret'),
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.8,
     personalityGates: [{ axis: 'loyalty', direction: '+', weight: 0.1 }],
     cooldownTicks: 480,
@@ -407,7 +402,8 @@ export const rippleRules: RippleRule[] = [
     id: 'public_humiliation',
     source: 'interaction:completed',
     sourceFilter: (payload) => payload?.action === 'insult',
-    target: 'self',
+    // Being publicly insulted is what humiliates — the aggressor isn't the one shamed.
+    target: 'victim',
     probability: 0.7,
     personalityGates: [
       { axis: 'vanity', direction: '+', weight: 0.2 },
@@ -456,7 +452,6 @@ export const rippleRules: RippleRule[] = [
     source: 'state:triggered',
     sourceFilter: (payload) => payload?.state === 'drunk',
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.4,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.25 }],
     cooldownTicks: 240,
@@ -575,7 +570,6 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) =>
       typeof payload?.action === 'string' && payload.action.includes('protest'),
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.9,
     cooldownTicks: 720,
     effects: {
@@ -732,7 +726,6 @@ export const rippleRules: RippleRule[] = [
     source: 'conversation:ended',
     sourceFilter: (payload) => typeof payload?.sentiment === 'number' && payload.sentiment > 0.4,
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.5,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.15 }],
     cooldownTicks: 120,
@@ -748,7 +741,6 @@ export const rippleRules: RippleRule[] = [
     source: 'conversation:ended',
     sourceFilter: (payload) => typeof payload?.sentiment === 'number' && payload.sentiment > 0.6,
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.4,
     personalityGates: [{ axis: 'loyalty', direction: '+', weight: 0.1 }],
     cooldownTicks: 240,
@@ -764,7 +756,6 @@ export const rippleRules: RippleRule[] = [
     source: 'conversation:ended',
     sourceFilter: (payload) => typeof payload?.sentiment === 'number' && payload.sentiment > 0.2,
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.2,
     personalityGates: [
       { axis: 'warmth', direction: '+', weight: 0.2 },
@@ -788,7 +779,6 @@ export const rippleRules: RippleRule[] = [
       Array.isArray(payload.topics) &&
       payload.topics.some((t: string) => t.includes('gossip') || t.includes('complaint')),
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.35,
     personalityGates: [{ axis: 'loyalty', direction: '+', weight: 0.15 }],
     cooldownTicks: 240,
@@ -807,7 +797,6 @@ export const rippleRules: RippleRule[] = [
       payload?.partnerState &&
       ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving'].includes(payload.partnerState),
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.6,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.2 }],
     cooldownTicks: 240,
@@ -828,7 +817,6 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.romanceLevel === 'number' &&
       payload.romanceLevel > 15,
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.3,
     personalityGates: [{ axis: 'sensuality', direction: '+', weight: 0.2 }],
     cooldownTicks: 360,
@@ -848,7 +836,6 @@ export const rippleRules: RippleRule[] = [
       payload.sentiment > 0 &&
       payload?.hadRecentConflict === true,
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.25,
     personalityGates: [
       { axis: 'warmth', direction: '+', weight: 0.2 },
@@ -870,7 +857,6 @@ export const rippleRules: RippleRule[] = [
       payload.sentiment > 0 &&
       payload?.hadRecentConflict === true,
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.25,
     personalityGates: [
       { axis: 'warmth', direction: '+', weight: 0.2 },
@@ -949,7 +935,6 @@ export const rippleRules: RippleRule[] = [
     source: 'goal:completed',
     sourceFilter: (payload) => payload?.goalType === 'protect',
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.8,
     cooldownTicks: 480,
     effects: {
@@ -964,7 +949,6 @@ export const rippleRules: RippleRule[] = [
     source: 'goal:completed',
     sourceFilter: (payload) => payload?.goalType === 'protect',
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.7,
     cooldownTicks: 480,
     effects: {
@@ -1028,7 +1012,6 @@ export const rippleRules: RippleRule[] = [
       payload.sentiment > 0.3 &&
       payload?.partnerState === 'in_debt',
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.5,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.2 }],
     cooldownTicks: 480,
@@ -1082,7 +1065,6 @@ export const rippleRules: RippleRule[] = [
     id: 'secret_trust_deepened',
     source: 'secret:shared',
     target: 'self',
-    secondaryTarget: 'perpetrator',
     probability: 0.5,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.2 }],
     cooldownTicks: 720,

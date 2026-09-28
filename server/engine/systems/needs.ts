@@ -12,6 +12,37 @@ import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../
 // Track which agents already have an active critical need event to avoid spamming
 const criticalNeedFired = new Map<number, Set<string>>();
 
+/** Drop per-agent critical-need latches for a world replace (agent ids are reused). */
+export function clearCriticalNeedFired(): void {
+  criticalNeedFired.clear();
+}
+
+// Consecutive `needsTick` calls during which an agent's action type was `working`.
+// CLOCK: TICKS — one increment per game tick, not game minutes and not
+// `agents.action_started` (see the overwork block below for why that column is
+// unusable here).
+const consecutiveWorkTicks = new Map<number, number>();
+
+/** Drop per-agent overwork counters for a world replace (agent ids are reused). */
+export function clearConsecutiveWorkTicks(): void {
+  consecutiveWorkTicks.clear();
+}
+
+/**
+ * Advance (or reset) an agent's consecutive-working-tick counter and return it.
+ * Mirrors `updateHungerTracking` in lifeEventsEngine: the entry is deleted the
+ * moment the condition stops holding, so work → sleep → work starts over at 1.
+ */
+function updateWorkTracking(agentId: number, isWorking: boolean): number {
+  if (!isWorking) {
+    consecutiveWorkTicks.delete(agentId);
+    return 0;
+  }
+  const next = (consecutiveWorkTicks.get(agentId) ?? 0) + 1;
+  consecutiveWorkTicks.set(agentId, next);
+  return next;
+}
+
 // Need names for iteration
 const NEED_KEYS = ['hunger', 'energy', 'social', 'comfort', 'fun'] as const;
 type NeedKey = (typeof NEED_KEYS)[number];
@@ -235,13 +266,14 @@ export function needsTick(): void {
     if (agent.current_location) {
       const location = locationsById.get(agent.current_location);
       if (location && location.services) {
-        const agentEcon = economyByAgent.get(agent.id);
-        const hasMoney = agentEcon ? agentEcon.money > 0 : false;
+        const money = economyByAgent.get(agent.id)?.money ?? 0;
 
         for (const service of location.services) {
           const needKey = service.needSatisfied as NeedKey;
           if (NEED_KEYS.includes(needKey)) {
-            if (service.cost <= 0 || hasMoney) {
+            // Affordability, not just solvency: a $1 agent shouldn't get the
+            // benefit of a $50 service.
+            if (service.cost <= 0 || money >= service.cost) {
               updatedNeeds[needKey] += service.amount * gameHoursElapsed;
             }
           }
@@ -378,12 +410,25 @@ export function needsTick(): void {
       needValues.reduce((sum, v) => sum + v, 0) / needValues.length;
     let stress = clamp(100 - (lowestNeed * 0.6 + averageNeed * 0.4), 0, 100);
 
-    // Overwork: working action adds stress proportional to consecutive work time
-    if (actionType === 'working') {
-      const workDuration = currentTime - (agent.action_started ?? currentTime);
-      if (workDuration > 360) { // More than 6 hours straight
-        stress = clamp(stress + (workDuration - 360) * 0.02, 0, 100);
-      }
+    // Overwork: working adds stress proportional to consecutive time spent working.
+    //
+    // CLOCK: `consecutiveWorkTicks` is the TICK clock — one increment per game tick,
+    // never the GAME-MINUTE clock (`currentTime` = day*1440 + hour*60 + minute),
+    // which carries the start-day offset and would put every agent past the gate on
+    // the world's first tick.
+    //
+    // WHY NOT `agents.action_started` (also a tick stamp): the decision engine
+    // rewrites `action_started` every time it re-issues an action, and it has no
+    // "same action → keep the old stamp" short-circuit. `working` has an
+    // ACTION_MIN_DURATION of 60 ticks, so `isActionComplete` fires every 60 ticks,
+    // the schedule path re-decides `working`, and `action_started` is reset to
+    // `totalTicks`. `totalTicks - action_started` therefore tops out around 65 (60
+    // plus the 5-tick interior-transition padding in movement.ts) and can never
+    // reach the 360-tick gate. A counter that survives action re-issue is the only
+    // way to measure a genuinely long shift.
+    const workTicks = updateWorkTracking(agent.id, actionType === 'working');
+    if (workTicks > 360) { // 360 ticks = 6 game hours at tick_speed 1
+      stress = clamp(stress + (workTicks - 360) * 0.02, 0, 100);
     }
 
     // State-driven stress modifiers

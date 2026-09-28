@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { activityLog, worldState } from '../db/schema';
+import { and, inArray, lt } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
 
@@ -48,4 +49,52 @@ export function logActivity(params: LogActivityParams): void {
   }).run();
 
   emitter.markDirty('activity.all');
+}
+
+// ─── Retention ────────────────────────────────────────────────────────────────
+
+const TICKS_PER_DAY = 1440;
+
+/** How long each retention tier survives, in game days. */
+const RETENTION_DAYS: Record<string, number> = {
+  short: 3,
+  medium: 14,
+  long: 60,
+};
+
+/** Registry types bucketed by tier, built once. `permanent` is absent on purpose. */
+const TYPES_BY_RETENTION = Object.entries(ACTIVITY_REGISTRY).reduce<Record<string, string[]>>(
+  (acc, [type, def]) => {
+    if (def.retention in RETENTION_DAYS) (acc[def.retention] ??= []).push(type);
+    return acc;
+  },
+  {},
+);
+
+/**
+ * Drop activity rows past their declared retention. Without this the log grows
+ * for the life of the world — at one tick per second the low-value tiers
+ * (`state_gained`, `purchase`, zone actions) dominate the table within hours.
+ *
+ * Bounded by `timestamp` (ticks) so it rides `idx_activity_log_timestamp`, and
+ * only ever removes types the registry marks as expendable: `permanent` rows,
+ * and any type not in the registry, are never touched.
+ */
+export function pruneActivityLog(currentTick: number): number {
+  let deleted = 0;
+
+  for (const [tier, days] of Object.entries(RETENTION_DAYS)) {
+    const types = TYPES_BY_RETENTION[tier];
+    if (!types?.length) continue;
+
+    const cutoff = currentTick - days * TICKS_PER_DAY;
+    if (cutoff <= 0) continue;
+
+    deleted += db
+      .delete(activityLog)
+      .where(and(inArray(activityLog.type, types), lt(activityLog.timestamp, cutoff)))
+      .run().changes;
+  }
+
+  return deleted;
 }

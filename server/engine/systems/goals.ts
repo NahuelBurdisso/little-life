@@ -25,6 +25,24 @@ function getCurrentTick(): number {
   return (world?.time as any)?.totalTicks ?? 0;
 }
 
+const TICKS_PER_DAY = 1440;
+
+/**
+ * Roll an abandonment rule's `chance`, which the registry authors as a
+ * probability *per game day* — it sits next to thresholds written in whole days
+ * (`ticks_elapsed > 4320`), and rules meant to fire immediately use `auto: true`
+ * instead.
+ *
+ * Abandonment is re-evaluated on every tick, so rolling `chance` straight turned
+ * "30% chance" into a near-certainty: 1 - 0.7^1440. Convert to the equivalent
+ * per-tick hazard rate so a day's worth of ticks compounds back to `chance`.
+ */
+function rollDailyChance(chance: number): boolean {
+  if (chance >= 1) return true;
+  if (chance <= 0) return false;
+  return Math.random() < 1 - Math.pow(1 - chance, 1 / TICKS_PER_DAY);
+}
+
 function compareOp(actual: number, op: string, value: number): boolean {
   switch (op) {
     case '>':  return actual > value;
@@ -200,10 +218,13 @@ function evaluateTriggers(
 
     simEvents.emit('goal:created', { agentId: agent.id, goalType: trigger.generates, targetId: targetId });
 
+    // `goal_created`, not `system`: this is the same event GoalReviewer logs, and
+    // filing it under System hid every trigger-generated goal behind the ⚙ filter
+    // and dropped its importance to 0.1, below the drama/highlight thresholds.
     logActivity({
-      type: 'system',
+      type: 'goal_created',
       initiator: agent.id,
-      templateData: { message: `${agent.name} set a new goal: ${trigger.generates}` },
+      templateData: { name: agent.name, goal: trigger.generates },
     });
   }
 }
@@ -228,7 +249,7 @@ function evaluateAbandonment(
         s => s.agent_id === agent.id && s.type === stateType,
       );
       if (hasState.length === 0) {
-        shouldAbandon = rule.auto === true || (rule.chance != null && Math.random() < rule.chance);
+        shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance));
       }
     } else if (rule.condition.startsWith('relationship.')) {
       if (goal.target_id) {
@@ -241,14 +262,14 @@ function evaluateAbandonment(
           const isA = rel.agent_a === agent.id;
           const actual = getRelField(rel, field, isA);
           if (compareOp(actual, op, value)) {
-            shouldAbandon = rule.auto === true || (rule.chance != null && Math.random() < rule.chance);
+            shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance));
           }
         }
       }
     } else if (rule.condition.startsWith('ticks_elapsed')) {
       const maxTicks = parseInt(rule.condition.split('> ')[1]);
       if (currentTick - goal.created_at > maxTicks) {
-        shouldAbandon = rule.auto === true || (rule.chance != null && Math.random() < rule.chance);
+        shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance));
       }
     } else if (rule.condition.startsWith('economy.')) {
       const econ = db.select().from(economy).where(eq(economy.agent_id, agent.id)).get();
@@ -278,7 +299,10 @@ function evaluateAbandonment(
 
     if (shouldAbandon) {
       const newStatus = rule.becomes ?? 'abandoned';
-      db.update(goals).set({ status: newStatus }).where(eq(goals.id, goal.id)).run();
+      db.update(goals)
+        .set({ status: newStatus, completed_at: currentTick })
+        .where(eq(goals.id, goal.id))
+        .run();
       goal.status = newStatus;
 
       if (newStatus === 'completed') {
@@ -299,7 +323,7 @@ function evaluateAbandonment(
 
 // ─── evaluatePassiveProgress ──────────────────────────────────────────────────
 
-function evaluatePassiveProgress(agent: any, goal: any, _currentTick: number): void {
+function evaluatePassiveProgress(agent: any, goal: any, currentTick: number): void {
   const def = GOAL_REGISTRY[goal.type];
   if (!def || def.valid_interactions.length > 0) return; // only passive goals
 
@@ -322,7 +346,7 @@ function evaluatePassiveProgress(agent: any, goal: any, _currentTick: number): v
       const newProgress = Math.min(def.completion_at, goal.progress + pe.progress);
       if (newProgress >= def.completion_at) {
         db.update(goals)
-          .set({ progress: newProgress, status: 'completed' })
+          .set({ progress: newProgress, status: 'completed', completed_at: currentTick })
           .where(eq(goals.id, goal.id))
           .run();
         simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, perpetratorId: goal.target_id ?? undefined, victimId: agent.id });

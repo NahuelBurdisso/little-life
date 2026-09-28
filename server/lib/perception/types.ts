@@ -21,9 +21,11 @@ export interface PerceptionRule {
 }
 
 export interface ReactionDef {
-  action: 'approach' | 'leave' | 'none';
+  action: 'approach' | 'leave' | 'none' | 'emote';
   conversation_topic?: string;
   conversation_tier?: string;
+  /** Key in the client's EMOTE_EMOJIS map. Only read when `action === 'emote'`. */
+  emote?: string;
   memory_template: string;
   trigger_reason: string;
 }

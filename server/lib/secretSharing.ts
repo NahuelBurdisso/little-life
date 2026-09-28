@@ -17,6 +17,15 @@ const sharedSecrets = new Map<number, Set<string>>(); // agentId → set of secr
 
 let initialized = false;
 
+/**
+ * Drop shared-secret bookkeeping for a world replace (agent ids are reused).
+ * Does not reset `initialized` — the simEvents listeners must stay registered
+ * exactly once.
+ */
+export function clearSharedSecrets(): void {
+  sharedSecrets.clear();
+}
+
 function initSecretSharing(): void {
   if (initialized) return;
   initialized = true;
@@ -72,8 +81,12 @@ function initSecretSharing(): void {
     agentSecrets.add(chosen.id);
     sharedSecrets.set(payload.agentId, agentSecrets);
 
-    // Create the shared knowledge fact — only known by the two agents
-    createFact(
+    // Create the shared knowledge fact — only known by the two agents.
+    // createFact dedupes on (type, subject, target), so a pair that has already
+    // confided returns null. Bail out: otherwise the drama log and the trust boost
+    // fire again and again off a fact that was never written, ratcheting trust
+    // upward without limit.
+    const factId = createFact(
       'secret_shared',
       payload.agentId,
       otherId,
@@ -81,6 +94,7 @@ function initSecretSharing(): void {
       [payload.agentId, otherId],
       'confided',
     );
+    if (factId === null) return;
 
     const sharerName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, payload.agentId)).get()?.name ?? 'Someone';
     const listenerName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name ?? 'someone';
@@ -111,7 +125,15 @@ function initSecretSharing(): void {
       timestamp: Date.now(),
     }).run();
 
-    simEvents.emit('secret:shared', { sharerId: payload.agentId, listenerId: otherId, category: chosen.category });
+    // `agentId`/`perpetratorId` are what the cascade engine resolves targets from;
+    // without them the secret_trust_deepened ripple rule could never fire.
+    simEvents.emit('secret:shared', {
+      agentId: payload.agentId,
+      perpetratorId: otherId,
+      sharerId: payload.agentId,
+      listenerId: otherId,
+      category: chosen.category,
+    });
   });
 }
 

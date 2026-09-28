@@ -7,7 +7,7 @@
  */
 
 import { ITEM_REGISTRY, SEASON_PRICE_MODIFIERS, RECIPE_REGISTRY, TRADE_RULES } from '../data/economyData';
-import type { ItemDef, Recipe, TradeRule } from '../data/economyData';
+import type { Recipe, TradeRule } from '../data/economyData';
 
 // --- Types ---
 
@@ -111,44 +111,3 @@ export function getTradeRuleForLocation(locationType: string): TradeRule | undef
   return TRADE_RULES[locationType];
 }
 
-export function getItemDef(itemId: string): ItemDef | undefined {
-  return ITEM_REGISTRY[itemId];
-}
-
-export function getFoodItems(): ItemDef[] {
-  return Object.values(ITEM_REGISTRY).filter(i => i.satisfies?.need === 'hunger');
-}
-
-export function getBestFoodInInventory(inventory: InventoryItem[]): string | null {
-  let bestItem: string | null = null;
-  let bestAmount = 0;
-  for (const inv of inventory) {
-    const def = ITEM_REGISTRY[inv.itemId];
-    if (def?.satisfies?.need === 'hunger' && inv.quantity > 0) {
-      if (def.satisfies.amount > bestAmount) {
-        bestAmount = def.satisfies.amount;
-        bestItem = inv.itemId;
-      }
-    }
-  }
-  return bestItem;
-}
-
-// --- Location helpers ---
-
-export function getLocationsThatSell(itemId: string): string[] {
-  return Object.entries(TRADE_RULES)
-    .filter(([, rule]) => rule.sells.includes(itemId))
-    .map(([locType]) => locType);
-}
-
-export function getLocationsThatSellFood(): string[] {
-  const foodItems = getFoodItems().map(i => i.id);
-  const locTypes = new Set<string>();
-  for (const [locType, rule] of Object.entries(TRADE_RULES)) {
-    if (rule.sells.some(s => foodItems.includes(s))) {
-      locTypes.add(locType);
-    }
-  }
-  return Array.from(locTypes);
-}

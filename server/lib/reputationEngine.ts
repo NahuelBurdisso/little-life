@@ -15,6 +15,15 @@ import { simEvents } from './simEvents';
 const reputationCache = new Map<number, number>();
 let initialized = false;
 
+/**
+ * Drop per-agent reputation for a world replace (agent ids are reused).
+ * Does not reset `initialized` — the simEvents listeners must stay registered
+ * exactly once.
+ */
+export function clearReputationCache(): void {
+  reputationCache.clear();
+}
+
 // ─── Event weights ────────────────────────────────────────────────────────────
 
 const FACT_TYPE_REPUTATION: Record<string, number> = {

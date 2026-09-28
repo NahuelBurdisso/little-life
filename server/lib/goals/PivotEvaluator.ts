@@ -36,6 +36,18 @@ export class PivotEvaluator {
   private lastEvalTick = new Map<number, number>(); // agentId → last tick evaluated
   private static EVAL_COOLDOWN = 60; // only evaluate once per 60 ticks (~1 game hour)
 
+  /**
+   * Drop per-agent state for a world replace. `lastEvalTick` holds TICK stamps and
+   * `totalTicks` restarts at 0, so a surviving stamp makes `currentTick - lastTick`
+   * negative — permanently below EVAL_COOLDOWN, which silently disables pivoting and
+   * stale-goal abandonment for every reused agent id. `inFlight` holds goal ids from
+   * the wiped world's id space, which SQLite reuses.
+   */
+  clear(): void {
+    this.lastEvalTick.clear();
+    this.inFlight.clear();
+  }
+
   async evaluate(agentId: number, currentTick: number): Promise<void> {
     // Cooldown: don't re-evaluate same agent every tick
     const lastTick = this.lastEvalTick.get(agentId) ?? 0;
@@ -90,7 +102,7 @@ export class PivotEvaluator {
 
     try {
       const response = await callOllamaChat({
-        model: CONFIG.AI.CHAT_MODEL, system: prompt.system,
+        model: CONFIG.AI.LIGHT_MODEL, system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
         options: { temperature: 0.7, num_predict: 200 },
@@ -123,7 +135,10 @@ export class PivotEvaluator {
   }
 
   private abandonGoal(goal: any, agentId: number, reason: string, currentTick: number): void {
-    db.update(goals).set({ status: 'abandoned' }).where(eq(goals.id, goal.id)).run();
+    db.update(goals)
+      .set({ status: 'abandoned', completed_at: currentTick })
+      .where(eq(goals.id, goal.id))
+      .run();
 
     simEvents.emit('goal:abandoned', {
       agentId, goalType: goal.type,

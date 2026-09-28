@@ -13,6 +13,16 @@ import type { PersonalityProfile } from './personality';
 const MAX_DRIFT = 15;
 const originalPersonalities = new Map<number, PersonalityProfile>();
 
+/**
+ * Drop cached personality baselines for a world replace. A reused agent id
+ * would otherwise have its ±15 drift cap measured against a stranger's
+ * baseline. Does not reset `initialized` — the simEvents listeners below must
+ * stay registered exactly once.
+ */
+export function clearPersonalityBaselines(): void {
+  originalPersonalities.clear();
+}
+
 function getOriginal(agentId: number): PersonalityProfile | null {
   if (originalPersonalities.has(agentId)) return originalPersonalities.get(agentId)!;
   const agent = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, agentId)).get();

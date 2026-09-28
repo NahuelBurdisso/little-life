@@ -205,24 +205,62 @@ describe('RippleEngine', () => {
       const result = engine.checkRequirementsPublic(rule.requires, 1, {}, ctx);
       expect(result).toBe(false);
     });
+
+    it('coLocatedWith perpetrator: true when the perpetrator is here', () => {
+      const rule = makeRule({ requires: { coLocatedWith: 'perpetrator' } });
+      const ctx = makeContext({
+        agentsAtLocation: [{ id: 1, personality: null }, { id: 2, personality: null }],
+      });
+      const result = engine.checkRequirementsPublic(rule.requires, 1, { perpetratorId: 2 }, ctx);
+      expect(result).toBe(true);
+    });
+
+    it('coLocatedWith perpetrator: false when the perpetrator is elsewhere', () => {
+      const rule = makeRule({ requires: { coLocatedWith: 'perpetrator' } });
+      const ctx = makeContext({
+        agentsAtLocation: [{ id: 1, personality: null }, { id: 3, personality: null }],
+      });
+      const result = engine.checkRequirementsPublic(rule.requires, 1, { perpetratorId: 2 }, ctx);
+      expect(result).toBe(false);
+    });
+
+    it('coLocatedWith perpetrator: false when the payload names no perpetrator', () => {
+      const rule = makeRule({ requires: { coLocatedWith: 'perpetrator' } });
+      const ctx = makeContext({
+        agentsAtLocation: [{ id: 1, personality: null }, { id: 2, personality: null }],
+      });
+      const result = engine.checkRequirementsPublic(rule.requires, 1, { agentId: 1 }, ctx);
+      expect(result).toBe(false);
+    });
+
+    it('coLocatedWith victim: true when the victim is here', () => {
+      const rule = makeRule({ requires: { coLocatedWith: 'victim' } });
+      const ctx = makeContext({
+        agentsAtLocation: [{ id: 1, personality: null }, { id: 4, personality: null }],
+      });
+      const result = engine.checkRequirementsPublic(rule.requires, 1, { victimId: 4 }, ctx);
+      expect(result).toBe(true);
+    });
   });
 
   // ─── deduplication ──────────────────────────────────────────────────────────
 
   describe('deduplication', () => {
-    it('skips state:triggered events WITH _cascade metadata', () => {
-      const payload = { state: 'heartbroken', _cascade: { chainId: 'abc', chainDepth: 1 } };
-      expect(engine.shouldSkipForDedup('state:triggered', payload)).toBe(true);
+    it('skips a rule re-firing off the event it emitted itself', () => {
+      const rule = makeRule({ id: 'affair_heartbreak' });
+      const payload = { state: 'heartbroken', _cascade: { chainId: 'abc', chainDepth: 1, parentRuleId: 'affair_heartbreak' } };
+      expect(engine.shouldSkipForDedup(rule, payload)).toBe(true);
     });
 
-    it('processes state:triggered events WITHOUT _cascade metadata', () => {
-      const payload = { state: 'heartbroken' };
-      expect(engine.shouldSkipForDedup('state:triggered', payload)).toBe(false);
+    it('allows a DIFFERENT rule to chain off a cascade-emitted event', () => {
+      const rule = makeRule({ id: 'heartbreak_drinking' });
+      const payload = { state: 'heartbroken', _cascade: { chainId: 'abc', chainDepth: 1, parentRuleId: 'affair_heartbreak' } };
+      expect(engine.shouldSkipForDedup(rule, payload)).toBe(false);
     });
 
-    it('does NOT skip non-state events with cascade metadata', () => {
-      const payload = { action: 'insult', _cascade: { chainId: 'abc', chainDepth: 1 } };
-      expect(engine.shouldSkipForDedup('interaction:completed', payload)).toBe(false);
+    it('processes events WITHOUT _cascade metadata', () => {
+      const rule = makeRule({ id: 'heartbreak_drinking' });
+      expect(engine.shouldSkipForDedup(rule, { state: 'heartbroken' })).toBe(false);
     });
   });
 });

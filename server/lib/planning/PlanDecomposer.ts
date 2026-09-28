@@ -141,7 +141,7 @@ export class PlanDecomposer {
 
     // 8. Call LLM
     const response = await callOllamaChat({
-      model: CONFIG.AI.CHAT_MODEL,
+      model: CONFIG.AI.LIGHT_MODEL,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
       priority: 'normal',

@@ -19,6 +19,20 @@ function pairKey(a: number, b: number): string {
   return `${Math.min(a, b)}_${Math.max(a, b)}`;
 }
 
+/**
+ * Drop confrontation cooldowns for a world replace.
+ *
+ * The values are wall-clock ms, so they are not stale in the unit sense — but the
+ * keys are built from agent ids, which SQLite reuses after the wipe. Left in place,
+ * a grudge pair from the previous world suppresses confrontations between the new
+ * agents that inherit those ids for up to COOLDOWN_MS (and `cleanupCooldowns` only
+ * prunes past COOLDOWN_MS * 2).
+ */
+export function clearConfrontationCooldowns(): void {
+  confrontationCooldown.clear();
+  lastCleanup = 0;
+}
+
 function cleanupCooldowns(): void {
   const now = Date.now();
   if (now - lastCleanup < COOLDOWN_MS) return;
@@ -200,7 +214,13 @@ function resolveConfrontation(
     }
   }
 
+  // `agentId`/`perpetratorId`/`victimId` are the fields the cascade engine excludes
+  // when picking a witness. Without them the combatants could be selected as
+  // witnesses to their own fight.
   simEvents.emit('confrontation:occurred', {
+    agentId: agentA.id,
+    perpetratorId: agentA.id,
+    victimId: agentB.id,
     agentAId: agentA.id,
     agentBId: agentB.id,
     locationId,

@@ -14,6 +14,11 @@ const lonelySince = new Map<number, number>(); // agentId → tick when social f
 const LONELY_THRESHOLD = 20;
 const LONELY_DURATION_TICKS = 720; // ~12 game hours of consecutive low social
 
+/** Drop per-agent loneliness tracking for a world replace (agent ids and ticks both reset). */
+export function clearLonelinessTracking(): void {
+  lonelySince.clear();
+}
+
 /** Called periodically (every 60 ticks) from the tick loop. */
 export function lonelinessCheck(totalTicks: number): void {
   const allNeeds = db.select().from(needs).all();
@@ -39,7 +44,9 @@ export function lonelinessCheck(totalTicks: number): void {
           agent_id: agent.id,
           type: 'lonely',
           severity: Math.min(1.0, (LONELY_THRESHOLD - agentNeeds.social) / LONELY_THRESHOLD),
-          started_at: Date.now(),
+          // agentStates.started_at is tick-valued: states.ts expires with
+          // `started_at + duration <= currentTick`.
+          started_at: totalTicks,
           duration: 2880, // 2 game days
           source: 'chronic_low_social',
           metadata: null,

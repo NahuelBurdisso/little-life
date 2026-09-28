@@ -141,9 +141,12 @@ export class SnapResolver {
         const existingStressed = db.select({ id: agentStates.id }).from(agentStates)
           .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, 'angry'))).get();
         if (!existingStressed) {
+          // `started_at: 0` made the state already 240+ ticks old on insert, so
+          // the very next states tick expired it and the plot never happened.
+          const startedAt = typeof metadata.currentTick === 'number' ? metadata.currentTick : 0;
           db.insert(agentStates).values({
             agent_id: agentId, type: 'angry', severity: 0.7,
-            started_at: 0, duration: 240, source: 'snap:plot', metadata: {},
+            started_at: startedAt, duration: 240, source: 'snap:plot', metadata: {},
           }).run();
         }
         logActivity({ type: 'drama', initiator: agentId,
@@ -166,9 +169,13 @@ export class SnapResolver {
         break;
       }
       case 'lash_out': {
-        // Take anger out on nearby agents
+        // Take anger out on a nearby agent. Downstream insult rules resolve the
+        // victim, so without one the lash-out has no consequences at all.
+        const victimId = this.pickNearbyAgent(agentId);
         simEvents.emit('interaction:completed', {
           agentId,
+          perpetratorId: agentId,
+          victimId,
           action: 'insult',
           _cascade: metadata,
         });
@@ -191,5 +198,20 @@ export class SnapResolver {
         break;
       }
     }
+  }
+
+  /** Random active agent sharing the snapping agent's location, or null. */
+  private pickNearbyAgent(agentId: number): number | null {
+    const self = db.select({ current_location: agents.current_location })
+      .from(agents).where(eq(agents.id, agentId)).get();
+    if (self?.current_location == null) return null;
+
+    const others = db.select({ id: agents.id }).from(agents)
+      .where(and(eq(agents.current_location, self.current_location), eq(agents.is_active, true)))
+      .all()
+      .filter(a => a.id !== agentId);
+    if (others.length === 0) return null;
+
+    return others[Math.floor(Math.random() * others.length)].id;
   }
 }

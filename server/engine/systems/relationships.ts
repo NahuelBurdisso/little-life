@@ -1,6 +1,6 @@
 import { db } from '../../db';
 import { agents, relationships, relationshipEvents } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, lt } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
@@ -12,7 +12,6 @@ import { simEvents } from '../../lib/simEvents';
 
 type AgentRow = typeof agents.$inferSelect;
 type RelRow = typeof relationships.$inferSelect;
-const STATIC_TAGS = new Set(['coworker', 'neighbor', 'family', 'roommate']);
 
 // --- Helpers ---
 
@@ -35,10 +34,14 @@ function deriveStatus(
   rBA: number,
   _trust: number,
   familiarity: number,
+  estranged = false,
 ): RelationshipStatus {
   const avgFriendship = (fAB + fBA) / 2;
   const maxRomance = Math.max(rAB, rBA);
   const minRomance = Math.min(rAB, rBA);
+
+  // Estrangement outranks everything — it is the one status that never lifts.
+  if (estranged) return 'estranged';
 
   if (minRomance > 70 && avgFriendship > 30) return 'partners';
   if (maxRomance > 30 && avgFriendship < -10) return 'complicated';
@@ -61,17 +64,20 @@ function updateTags(
     avgTrust: number;
   },
 ): string[] {
+  // Only the six derived tags below are ever added or removed here, so any
+  // static tag the caller already carries (coworker, neighbor, family,
+  // roommate) survives untouched.
   const tags = new Set(existingTags);
 
   if (metrics.avgFriendship > 80) {
     tags.add('best_friend');
-  } else if (!STATIC_TAGS.has('best_friend')) {
+  } else {
     tags.delete('best_friend');
   }
 
   if (metrics.avgFriendship < -50) {
     tags.add('rival');
-  } else if (!STATIC_TAGS.has('rival')) {
+  } else {
     tags.delete('rival');
   }
 
@@ -82,19 +88,19 @@ function updateTags(
     tags.delete('partner');
     tags.add('crush');
   } else {
-    if (!STATIC_TAGS.has('crush')) tags.delete('crush');
-    if (!STATIC_TAGS.has('partner')) tags.delete('partner');
+    tags.delete('crush');
+    tags.delete('partner');
   }
 
   if (metrics.avgTrust > 60) {
     tags.add('trusted');
-  } else if (!STATIC_TAGS.has('trusted')) {
+  } else {
     tags.delete('trusted');
   }
 
   if (metrics.avgTrust < -40) {
     tags.add('distrusted');
-  } else if (!STATIC_TAGS.has('distrusted')) {
+  } else {
     tags.delete('distrusted');
   }
 
@@ -109,6 +115,42 @@ function normalizePair(
   const a = swapped ? agentB : agentA;
   const b = swapped ? agentA : agentB;
   return [a, b, swapped];
+}
+
+// --- Retention ---
+
+/**
+ * How long a processed relationship event is kept, in wall-clock ms.
+ *
+ * CLOCK: WALL-CLOCK MS, because `relationshipEvents.timestamp` is a `Date.now()`
+ * stamp. Every reader is already windowed well inside this: the heartbroken check
+ * in states.ts looks back 60 ticks, the autoplay collectors look back one analysis
+ * window, and chronicle takes the newest 600 rows with a 15-minute heat half-life,
+ * so a row this old contributes 2^-24 of a beat.
+ */
+const EVENT_RETENTION_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Drop processed relationship events past their retention.
+ *
+ * The table is append-only — `tick` marks rows `processed` and nothing has ever
+ * deleted them — so it grew for the life of the world at roughly one row per
+ * interaction, dragging the `processed = false` scan and every windowed read
+ * along with it.
+ *
+ * Unprocessed rows are never touched regardless of age: an old one means the
+ * engine was down when it was written, and its deltas are still owed.
+ */
+export function pruneRelationshipEvents(): number {
+  return db
+    .delete(relationshipEvents)
+    .where(
+      and(
+        eq(relationshipEvents.processed, true),
+        lt(relationshipEvents.timestamp, Date.now() - EVENT_RETENTION_MS),
+      ),
+    )
+    .run().changes;
 }
 
 // --- Main Tick ---
@@ -244,12 +286,21 @@ export function tick(
 
     // Resolve directional deltas. If the event's agentA/agentB were swapped
     // during normalization, we need to swap the AB/BA deltas too.
-    const fDeltaAB = swapped ? event.friendship_delta_ba : event.friendship_delta_ab;
-    const fDeltaBA = swapped ? event.friendship_delta_ab : event.friendship_delta_ba;
-    const rDeltaAB = swapped ? event.romance_delta_ba : event.romance_delta_ab;
-    const rDeltaBA = swapped ? event.romance_delta_ab : event.romance_delta_ba;
+    const rawFDeltaAB = swapped ? event.friendship_delta_ba : event.friendship_delta_ab;
+    const rawFDeltaBA = swapped ? event.friendship_delta_ab : event.friendship_delta_ba;
+    const rawRDeltaAB = swapped ? event.romance_delta_ba : event.romance_delta_ab;
+    const rawRDeltaBA = swapped ? event.romance_delta_ab : event.romance_delta_ba;
     const tDeltaAB = swapped ? event.trust_delta_ba : event.trust_delta_ab;
     const tDeltaBA = swapped ? event.trust_delta_ab : event.trust_delta_ba;
+
+    // Estrangement is a one-way door: once the tag is set, no interaction can
+    // buy back goodwill. Negative deltas still land — they can always hurt
+    // each other further — so only the positive half is discarded.
+    const wasEstranged = rel.tags.includes('estranged');
+    const fDeltaAB = wasEstranged ? Math.min(0, rawFDeltaAB) : rawFDeltaAB;
+    const fDeltaBA = wasEstranged ? Math.min(0, rawFDeltaBA) : rawFDeltaBA;
+    const rDeltaAB = wasEstranged ? Math.min(0, rawRDeltaAB) : rawRDeltaAB;
+    const rDeltaBA = wasEstranged ? Math.min(0, rawRDeltaBA) : rawRDeltaBA;
 
     const newFriendshipAB = clamp(
       rel.friendship_ab + applyDiminishing(rel.friendship_ab, fDeltaAB),
@@ -296,12 +347,21 @@ export function tick(
     const minRomance = Math.min(newRomanceAB, newRomanceBA);
     const avgTrust = (newTrustAB + newTrustBA) / 2;
 
-    const newTags = updateTags(rel.tags, {
+    let newTags = updateTags(rel.tags, {
       avgFriendship,
       maxRomance,
       minRomance,
       avgTrust,
     });
+
+    // Two agents who know each other well and have bottomed out mutual
+    // friendship are done for good. `updateTags` only deletes the tags it
+    // owns, so `estranged` survives every later pass untouched.
+    const isEstranged =
+      wasEstranged || (avgFriendship <= -80 && newFamiliarity >= 30);
+    if (isEstranged && !wasEstranged) {
+      newTags = [...newTags, 'estranged'];
+    }
 
     const oldStatus = rel.status;
     const newStatus = deriveStatus(
@@ -311,6 +371,7 @@ export function tick(
       newRomanceBA,
       avgTrust,
       newFamiliarity,
+      isEstranged,
     );
 
     db.update(relationships)
@@ -358,6 +419,17 @@ export function tick(
       });
       simEvents.emit('relationship:changed', { agentId: a, otherName: nameB, status: newStatus });
       simEvents.emit('relationship:changed', { agentId: b, otherName: nameA, status: newStatus });
+
+      if (isEstranged && !wasEstranged) {
+        logActivity({
+          type: 'drama',
+          agents: [a, b],
+          severity: 0.7,
+          templateData: {
+            description: `${nameA} and ${nameB} are estranged for good — neither will ever forgive the other.`,
+          },
+        });
+      }
     }
 
     // Emit sentiment event if friendship or romance shift is significant
@@ -392,7 +464,18 @@ export function tick(
   const gracePeriodMs =
     CONFIG.RELATIONSHIPS.DECAY_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
 
+  // Game hours since the *previous* decay pass, not since the previous tick.
+  // One tick advances the clock by `tick_speed` game minutes and this block runs
+  // every 60th tick, so 60 * tick_speed game minutes = `tick_speed` game hours.
+  // Section 1 above is per-tick and correctly uses `gameHoursElapsed`
+  // (= tick_speed / 60); reusing that value here made decay 60x too weak.
+  const gameHoursSinceLastPass = gameHoursElapsed * 60;
+
   for (const [, rel] of relMap) {
+    // Estranged pairs are exempt: decay pulls values toward 0, which would
+    // quietly walk the hatred back to neutral and undo the permanence.
+    if (rel.tags.includes('estranged')) continue;
+
     const timeSinceInteraction = now - rel.last_interaction;
     if (timeSinceInteraction <= gracePeriodMs) continue;
 
@@ -404,7 +487,7 @@ export function tick(
     const dailyDecayRate =
       CONFIG.RELATIONSHIPS.DECAY_DAILY_RATE *
       decayStrength *
-      (gameHoursElapsed / 24);
+      (gameHoursSinceLastPass / 24);
 
     let changed = false;
 

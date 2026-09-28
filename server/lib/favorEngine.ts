@@ -14,6 +14,11 @@ interface FavorBalance {
 // agentId → Map<otherAgentId, FavorBalance>
 const favorLedger = new Map<number, Map<number, FavorBalance>>();
 
+/** Drop the favor ledger for a world replace (agent ids are reused). */
+export function clearFavorLedger(): void {
+  favorLedger.clear();
+}
+
 function getBalance(agentId: number, otherId: number): FavorBalance {
   let agentMap = favorLedger.get(agentId);
   if (!agentMap) {
@@ -40,12 +45,6 @@ function recordFavor(giverId: number, receiverId: number, magnitude: number): vo
 export function getNetFavorBalance(agentId: number, otherId: number): number {
   const balance = getBalance(agentId, otherId);
   return balance.given - balance.received;
-}
-
-/** Check if agent feels obligation toward another (received > given) */
-export function feelsObligation(agentId: number, otherId: number): boolean {
-  const net = getNetFavorBalance(agentId, otherId);
-  return net < -2; // owes 3+ favors
 }
 
 /** Social score modifier based on favor balance */

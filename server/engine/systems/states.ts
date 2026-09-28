@@ -43,6 +43,9 @@ interface CascadeEntry {
 
 // ─── Module-level state ───────────────────────────────────────────────────────
 
+/** Minimum lifetime (1 game hour) before a conditional-exit state may be removed. */
+const CONDITIONAL_EXIT_GRACE_TICKS = 60;
+
 let previouslyActiveAgents = new Set<number>();
 
 // Track ticks where an agent had stressed state removed (to avoid re-triggering immediately)
@@ -70,6 +73,27 @@ const brokeSince = new Map<number, number>();
 
 // Track ticks when each agent gambled (for addiction detection)
 const gamblingHistory = new Map<number, number[]>(); // agentId → array of ticks when gambled
+
+/**
+ * Drop all per-agent tracking for a world replace.
+ *
+ * Every map above is keyed by agent id and holds tick values. SQLite reuses
+ * rowids after a DELETE while `totalTicks` restarts at 0, so surviving entries
+ * both belong to a stranger and sit in the future — `currentTick - since` goes
+ * negative and the cooldowns/duration gates they guard never fire again.
+ */
+export function clearStatesTrackers(): void {
+  previouslyActiveAgents = new Set();
+  stressRemovedAtTick.clear();
+  gamblingCooldowns.clear();
+  lowMoodSince.clear();
+  lowSocialSince.clear();
+  sickRecoveredAtTick.clear();
+  drunkHistory.clear();
+  alcoholRecoveredAtTick.clear();
+  brokeSince.clear();
+  gamblingHistory.clear();
+}
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
@@ -111,6 +135,17 @@ export function statesTick() {
             initiator: agent.id,
             templateData: { agent: agent.name, state: 'sick' },
           });
+        } else if (state.type === 'arrested') {
+          // Release: the town remembers, so the sentence becomes a gossip fact.
+          logActivity({
+            type: 'drama',
+            initiator: agent.id,
+            severity: 0.5,
+            templateData: {
+              description: `${agent.name} was released from prison after ${Math.round(state.duration / 60)} hours.`,
+            },
+          });
+          simEvents.emit('crime:released', { agentId: agent.id });
         } else {
           logActivity({
             type: 'state_lost',
@@ -409,7 +444,9 @@ function evaluateTriggers(
   if (!activeTypes.has('in_debt')) {
     const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
       .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
-    if (eco && eco.money === 0) {
+    // `<= 0`, not `=== 0`: sale tax splits leave fractional balances and
+    // disasters can push money negative, and both are more broke than zero.
+    if (eco && eco.money <= 0) {
       const hasFood = (eco.inventory as any[]).some(
         (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
       );
@@ -819,6 +856,10 @@ function evaluateTriggers(
           });
           simEvents.emit('state:triggered', { agentId: agent.id, state: 'lonely', cause: 'low_social' });
           activeTypes.add('lonely');
+          // Reset the timer, otherwise an agent who leaves `lonely` with social
+          // still under 20 relapses on the very next tick instead of getting
+          // the 60-tick grace period again.
+          lowSocialSince.delete(agent.id);
         }
       }
     } else {
@@ -900,8 +941,11 @@ function evaluateTriggers(
   if (!activeTypes.has('confident') && personality.vanity > 40) {
     const msPerTick = CONFIG.TICK_INTERVAL_MS;
     const sinceWindow = Date.now() - 1440 * msPerTick;
+    // Projected: only membership is read, but `select()` dragged the whole
+    // `messages` transcript of every recent conversation across for each agent,
+    // every tick.
     const positiveConvos = db
-      .select()
+      .select({ participants: conversations.participants })
       .from(conversations)
       .where(and(gt(conversations.sentiment, 0.25), gt(conversations.started_at, sinceWindow)))
       .all()
@@ -943,6 +987,12 @@ function checkConditionalExits(
   for (const state of stateRows) {
     if (!STATE_DEFINITIONS[state.type as StateType]?.conditionalExit) continue;
 
+    // A state created while its exit condition already holds would be deleted on
+    // the very next tick. That silently no-op'd every cascade rule that grants
+    // `stressed` (arrest, blackmail, humiliation, ...) to an agent whose needs
+    // happened to be fine. Give every conditional state a minimum lifetime.
+    if (currentTick - state.started_at < CONDITIONAL_EXIT_GRACE_TICKS) continue;
+
     let shouldExit = false;
 
     switch (state.type as StateType) {
@@ -964,7 +1014,7 @@ function checkConditionalExits(
         // Look back 10 minutes real-time (enough to catch recent conversations)
         const sinceWindow = Date.now() - 600_000;
         const recentPositiveConvos = db
-          .select()
+          .select({ participants: conversations.participants })
           .from(conversations)
           .where(and(gt(conversations.sentiment, 0.2), gt(conversations.started_at, sinceWindow)))
           .all()
@@ -1003,13 +1053,22 @@ function checkConditionalExits(
         // Exit path 3: long duration (depression lifts after ~2 game days even without help)
         const maxDepressedTicks = 2880; // ~2 game days
         if (currentTick - state.started_at > maxDepressedTicks) {
-          shouldExit = Math.random() < 0.05; // 5% per tick after 2 days
+          // OR, not assignment: a plain `=` let this arm overwrite the exit that
+          // path 2 had already granted, so past the two-day mark a recovered
+          // agent was pushed back into depression 95% of the time and the state
+          // became effectively permanent.
+          shouldExit = shouldExit || Math.random() < 0.05; // 5% per tick after 2 days
         }
         break;
       }
 
       case 'infatuated': {
-        if (!state.target_agent_id) break;
+        if (!state.target_agent_id) {
+          // No love-interest link to evaluate. Pass 1a skips conditional-exit
+          // states entirely, so without this fallback the state is permanent.
+          shouldExit = state.started_at + state.duration <= currentTick;
+          break;
+        }
         const rel = db
           .select()
           .from(relationships)
@@ -1046,7 +1105,7 @@ function checkConditionalExits(
         // Recovery path 2: rock bottom (money = 0, no food)
         const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
           .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
-        if (eco && eco.money === 0) {
+        if (eco && eco.money <= 0) {
           const hasFood = (eco.inventory as any[]).some(
             (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
           );
@@ -1061,7 +1120,13 @@ function checkConditionalExits(
         const meta = (state.metadata as Record<string, any> | null) ?? {};
         const loveInterestId = meta.loveInterestId as number | undefined;
         const rivalId = meta.rivalId as number | undefined;
-        if (!loveInterestId || !rivalId) { shouldExit = true; break; }
+        if (!loveInterestId || !rivalId) {
+          // Jealousy from a source that didn't record the triangle (e.g. a
+          // cascade rule). Exiting immediately would delete it the very next
+          // tick, so let it run out its duration instead.
+          shouldExit = state.started_at + state.duration <= currentTick;
+          break;
+        }
 
         const rel = db.select().from(relationships).where(
           or(
@@ -1538,7 +1603,7 @@ function processStateEffects(
             reason: 'euphoric_gift',
             items_exchanged: null,
             location_id: agent.current_location,
-            timestamp: currentTick,
+            timestamp: Date.now(),
           })
           .run();
 

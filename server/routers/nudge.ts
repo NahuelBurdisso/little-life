@@ -16,6 +16,7 @@ import { eq, and, ne } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
+import { zoneOccupancy } from '../lib/interiorGrid';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -92,7 +93,16 @@ export const nudgeRouter = router({
       const world = db.select().from(worldState).get();
       if (!world) throw new Error('World not initialized');
 
+      // CLOCK: `now` is the TICK clock (`world.time.totalTicks`) — the right unit for
+      // `agents.action_started`, `activityLog.timestamp`, `worldEvents.started_at`.
       const now = (world.time as any).totalTicks as number;
+      // CLOCK: GAME MINUTES (day*1440 + hour*60 + minute) — the unit `needs.last_updated`
+      // is written and read in. Not interchangeable with `now`: the two only agree at
+      // tick_speed 1 with startDay 0.
+      const nowGameMinutes =
+        (world.time as any).day * 1440 +
+        (world.time as any).hour * 60 +
+        (world.time as any).minute;
 
       switch (action.type) {
         // ─── suggest_talk ──────────────────────────────────────────────────
@@ -148,7 +158,9 @@ export const nudgeRouter = router({
               priority: CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY,
               trigger_reason: 'player_nudge',
               topic: topic ?? null,
-              queued_at: now,
+              // conversationQueue.queued_at is wall-clock ms everywhere else
+              // (the scheduler expires entries against Date.now()); `now` is a tick.
+              queued_at: Date.now(),
               max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
             })
             .run();
@@ -328,7 +340,9 @@ export const nudgeRouter = router({
               reason: 'player_gift',
               items_exchanged: null,
               location_id: null,
-              timestamp: now,
+              // economyTransactions.timestamp is wall-clock ms everywhere else;
+              // `now` here is a tick count.
+              timestamp: Date.now(),
             })
             .run();
 
@@ -371,10 +385,15 @@ export const nudgeRouter = router({
         case 'toggle_pause': {
           const newPaused = !world.is_paused;
 
+          // Pausing keeps `tick_speed`: gameTick already skips a paused world, so
+          // zeroing it only threw away the speed the user picked (resuming from
+          // 4x dropped back to 1x) and made game-time ages read as "0m ago".
+          // Resuming still needs a floor, since `change_speed(0)` pauses by
+          // setting the speed to 0 and would otherwise resume a frozen clock.
           db.update(worldState)
             .set({
               is_paused: newPaused,
-              tick_speed: newPaused ? 0 : 1,
+              tick_speed: newPaused ? world.tick_speed : world.tick_speed || 1,
             })
             .where(eq(worldState.id, world.id))
             .run();
@@ -401,15 +420,27 @@ export const nudgeRouter = router({
             };
           }
 
-          // Find available home
+          // Find available home.
+          //
+          // Capacity is a residency question, so it is counted from `agents.home`
+          // rather than `locations.current_occupants` — the latter is transient
+          // physical presence, rewritten by movement.ts as agents walk in and out.
+          // Reading it here meant housing looked full at 3am and completely empty
+          // at noon, when the same vacant-looking house was handed to every new
+          // arrival in a row.
           const homes = db
             .select()
             .from(locations)
             .where(eq(locations.type, 'home'))
             .all();
 
+          const residentCounts = new Map<number, number>();
+          for (const a of activeAgents) {
+            if (a.home != null) residentCounts.set(a.home, (residentCounts.get(a.home) ?? 0) + 1);
+          }
+
           const availableHome = homes.find(
-            (h) => (h.current_occupants as number[]).length < h.capacity
+            (h) => (residentCounts.get(h.id) ?? 0) < h.capacity
           );
           if (!availableHome) {
             return { success: false, reason: 'No available housing' };
@@ -496,7 +527,13 @@ export const nudgeRouter = router({
               decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
               thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
               mood_modifiers: [],
-              last_updated: now,
+              // CLOCK: `needs.last_updated` is GAME MINUTES
+              // (day*1440 + hour*60 + minute) — that is what `needs.ts` writes and
+              // what mood-modifier `expiresAt` is derived from in
+              // `engine/systems/conversations.ts`. `now` above is the TICK clock and
+              // is `startDay*1440` too small, which made any mood modifier granted to
+              // a brand-new agent expire the moment it was created.
+              last_updated: nowGameMinutes,
             })
             .run();
 
@@ -511,7 +548,8 @@ export const nudgeRouter = router({
               money: CONFIG.ECONOMY.STARTING_MONEY,
               daily_expenses: CONFIG.ECONOMY.DAILY_EXPENSES.min,
               inventory: [],
-              last_payday: now,
+              // economy.last_payday is wall-clock ms (economy.ts compares it to Date.now()).
+              last_payday: Date.now(),
               production_remainder: 0,
             })
             .run();
@@ -555,11 +593,27 @@ export const nudgeRouter = router({
             return { success: false, reason: 'Agent is already inactive' };
           }
 
-          // Deactivate agent
+          // Deactivate agent.
+          //
+          // The movement fields are cleared alongside `is_active` to match the
+          // death path in lifeEventsEngine: leaving a destination and a path on
+          // the row meant the removed agent still showed as en route in every
+          // read model that does not filter on `is_active`.
           db.update(agents)
-            .set({ is_active: false })
+            .set({
+              is_active: false,
+              current_action: { type: 'idle' },
+              current_destination: null,
+              current_path: null,
+              action_queue: [],
+            })
             .where(eq(agents.id, agentId))
             .run();
+
+          // Release the interior zone slot — `zoneOccupancy.leave` only runs on a
+          // location change, and a removed agent never moves again, so the slot
+          // counted against that zone's `maxOccupants` forever.
+          zoneOccupancy.leave(agentId);
 
           // End any active conversations involving this agent
           const activeConvos = db
@@ -572,7 +626,9 @@ export const nudgeRouter = router({
             const parts = convo.participants as number[];
             if (parts.includes(agentId)) {
               db.update(conversations)
-                .set({ status: 'ended', ended_at: now })
+                // conversations.ended_at is wall-clock ms everywhere else
+                // (pair cooldowns and gossip staleness compare it to Date.now()).
+                .set({ status: 'ended', ended_at: Date.now() })
                 .where(eq(conversations.id, convo.id))
                 .run();
             }
@@ -613,7 +669,9 @@ export const nudgeRouter = router({
           const { agentId, targetId, factId } = action;
           const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
           const target = db.select().from(agents).where(eq(agents.id, targetId)).get();
-          if (!agent || !target) return { success: false, reason: 'Agent not found' };
+          if (!agent?.is_active || !target?.is_active) {
+            return { success: false, reason: 'Agent not found or inactive' };
+          }
 
           const { shared_knowledge } = await import('../db/schema');
           const fact = db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();
@@ -634,7 +692,7 @@ export const nudgeRouter = router({
             priority: CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY,
             trigger_reason: 'player_tell_secret',
             topic: `revealing: ${fact.content}`,
-            queued_at: now,
+            queued_at: Date.now(),
             max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
           }).run();
 
@@ -654,7 +712,13 @@ export const nudgeRouter = router({
           const { agentA: aId, agentB: bId } = action;
           const agentA = db.select().from(agents).where(eq(agents.id, aId)).get();
           const agentB = db.select().from(agents).where(eq(agents.id, bId)).get();
-          if (!agentA || !agentB) return { success: false, reason: 'Agent not found' };
+          // `is_active` as well as existence: a removed or dead agent keeps its row,
+          // and the queue entry below is silently dropped by the scheduler's liveness
+          // check — but the two agent updates were still applied, walking a corpse to
+          // a midpoint for a confrontation that could never happen.
+          if (!agentA?.is_active || !agentB?.is_active) {
+            return { success: false, reason: 'Agent not found or inactive' };
+          }
 
           // Queue deep confrontation conversation
           db.insert(conversationQueue).values({
@@ -663,7 +727,7 @@ export const nudgeRouter = router({
             priority: CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY + 50,
             trigger_reason: 'player_confront',
             topic: 'confrontation',
-            queued_at: now,
+            queued_at: Date.now(),
             max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
           }).run();
 
@@ -673,13 +737,20 @@ export const nudgeRouter = router({
           const midX = (posA.x + posB.x) / 2;
           const midY = (posA.y + posB.y) / 2;
 
+          // The confrontation is unshifted onto the existing queue rather than
+          // replacing it, matching `suggest_talk`. Overwriting threw away the rest of
+          // the agent's planned day, so a single nudge left both of them with nothing
+          // to do once the argument ended.
+          const queueA = (agentA.action_queue as Record<string, any>[]) ?? [];
+          const queueB = (agentB.action_queue as Record<string, any>[]) ?? [];
+
           db.update(agents).set({
             current_action: { type: 'walking', to: { x: midX, y: midY } },
             current_destination: { x: midX, y: midY },
             current_path: null,
             action_started: now,
             action_duration: null,
-            action_queue: [{ type: 'talking', target: bId }],
+            action_queue: [{ type: 'talking', target: bId }, ...queueA],
           }).where(eq(agents.id, aId)).run();
 
           db.update(agents).set({
@@ -688,7 +759,7 @@ export const nudgeRouter = router({
             current_path: null,
             action_started: now,
             action_duration: null,
-            action_queue: [{ type: 'talking', target: aId }],
+            action_queue: [{ type: 'talking', target: aId }, ...queueB],
           }).where(eq(agents.id, bId)).run();
 
           logActivity({

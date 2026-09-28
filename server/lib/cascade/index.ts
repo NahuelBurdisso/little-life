@@ -16,6 +16,9 @@ let witnessAmplifier: WitnessAmplifier | null = null;
 let tensionTracker: TensionTracker | null = null;
 let snapResolver: SnapResolver | null = null;
 
+/** Agents already counted as asleep, so `onSleep` relief fires once per sleep. */
+const sleepingAgents = new Set<number>();
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function getCurrentTick(): number {
@@ -105,12 +108,28 @@ export function cascadeTick(): void {
   rippleEngine.processQueue();
 
   // 3. Run tension tickUpdate for all active agents
-  const activeAgents = db.select({ id: agents.id, personality: agents.personality })
+  const activeAgents = db.select({
+    id: agents.id,
+    personality: agents.personality,
+    current_action: agents.current_action,
+  })
     .from(agents)
     .where(eq(agents.is_active, true))
     .all();
 
   for (const agent of activeAgents) {
+    // Rest bleeds off tension. Without this, `onSleep` had no call site at all
+    // and sleeping did nothing to defuse an agent heading for a snap. Fire once
+    // per sleep, not once per tick asleep — the latter would zero out tension
+    // every night.
+    const isSleeping = (agent.current_action as { type?: string } | null)?.type === 'sleeping';
+    if (isSleeping && !sleepingAgents.has(agent.id)) {
+      tensionTracker.onSleep(agent.id);
+      sleepingAgents.add(agent.id);
+    } else if (!isSleeping) {
+      sleepingAgents.delete(agent.id);
+    }
+
     // Get agent's active states
     const stateRows = db.select({ type: agentStates.type })
       .from(agentStates)
@@ -124,6 +143,9 @@ export function cascadeTick(): void {
     // 4. Check snap threshold
     const personality = agent.personality as PersonalityProfile | null;
     if (personality && snapResolver && tensionTracker.shouldSnap(agent.id, personality, currentTick)) {
+      // Snapshot the grievances before recording the snap — recordSnap clears them.
+      const tensionSources = tensionTracker.getSources(agent.id);
+
       // Record the snap
       tensionTracker.recordSnap(agent.id, currentTick);
 
@@ -137,8 +159,6 @@ export function cascadeTick(): void {
         .from(goals)
         .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
         .all();
-
-      const tensionSources = tensionTracker.getSources(agent.id);
 
       // Build personality summary
       const p = personality;
@@ -179,8 +199,13 @@ export function resetCascade(): void {
   if (rippleEngine) {
     rippleEngine.resetCooldowns();
     rippleEngine.resetTickCounter();
+    // Pending events carry raw agent ids. Ids restart at 1 after a world wipe,
+    // so a leftover item is not discarded as stale — it lands on whichever
+    // *different* agent now holds that id.
+    rippleEngine.clearQueue();
   }
   if (tensionTracker) {
     tensionTracker.reset();
   }
+  sleepingAgents.clear();
 }

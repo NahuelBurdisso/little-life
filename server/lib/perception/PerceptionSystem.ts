@@ -1,6 +1,6 @@
 import { db } from '../../db';
 import { agents, needs, agentStates, relationships, conversations, conversationQueue, locations } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { simEvents } from '../simEvents';
 import { PERCEPTION_REGISTRY, REACTION_TYPES } from './perceptionRegistry';
 import type { PerceptionRule } from './types';
@@ -36,6 +36,14 @@ interface RelationshipData {
   romance_ab: number;
   romance_ba: number;
 }
+
+/**
+ * Payoff of a passing greeting (`action: 'emote'`). Deliberately far below what
+ * a real conversation gives — this is the "nodded at each other in the street"
+ * tier, it should register without competing with talking.
+ */
+const GREETING_FAMILIARITY_GAIN = 0.5;
+const GREETING_SOCIAL_GAIN = 2;
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
@@ -338,6 +346,40 @@ export class PerceptionSystem {
             // Mark this pair as busy so subsequent perception pairs don't double-queue
             addBusy([observer.id, target.id]);
           }
+        } else if (reaction.action === 'emote') {
+          // A greeting in passing. No conversation row, no memory-bearing
+          // exchange — just an overhead emote plus a small social payoff.
+          // `scan` runs after every system phase, so nothing overwrites
+          // `current_action` before the client polls; next tick's decisions
+          // phase replaces it, which is what makes the marker short-lived.
+          const stamped = {
+            ...(observer.current_action ?? {}),
+            emote: reaction.emote ?? 'wave',
+            emote_at: Date.now(),
+          };
+          observer.current_action = stamped;
+          db.update(agents)
+            .set({ current_action: stamped })
+            .where(eq(agents.id, observer.id))
+            .run();
+
+          const [relA, relB] = observer.id < target.id
+            ? [observer.id, target.id]
+            : [target.id, observer.id];
+          if (relMap.has(`${relA}-${relB}`)) {
+            db.update(relationships)
+              .set({
+                familiarity: sql`min(100, ${relationships.familiarity} + ${GREETING_FAMILIARITY_GAIN})`,
+                last_updated: Date.now(),
+              })
+              .where(and(eq(relationships.agent_a, relA), eq(relationships.agent_b, relB)))
+              .run();
+          }
+
+          db.update(needs)
+            .set({ social: sql`min(100, ${needs.social} + ${GREETING_SOCIAL_GAIN})` })
+            .where(eq(needs.agent_id, observer.id))
+            .run();
         } else if (reaction.action === 'leave') {
           // Send agent walking home
           const observerRow = db.select({ home: agents.home })

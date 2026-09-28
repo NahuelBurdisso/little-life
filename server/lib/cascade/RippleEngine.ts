@@ -90,6 +90,22 @@ export class RippleEngine {
     this.cooldowns.get(ruleId)!.set(agentId, { tick, cooldownTicks: effectiveCooldown });
   }
 
+  /**
+   * Which agent a rule's cooldown is bucketed under.
+   *
+   * `witness` / `random_present` rules resolve to a *random* co-located agent, so
+   * a cooldown keyed on that agent throttles almost nothing — each repeat of the
+   * source event simply rolls a different witness and fires again. Bucket those
+   * under the agent the event was about instead, so one crowd reaction per source
+   * event window is what actually gets capped.
+   */
+  private cooldownAgent(rule: RippleRule, resolvedAgentId: number, payload: any): number {
+    if (rule.target === 'witness' || rule.target === 'random_present') {
+      return payload?.agentId ?? payload?.perpetratorId ?? resolvedAgentId;
+    }
+    return resolvedAgentId;
+  }
+
   resetCooldowns(): void {
     this.cooldowns.clear();
   }
@@ -135,8 +151,20 @@ export class RippleEngine {
 
   // ─── Deduplication ───────────────────────────────────────────────────────────
 
-  shouldSkipForDedup(source: string, payload: any): boolean {
-    return source === 'state:triggered' && payload !== null && typeof payload === 'object' && '_cascade' in payload;
+  /**
+   * Self-loop guard: a rule must not re-fire off the event it just emitted.
+   *
+   * This used to reject *every* cascade-originated `state:triggered`, which made
+   * every cascade-created state a chain dead-end — heartbroken never led to
+   * drinking/confrontation/isolation, angry never led to lashing out, sick never
+   * spread past the first hop. Chain length is already bounded by
+   * `isChainDepthExceeded`, the per-tick cap and per-rule cooldowns, so only the
+   * immediate self-loop needs blocking here.
+   */
+  shouldSkipForDedup(rule: RippleRule, payload: any): boolean {
+    if (payload === null || typeof payload !== 'object') return false;
+    const parentRuleId = payload._cascade?.parentRuleId;
+    return parentRuleId != null && parentRuleId === rule.id;
   }
 
   // ─── Requirements ────────────────────────────────────────────────────────────
@@ -171,6 +199,14 @@ export class RippleEngine {
     if (requires.coLocatedWith === 'any_agent') {
       const others = ctx.agentsAtLocation.filter(a => a.id !== agentId);
       if (others.length === 0) return false;
+    } else if (requires.coLocatedWith !== undefined) {
+      // 'perpetrator' | 'victim'. Without these branches the requirement passed
+      // unconditionally, so `drunk_fight` picked fights with nobody.
+      const otherId = requires.coLocatedWith === 'perpetrator'
+        ? payload?.perpetratorId ?? null
+        : payload?.victimId ?? null;
+      if (otherId == null || otherId === agentId) return false;
+      if (!ctx.agentsAtLocation.some(a => a.id === otherId)) return false;
     }
 
     if (requires.needBelow !== undefined) {
@@ -230,6 +266,18 @@ export class RippleEngine {
 
   // ─── Queue ────────────────────────────────────────────────────────────────────
 
+  /**
+   * Drop every event still waiting to be evaluated.
+   *
+   * Only meaningful on a world replace. Queued payloads carry raw agent ids, and
+   * ids restart at 1 after a wipe — so anything left here would not be discarded
+   * as stale, it would be applied to whichever *different* agent now holds that
+   * id. Same hazard the movement and cost-map resets exist for.
+   */
+  clearQueue(): void {
+    this.eventQueue.length = 0;
+  }
+
   processQueue(): void {
     while (this.eventQueue.length > 0) {
       const item = this.eventQueue.shift();
@@ -258,14 +306,14 @@ export class RippleEngine {
   // ─── Main event handler ────────────────────────────────────────────────────────
 
   private handleEvent(source: string, payload: any): void {
-    // Deduplication: skip state:triggered events that came from cascade itself
-    if (this.shouldSkipForDedup(source, payload)) return;
-
     const currentTick = this.getCurrentTick();
 
     // Find all rules matching this source
     for (const rule of this.rules) {
       if (rule.source !== source) continue;
+
+      // Deduplication: don't let a rule re-fire off its own emitted event
+      if (this.shouldSkipForDedup(rule, payload)) continue;
 
       // Apply source filter if present
       if (rule.sourceFilter) {
@@ -278,7 +326,7 @@ export class RippleEngine {
       if (agentId == null) continue;
 
       // Check cooldown
-      if (this.isOnCooldown(rule.id, agentId, currentTick)) continue;
+      if (this.isOnCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), currentTick)) continue;
 
       // Generate chain metadata
       const chainId = payload?._cascade?.chainId ?? crypto.randomBytes(6).toString('hex');
@@ -376,7 +424,7 @@ export class RippleEngine {
     if (Math.random() >= prob) return;
 
     // Record cooldown
-    this.recordCooldown(rule.id, agentId, currentTick);
+    this.recordCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), currentTick);
 
     // Increment tick counter
     this.incrementTickCounter(depth);
@@ -588,12 +636,19 @@ export class RippleEngine {
         .get();
 
       if (!existing) {
+        // States like `infatuated` and `jealous` are evaluated against the agent
+        // they are *about*. Without a link they are unresolvable, so carry over
+        // whoever this cascade was about.
+        const aboutId = [metadata.victimId, metadata.perpetratorId]
+          .find(id => id != null && id !== agentId) ?? null;
+
         db.insert(agentStates).values({
           agent_id: agentId,
           type: fx.createState,
           severity: 0.5,
           started_at: currentTick,
           duration: 120,
+          target_agent_id: aboutId,
           source: `cascade:${rule.id}`,
           metadata: { _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, ruleId: rule.id } },
         }).run();
@@ -612,6 +667,12 @@ export class RippleEngine {
           agentId,
           state: fx.createState,
           cause: `cascade:${rule.id}`,
+          // Carry the cast forward the way the `emitEvent` branch does. Without
+          // these, every rule chaining off a cascade-created state saw no
+          // perpetrator or victim, so `relationshipMin/Max`, `target:
+          // 'perpetrator'` and `coLocatedWith: 'perpetrator'` could never match.
+          perpetratorId: metadata.perpetratorId,
+          victimId: metadata.victimId,
           _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, parentRuleId: rule.id },
         });
       }

@@ -1,9 +1,10 @@
 import { db } from '../db';
 import { agents, shared_knowledge, relationships, agentStates, economy, conversations, relationshipEvents } from '../db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, gt, lt } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { PersonalityProfile } from './personality';
 import { simEvents } from './simEvents';
+import { cliqueIdOf } from './cliques';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -283,17 +284,36 @@ export function getShareableFacts(
   });
 
   // Sort: sensitivity desc, then relevance to listener (shared_knowledge about listener or their friends first)
+  // Circle membership counts as relevance too: news about someone in your own
+  // group travels through that group first, which is what makes a clique feel
+  // like one rather than a list of names.
+  const listenerClique = cliqueIdOf(listenerId);
+  const inListenerCircle = (subjectId: number) =>
+    listenerClique != null && cliqueIdOf(subjectId) === listenerClique;
+
+  // Relevance is resolved once per fact, before the sort. It was previously
+  // computed inside the comparator, where the `getRelationshipFriendship` call
+  // meant O(n log n) relationship SELECTs on a function called for every agent
+  // on every tick (the `hasGossip` check in decisions.ts) — and the comparator
+  // re-derived the same answer for the same fact on every comparison it took part
+  // in. Precomputing also makes the ordering a stable function of the data, which
+  // a comparator doing I/O is not guaranteed to be.
+  const relevance = new Map<number, boolean>();
+  for (const fact of shareable) {
+    relevance.set(
+      fact.id,
+      fact.subject_id === listenerId ||
+        fact.target_id === listenerId ||
+        inListenerCircle(fact.subject_id) ||
+        getRelationshipFriendship(listenerId, fact.subject_id) > 50,
+    );
+  }
+
   shareable.sort((a, b) => {
     if (b.sensitivity !== a.sensitivity) return b.sensitivity - a.sensitivity;
 
-    const aRelevant =
-      a.subject_id === listenerId ||
-      a.target_id === listenerId ||
-      getRelationshipFriendship(listenerId, a.subject_id) > 50;
-    const bRelevant =
-      b.subject_id === listenerId ||
-      b.target_id === listenerId ||
-      getRelationshipFriendship(listenerId, b.subject_id) > 50;
+    const aRelevant = relevance.get(a.id)!;
+    const bRelevant = relevance.get(b.id)!;
 
     if (aRelevant && !bRelevant) return -1;
     if (!aRelevant && bRelevant) return 1;
@@ -442,6 +462,36 @@ export function deactivateStaleFacts(): void {
     .where(eq(shared_knowledge.is_active, true))
     .all();
 
+  /**
+   * Subjects with a recent negative conversation, computed once per pass.
+   *
+   * The `reputation` case below used to read every ended conversation ever held
+   * and filter in JS — once for each reputation fact, on a table that is only
+   * ever appended to, on every tick. Bounding `ended_at` and `sentiment` in SQL
+   * lets it ride `idx_conversations_status_ended` and stop at the recent window,
+   * and hoisting it out of the loop turns N scans into one.
+   *
+   * Built lazily: a town with no reputation facts should not pay for it at all.
+   */
+  let recentlyDisliked: Set<number> | null = null;
+  const subjectsWithNegativeConversations = (): Set<number> => {
+    if (recentlyDisliked) return recentlyDisliked;
+    const cutoff = Date.now() - 1_440_000;
+    const rows = db
+      .select({ participants: conversations.participants })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.status, 'ended'),
+          gt(conversations.ended_at, cutoff),
+          lt(conversations.sentiment, 0),
+        ),
+      )
+      .all();
+    recentlyDisliked = new Set(rows.flatMap((r) => r.participants as number[]));
+    return recentlyDisliked;
+  };
+
   for (const fact of activeFacts) {
     let stale = false;
 
@@ -519,20 +569,9 @@ export function deactivateStaleFacts(): void {
       }
 
       case 'reputation': {
-        // Deactivate if no negative conversations involving subject in last 1440 ticks (1440000 ms)
-        const cutoff = Date.now() - 1_440_000;
-        const negConvs = db
-          .select({ id: conversations.id, participants: conversations.participants, sentiment: conversations.sentiment, ended_at: conversations.ended_at })
-          .from(conversations)
-          .where(eq(conversations.status, 'ended'))
-          .all()
-          .filter((c) => {
-            const participants: number[] = c.participants as number[];
-            const endedAt = c.ended_at ?? 0;
-            return participants.includes(fact.subject_id) && c.sentiment < 0 && endedAt > cutoff;
-          });
-
-        if (negConvs.length === 0) stale = true;
+        // Deactivate if no negative conversations involving subject in the last
+        // 1_440_000 ms of wall clock.
+        if (!subjectsWithNegativeConversations().has(fact.subject_id)) stale = true;
         break;
       }
 

@@ -124,7 +124,9 @@ function applyRelationshipEffect(effect: EffectDef, ctx: InteractionContext): vo
     description: `${ctx.interactionType} interaction`,
     sentiment: delta > 0 ? Math.min(1, delta / 30) : Math.max(-1, delta / 30),
     processed: false,
-    timestamp: ctx.currentTick,
+    // Every other writer of this column stores wall-clock ms; mixing ticks in
+    // makes any time-window query over the table silently wrong.
+    timestamp: Date.now(),
     friendship_delta_ab,
     friendship_delta_ba,
     romance_delta_ab,
@@ -258,7 +260,7 @@ function applyEconomyEffect(effect: EffectDef, ctx: InteractionContext): void {
       amount,
       reason: ctx.interactionType,
       location_id: ctx.locationId,
-      timestamp: ctx.currentTick,
+      timestamp: Date.now(),
     }).run();
   } else if (effect.delta !== undefined) {
     // Flat delta applied to specified agents
@@ -326,7 +328,7 @@ function applyGoalEffect(effect: EffectDef, ctx: InteractionContext): void {
   const newProgress = Math.min(1, goal.progress + effect.advance);
   if (newProgress >= 1) {
     db.update(goals)
-      .set({ progress: newProgress, status: 'completed' })
+      .set({ progress: newProgress, status: 'completed', completed_at: ctx.currentTick })
       .where(eq(goals.id, ctx.goalId))
       .run();
   } else {

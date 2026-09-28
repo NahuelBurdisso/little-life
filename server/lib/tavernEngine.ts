@@ -18,6 +18,11 @@ interface DrinkState {
 
 const drinkTracker = new Map<number, DrinkState>();
 
+/** Drop per-agent drink state for a world replace (agent ids and ticks both reset). */
+export function clearTavernTracking(): void {
+  drinkTracker.clear();
+}
+
 /** Called each tick for agents at tavern doing socializing/idle. */
 export function tavernTick(totalTicks: number): void {
   const allAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
@@ -107,7 +112,9 @@ export function tavernTick(totalTicks: number): void {
           agent_id: agent.id,
           type: 'drunk',
           severity: 0.6,
-          started_at: Date.now(),
+          // agentStates.started_at is tick-valued: states.ts expires with
+          // `started_at + duration <= currentTick`.
+          started_at: totalTicks,
           duration: 720, // ~12 game hours
           source: 'tavern_drinking',
           metadata: { drinks: state.drinks },

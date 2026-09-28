@@ -28,6 +28,7 @@ import {
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and, desc } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
+import { clearConversationCache } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate } from '../../ai/templates';
@@ -63,18 +64,78 @@ type QueueRow = typeof conversationQueue.$inferSelect;
 type WorldRow = typeof worldState.$inferSelect;
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Wall-clock budget granted per LLM turn before a conversation is force-ended.
+ *
+ * CLOCK: WALL-CLOCK MS. `ActiveLLMEntry.startedAt` is a `Date.now()` stamp taken
+ * at dispatch, so this budget is compared ms-to-ms and must NOT be scaled by
+ * `world.tick_speed`. A turn is one Ollama call (plus up to `AI.RETRY_ATTEMPTS`
+ * retries) and the 200ms inter-turn delay in `taskRunner.runConversationTurn`.
+ */
+const MS_PER_LLM_TURN = 15000;
+
+/**
+ * How close two agents must be before an LLM conversation opens. Beyond this the
+ * initiator walks over first (see the staging block in Step E). Kept well under
+ * the 64px co-location cutoff so staging never fights that check.
+ */
+const TALK_DISTANCE_PX = 40;
+/** Where the approacher stops: just inside talking range, not on top of them. */
+const TALK_STAGE_OFFSET_PX = 24;
+/** Destination drift tolerated before the walk order is re-issued. */
+const TALK_STAGE_REISSUE_PX = 12;
+
+// ---------------------------------------------------------------------------
 // Main tick
 // ---------------------------------------------------------------------------
 
+/**
+ * Put every participant still marked as talking in THIS conversation back to idle.
+ * Used whenever a conversation leaves the pipeline without going through
+ * `processCompletedConversation` (ended externally, aborted, too few participants).
+ * Returns true when at least one agent was released.
+ */
+function releaseTalkingParticipants(conversation: ConversationRow): boolean {
+  const participantIds = conversation.participants as number[];
+  let released = false;
+  for (const participantId of participantIds) {
+    const agent = db.select().from(agents).where(eq(agents.id, participantId)).get();
+    if (!agent) continue;
+    const action = agent.current_action as any;
+    if (action?.type === 'talking' && String(action?.conversationId) === String(conversation.id)) {
+      db.update(agents)
+        .set({ current_action: { type: 'idle' }, action_duration: null })
+        .where(eq(agents.id, participantId))
+        .run();
+      released = true;
+    }
+  }
+  return released;
+}
+
 export async function conversationsTick(): Promise<void> {
   // Collected LLM dispatch tasks — executed OUTSIDE the transaction (fire-and-forget async)
-  const dispatches: Array<{ conversationId: number; speakerId: number; participantIds: number[] }> = [];
-  // Completed LLM conversations to process asynchronously — OUTSIDE the transaction
-  const completedConversations: Array<{ conversation: ConversationRow; world: WorldRow }> = [];
+  const dispatches: Array<{
+    conversationId: number;
+    speakerId: number;
+    participantIds: number[];
+    participantNames: string[];
+  }> = [];
+  // Completed LLM conversations to process asynchronously — OUTSIDE the transaction.
+  // `truncated` marks conversations force-ended by the turn budget rather than by
+  // reaching max_turns, so downstream consumers can tell a cut-short exchange from
+  // a natural one.
+  const completedConversations: Array<{ conversation: ConversationRow; world: WorldRow; truncated: boolean }> = [];
   // Timed-out queue entries needing template fallback — OUTSIDE the transaction
   const timedOutQueue: Array<{ entry: QueueRow; world: WorldRow }> = [];
 
   let changed = false;
+  // Set when Step A puts an agent back to idle; the agent snapshot has to be
+  // re-pushed to the client even though no conversation row changed.
+  let agentsReleased = false;
 
   // ── Sync part: all DB reads and writes inside a single transaction ──────────
   db.transaction(() => {
@@ -94,57 +155,13 @@ export async function conversationsTick(): Promise<void> {
 
     // --- Step A: Check active LLM conversations ---
     const toRemove = new Set<number>();
-    const LLM_CONVERSATION_TIMEOUT_MS = 60000; // 60 seconds
+    // Scale the force-end budget with the deep-conversation turn count instead of
+    // a flat 60s: a 10-turn conversation cannot finish inside 60s, so the flat
+    // ceiling was amputating roughly one deep conversation in six.
+    const llmConversationTimeoutMs = schedulerState.max_turns_deep * MS_PER_LLM_TURN;
     const now = Date.now();
 
     for (const entry of activeLLM) {
-      // Timeout check — force-end hung conversations
-      if (now - entry.startedAt > LLM_CONVERSATION_TIMEOUT_MS) {
-        const convo = db.select().from(conversations).where(eq(conversations.id, entry.conversationId)).get();
-        if (convo && convo.status !== 'ended') {
-          // Compute sentiment from whatever messages we got so far
-          const partialMessages = (convo.messages as ConversationMessage[]) ?? [];
-          const avgSentiment = partialMessages.length > 0
-            ? partialMessages.reduce((sum, m) => sum + (m.sentiment ?? 0), 0) / partialMessages.length
-            : 0;
-          db.update(conversations).set({ status: 'ended', ended_at: now, sentiment: avgSentiment })
-            .where(eq(conversations.id, entry.conversationId)).run();
-          // Reset agents and give minimal social needs update
-          const participants = convo.participants as number[];
-          for (const pid of participants) {
-            const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
-            if (agent && (agent.current_action as any)?.type === 'talking') {
-              db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
-                .where(eq(agents.id, pid)).run();
-            }
-            // Give social credit for partial conversation (they did talk, even if LLM timed out)
-            const agentNeeds = db.select().from(needs).where(eq(needs.agent_id, pid)).get();
-            if (agentNeeds) {
-              db.update(needs).set({ social: clamp(agentNeeds.social + 2, 0, 100) })
-                .where(eq(needs.id, agentNeeds.id)).run();
-            }
-          }
-          // Emit conversation:ended so cascade/memory systems still process partial conversations
-          if (participants.length >= 2) {
-            simEvents.emit('conversation:ended', {
-              agentId: participants[0],
-              perpetratorId: participants[1],
-              otherName: '',
-              summary: (convo.topic as string) ?? 'interrupted conversation',
-              turns: partialMessages.length,
-              sentiment: avgSentiment,
-              topics: [],
-              partnerState: null,
-              romanceLevel: 0,
-              hadRecentConflict: false,
-            });
-          }
-          changed = true;
-        }
-        toRemove.add(entry.conversationId);
-        continue;
-      }
-
       const conversation = db
         .select()
         .from(conversations)
@@ -152,17 +169,38 @@ export async function conversationsTick(): Promise<void> {
         .get();
 
       if (!conversation) {
+        // Row is gone — nothing downstream will ever evict its cached identities.
+        clearConversationCache(entry.conversationId);
         toRemove.add(entry.conversationId);
         continue;
       }
 
+      // Already ended by someone outside this system — `markConversationEnded`
+      // (LLM context lost) or `deactivateAgent` (participant died).
+      // `processCompletedConversation` bails immediately on `status === 'ended'`,
+      // so routing this arm there dequeued the entry and did nothing at all,
+      // stranding both agents in `current_action = 'talking'` forever. Release
+      // them and drop the caches here instead.
+      if (conversation.status === 'ended') {
+        if (releaseTalkingParticipants(conversation)) agentsReleased = true;
+        clearConversationCache(conversation.id);
+        toRemove.add(entry.conversationId);
+        changed = true;
+        continue;
+      }
+
       const messages = conversation.messages as ConversationMessage[];
-      if (
-        conversation.status === 'ended' ||
-        messages.length >= conversation.max_turns
-      ) {
-        // Collect for async processing outside the transaction
-        completedConversations.push({ conversation, world });
+      // WALL-CLOCK MS on both sides — `entry.startedAt` is a `Date.now()` stamp,
+      // so no tick_speed conversion applies here.
+      const timedOut = now - entry.startedAt > llmConversationTimeoutMs;
+
+      if (timedOut || messages.length >= conversation.max_turns) {
+        // Force-ends go through the SAME completion pipeline as natural ends.
+        // The previous inline hand-rolled ending skipped quality scoring,
+        // relationship events, memories and cache eviction, and emitted
+        // `conversation:ended` exactly once — for participants[0], with an empty
+        // otherName — so every listener silently dropped participant #2.
+        completedConversations.push({ conversation, world, truncated: timedOut });
         toRemove.add(entry.conversationId);
         llmTotal++;
         changed = true;
@@ -223,9 +261,13 @@ export async function conversationsTick(): Promise<void> {
     for (const entry of llmEntries) {
       if (currentActive >= schedulerState.max_concurrent_llm) break;
 
-      // Depressed agents skip conversations — remove from queue
-      const firstParticipantStates = getAgentStates(entry.participants[0]);
-      if (firstParticipantStates.includes('depressed')) {
+      // Depressed agents skip conversations — remove from queue.
+      // Checked for every participant, not just the initiator: a depressed agent
+      // queued as the *target* was still dragged into a full LLM conversation.
+      const anyDepressed = entry.participants.some((pid) =>
+        getAgentStates(pid).includes('depressed'),
+      );
+      if (anyDepressed) {
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
         continue;
       }
@@ -262,6 +304,46 @@ export async function conversationsTick(): Promise<void> {
           db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
           continue;
         }
+      }
+
+      // Physical staging: two agents 60px apart shouldn't teleport into a
+      // conversation. Walk the initiator over first and open the conversation on
+      // a later tick, once they're adjacent. The queue entry is deliberately NOT
+      // deleted — if they never converge it ages out via `max_wait` into the
+      // template path, which reads as "they gave up".
+      const stageDx = secondParticipant.position.x - firstParticipant.position.x;
+      const stageDy = secondParticipant.position.y - firstParticipant.position.y;
+      const stageDist = Math.hypot(stageDx, stageDy);
+      if (stageDist > TALK_DISTANCE_PX) {
+        const moverAction = (firstParticipant.current_action?.type ?? 'idle') as string;
+        // Don't yank someone out of sleep, death, or another conversation.
+        if (moverAction === 'sleeping' || moverAction === 'dead' || moverAction === 'talking') {
+          continue;
+        }
+        const targetX = secondParticipant.position.x - (stageDx / stageDist) * TALK_STAGE_OFFSET_PX;
+        const targetY = secondParticipant.position.y - (stageDy / stageDist) * TALK_STAGE_OFFSET_PX;
+        // Re-issuing the order every tick would null `current_path` every tick and
+        // freeze them in place, so only write it when the destination has actually
+        // drifted (the partner moved) or they aren't walking yet.
+        const dest = firstParticipant.current_destination;
+        const alreadyHeaded =
+          moverAction === 'walking' &&
+          dest != null &&
+          Math.hypot(dest.x - targetX, dest.y - targetY) <= TALK_STAGE_REISSUE_PX;
+        if (!alreadyHeaded) {
+          db.update(agents)
+            .set({
+              current_action: { type: 'walking', reason: 'approaching_conversation' },
+              current_destination: { x: targetX, y: targetY },
+              current_path: null,
+              action_started: time.totalTicks,
+              action_duration: null,
+            })
+            .where(eq(agents.id, firstParticipant.id))
+            .run();
+          changed = true;
+        }
+        continue;
       }
 
       const locationId = firstParticipant.current_location;
@@ -310,17 +392,15 @@ export async function conversationsTick(): Promise<void> {
           .run();
       }
 
-      // Emit conversation:started for both participants
-      if (firstParticipant && secondParticipant) {
-        simEvents.emit('conversation:started', { agentId: firstParticipant.id, otherName: secondParticipant.name });
-        simEvents.emit('conversation:started', { agentId: secondParticipant.id, otherName: firstParticipant.name });
-      }
-
-      // Collect dispatch — actual startConversation() call goes outside transaction
+      // Collect dispatch — actual startConversation() call goes outside transaction.
+      // `conversation:started` is emitted there, only once the task runner accepts:
+      // emitting here recorded memories and cascades for conversations that were
+      // deleted moments later when all runner slots were full.
       dispatches.push({
         conversationId,
         speakerId: entry.participants[0],
         participantIds: entry.participants as number[],
+        participantNames: [firstParticipant.name, secondParticipant.name],
       });
 
       fillEntries.push({
@@ -352,6 +432,10 @@ export async function conversationsTick(): Promise<void> {
   // ── Async part: dispatch LLM calls outside transaction ─────────────────────
   for (const d of dispatches) {
     const accepted = taskRunner.startConversation(d.conversationId, d.speakerId);
+    if (accepted) {
+      simEvents.emit('conversation:started', { agentId: d.participantIds[0], otherName: d.participantNames[1] });
+      simEvents.emit('conversation:started', { agentId: d.participantIds[1], otherName: d.participantNames[0] });
+    }
     if (!accepted) {
       // Task runner slots full — remove the conversation record and reset agents to idle
       db.delete(conversations).where(eq(conversations.id, d.conversationId)).run();
@@ -385,6 +469,11 @@ export async function conversationsTick(): Promise<void> {
   if (changed) {
     emitter.markDirty('conversations');
   }
+  if (agentsReleased) {
+    // Releasing an agent changes no conversation row, so the agent snapshot has to
+    // be pushed explicitly or the client keeps rendering them as talking.
+    emitter.markDirty('agents.all');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -395,9 +484,22 @@ async function processCompletedConversation(
   conversation: ConversationRow,
   world: WorldRow,
 ): Promise<void> {
+  // Evict first, so every exit path below is covered. This is the terminal step
+  // for the conversation — no further turns will be generated for it — and it
+  // was the only completion path that never dropped its cached identities, so
+  // two entries per LLM conversation (full agent rows, relationship, location,
+  // personality and enrichment) accumulated for the life of the process.
+  clearConversationCache(conversation.id);
+
   // Re-read to check if already processed (avoid double processing from TaskRunner + tick race)
   const fresh = db.select().from(conversations).where(eq(conversations.id, conversation.id)).get();
-  if (!fresh || fresh.status === 'ended') return;
+  if (!fresh || fresh.status === 'ended') {
+    // The conversation was ended underneath us (LLM context lost, participant died,
+    // player nudge). The scheduler entry is already gone, so nothing else will ever
+    // rescue these agents — release them here or they stay `talking` forever.
+    if (releaseTalkingParticipants(conversation)) emitter.markDirty('agents.all');
+    return;
+  }
 
   const messages = fresh.messages as ConversationMessage[];
   const now = Date.now();
@@ -427,6 +529,7 @@ async function processCompletedConversation(
       })
       .where(eq(conversations.id, conversation.id))
       .run();
+    if (releaseTalkingParticipants(fresh)) emitter.markDirty('agents.all');
     return;
   }
 
@@ -441,14 +544,18 @@ async function processCompletedConversation(
       const agentA = participants[i];
       const agentB = participants[j];
 
-      // Enforce A < B ordering for consistency with relationship table
-      const [orderedA, orderedB] = agentA.id < agentB.id
+      // Enforce A < B ordering for consistency with relationship table.
+      // The personalities MUST be swapped alongside the ids: the engine returns
+      // `*AB` deltas keyed to `personalityA`, and those are written into
+      // `friendship_delta_ab`, which relationships.ts applies to orderedA -> orderedB.
+      const aIsFirst = agentA.id < agentB.id;
+      const [orderedA, orderedB] = aIsFirst
         ? [agentA.id, agentB.id]
         : [agentB.id, agentA.id];
 
       // --- Compute relationship deltas via engine ---
-      const personalityA = agentA.personality as PersonalityProfile | null;
-      const personalityB = agentB.personality as PersonalityProfile | null;
+      const personalityA = (aIsFirst ? agentA : agentB).personality as PersonalityProfile | null;
+      const personalityB = (aIsFirst ? agentB : agentA).personality as PersonalityProfile | null;
 
       let compat = 1.0;
       if (personalityA && personalityB) {
@@ -772,7 +879,7 @@ async function processCompletedConversation(
 
       const currentTime =
         time.day * 24 * 60 + time.hour * 60 + time.minute;
-      let moodModifierDuration: number = CONFIG.NEEDS.MOOD_MODIFIER_DURATION_TICKS;
+      let moodModifierDuration: number = CONFIG.NEEDS.MOOD_MODIFIER_DURATION_GAME_MINUTES;
       if (personality && personality.neuroticism > 60) {
         moodModifierDuration = Math.round(moodModifierDuration * 1.5);
       }
@@ -796,8 +903,9 @@ async function processCompletedConversation(
     }
   }
 
-  // Spread gossip: for each participant, share known shared_knowledge if the subject was mentioned
-  const messageTexts = messages.map((m) => m.text);
+  // Spread gossip: for each participant, share known shared_knowledge if the subject
+  // was mentioned. Only the speaker's OWN lines count — matching against the whole
+  // transcript leaked a secret whenever the *listener* happened to say the subject's name.
   for (const pid of participantIds) {
     const otherId = participantIds.find((p) => p !== pid);
     if (!otherId) continue;
@@ -805,7 +913,9 @@ async function processCompletedConversation(
     if (!agent?.personality) continue;
     const personalityData = agent.personality as any;
     const sharable = getShareableFacts(pid, otherId, personalityData);
-    spreadGossip(pid, otherId, messageTexts, sharable);
+    const spokenTexts = messages.filter((m) => m.speakerId === pid).map((m) => m.text);
+    if (spokenTexts.length === 0) continue;
+    spreadGossip(pid, otherId, spokenTexts, sharable);
   }
 
   // --- Dark Social Dynamics: Post-Conversation Effects ---
@@ -1219,9 +1329,22 @@ async function processTimedOutEntry(
   const agentList: AgentRow[] = [];
   for (const pid of entry.participants) {
     const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
-    if (agent) agentList.push(agent);
+    // Deactivated agents keep their row, so without this guard a dead agent still
+    // produced a template conversation with real relationship and needs effects.
+    if (agent?.is_active) agentList.push(agent);
   }
   if (agentList.length < 2) return;
+
+  // Same liveness/proximity contract as the LLM path: a queue entry only reaches
+  // here after waiting out `max_wait`, by which time the pair may have walked apart.
+  const sameLocation =
+    agentList[0].current_location != null &&
+    agentList[0].current_location === agentList[1].current_location;
+  if (!sameLocation) {
+    const dx = agentList[0].position.x - agentList[1].position.x;
+    const dy = agentList[0].position.y - agentList[1].position.y;
+    if (dx * dx + dy * dy > 64 * 64) return;
+  }
 
   const locationId = agentList[0].current_location;
   if (!locationId) return;
@@ -1291,68 +1414,89 @@ async function processTimedOutEntry(
   else if (friendship < -20) categoriesToTry.push('greeting_cold');
   else categoriesToTry.push('greeting_neutral');
 
-  // Try categories in order, use first one that returns a template
-  let templateResult: { text: string; sentiment: number } | null = null;
-  let matchedCategory = '';
-  for (const category of categoriesToTry) {
-    templateResult = selectTemplate(
-      category,
-      entry.participants[0],
-      entry.participants[1],
-      {
-        friendship,
-        mood,
-        timeOfDay: dayPhase,
-        locationType: loc0?.type ?? null,
-        weather: world.weather,
-      },
-    );
-    if (templateResult) { matchedCategory = category; break; }
-  }
-
-  // If nothing matched, try one more time with greeting
-  if (!templateResult) {
-    const fallbackCategory = friendship > 30 ? 'greeting_friendly' : friendship < -20 ? 'greeting_cold' : 'greeting_neutral';
-    templateResult = selectTemplate(
-      fallbackCategory,
-      entry.participants[0],
-      entry.participants[1],
-      {
-        friendship,
-        mood,
-        timeOfDay: dayPhase,
-        locationType: null,
-        weather: world.weather as string,
-      },
-    );
-  }
-
   // Get location name for template interpolation
   const templateLocation = db.select({ name: locations.name }).from(locations).where(eq(locations.id, locationId)).get();
 
-  const messageText = templateResult
-    ? interpolateTemplate(templateResult.text, {
-        'speaker.name': agentList[0].name,
-        'other.name': agentList[1].name,
-        'listener.name': agentList[1].name,
-        'location.name': templateLocation?.name ?? 'town',
-        'weather': (world.weather as string) ?? 'weather',
-      })
-    : `${agentList[0].name} nodded at ${agentList[1].name}.`;
-  const messageSentiment = templateResult ? templateResult.sentiment : 0;
+  /**
+   * Picks the first category that yields a template and renders it for the
+   * given speaker. `selectTemplate` records usage, and its cooldown is keyed on
+   * (pair, category), so a category consumed by an earlier turn is unavailable
+   * to the later ones — the turns can't echo each other.
+   */
+  const buildLine = (
+    categories: string[],
+    speakerIdx: 0 | 1,
+    ignoreLocation = false,
+  ): { text: string; sentiment: number; category: string } | null => {
+    for (const category of categories) {
+      const picked = selectTemplate(
+        category,
+        entry.participants[0],
+        entry.participants[1],
+        {
+          friendship,
+          mood,
+          timeOfDay: dayPhase,
+          locationType: ignoreLocation ? null : (loc0?.type ?? null),
+          weather: world.weather as string,
+        },
+      );
+      if (!picked) continue;
+      const speaker = agentList[speakerIdx];
+      const other = agentList[speakerIdx === 0 ? 1 : 0];
+      return {
+        category,
+        sentiment: picked.sentiment,
+        text: interpolateTemplate(picked.text, {
+          'speaker.name': speaker.name,
+          'other.name': other.name,
+          'listener.name': other.name,
+          'location.name': templateLocation?.name ?? 'town',
+          'weather': (world.weather as string) ?? 'weather',
+        }),
+      };
+    }
+    return null;
+  };
 
-  // Create a completed conversation with the template message
+  const fallbackCategory =
+    friendship > 30 ? 'greeting_friendly' : friendship < -20 ? 'greeting_cold' : 'greeting_neutral';
+
+  const opener =
+    buildLine(categoriesToTry, 0) ?? buildLine([fallbackCategory], 0, true);
+
+  const matchedCategory = opener?.category ?? '';
+
+  // A single line reads as talking AT someone. Give the partner a reply and,
+  // when one lands, let the opener sign off — still zero LLM cost.
+  const turns: Array<{ text: string; sentiment: number }> = [
+    opener ?? { text: `${agentList[0].name} nodded at ${agentList[1].name}.`, sentiment: 0 },
+  ];
+
+  const replyCategories =
+    turns[0].sentiment <= -0.2
+      ? ['snide_remark', 'passive_aggressive', 'tense_encounter', 'greeting_cold']
+      : ['small_talk_weather', 'small_talk_work', 'excited_event', fallbackCategory];
+  const reply = buildLine(replyCategories, 1);
+  if (reply) turns.push(reply);
+
+  if (reply) {
+    const signOff = buildLine(['farewell'], 0);
+    if (signOff) turns.push(signOff);
+  }
+
+  const messageSentiment = turns.reduce((sum, t) => sum + t.sentiment, 0) / turns.length;
+
+  // Create a completed conversation with the template messages
   const conversationDoc = {
     participants: entry.participants,
-    messages: [
-      {
-        speakerId: entry.participants[0],
-        text: messageText,
-        sentiment: messageSentiment,
-        topics: extractTopics([{ text: messageText }]),
-        timestamp: now,
-      },
-    ],
+    messages: turns.map((turn, i) => ({
+      speakerId: entry.participants[i % 2],
+      text: turn.text,
+      sentiment: turn.sentiment,
+      topics: extractTopics([{ text: turn.text }]),
+      timestamp: now,
+    })),
     location: locationId,
     trigger_reason: entry.trigger_reason + ' (template)',
     topic: categoryToTopic(matchedCategory) ?? entry.topic,
@@ -1360,7 +1504,7 @@ async function processTimedOutEntry(
     started_at: now,
     ended_at: now,
     sentiment: messageSentiment,
-    max_turns: 1,
+    max_turns: turns.length,
   };
 
   db.insert(conversations)
@@ -1368,9 +1512,11 @@ async function processTimedOutEntry(
     .returning({ id: conversations.id })
     .get();
 
-  // Lighter relationship event for template conversations
-  const agentA = agentList[0];
-  const agentB = agentList[1];
+  // Lighter relationship event for template conversations.
+  // Personalities follow orderedA/orderedB, not agentList order — the engine keys its
+  // `*AB` deltas to personalityA and those are stored as `*_delta_ab`.
+  const agentA = agentList.find((a) => a.id === orderedA) ?? agentList[0];
+  const agentB = agentList.find((a) => a.id === orderedB) ?? agentList[1];
   const personalityA = agentA.personality as PersonalityProfile | null;
   const personalityB = agentB.personality as PersonalityProfile | null;
 
@@ -1384,7 +1530,7 @@ async function processTimedOutEntry(
 
   const templateImpactCtx: ConversationImpactContext = {
     overallSentiment: messageSentiment,
-    turnCount: 1,
+    turnCount: turns.length,
     topic: conversationDoc.topic,
     personalityA,
     personalityB,
@@ -1460,7 +1606,7 @@ async function processTimedOutEntry(
         moodModifiers.push({
           value: avgSentiment * 3,
           source: 'template_conversation',
-          expiresAt: currentTime + CONFIG.NEEDS.MOOD_MODIFIER_DURATION_TICKS,
+          expiresAt: currentTime + CONFIG.NEEDS.MOOD_MODIFIER_DURATION_GAME_MINUTES,
         });
       }
 

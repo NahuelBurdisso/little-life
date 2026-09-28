@@ -14,6 +14,7 @@ import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
+import { zoneOccupancy } from './interiorGrid';
 
 // --- Types ---
 
@@ -61,6 +62,17 @@ export function updateHungerTracking(agentId: number, hunger: number): void {
   } else {
     hungerZeroTicks.delete(agentId);
   }
+}
+
+/**
+ * Drop per-agent hunger counters for a world replace (SQLite reuses agent ids).
+ * These hold a COUNT, not a tick stamp, so they cannot go negative, and the first
+ * `needsTick` deletes them anyway (a new agent starts at hunger 80). Cleared for
+ * consistency, and to close the window where a death check for a reused id runs
+ * before that first `needsTick`.
+ */
+export function clearHungerTracking(): void {
+  hungerZeroTicks.clear();
 }
 
 // --- Death Triggers Registry ---
@@ -136,6 +148,13 @@ function deactivateAgent(ctx: DeathEffectContext): void {
       }).where(eq(locations.id, loc.id)).run();
     }
   }
+
+  // Release the interior zone slot. `zoneOccupancy.leave` is only ever called by
+  // movement.ts on a location *change*, and the deceased never moves again — so
+  // the corpse held its bed, kitchen seat or tavern stool against that zone's
+  // `maxOccupants` for the rest of the run, and the living were routed around a
+  // slot nobody was using.
+  zoneOccupancy.leave(ctx.agentId);
 
   // Clear all active states
   db.delete(agentStates).where(eq(agentStates.agent_id, ctx.agentId)).run();

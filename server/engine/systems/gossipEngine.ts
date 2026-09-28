@@ -6,16 +6,25 @@
  * 2. Passive eavesdropping (agents at the same location as a conversation learn shared_knowledge)
  * 3. Active gossip sharing (curious agents proactively share shared_knowledge with friends)
  * 4. Secret discovery (curious agents piece together hidden information)
- * 5. Observation-based learning (witnessing actions creates knowledge)
+ * 5. Common knowledge threshold (a secret most of the town knows stops being one)
  *
  * To add a new spread mechanic: add it here. One file, one place.
  */
 
 import { db } from '../../db';
-import { agents, shared_knowledge, relationships, conversations, worldEvents } from '../../db/schema';
+import {
+  agents,
+  shared_knowledge,
+  relationships,
+  conversations,
+  worldEvents,
+  needs as needsTable,
+  agentStates,
+} from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
 import { logActivity } from '../../lib/activityLogger';
+import { getAgentStates } from '../../lib/states';
 
 interface AgentInfo {
   id: number;
@@ -24,7 +33,42 @@ interface AgentInfo {
   personality: PersonalityProfile | null;
 }
 
-export function gossipTick(_currentTick: number): void {
+/**
+ * Add knowers to a fact and keep the in-memory snapshot in sync.
+ *
+ * `allFacts` is read once per tick and every spread mechanic below does a
+ * read-modify-write against it. Without writing the result back onto the row,
+ * two spreads of the same fact in one tick each write `[...original, theirId]`
+ * and the earlier learner is silently erased.
+ */
+function addKnowers(fact: { id: number; known_by: unknown }, newKnowers: number[]): void {
+  const knownBy = fact.known_by as number[];
+  const updated = [...new Set([...knownBy, ...newKnowers])];
+  if (updated.length === knownBy.length) return;
+  db.update(shared_knowledge)
+    .set({ known_by: updated })
+    .where(eq(shared_knowledge.id, fact.id))
+    .run();
+  fact.known_by = updated;
+}
+
+/**
+ * A secret more than half the town is repeating has stopped being a secret.
+ * Mild facts (sensitivity 1) are public by construction and never qualify —
+ * flipping them would just spam the log with "everyone knows Piet bakes bread".
+ */
+export function isCommonKnowledge(
+  fact: { sensitivity: number; known_by: unknown },
+  population: number,
+): boolean {
+  if (fact.sensitivity < 2 || population <= 0) return false;
+  return (fact.known_by as number[]).length > population / 2;
+}
+
+/** How hard being found out hits the subject, per point of sensitivity. */
+const EXPOSURE_MOOD_HIT = 6;
+
+export function gossipTick(currentTick: number): void {
   const allAgents: AgentInfo[] = db.select({
     id: agents.id,
     name: agents.name,
@@ -67,10 +111,7 @@ export function gossipTick(_currentTick: number): void {
     const newKnowers = coLocated.filter(a => !knownBy.includes(a.id)).map(a => a.id);
     if (newKnowers.length === 0) continue;
 
-    db.update(shared_knowledge)
-      .set({ known_by: [...new Set([...knownBy, ...newKnowers])] })
-      .where(eq(shared_knowledge.id, fact.id))
-      .run();
+    addKnowers(fact, newKnowers);
   }
 
   // ── 2. Passive eavesdropping ────────────────────────────────────────────
@@ -106,8 +147,7 @@ export function gossipTick(_currentTick: number): void {
           const chance = curiosity / 2500; // ~4% for max curiosity per tick, ~2% for average
           if (Math.random() > chance) continue;
 
-          const updated = [...new Set([...knownBy, eavesdropper.id])];
-          db.update(shared_knowledge).set({ known_by: updated }).where(eq(shared_knowledge.id, fact.id)).run();
+          addKnowers(fact, [eavesdropper.id]);
 
           if (fact.sensitivity >= 2) {
             logActivity({
@@ -169,9 +209,7 @@ export function gossipTick(_currentTick: number): void {
       if (shareable.length === 0) continue;
 
       const fact = shareable[Math.floor(Math.random() * shareable.length)];
-      const knownBy = fact.known_by as number[];
-      db.update(shared_knowledge).set({ known_by: [...new Set([...knownBy, target.id])] })
-        .where(eq(shared_knowledge.id, fact.id)).run();
+      addKnowers(fact, [target.id]);
 
       if (fact.sensitivity >= 2) {
         logActivity({
@@ -204,9 +242,7 @@ export function gossipTick(_currentTick: number): void {
       if (discoverable.length === 0) continue;
 
       const fact = discoverable[Math.floor(Math.random() * discoverable.length)];
-      const knownBy = fact.known_by as number[];
-      db.update(shared_knowledge).set({ known_by: [...new Set([...knownBy, agent.id])] })
-        .where(eq(shared_knowledge.id, fact.id)).run();
+      addKnowers(fact, [agent.id]);
 
       logActivity({
         type: 'drama',
@@ -217,4 +253,61 @@ export function gossipTick(_currentTick: number): void {
       }
   }
 
+  // ── 5. Common knowledge threshold ──────────────────────────────────────
+  // Spread used to saturate silently: once everyone knew, nothing happened.
+  // Crossing the halfway mark is the moment the subject has to live with it.
+  for (const fact of allFacts) {
+    if (fact.is_public) continue;
+    if (!isCommonKnowledge(fact, allAgents.length)) continue;
+
+    db.update(shared_knowledge)
+      .set({ is_public: true, revealed_at: Date.now() })
+      .where(eq(shared_knowledge.id, fact.id))
+      .run();
+    fact.is_public = true;
+
+    const subject = allAgents.find((a) => a.id === fact.subject_id);
+    logActivity({
+      type: 'drama',
+      initiator: fact.subject_id,
+      severity: Math.min(1, 0.5 + fact.sensitivity * 0.15),
+      templateData: {
+        description: `The whole town now knows that ${fact.content}.`,
+      },
+    });
+    if (!subject) continue;
+
+    const subjectNeeds = db
+      .select()
+      .from(needsTable)
+      .where(eq(needsTable.agent_id, subject.id))
+      .get();
+    if (subjectNeeds) {
+      db.update(needsTable)
+        .set({ mood: Math.max(5, subjectNeeds.mood - EXPOSURE_MOOD_HIT * fact.sensitivity) })
+        .where(eq(needsTable.agent_id, subject.id))
+        .run();
+    }
+
+    // Reuse `stressed` rather than a bespoke `shamed` state: a new type would
+    // need entries in the decay, effect and prompt tables to mean anything.
+    if (!getAgentStates(subject.id).includes('stressed')) {
+      db.insert(agentStates)
+        .values({
+          agent_id: subject.id,
+          type: 'stressed',
+          severity: Math.min(0.9, 0.3 + fact.sensitivity * 0.15),
+          started_at: currentTick,
+          duration: 999999, // conditional exit, same as the needs-driven variant
+          source: 'knowledge:exposed',
+          metadata: { factId: fact.id },
+        })
+        .run();
+      logActivity({
+        type: 'state_gained',
+        initiator: subject.id,
+        templateData: { agent: subject.name, state: 'stressed' },
+      });
+    }
+  }
 }

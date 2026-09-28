@@ -15,7 +15,6 @@ export interface RippleRule {
   source: string;
   sourceFilter?: (payload: any, ctx: RippleContext) => boolean;
   target: 'self' | 'perpetrator' | 'victim' | 'witness' | 'random_present';
-  secondaryTarget?: 'self' | 'perpetrator' | 'victim' | 'random_present';
   probability: number;
   personalityGates?: Array<{
     axis: keyof PersonalityProfile;

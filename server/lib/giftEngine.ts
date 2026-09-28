@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, economy, economyTransactions, relationships, relationshipEvents, agentStates } from '../db/schema';
+import { agents, economy, economyTransactions, relationships, relationshipEvents, agentStates, worldState } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
@@ -14,6 +14,11 @@ import { ITEM_REGISTRY } from '../data/economyData';
 // Gift cooldown: prevent spam (1 gift per agent per game day at most)
 const lastGiftTick = new Map<number, number>();
 const GIFT_COOLDOWN_TICKS = 1440; // ~1 game day
+
+/** Drop per-agent gift cooldowns for a world replace (agent ids are reused). */
+export function clearGiftTracking(): void {
+  lastGiftTick.clear();
+}
 
 // Items suitable for gifting, ordered by value
 const GIFT_ITEMS = ['food_cooked', 'food_raw', 'bread', 'ale', 'flowers'];
@@ -188,6 +193,10 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
   const giver = db.select().from(agents).where(eq(agents.id, giverId)).get();
   if (!giver || giver.current_location === null) return;
 
+  // This runs from a simEvents handler, so no tick is threaded in; read it.
+  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
+  const currentTick = world?.time?.totalTicks ?? 0;
+
   // Find agents at same location with romance toward the giver
   const coLocated = db.select().from(agents)
     .where(eq(agents.is_active, true))
@@ -227,7 +236,9 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
       severity: Math.min(1.0, witnessRomance / 100),
       target_agent_id: giverId,
       metadata: { rivalId: receiverId, loveInterestId: giverId, trigger: 'gift_witnessed' },
-      started_at: Date.now(),
+      // agentStates.started_at is tick-valued: states.ts expires with
+      // `started_at + duration <= currentTick`.
+      started_at: currentTick,
       duration: 2880, // ~2 game days
       source: 'gift_witnessed',
     }).run();

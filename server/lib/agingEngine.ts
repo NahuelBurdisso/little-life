@@ -15,6 +15,15 @@ const DAYS_PER_YEAR = 28 * 4; // 112 days = 4 seasons
 const birthDays = new Map<number, number>(); // agentId → day-of-year (0-111)
 const lastBirthdayYear = new Map<number, number>(); // prevent double celebration
 
+/**
+ * Drop per-agent birthday tracking for a world replace. Birth days are derived
+ * from the agent's name, so a reused id would otherwise keep a stranger's date.
+ */
+export function clearAgingTracking(): void {
+  birthDays.clear();
+  lastBirthdayYear.clear();
+}
+
 /** Initialize birth days for all agents. Call once on startup. */
 export function initBirthdays(): void {
   const allAgents = db.select().from(agents).all();
@@ -86,10 +95,14 @@ export function agingTick(currentDay: number): void {
         }
       }
 
-      // Aging effect: slightly increase energy decay rate for older agents
+      // Aging effect: slightly increase energy decay rate for older agents.
+      // The stored rate already carries every previous birthday's increase, so
+      // the multiplier is the single year's 0.5% — scaling by the full
+      // `(age - 40) * 0.005` here would compound it (a 50-year-old would tire
+      // 28% faster instead of the intended 5%).
       if (newAge > 40 && agentNeeds) {
         const currentRates = agentNeeds.decay_rates;
-        const ageMultiplier = 1 + (newAge - 40) * 0.005; // 0.5% per year over 40
+        const ageMultiplier = 1.005; // 0.5% per year over 40, applied once per birthday
         const newRates = {
           ...currentRates,
           energy: currentRates.energy * ageMultiplier,
@@ -98,9 +111,4 @@ export function agingTick(currentDay: number): void {
       }
     }
   }
-}
-
-/** Get birth day of year for an agent. */
-export function getBirthDay(agentId: number): number {
-  return birthDays.get(agentId) ?? 0;
 }

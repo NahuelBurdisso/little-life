@@ -36,6 +36,11 @@ function xpForLevel(level: number): number {
 
 const agentHobbies = new Map<number, Map<HobbyId, HobbySkill>>();
 
+/** Drop per-agent hobby skills for a world replace (agent ids are reused). */
+export function clearHobbySkills(): void {
+  agentHobbies.clear();
+}
+
 function getSkills(agentId: number): Map<HobbyId, HobbySkill> {
   let skills = agentHobbies.get(agentId);
   if (!skills) {

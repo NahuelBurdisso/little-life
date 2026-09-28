@@ -288,10 +288,16 @@ export const REACTION_TYPES: Record<string, ReactionDef> = {
     memory_template: 'perception_witnessed_crime',
     trigger_reason: 'perception_witnessed_crime',
   },
+  /**
+   * A passing greeting, NOT a conversation. This used to queue a `template`
+   * conversation, which `conversationsTick` dequeued immediately into a full
+   * one-message `conversations` row plus relationship events, memories and
+   * `conversation:ended` cascades — 83% of all recorded conversations were
+   * these stubs. Now it only shows an overhead emote and nudges familiarity.
+   */
   approach_chat: {
-    action: 'approach',
-    conversation_topic: 'casual chat',
-    conversation_tier: 'template',
+    action: 'emote',
+    emote: 'wave',
     memory_template: 'perception_casual',
     trigger_reason: 'perception_casual_chat',
   },

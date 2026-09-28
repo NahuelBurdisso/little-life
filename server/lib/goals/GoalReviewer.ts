@@ -10,7 +10,7 @@ import { buildGoalReviewPrompt, buildAmbitionGenerationPrompt } from './goalProm
 import type { GoalReviewAction } from './types';
 import { MAX_LLM_GOALS } from './types';
 import { CONFIG } from '../constants';
-import { and, eq, or } from 'drizzle-orm';
+import { and, desc, eq, or } from 'drizzle-orm';
 
 const TICKS_PER_DAY = 1440;
 
@@ -21,6 +21,21 @@ export class GoalReviewer {
   private agentCache: { data: { id: number; name: string }[]; tick: number } | null = null;
   private reviewedToday = new Set<number>(); // agent IDs already reviewed this day
   private lastDay = -1;
+
+  /**
+   * Drop cached world state for a world replace. `agentCache.tick` is a TICK stamp
+   * and `totalTicks` restarts at 0, so a surviving entry makes
+   * `currentTick - tick` negative — permanently under the 100-tick TTL, which feeds
+   * the PREVIOUS world's agent id/name list into goal-review prompts and goal target
+   * mapping. `reviewedToday`/`lastDay` self-heal on the next day change, but if the
+   * new world happens to start on the same day number they would suppress the first
+   * review for every reused agent id, so they are reset here too.
+   */
+  clear(): void {
+    this.agentCache = null;
+    this.reviewedToday.clear();
+    this.lastDay = -1;
+  }
 
   private getAllAgents(currentTick: number): { id: number; name: string }[] {
     if (this.agentCache && currentTick - this.agentCache.tick < 100) {
@@ -66,12 +81,18 @@ export class GoalReviewer {
 
       const llmGoals = activeGoals.filter(g => g.source === 'llm');
 
+      // Bounded in SQL. `.all().slice(-10)` pulled every active memory the agent
+      // has into JS to throw all but ten away, and took them in rowid order
+      // rather than by recency. Reversed after the fetch so the prompt still
+      // reads oldest → newest.
       const recentMemories = db
         .select({ description: memories.description })
         .from(memories)
         .where(and(eq(memories.agent_id, agentId), eq(memories.is_active, 1)))
+        .orderBy(desc(memories.created_at))
+        .limit(10)
         .all()
-        .slice(-10)
+        .reverse()
         .map(m => m.description);
 
       const econ = db
@@ -135,7 +156,7 @@ export class GoalReviewer {
 
       // Single LLM call
       const response = await callOllamaChat({
-        model: CONFIG.AI.CHAT_MODEL,
+        model: CONFIG.AI.LIGHT_MODEL,
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
@@ -248,7 +269,7 @@ export class GoalReviewer {
 
   // ─── Process a single goal review action ───────────────────────────────────
 
-  async processReview(review: GoalReviewAction, agentId: number, _currentTick: number): Promise<void> {
+  async processReview(review: GoalReviewAction, agentId: number, currentTick: number): Promise<void> {
     const goal = db
       .select()
       .from(goals)
@@ -274,7 +295,7 @@ export class GoalReviewer {
 
     if (review.action === 'abandon') {
       db.update(goals)
-        .set({ status: 'abandoned' })
+        .set({ status: 'abandoned', completed_at: currentTick })
         .where(eq(goals.id, review.goal_id))
         .run();
 
@@ -304,12 +325,15 @@ export class GoalReviewer {
     const personality = getEffectivePersonality(agentId);
     if (!personality) return null;
 
+    // Bounded in SQL — see the note on the same pattern in reviewGoals().
     const recentMemories = db
       .select({ description: memories.description })
       .from(memories)
       .where(and(eq(memories.agent_id, agentId), eq(memories.is_active, 1)))
+      .orderBy(desc(memories.created_at))
+      .limit(6)
       .all()
-      .slice(-6)
+      .reverse()
       .map(m => m.description);
 
     const econ = db
@@ -350,7 +374,7 @@ export class GoalReviewer {
 
     try {
       const response = await callOllamaChat({
-        model: CONFIG.AI.CHAT_MODEL,
+        model: CONFIG.AI.LIGHT_MODEL,
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',

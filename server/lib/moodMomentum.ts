@@ -19,6 +19,11 @@ interface MoodTracker {
 
 const moodTrackers = new Map<number, MoodTracker>();
 
+/** Drop per-agent mood momentum for a world replace (agent ids are reused). */
+export function clearMoodTrackers(): void {
+  moodTrackers.clear();
+}
+
 function getTracker(agentId: number): MoodTracker {
   let tracker = moodTrackers.get(agentId);
   if (!tracker) {

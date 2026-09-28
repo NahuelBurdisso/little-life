@@ -32,6 +32,20 @@ export function clearConversationCache(conversationId: number): void {
     if (key.startsWith(`${conversationId}:`)) identityCache.delete(key);
   }
 }
+
+/**
+ * Drop every cached identity for a world replace.
+ *
+ * Per-conversation eviction only runs on normal conversation completion. A world
+ * replace abandons in-flight LLM conversations (the `taskRunner.drain()` race in
+ * `setup.replaceWorld`, then `resetSlots()`), so their entries are never evicted.
+ * Both `conversations.id` and `agents.id` restart at 1 after the wipe, so the new
+ * world's conversation 1 / speaker 1 would otherwise read the previous world's
+ * identity, relationship and location straight into the LLM prompt.
+ */
+export function clearAllConversationCaches(): void {
+  identityCache.clear();
+}
 import { getDrinkCount } from '../lib/tavernEngine';
 
 export async function getConversationContext(conversationId: number, speakerId: number) {

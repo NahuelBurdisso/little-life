@@ -85,6 +85,9 @@ export class TensionTracker {
     state.lastSnapTick = tick;
     state.snapCount += 1;
     state.value = 20;
+    // The grievances were just acted on. Keeping them would feed the same stale
+    // reasons into every future snap prompt for the rest of the run.
+    state.sources = [];
   }
 
   // ─── Relief events ───────────────────────────────────────────────────────────

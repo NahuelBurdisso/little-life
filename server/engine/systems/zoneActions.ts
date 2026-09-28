@@ -1,26 +1,28 @@
 import { db } from '../../db';
 import { agents, needs, economy, worldState } from '../../db/schema';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '../../lib/activityLogger';
 import { addToInventory } from '../../lib/economyEngine';
 import { practiceHobby, getSkillOutputMultiplier, getSkillNeedBonus } from '../../lib/hobbyEngine';
 
 interface ZoneActionEffect {
-  needDeltas: Record<string, number>; // positive = increases need value, negative = decreases
+  // Need values in this codebase are SATISFACTION (0 = starving/exhausted), so a
+  // positive delta is a gain and a negative delta is a cost. This is the opposite
+  // of the decay-modifier convention used in needs.ts.
+  needDeltas: Record<string, number>;
   itemProduced?: { item: string; qty: number };
 }
 
 const ZONE_ACTION_EFFECTS: Record<string, () => ZoneActionEffect> = {
-  cook:        () => ({ needDeltas: { hunger: -20 } }),
-  rest:        () => ({ needDeltas: { energy: -5 } }),
+  cook:        () => ({ needDeltas: { hunger: 20 } }),
+  rest:        () => ({ needDeltas: { energy: 5 } }),
   contemplate: () => ({ needDeltas: { mood: 5, comfort: 3 } }),
-  fish:        () => ({ needDeltas: { fun: -4 }, itemProduced: { item: 'food_raw', qty: 1 } }),
-  garden:      () => ({ needDeltas: { comfort: -4, mood: 3 } }),
+  fish:        () => ({ needDeltas: { fun: 4 }, itemProduced: { item: 'food_raw', qty: 1 } }),
+  garden:      () => ({ needDeltas: { comfort: 4, mood: 3 } }),
   forage:      () => ({ needDeltas: {}, itemProduced: { item: 'food_raw', qty: 1 } }),
-  perform:     () => ({ needDeltas: { fun: -6, social: -3 } }),
-  watch:       () => ({ needDeltas: { fun: -3, social: -2 } }),
-  browse:      () => ({ needDeltas: { fun: -2 } }),
-  jog:         () => ({ needDeltas: { fun: -3, mood: 2, energy: 4 } }),
+  perform:     () => ({ needDeltas: { fun: 6, social: 3 } }),
+  watch:       () => ({ needDeltas: { fun: 3, social: 2 } }),
+  browse:      () => ({ needDeltas: { fun: 2 } }),
+  jog:         () => ({ needDeltas: { fun: 3, mood: 2, energy: -4 } }),
 };
 
 // Need columns that exist in the needs table
@@ -58,8 +60,8 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
     for (const [need, delta] of Object.entries(effect.needDeltas)) {
       if (isNeedColumn(need)) {
         const current = agentNeeds[need] as number;
-        // Negative deltas (restoration) are enhanced by skill
-        const enhancedDelta = delta < 0 ? delta - skillNeedBonus : delta;
+        // Gains (positive deltas) are enhanced by skill; costs are left alone
+        const enhancedDelta = delta > 0 ? delta + skillNeedBonus : delta;
         updates[need] = Math.max(0, Math.min(100, current + enhancedDelta));
       }
     }
@@ -83,12 +85,8 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
     }
   }
 
-  // Log activity
-  logActivity({
-    type: actionType,
-    initiator: agentId,
-    templateData: { agent: agent.name, action: actionType },
-  });
+  // No activity log here: decisions.ts already writes a feed row for every
+  // zone activity when it is chosen, so logging again on arrival double-posts.
 
   return true;
 }

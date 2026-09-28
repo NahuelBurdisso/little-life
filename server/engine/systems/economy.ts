@@ -18,10 +18,12 @@ const productionThisTick = new Map<number, { item: string; qty: number }>();
 let dailyLivingCostMultiplier = 1.0;
 let dailyTaxRateMultiplier = 1.0;
 
-export function getDailyTaxMultiplier(): number { return dailyTaxRateMultiplier; }
-export function getDailyLivingCostMultiplier(): number { return dailyLivingCostMultiplier; }
-
 const lastMilestoneLevel = new Map<number, number>();
+
+/** Drop per-agent wealth-milestone tracking for a world replace (agent ids are reused). */
+export function clearMilestoneTracking(): void {
+  lastMilestoneLevel.clear();
+}
 const MILESTONES = [10, 25, 50, 100];
 
 function checkMilestone(agentId: number, money: number): void {
