@@ -31,8 +31,8 @@ import { CONFIG } from '../../lib/constants';
 import { clearConversationCache, fallbackDetector } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
-import { selectTemplate, interpolateTemplate } from '../../ai/templates';
-import { TEMPLATE_REPLY_FALLBACKS } from '../../data/templates';
+import { selectTemplate, interpolateTemplate, greetingCategory } from '../../ai/templates';
+import { TEMPLATE_REPLY_FALLBACKS, ROLE_PLACEHOLDERS } from '../../data/templates';
 import { OUTDOOR_TYPES } from '../../lib/worldgen/buildingTemplates';
 import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
@@ -1505,23 +1505,24 @@ async function processTimedOutEntry(
     )
     .get();
 
-  const friendship = relationship
-    ? (relationship.friendship_ab + relationship.friendship_ba) / 2
-    : 0;
-
-  const needs0 = db
-    .select()
-    .from(needs)
-    .where(eq(needs.agent_id, agentList[0].id))
-    .get();
-
-  const mood = needs0 ? needs0.mood : 50;
+  // Each speaker's lines are chosen from THEIR OWN state: their feelings toward
+  // the other (friendship is directional) and their own needs. Both used to use
+  // the pair's average friendship and the opener's mood, so a miserable listener
+  // replied with the opener's cheer, and one-sided feelings averaged away.
+  const speakerState = agentList.map((agent) => {
+    const isA = agent.id === orderedA;
+    const n = db.select().from(needs).where(eq(needs.agent_id, agent.id)).get();
+    return {
+      friendship: relationship ? (isA ? relationship.friendship_ab : relationship.friendship_ba) : 0,
+      mood: n?.mood ?? 50,
+      hunger: n?.hunger ?? 50,
+      energy: n?.energy ?? 50,
+    };
+  });
+  const { friendship, mood } = speakerState[0];
   const dayPhase = world.day_phase;
 
-  // Select category based on context — use the richest matching template
-  const needs0Val = needs0 ? { hunger: needs0.hunger, energy: needs0.energy } : { hunger: 50, energy: 50 };
-
-  // Build a prioritized list of categories to try
+  // Build a prioritized list of categories to try (for the opener, speaker 0)
   const categoriesToTry: string[] = [];
 
   // Negative/conflict categories (highest priority — drama first).
@@ -1534,8 +1535,8 @@ async function processTimedOutEntry(
 
   // Contextual categories (interesting situations)
   if (mood < 30) categoriesToTry.push('complaint_mood');
-  if (needs0Val.hunger < 35) categoriesToTry.push('hungry');
-  if (needs0Val.energy < 35) categoriesToTry.push('tired');
+  if (speakerState[0].hunger < 35) categoriesToTry.push('hungry');
+  if (speakerState[0].energy < 35) categoriesToTry.push('tired');
   if (mood > 70 && friendship > 30) categoriesToTry.push('excited_event');
 
   // Location-specific
@@ -1549,9 +1550,7 @@ async function processTimedOutEntry(
   categoriesToTry.push('small_talk_work');
 
   // Greeting as fallback
-  if (friendship > 30) categoriesToTry.push('greeting_friendly');
-  else if (friendship < -20) categoriesToTry.push('greeting_cold');
-  else categoriesToTry.push('greeting_neutral');
+  categoriesToTry.push(greetingCategory(friendship));
 
   // Get location name for template interpolation
   const templateLocation = db.select({ name: locations.name }).from(locations).where(eq(locations.id, locationId)).get();
@@ -1560,6 +1559,24 @@ async function processTimedOutEntry(
   // setting they need.
   const setting: 'indoor' | 'outdoor' | null =
     loc0?.type != null ? (OUTDOOR_TYPES.has(loc0.type) ? 'outdoor' : 'indoor') : null;
+
+  // Real townsfolk for `{baker.name}`-style placeholders (see ROLE_PLACEHOLDERS):
+  // only active agents in that job who aren't part of this conversation. A role
+  // nobody fills leaves its placeholder unset, which makes selectTemplate skip
+  // the variants that use it.
+  const roleVars: Record<string, string> = {};
+  for (const [placeholder, job] of Object.entries(ROLE_PLACEHOLDERS)) {
+    const holders = db
+      .select({ name: agents.name, id: agents.id })
+      .from(economy)
+      .innerJoin(agents, eq(agents.id, economy.agent_id))
+      .where(and(eq(economy.job, job), eq(agents.is_active, true)))
+      .all()
+      .filter((h) => !entry.participants.includes(h.id));
+    if (holders.length > 0) roleVars[placeholder] = holders[Math.floor(Math.random() * holders.length)].name;
+  }
+  const tavern = db.select({ name: locations.name }).from(locations).where(eq(locations.type, 'tavern')).get();
+  if (tavern) roleVars['tavern.name'] = tavern.name;
 
   /**
    * Picks the first category that yields a template and renders it for the
@@ -1572,46 +1589,46 @@ async function processTimedOutEntry(
     speakerIdx: 0 | 1,
     ignoreLocation = false,
   ): { text: string; sentiment: number; category: string } | null => {
+    const speaker = agentList[speakerIdx];
+    const other = agentList[speakerIdx === 0 ? 1 : 0];
+    const vars: Record<string, string> = {
+      ...roleVars,
+      'speaker.name': speaker.name,
+      'other.name': other.name,
+      'listener.name': other.name,
+      'location.name': templateLocation?.name ?? 'town',
+      'weather': (world.weather as string) ?? 'weather',
+    };
     for (const category of categories) {
       const picked = selectTemplate(
         category,
         entry.participants[0],
         entry.participants[1],
         {
-          friendship,
-          mood,
+          friendship: speakerState[speakerIdx].friendship,
+          mood: speakerState[speakerIdx].mood,
           timeOfDay: dayPhase,
           locationType: ignoreLocation ? null : (loc0?.type ?? null),
           weather: world.weather as string,
           setting,
           // `{location.name}` is the conversation's location; "you have to come
           // to Home 4" is only sayable to a listener who isn't already there.
-          listenerElsewhere: agentList[speakerIdx === 0 ? 1 : 0].current_location !== locationId,
+          listenerElsewhere: other.current_location !== locationId,
         },
+        vars,
       );
       if (!picked) continue;
-      const speaker = agentList[speakerIdx];
-      const other = agentList[speakerIdx === 0 ? 1 : 0];
       return {
         category,
         sentiment: picked.sentiment,
-        text: interpolateTemplate(picked.text, {
-          'speaker.name': speaker.name,
-          'other.name': other.name,
-          'listener.name': other.name,
-          'location.name': templateLocation?.name ?? 'town',
-          'weather': (world.weather as string) ?? 'weather',
-        }),
+        text: interpolateTemplate(picked.text, vars),
       };
     }
     return null;
   };
 
-  const fallbackCategory =
-    friendship > 30 ? 'greeting_friendly' : friendship < -20 ? 'greeting_cold' : 'greeting_neutral';
-
   const opener =
-    buildLine(categoriesToTry, 0) ?? buildLine([fallbackCategory], 0, true);
+    buildLine(categoriesToTry, 0) ?? buildLine([greetingCategory(friendship)], 0, true);
 
   const matchedCategory = opener?.category ?? '';
 
@@ -1626,7 +1643,7 @@ async function processTimedOutEntry(
   const replyCategories =
     turns[0].sentiment <= -0.2
       ? ['snide_remark', 'passive_aggressive', 'tense_encounter', 'greeting_cold']
-      : ['small_talk_weather', 'small_talk_work', 'excited_event', fallbackCategory];
+      : ['small_talk_weather', 'small_talk_work', 'excited_event', greetingCategory(speakerState[1].friendship)];
   // When every reply category is on its per-pair cooldown (pairs that keep
   // bumping into each other exhaust them fast) the exchange used to stop at the
   // opener. Fall back to a stock acknowledgement so both people always speak.

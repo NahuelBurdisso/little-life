@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { eq, inArray, like, sql } from 'drizzle-orm';
 import { db } from '../../db';
 import {
@@ -8,12 +8,13 @@ import {
   conversationSchedulerState,
   locations,
   needs,
+  relationships,
   relationshipEvents,
   templateUsage,
   worldState,
 } from '../../db/schema';
 import { CONVERSATION_TEMPLATES } from '../../data/templates';
-import { selectTemplate, type TemplateState } from '../templates';
+import { greetingCategory, selectTemplate, type TemplateState } from '../templates';
 import { conversationsTick } from '../../engine/systems/conversations';
 
 /**
@@ -51,10 +52,14 @@ function clearUsage(): void {
 
 /** Every text the selector can produce for these inputs, cooldowns cleared each draw. */
 function draw(category: string, s: TemplateState): Set<string> {
+  return drawWith(category, s, undefined);
+}
+
+function drawWith(category: string, s: TemplateState, vars: Record<string, string> | undefined): Set<string> {
   const seen = new Set<string>();
   for (let i = 0; i < DRAWS; i++) {
     clearUsage();
-    const picked = selectTemplate(category, a, b, s);
+    const picked = selectTemplate(category, a, b, s, vars);
     if (picked) seen.add(picked.text);
   }
   return seen;
@@ -180,6 +185,56 @@ describe('selectTemplate — context', () => {
   });
 });
 
+describe('greetings', () => {
+  it('have a template for every relationship band, mood and time of day', () => {
+    const phases = ['dawn', 'morning', 'afternoon', 'evening', 'night'];
+    const gaps: string[] = [];
+    for (let friendship = -100; friendship <= 100; friendship += 5) {
+      for (let mood = 0; mood <= 100; mood += 10) {
+        for (const timeOfDay of phases) {
+          clearUsage();
+          const category = greetingCategory(friendship);
+          const picked = selectTemplate(category, a, b, state({ friendship, mood, timeOfDay, weather: 'cloudy' }));
+          if (!picked) gaps.push(`${category} f=${friendship} mood=${mood} ${timeOfDay}`);
+        }
+      }
+    }
+    expect(gaps).toEqual([]);
+  });
+
+  it('greets a stranger (friendship 0) neutrally', () => {
+    expect(greetingCategory(0)).toBe('greeting_neutral');
+    expect(draw('greeting_neutral', state({ friendship: 0, mood: 50 })).size).toBeGreaterThan(0);
+  });
+});
+
+describe('templates grounded in the real town', () => {
+  beforeEach(clearUsage);
+
+  it('names no member of the old fixed cast', () => {
+    for (const t of CONVERSATION_TEMPLATES) {
+      for (const v of t.variants) expect(v.text).not.toMatch(/\b(Priya|Marco|Little Life)\b/);
+    }
+  });
+
+  const base = { 'other.name': 'Omar', 'location.name': 'Home 4', 'speaker.name': 'Priya' };
+  const hungry = state({ friendship: 50, timeOfDay: 'afternoon', locationType: 'home' });
+
+  it("drops a role line when nobody holds that job", () => {
+    for (const line of drawWith('hungry', hungry, base)) expect(line).not.toContain('{baker.name}');
+    expect(drawWith('hungry', hungry, { ...base, 'baker.name': 'Ines' })).toContain(
+      "{baker.name}'s bread was incredible today. Have you tried it, {other.name}?",
+    );
+  });
+
+  it('never invites someone to the tavern while already in it', () => {
+    const vars = { ...base, 'tavern.name': 'The Rusty Mug' };
+    const atTavern = drawWith('hungry', { ...hungry, locationType: 'tavern' }, vars);
+    for (const line of atTavern) expect(line).not.toContain('{tavern.name}');
+    expect([...drawWith('hungry', hungry, vars)].some((l) => l.includes('{tavern.name}'))).toBe(true);
+  });
+});
+
 describe('template conversations', () => {
   beforeEach(() => {
     clearUsage();
@@ -239,5 +294,67 @@ describe('template conversations', () => {
     expect(messages.length).toBeGreaterThanOrEqual(2);
     expect(messages[0].speakerId).toBe(a);
     expect(messages[1].speakerId).toBe(b);
+  });
+
+  describe('each speaker speaks from their own state', () => {
+    // a < b (inserted first), so friendship_ab is a's feeling toward b.
+    function setFeelings(aTowardB: number, bTowardA: number): void {
+      db.delete(relationships).where(eq(relationships.agent_a, a)).run();
+      db.insert(relationships).values({
+        agent_a: a, agent_b: b,
+        friendship_ab: aTowardB, friendship_ba: bTowardA,
+        romance_ab: 0, romance_ba: 0, trust_ab: 50, trust_ba: 50,
+        familiarity: 40, interaction_count: 5, last_interaction: 0,
+        average_interaction_sentiment: 0, tags: [], status: 'acquaintance',
+        created_at: 0, last_updated: 0,
+      }).run();
+    }
+    function setMood(agentId: number, mood: number): void {
+      db.update(needs).set({ mood }).where(eq(needs.agent_id, agentId)).run();
+    }
+    function coolDown(...categories: string[]): void {
+      for (const category of categories) {
+        db.insert(templateUsage).values({ template_category: category, agent_a: a, agent_b: b, used_at: Date.now() }).run();
+      }
+    }
+    const lines = (category: string) =>
+      CONVERSATION_TEMPLATES.filter((t) => t.category === category).flatMap((t) => t.variants.map((v) => v.text));
+    const render = (text: string, otherName: string) =>
+      text.replace('{other.name}', otherName).replace('{location.name}', 'Home 4');
+
+    afterEach(() => {
+      db.delete(relationships).where(eq(relationships.agent_a, a)).run();
+      setMood(a, 55);
+      setMood(b, 55);
+    });
+
+    it('uses the replier\'s own friendship: a warm opener can get a cold reply', async () => {
+      setFeelings(60, -50);
+      setMood(a, 55);
+      setMood(b, 55);
+      // Leave only greetings on the table for both turns.
+      coolDown('small_talk_weather', 'small_talk_work', 'excited_event');
+
+      const messages = (await runTemplateConversation()).messages as Array<{ text: string }>;
+
+      expect(lines('greeting_friendly').map((t) => render(t, 'Omar Haddad'))).toContain(messages[0].text);
+      expect(lines('greeting_cold').map((t) => render(t, 'Priya Sharma'))).toContain(messages[1].text);
+    });
+
+    it("uses the replier's own mood: a cheerful opener doesn't make a miserable partner cheerful", async () => {
+      setFeelings(60, 60);
+      setMood(a, 85);
+      setMood(b, 10);
+      coolDown('small_talk_weather');
+
+      const messages = (await runTemplateConversation()).messages as Array<{ text: string }>;
+
+      // Opener (mood 85) is excited; the reply is small talk about work, picked
+      // for the replier's mood 10 — the "rough day" set, not the upbeat one.
+      const rough = CONVERSATION_TEMPLATES
+        .filter((t) => t.category === 'small_talk_work' && t.conditions.maxMood != null)
+        .flatMap((t) => t.variants.map((v) => v.text));
+      expect(rough).toContain(messages[1].text);
+    });
   });
 });

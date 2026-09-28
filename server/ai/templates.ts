@@ -27,6 +27,19 @@ export interface TemplateState {
   listenerElsewhere?: boolean;
 }
 
+/**
+ * Which greeting category fits a speaker's friendship toward the listener. The
+ * bands must line up with the greeting templates' friendship conditions: the
+ * old inline thresholds (friendly > 30, cold < -20, else neutral) sent
+ * friendship 31–39 to a category whose templates start at 40, and strangers
+ * (0–9) to a neutral category whose templates started at 10 — no greeting at all.
+ */
+export function greetingCategory(friendship: number): 'greeting_friendly' | 'greeting_neutral' | 'greeting_cold' {
+  if (friendship >= 40) return 'greeting_friendly';
+  if (friendship < -20) return 'greeting_cold';
+  return 'greeting_neutral';
+}
+
 function matchesField(conditionValue: any, stateValue: string | null): boolean {
   if (conditionValue == null) return true; // no condition = pass
   if (stateValue == null) return true; // no state = don't filter
@@ -58,6 +71,9 @@ function conditionsMatch(
   if (!matchesField(conditions.location, state.locationType)) {
     return false;
   }
+  if (conditions.notLocation && state.locationType != null && conditions.notLocation.includes(state.locationType)) {
+    return false;
+  }
   if (!matchesField(conditions.weather, state.weather)) {
     return false;
   }
@@ -73,14 +89,34 @@ function conditionsMatch(
   return true;
 }
 
+/** True when every `{placeholder}` in `text` has a value in `vars`. */
+function placeholdersResolvable(text: string, vars: Record<string, string>): boolean {
+  for (const m of text.matchAll(/\{([^}]+)\}/g)) {
+    if (!(m[1].trim() in vars)) return false;
+  }
+  return true;
+}
+
+/**
+ * `vars`, when given, are the values the caller will interpolate with. Variants
+ * that reference a placeholder missing from it (e.g. `{baker.name}` in a town
+ * with no baker) are not eligible, and a template left with no eligible variant
+ * doesn't match — so the line is dropped, never rendered with a raw `{...}`.
+ */
 export function selectTemplate(
   category: string,
   agentA: number,
   agentB: number,
-  currentState: TemplateState
+  currentState: TemplateState,
+  vars?: Record<string, string>
 ): { text: string; sentiment: number } | null {
-  // 1. Templates for this category
-  const categoryTemplates = CONVERSATION_TEMPLATES.filter((t) => t.category === category);
+  // 1. Templates for this category, with only the variants we can render
+  const categoryTemplates = CONVERSATION_TEMPLATES
+    .filter((t) => t.category === category)
+    .map((t) => vars
+      ? { ...t, variants: t.variants.filter((v) => placeholdersResolvable(v.text, vars)) }
+      : t)
+    .filter((t) => t.variants.length > 0);
 
   if (categoryTemplates.length === 0) return null;
 

@@ -25,10 +25,25 @@ export interface TemplateDef {
     setting?: 'indoor' | 'outdoor' | null;
     /** Only when the listener is NOT at the conversation's location. */
     listenerElsewhere?: boolean | null;
+    /** Location types where this template must NOT be used. */
+    notLocation?: string[] | null;
   };
   variants: Array<{ text: string; sentiment: number }>;
   cooldownPerPair: number;
 }
+
+/**
+ * Placeholders that name a real townsperson by job (from `economy.job`). The
+ * catalog was written for a fixed cast ("Priya's bread", "Marco makes the best
+ * drinks"); procedural towns have different people, or none in that job. A
+ * variant using one of these is only eligible when an active agent holds the
+ * job and is neither of the two people talking; otherwise the variant is
+ * skipped. `{tavern.name}` works the same way for the town's tavern.
+ */
+export const ROLE_PLACEHOLDERS: Record<string, string> = {
+  'baker.name': 'baker',
+  'bartender.name': 'bartender',
+};
 
 /**
  * A generic answer for the second speaker when no template reply is available
@@ -108,12 +123,50 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
     ],
     cooldownPerPair: 4,
   },
+  {
+    // Friends still greet each other on a bad day — just more quietly.
+    category: "greeting_friendly",
+    conditions: {
+      minFriendship: 40,
+      maxFriendship: null,
+      minMood: null,
+      maxMood: 49,
+      timeOfDay: null,
+      location: null,
+      weather: null,
+    },
+    variants: [
+      { text: "Hey, {other.name}. Glad it's you.", sentiment: 0.4 },
+      { text: "Oh, {other.name}. I could use a friendly face today.", sentiment: 0.3 },
+    ],
+    cooldownPerPair: 4,
+  },
 
   // ===== greeting_neutral =====
+  // Greeting bands (see greetingCategory in server/ai/templates.ts): friendly
+  // at friendship >= 40, cold below -20, neutral in between — which includes
+  // strangers at 0. Every band has a template for every mood.
   {
     category: "greeting_neutral",
     conditions: {
-      minFriendship: 10,
+      minFriendship: -20,
+      maxFriendship: 39,
+      minMood: null,
+      maxMood: 29,
+      timeOfDay: null,
+      location: null,
+      weather: null,
+    },
+    variants: [
+      { text: "Oh. Hi, {other.name}.", sentiment: 0.0 },
+      { text: "*gives {other.name} a tired nod*", sentiment: 0.0 },
+    ],
+    cooldownPerPair: 4,
+  },
+  {
+    category: "greeting_neutral",
+    conditions: {
+      minFriendship: -20,
       maxFriendship: 39,
       minMood: 30,
       maxMood: null,
@@ -131,7 +184,7 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
   {
     category: "greeting_neutral",
     conditions: {
-      minFriendship: 10,
+      minFriendship: -20,
       maxFriendship: 39,
       minMood: 30,
       maxMood: null,
@@ -147,7 +200,7 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
   {
     category: "greeting_neutral",
     conditions: {
-      minFriendship: 10,
+      minFriendship: -20,
       maxFriendship: 39,
       minMood: null,
       maxMood: null,
@@ -264,8 +317,8 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
       { text: "{other.name}! Pull up a chair, drinks are on me tonight.", sentiment: 0.7 },
       { text: "Nothing like a cold one after a long day. Cheers, {other.name}!", sentiment: 0.6 },
       { text: "This place really comes alive at night. Glad to see you here, {other.name}.", sentiment: 0.5 },
-      { text: "Marco makes the best drinks in town. What are you having, {other.name}?", sentiment: 0.5 },
-      { text: "*raises glass* To another day survived in Little Life!", sentiment: 0.6 },
+      { text: "{bartender.name} makes the best drinks in town. What are you having, {other.name}?", sentiment: 0.5 },
+      { text: "*raises glass* To another day survived in this town!", sentiment: 0.6 },
     ],
     cooldownPerPair: 4,
   },
@@ -867,9 +920,28 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
       weather: null,
     },
     variants: [
-      { text: "{other.name}, want to grab a bite at the tavern? I'm starving.", sentiment: 0.4 },
       { text: "I could eat a whole harvest feast right now. Join me for food?", sentiment: 0.3 },
-      { text: "Priya's bread was incredible today. Have you tried it, {other.name}?", sentiment: 0.5 },
+      // Dropped automatically when the town has no baker (or the baker is one
+      // of the two people talking) — see ROLE_PLACEHOLDERS.
+      { text: "{baker.name}'s bread was incredible today. Have you tried it, {other.name}?", sentiment: 0.5 },
+    ],
+    cooldownPerPair: 4,
+  },
+  {
+    category: "hungry",
+    conditions: {
+      minFriendship: 30,
+      maxFriendship: null,
+      minMood: null,
+      maxMood: null,
+      timeOfDay: ["afternoon", "evening"],
+      location: null,
+      weather: null,
+      // Not an invitation you make while already sitting in the tavern.
+      notLocation: ["tavern"],
+    },
+    variants: [
+      { text: "{other.name}, want to grab a bite at {tavern.name}? I'm starving.", sentiment: 0.4 },
     ],
     cooldownPerPair: 4,
   },
