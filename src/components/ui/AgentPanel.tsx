@@ -71,13 +71,32 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
     memories,
     states: agentStates,
     conversationHistory,
-    isLoading,
+    status,
   } = useSelectedAgent(agentId);
   const { world } = useWorldState();
   const { agents: allAgents } = useAgents();
   const { conversations: activeConversations } = useConversations();
 
-  if (isLoading || !data?.agent) {
+  // Nothing left to show for this id (removed agent, or an id from a world
+  // that has since been replaced): deselect, the same as pressing ✕. Keeping
+  // the panel open on a "not found" card would just be a dead end the user has
+  // to dismiss by hand.
+  useEffect(() => {
+    if (status === "notFound") onClose();
+  }, [status, onClose]);
+
+  if (status === "error") {
+    return (
+      <div className="h-full bg-gray-800 border-l border-gray-700 flex flex-col items-center justify-center gap-2 p-3">
+        <p className="text-sm text-gray-400">Couldn't load this resident.</p>
+        <button onClick={onClose} className="text-xs text-gray-400 hover:text-white underline">
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  if (status !== "ready" || !data?.agent) {
     return (
       <div className="h-full bg-gray-800 border-l border-gray-700 flex items-center justify-center">
         <p className="text-sm text-gray-400">Loading...</p>
