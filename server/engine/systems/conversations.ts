@@ -528,6 +528,21 @@ async function processCompletedConversation(
   // with every turn it was allowed, and calling it "cut off" would be a lie.
   const cutShort = truncated && messages.length < fresh.max_turns;
 
+  // Nothing was said: the LLM hung for the whole turn budget before the first
+  // reply landed. Running the full completion path here invented a conversation
+  // that never happened — a social boost of ~8, relationship events computed off
+  // zero turns, "we talked about X" memories, cascade triggers. End it quietly
+  // and just hand the participants back. (Only a force-end can reach here with
+  // an empty transcript: a natural end needs `max_turns` messages.)
+  if (messages.length === 0) {
+    db.update(conversations)
+      .set({ status: 'ended', ended_at: now, sentiment: 0 })
+      .where(eq(conversations.id, fresh.id))
+      .run();
+    if (releaseTalkingParticipants(fresh)) emitter.markDirty('agents.all');
+    return;
+  }
+
   // Calculate overall sentiment: average of all message sentiments
   let overallSentiment = 0;
   if (messages.length > 0) {

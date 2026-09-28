@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { eq, inArray } from 'drizzle-orm';
-import { db, sqlite } from '../../../db';
+import { eq, inArray, sql } from 'drizzle-orm';
+import { db } from '../../../db';
 import {
   agents,
+  agentStates,
   conversations,
   conversationQueue,
   conversationSchedulerState,
+  locations,
+  needs,
   relationshipEvents,
   worldState,
 } from '../../../db/schema';
@@ -65,7 +68,20 @@ function setActive(entries: Array<{ conversationId: number; startedAt: number }>
   }).run();
 }
 
-function insertAgent(name: string): number {
+function insertHome(): number {
+  return db.insert(locations).values({
+    name: 'Test Cottage',
+    type: 'home',
+    position: { x: 0, y: 0, width: 4, height: 4 },
+    entry_point: { x: 0, y: 0 },
+    capacity: 2,
+    current_occupants: [],
+    services: [],
+    description: 'test',
+  }).returning({ id: locations.id }).get().id;
+}
+
+function insertAgent(name: string, home: number): number {
   return db.insert(agents).values({
     name,
     bio: 'test',
@@ -80,7 +96,7 @@ function insertAgent(name: string): number {
     action_started: 0,
     action_queue: [],
     schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: [] },
-    home: 1,
+    home,
     created_at: 0,
     is_active: true,
   }).returning({ id: agents.id }).get().id;
@@ -109,25 +125,42 @@ function insertConversation(participants: number[], turns: number, maxTurns: num
 
 describe('conversationsTick — truncated conversations (B3)', () => {
   const agentIds: number[] = [];
+  let homeId = 0;
   const ended: Array<{ agentId: number; truncated?: boolean }> = [];
   const onEnded = (p: { agentId: number; truncated?: boolean }) => ended.push(p);
 
   beforeAll(() => {
-    // Agents reference a home location; this test only needs the rows to exist.
-    sqlite.pragma('foreign_keys = OFF');
     ensureWorld();
-    agentIds.push(insertAgent('Ada'), insertAgent('Bram'));
+    homeId = insertHome();
+    agentIds.push(insertAgent('Ada', homeId), insertAgent('Bram', homeId));
+    for (const agent_id of agentIds) {
+      db.insert(needs).values({
+        agent_id,
+        hunger: 50, energy: 50, social: 40, comfort: 50, fun: 40, mood: 50, stress: 20,
+        decay_rates: { hunger: 1, energy: 1, social: 1, comfort: 1, fun: 1 },
+        thresholds: { critical: 10, low: 30, satisfied: 70 },
+        mood_modifiers: [],
+        last_updated: 0,
+      }).run();
+    }
     simEvents.on('conversation:ended', onEnded);
   });
 
   afterAll(() => {
     simEvents.off('conversation:ended', onEnded);
     setActive([]);
-    // Workers reuse the DB across files, so don't leave two extra townsfolk behind.
+    // Workers reuse the DB across files, so leave nothing of these two behind.
+    const ids = sql.join(agentIds.map((id) => sql`${id}`), sql`, `);
+    db.run(sql`DELETE FROM activity_log
+               WHERE initiator_id IN (${ids}) OR target_id IN (${ids})
+                  OR EXISTS (SELECT 1 FROM json_each(activity_log.agent_ids) WHERE value IN (${ids}))`);
     db.delete(conversations).where(eq(conversations.trigger_reason, 'test')).run();
     db.delete(relationshipEvents).where(inArray(relationshipEvents.agent_a, agentIds)).run();
+    db.delete(relationshipEvents).where(inArray(relationshipEvents.agent_b, agentIds)).run();
+    db.delete(agentStates).where(inArray(agentStates.agent_id, agentIds)).run();
+    db.delete(needs).where(inArray(needs.agent_id, agentIds)).run();
     db.delete(agents).where(inArray(agents.id, agentIds)).run();
-    sqlite.pragma('foreign_keys = ON');
+    db.delete(locations).where(eq(locations.id, homeId)).run();
   });
 
   beforeEach(() => {
@@ -187,5 +220,37 @@ describe('conversationsTick — truncated conversations (B3)', () => {
 
     expect(ended).toHaveLength(2);
     expect(ended.every((e) => e.truncated === false)).toBe(true);
+  });
+
+  it('ends a zero-turn force-ended conversation quietly', async () => {
+    // The LLM hung for the whole budget and nothing was ever said.
+    const id = insertConversation(agentIds, 0, 6);
+    for (const agentId of agentIds) {
+      db.update(agents)
+        .set({ current_action: { type: 'talking', conversationId: id } })
+        .where(eq(agents.id, agentId))
+        .run();
+    }
+    const socialBefore = db.select().from(needs).where(inArray(needs.agent_id, agentIds)).all()
+      .map((n) => n.social);
+    const relEventsBefore = db.select().from(relationshipEvents)
+      .where(inArray(relationshipEvents.agent_a, agentIds)).all().length;
+    setActive([{ conversationId: id, startedAt: Date.now() - 10_000_000 }]);
+
+    await conversationsTick();
+
+    const row = db.select().from(conversations).where(eq(conversations.id, id)).get()!;
+    expect(row.status).toBe('ended');
+    // No memory, no cascade trigger, no relationship change, no social boost.
+    expect(ended).toHaveLength(0);
+    expect(record).not.toHaveBeenCalled();
+    expect(db.select().from(relationshipEvents)
+      .where(inArray(relationshipEvents.agent_a, agentIds)).all()).toHaveLength(relEventsBefore);
+    expect(db.select().from(needs).where(inArray(needs.agent_id, agentIds)).all()
+      .map((n) => n.social)).toEqual(socialBefore);
+    // ...but the participants are handed back.
+    for (const a of db.select().from(agents).where(inArray(agents.id, agentIds)).all()) {
+      expect(a.current_action).toEqual({ type: 'idle' });
+    }
   });
 });
