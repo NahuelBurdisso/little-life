@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { configDefaults } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
@@ -14,5 +15,9 @@ export default defineConfig({
     // one WAL file. Must stay a setupFile: server/db reads DATABASE_PATH at
     // import time, and setupFiles are the last hook that runs before that.
     setupFiles: "./server/db/testWorker.ts",
+    // Agent worktrees live under .claude/worktrees/ with full copies of the
+    // test suite. Without this, `npm test` at the root collected every copy
+    // (241 files instead of ~46) and ran other branches' half-finished code.
+    exclude: [...configDefaults.exclude, ".claude/**"],
   },
 });
