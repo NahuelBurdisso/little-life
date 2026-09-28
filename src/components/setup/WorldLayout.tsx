@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from 'react';
 import { trpc } from '../../lib/trpc';
 import { WorldPreview } from './WorldPreview';
 import {
@@ -78,10 +78,13 @@ export function WorldLayout({
   // Everything social placement reads: names, homes and workplaces, the
   // relationship rows, and the scenario (whose romance threads and rivalries
   // depend on the agents' ages and personalities too, so the whole agent list
-  // goes in). A string, so it is a stable scalar dep.
-  const socialKey = config.socialPlacement === false
-    ? 'off'
-    : JSON.stringify([agents, relationships, scenario]);
+  // goes in). A string, so it is a stable scalar dep; memoised so the
+  // serialisation runs only when one of its inputs changes, not every render.
+  const socialOff = config.socialPlacement === false;
+  const socialKey = useMemo(
+    () => (socialOff ? 'off' : JSON.stringify([agents, relationships, scenario])),
+    [socialOff, agents, relationships, scenario],
+  );
   const depKey =
     `${config.sizeTier}|${customW}|${customH}|${agentCount}|${homeNamesKey}|${socialKey}`;
 

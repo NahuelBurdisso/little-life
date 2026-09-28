@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AgentConfig, RelationshipConfig, SliderConfig, WorldGenConfig } from './types';
 import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } from './types';
 import { WorldLayout } from './WorldLayout';
@@ -15,9 +15,12 @@ import { trpc } from '../../lib/trpc';
 const STEPS = [
   { id: 'scenario', label: 'Scenario', icon: 'S' },
   { id: 'preview', label: 'Preview', icon: 'P' },
-  { id: 'worldlayout', label: 'World Layout', icon: 'L' },
+  // After agents and relationships: the layout places households by the
+  // relationship graph, so previewing it before the cast is settled showed a
+  // town that Start would then silently rearrange.
   { id: 'agents', label: 'Agents', icon: 'A' },
   { id: 'relationships', label: 'Relationships', icon: 'R' },
+  { id: 'worldlayout', label: 'World Layout', icon: 'L' },
   { id: 'world', label: 'World', icon: 'W' },
   { id: 'rules', label: 'Rules', icon: 'S' },
 ] as const;
@@ -48,6 +51,9 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
   // Regenerating rerolls the scenario without touching the sliders.
   const [scenarioSeed, setScenarioSeed] = useState(() => randomSeed());
   const [worldgen, setWorldgen] = useState<WorldGenConfig>(DEFAULT_WORLDGEN);
+  // Stable identity for `WorldLayout`, which memoises its preview key on it; an
+  // inline `{ ...sliders, seed }` is a new object every render.
+  const scenario = useMemo(() => ({ ...sliders, seed: scenarioSeed }), [sliders, scenarioSeed]);
   // Lives here, not in `WorldLayout`: that step unmounts when the user moves
   // on, so its local error would be gone by the time Start is reachable.
   // `setup.initialize` runs the same worldgen schema as `previewWorld`, so a
@@ -142,7 +148,7 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
               onChange={setWorldgen}
               agents={agents}
               relationships={relationships}
-              scenario={{ ...sliders, seed: scenarioSeed }}
+              scenario={scenario}
               onErrorChange={setWorldgenError}
             />
           )}
