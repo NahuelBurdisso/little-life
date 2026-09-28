@@ -231,4 +231,28 @@ describe('shop purchases', () => {
     ticks(5);
     expect(purchasesBy(fed.buyer).map((t) => t.reason)).toEqual(['purchase:food_prepared']);
   });
+
+  it('a shopkeeper eating in their own shop eats their stock without selling to themselves', () => {
+    // A tavern, so wholesale from other files' producers (it buys drink/food_raw)
+    // can't touch the food_prepared count under test. Money isn't asserted for
+    // the same reason; the ledger is: a self-sale would be a purchase row.
+    const { owner, shop } = scene(stock({ food_prepared: 10 }), 100, [], 'tavern');
+    setAction(owner, { type: 'eating', locationId: shop }, 100, shop);
+
+    ticks(10);
+
+    expect(purchasesBy(owner)).toHaveLength(0);
+    expect(feedPurchasesBy(owner)).toHaveLength(0);
+    expect(count(owner, 'food_prepared')).toBe(9); // one meal, once
+  });
+
+  it('a shopkeeper shopping in their own shop buys nothing', () => {
+    const { owner, shop } = scene(stock({ food_prepared: 1 }), 100, [], 'tavern');
+    setAction(owner, { type: 'shopping', shopId: shop, items: ['food_prepared'] }, 100, shop);
+
+    ticks(5);
+
+    expect(purchasesBy(owner)).toHaveLength(0);
+    expect(count(owner, 'food_prepared')).toBe(1);
+  });
 });

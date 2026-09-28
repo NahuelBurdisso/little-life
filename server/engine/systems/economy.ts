@@ -413,6 +413,18 @@ export function economyTick(): void {
           // retry next tick — restocking (wholesale) or payday can land mid-meal.
           if (!itemToBuy) { continue; }
 
+          // The owner eating in their own shop used to "buy" from themselves:
+          // money went round in a circle minus tax, and the feed got a purchase
+          // line. They just eat one unit of their own stock — no sale, no tax,
+          // no ledger row, no feed line.
+          if (eatLocation.owner === agent.id) {
+            const newInv = removeFromInventory(ownerEcon.inventory as any[], itemToBuy, 1);
+            db.update(economy).set({ inventory: newInv }).where(eq(economy.id, ownerEcon.id)).run();
+            ownerEcon.inventory = newInv;
+            handled.add(MEAL);
+            continue;
+          }
+
           const shopStock = getInventoryCount(ownerEcon.inventory as any[], itemToBuy);
           const price = Math.round(getMarketPrice(itemToBuy, season, shopStock) * getReputationPriceModifier(agent.id));
           if (buyerEcon.money < price) { continue; }
@@ -441,8 +453,9 @@ export function economyTick(): void {
       locationCache.set(shopId, loc);
     }
 
-    // Find shop owner's economy record
-    if (!shopLocation.owner) continue;
+    // Find shop owner's economy record. Shopping in your own shop is a no-op:
+    // the stock is already yours (same self-purchase loop as eating, above).
+    if (!shopLocation.owner || shopLocation.owner === agent.id) continue;
     const ownerEcon = econByAgent.get(shopLocation.owner);
     if (!ownerEcon) continue;
 
