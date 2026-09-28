@@ -20,6 +20,11 @@ export interface LocationSeed {
 }
 
 /** Phase 3 may extend. Placeholder for Phase 1. */
+/** Kinds the terrain stage emits today. `TerrainTile.kind` stays a plain
+ *  string because saved worlds (and the renderer) still carry the legacy
+ *  `tall_grass` kind, which is no longer generated. */
+export type TerrainKind = 'flowers' | 'grass_tuft' | 'dirt_patch' | 'tree' | 'bush' | 'rock';
+
 export interface TerrainTile {
   x: number;
   y: number;
