@@ -39,6 +39,7 @@ import { calculateCompatibility, PersonalityProfile } from '../../lib/personalit
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
 import { getAgentStates } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
+import { extractConfidedQuote } from '../../lib/factText';
 import { evaluateConversation } from '../../lib/conversationEvaluator';
 
 // ---------------------------------------------------------------------------
@@ -806,15 +807,22 @@ async function processCompletedConversation(
           )).get();
         const friendship = rel ? (participantId < otherId ? rel.friendship_ab : rel.friendship_ba) : 0;
         if (friendship > 60) {
-          // Extract a snippet of what they actually said for the secret content
-          const speakerMsgs = messages.filter(m => m.speakerId === participantId);
-          const snippet = speakerMsgs.length > 0
-            ? speakerMsgs[speakerMsgs.length - 1].text.substring(0, 80)
-            : '';
-          createFact('secret_told', participantId, otherId, 3, [participantId, otherId], 'confided', {
-            quote: snippet || undefined,
-            detail: fresh.topic ? `about ${fresh.topic}` : undefined,
-          });
+          // The secret is what they actually said. Conversations carry no
+          // structured summary, so take the latest line with real speech in it:
+          // stage directions stripped, whole sentences only. A fixed 80-char
+          // cut used to turn "(My heart gives a little skip, and I feel a
+          // warmth bloom…" into a sensitivity-3 secret the town then passed
+          // around. No quotable line means nothing was confided — no fact.
+          const quote = messages
+            .filter(m => m.speakerId === participantId)
+            .reverse()
+            .map(m => extractConfidedQuote(m.text))
+            .find((q): q is string => q != null);
+          if (quote) {
+            createFact('secret_told', participantId, otherId, 3, [participantId, otherId], 'confided', {
+              quote,
+            });
+          }
         }
       }
     }

@@ -50,3 +50,42 @@ export function endSentence(text: string): string {
 export function thatSentence(lead: string, factContent: string): string {
   return endSentence(`${lead} that ${asClause(factContent)}`);
 }
+
+/**
+ * Pull something quotable out of an LLM conversation line for a "confided" fact.
+ *
+ * Model output mixes speech with stage directions — "(My heart gives a little
+ * skip…)", "*looks away*" — and used to be cut at a fixed 80 characters, which
+ * turned inner narration into a sensitivity-3 secret that then spread through
+ * town as a juicy discovery. Here stage directions are removed, only complete
+ * sentences count, and the result is cut at a sentence boundary. Returns null
+ * when nothing worth repeating is left, so the caller creates no fact at all.
+ */
+export function extractConfidedQuote(text: string, max = 160): string | null {
+  let speech = text
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\*[^*]*\*/g, ' ');
+  // An unclosed "(", "[" or "*" is a stage direction the model never finished
+  // (or that a length cap cut off): everything after it is narration.
+  speech = speech.replace(/[(*[][\s\S]*$/, ' ');
+  speech = speech.replace(/\s+/g, ' ').trim();
+  // Surrounding quotes would double up with the ones the fact template adds.
+  speech = speech.replace(/^["“”']+|["“”']+$/g, '').replace(/"/g, "'").trim();
+
+  // Only complete sentences: a trailing fragment without end punctuation is
+  // where the model (or a token cap) stopped mid-thought.
+  const sentences = speech.match(/[^.!?…]+[.!?…]+/g) ?? [];
+  let quote = '';
+  for (const raw of sentences) {
+    const sentence = raw.trim();
+    const candidate = quote ? `${quote} ${sentence}` : sentence;
+    if (candidate.length > max) break;
+    quote = candidate;
+  }
+
+  // Four words is the floor for a line that says something about the speaker;
+  // "Oh. Well." or "Thank you!" are not secrets.
+  if (quote.split(/\s+/).filter((w) => /[a-z]/i.test(w)).length < 4) return null;
+  return quote;
+}

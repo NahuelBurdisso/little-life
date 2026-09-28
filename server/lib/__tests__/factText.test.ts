@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { asClause, endSentence, thatSentence } from '../factText';
+import { asClause, endSentence, extractConfidedQuote, thatSentence } from '../factText';
 
 describe('fact text normalisation', () => {
   it('drops the trailing full stop so the fact can sit inside a sentence', () => {
@@ -32,5 +32,39 @@ describe('fact text normalisation', () => {
 
   it('collapses stray whitespace', () => {
     expect(asClause('  Marco\n  is   broke.  ')).toBe('Marco is broke');
+  });
+});
+
+describe('extractConfidedQuote', () => {
+  it('rejects a line that is only a stage direction', () => {
+    // The playtest secret, as the model actually wrote it (unclosed, too).
+    expect(extractConfidedQuote(
+      '(My heart gives a little skip, and I feel a warmth bloom in my chest that rivals the sun',
+    )).toBeNull();
+    expect(extractConfidedQuote('(She looks away.) *sighs*')).toBeNull();
+  });
+
+  it('keeps the speech around stage directions', () => {
+    expect(extractConfidedQuote('(looks down) I haven\'t slept since Rosa left me. *wipes eyes*'))
+      .toBe('I haven\'t slept since Rosa left me.');
+  });
+
+  it('drops a trailing fragment the model never finished', () => {
+    expect(extractConfidedQuote('I still write letters to her every night. And sometimes I think that'))
+      .toBe('I still write letters to her every night.');
+  });
+
+  it('cuts at a sentence boundary, never mid-word', () => {
+    const long = 'I lost the shop money at cards last week. ' + 'Nobody knows, not even my sister who keeps the books for me every single month without fail.';
+    expect(extractConfidedQuote(long, 60)).toBe('I lost the shop money at cards last week.');
+  });
+
+  it('rejects filler that says nothing', () => {
+    expect(extractConfidedQuote('Oh. Well. Thanks!')).toBeNull();
+  });
+
+  it('does not let inner double quotes break the fact template', () => {
+    expect(extractConfidedQuote('"He said "never again" and I believed him."'))
+      .toBe("He said 'never again' and I believed him.");
   });
 });
