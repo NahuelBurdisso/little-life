@@ -15,6 +15,7 @@ import {
   PLAN_RETRY_FLOOR_SECONDS,
   PLAN_OUTAGE_THRESHOLD,
   PLAN_OUTAGE_PROBE_SECONDS,
+  PLAN_PROBE_EXPIRY_MS,
   gameMinuteOf,
   type GameClock,
 } from '../PlanLLMGate';
@@ -134,6 +135,43 @@ function farLater() {
   wall += 3600_000;
 }
 
+/**
+ * First game minute after `from` at which the gate admits `id` — i.e. when the
+ * agent's game-time backoff ends — or null if it is admitted right away.
+ * Observed through `tryAcquire` only, with the wall clock pushed far ahead so
+ * the real-time floor and breaker window don't mask the game-time answer.
+ */
+function retryAt(id: number, from = gameMinuteOf(clock)): number | null {
+  const saved = wall;
+  wall += 24 * 3600_000;
+  try {
+    for (let m = from; m <= from + 24 * 60; m++) {
+      const ticket = gate.tryAcquire(id, m);
+      if (ticket) {
+        gate.release(ticket);
+        return m === from ? null : m;
+      }
+    }
+    return Infinity;
+  } finally {
+    wall = saved;
+  }
+}
+
+/**
+ * Whether the outage breaker is closed right now: two different agents
+ * (without backoff) can both be admitted at once. While it is open at most
+ * one probe gets through.
+ */
+function breakerClosed(a: number, b: number): boolean {
+  const m = gameMinuteOf(clock);
+  const t1 = gate.tryAcquire(a, m);
+  const t2 = gate.tryAcquire(b, m);
+  if (t1) gate.release(t1);
+  if (t2) gate.release(t2);
+  return !!t1 && !!t2;
+}
+
 /** Wait for an agent's plan job to finish (the queue releases its key). */
 async function settled(queue: PlanLLMQueue, id = agentId) {
   await vi.waitFor(() => expect(queue.isPending(id, 'generate')).toBe(false));
@@ -152,6 +190,7 @@ beforeEach(() => {
   memory.record.mockClear();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   clock = at(8);
   wall = 1_000_000;
   rand = 0.5;
@@ -200,7 +239,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       expect(gen.queueGeneration(agentId, at(8, m))).toBe(false);
     }
     expect(callOllamaChat).toHaveBeenCalledTimes(1);
-    expect(gate.getRetryAt(agentId)).toBe(gameMinuteOf(at(8)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
+    expect(retryAt(agentId)).toBe(gameMinuteOf(at(8)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
   });
 
   it('treats unparseable output as a failure too', async () => {
@@ -231,7 +270,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     const plan = cache.get(agentId)!;
     expect(plan.source).toBe('llm');
     expect(plan.blocks.map((b) => b.broad_action)).toContain('Bake bread');
-    expect(gate.getRetryAt(agentId)).toBeNull();
+    expect(retryAt(agentId)).toBeNull();
     // A real plan for today is final: later asks run no LLM call.
     gen.queueGeneration(agentId, at(10));
     await settled(queue);
@@ -268,7 +307,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       expect(gen.queueGeneration(agentId, clock)).toBe(true);
       await settled(queue);
       expected = PLAN_RETRY_BACKOFF_MINUTES[Math.min(i, PLAN_RETRY_BACKOFF_MINUTES.length - 1)];
-      expect(gate.getRetryAt(agentId)).toBe(gameMinuteOf(clock) + expected);
+      expect(retryAt(agentId)).toBe(gameMinuteOf(clock) + expected);
     }
   });
 
@@ -280,7 +319,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       fail();
       gen.queueGeneration(agentId, clock);
       await settled(queue);
-      waits.push(gate.getRetryAt(agentId)! - gameMinuteOf(clock));
+      waits.push(retryAt(agentId)! - gameMinuteOf(clock));
     }
     expect(waits).toEqual([PLAN_RETRY_BACKOFF_MINUTES[0] * 0.8, PLAN_RETRY_BACKOFF_MINUTES[0] * 1.2]);
   });
@@ -293,7 +332,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     });
     gen.queueGeneration(agentId, at(8));
     await settled(queue);
-    expect(gate.getRetryAt(agentId)).toBe(gameMinuteOf(at(9)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
+    expect(retryAt(agentId, gameMinuteOf(at(8)))).toBe(gameMinuteOf(at(9)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
   });
 
   it('forgets backoffs on clear() (world replace)', async () => {
@@ -341,11 +380,10 @@ describe('PlanGenerator outage breaker', () => {
   it('trips after consecutive failures across agents and reports it to the feed once', async () => {
     const { queue, gen } = setup();
     await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD - 1);
-    expect(gate.isOutage()).toBe(false);
+    expect(breakerClosed(ids[2], ids[3])).toBe(true);
     expect(feedErrors()).toHaveLength(0);
 
     await failAgents(gen, queue, PLAN_OUTAGE_THRESHOLD, PLAN_OUTAGE_THRESHOLD - 1);
-    expect(gate.isOutage()).toBe(true);
     expect(feedErrors()).toHaveLength(1);
 
     // An agent with no backoff of its own is still refused while the breaker is open.
@@ -379,7 +417,7 @@ describe('PlanGenerator outage breaker', () => {
     succeed();
     expect(gen.queueGeneration(ids[0], clock)).toBe(true);
     await settled(queue, ids[0]);
-    expect(gate.isOutage()).toBe(false);
+    expect(breakerClosed(ids[2], ids[3])).toBe(true);
     succeed();
     expect(gen.queueGeneration(ids[1], clock)).toBe(true);
     await settled(queue, ids[1]);
@@ -404,6 +442,91 @@ describe('PlanGenerator outage breaker', () => {
     fail();
     expect(gen.queueGeneration(ids[0], clock)).toBe(true);
     await settled(queue, ids[0]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What counts as an outage
+// ---------------------------------------------------------------------------
+
+describe('PlanGenerator failure classification', () => {
+  const unusable = () => vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: 'Sure! I will do stuff.' }) as never);
+
+  async function runFor(gen: PlanGenerator, queue: PlanLLMQueue, id: number) {
+    expect(gen.queueGeneration(id, clock)).toBe(true);
+    await settled(queue, id);
+  }
+
+  it('unusable answers back the agent off but never trip the breaker', async () => {
+    const { cache, queue, gen } = setup();
+    for (const id of ids.slice(0, PLAN_OUTAGE_THRESHOLD)) {
+      unusable();
+      await runFor(gen, queue, id);
+      expect(cache.get(id)?.source).toBe('fallback');
+      expect(retryAt(id)).not.toBeNull();
+    }
+    expect(breakerClosed(ids[3], ids[3] + 1000)).toBe(true);
+    expect(feedErrors()).toHaveLength(0);
+  });
+
+  it('an answer in the middle of an outage streak resets it', async () => {
+    const { queue, gen } = setup();
+    fail();
+    await runFor(gen, queue, ids[0]);
+    fail();
+    await runFor(gen, queue, ids[1]);
+    unusable(); // the LLM is up after all
+    await runFor(gen, queue, ids[2]);
+    fail();
+    await runFor(gen, queue, ids[3]);
+    // Three transport failures, but not in a row: no outage.
+    expect(breakerClosed(ids[3] + 1000, ids[3] + 1001)).toBe(true);
+    expect(feedErrors()).toHaveLength(0);
+  });
+
+  it('plans without memories when retrieval fails (embedding timeout)', async () => {
+    const { cache, queue, gen } = setup();
+    memory.retrieve.mockImplementationOnce(async () => { throw new Error('Embedding request timed out'); });
+    memory.retrieveByType.mockImplementationOnce(async () => { throw new Error('Embedding request timed out'); });
+    succeed();
+    await runFor(gen, queue, agentId);
+    expect(callOllamaChat).toHaveBeenCalledTimes(1);
+    expect(cache.get(agentId)?.source).toBe('llm');
+  });
+
+  it('a bug in prompt building backs off and reports, without calling the LLM or counting as outage', async () => {
+    const { cache, queue, gen } = setup();
+    for (const id of ids.slice(0, PLAN_OUTAGE_THRESHOLD)) {
+      // Malformed retrieval result: survives bestEffort, then blows up in our
+      // own mapping code while the prompt is built.
+      memory.retrieve.mockImplementationOnce(async () => [{ memory: null }] as never);
+      await runFor(gen, queue, id);
+      expect(cache.get(id)?.source).toBe('fallback');
+      expect(retryAt(id)).not.toBeNull();
+    }
+    expect(callOllamaChat).not.toHaveBeenCalled();
+    expect(breakerClosed(ids[3], ids[3] + 1000)).toBe(true);
+    // Reported (once per agent streak), but never as an LLM outage.
+    const errors = feedErrors().map(([p]) => String(p.templateData?.message));
+    expect(errors).toHaveLength(PLAN_OUTAGE_THRESHOLD);
+    expect(errors.every((m) => m.includes('plan prompt'))).toBe(true);
+  });
+});
+
+describe('PlanLLMGate probe expiry', () => {
+  it('frees a probe that never comes back', () => {
+    setup();
+    for (const id of ids.slice(0, PLAN_OUTAGE_THRESHOLD)) gate.recordFailure(id, 'down');
+    wall += PLAN_OUTAGE_PROBE_SECONDS * 1000;
+    const m = gameMinuteOf(clock);
+
+    // A probe goes out and is never released (its job was dropped).
+    expect(gate.tryAcquire(ids[3], m)).not.toBeNull();
+    expect(gate.tryAcquire(ids[3] + 1000, m)).toBeNull();
+
+    // Past the expiry the gate stops waiting for it.
+    wall += PLAN_PROBE_EXPIRY_MS;
+    expect(gate.tryAcquire(ids[3] + 1000, m)).not.toBeNull();
   });
 });
 
@@ -441,7 +564,7 @@ describe('PlanGenerator replan under failure', () => {
 
     expect(plan.blocks[1].status).toBe('active');
     expect(cache.set).not.toHaveBeenCalled();
-    expect(gate.getRetryAt(agentId)).not.toBeNull();
+    expect(retryAt(agentId)).not.toBeNull();
 
     // Inside the backoff, further replans don't reach the LLM.
     gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10, 5)), 22);
@@ -471,7 +594,17 @@ describe('PlanGenerator replan under failure', () => {
     gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
     await replanSettled(queue);
     expect(cache.get(agentId)!.blocks.map((b) => b.broad_action)).toEqual(['Breakfast', 'Sulk at home', 'Walk it off', 'Read']);
-    expect(gate.getRetryAt(agentId)).toBeNull();
+    expect(retryAt(agentId)).toBeNull();
+  });
+
+  it('accepts a single-block evening replan', async () => {
+    const { cache, queue, gen } = setup();
+    withActivePlan(cache);
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: '20:00-22:00 | Stew on it | Home' }) as never);
+    gen.queueReplan(agentId, event, 20, gameMinuteOf(at(20)), 22);
+    await replanSettled(queue);
+    // Both earlier blocks have ended by 20:00, so they are kept as history.
+    expect(cache.get(agentId)!.blocks.map((b) => b.broad_action)).toEqual(['Breakfast', 'Bake bread', 'Stew on it']);
   });
 });
 

@@ -102,8 +102,25 @@ function setup() {
   const decomposer = new PlanDecomposer(cache, queue, gate);
   const executor = new PlanExecutor(cache, decomposer);
   cache.set(agentId, workPlan());
-  const act = () => executor.getPlannedAction(agentId, hour, 0, 1, minute);
+  const act = (tick = 0) => executor.getPlannedAction(agentId, hour, tick, 1, minute);
   return { cache, queue, gate, decomposer, executor, act };
+}
+
+/**
+ * Whether the gate is holding `id` back on game time right now. Observed via
+ * `tryAcquire` with the wall clock pushed far ahead, so only the game-time
+ * backoff can refuse.
+ */
+function backingOff(gate: PlanLLMGate, id: number): boolean {
+  const saved = wall;
+  wall += 24 * 3600_000;
+  try {
+    const ticket = gate.tryAcquire(id, gameMinuteOf({ day: 1, hour, minute }));
+    if (ticket) gate.release(ticket);
+    return ticket === null;
+  } finally {
+    wall = saved;
+  }
 }
 
 async function settled(queue: PlanLLMQueue, id = agentId) {
@@ -158,7 +175,7 @@ describe('plan execution when block decomposition fails', () => {
       expect(act()).toBeNull();
     }
     expect(callOllamaChat).toHaveBeenCalledTimes(1);
-    expect(gate.getRetryAt(agentId)).not.toBeNull();
+    expect(backingOff(gate, agentId)).toBe(true);
 
     // Backoff over (both clocks): the next pass asks again, and once the
     // actions arrive the plan drives the agent.
@@ -170,7 +187,7 @@ describe('plan execution when block decomposition fails', () => {
 
     expect(callOllamaChat).toHaveBeenCalledTimes(2);
     expect(cache.get(agentId)!.blocks[0].decomposed_actions).toHaveLength(2);
-    expect(gate.getRetryAt(agentId)).toBeNull();
+    expect(backingOff(gate, agentId)).toBe(false);
     const planned = act();
     expect(planned).not.toBeNull();
     expect(planned!.source).toBe('plan:decomposed');
@@ -182,7 +199,7 @@ describe('plan execution when block decomposition fails', () => {
     act();
     await settled(queue);
     expect(cache.get(agentId)!.blocks[0].decomposed_actions).toBeUndefined();
-    expect(gate.getRetryAt(agentId)).not.toBeNull();
+    expect(backingOff(gate, agentId)).toBe(true);
     expect(act()).toBeNull();
   });
 
@@ -190,10 +207,60 @@ describe('plan execution when block decomposition fails', () => {
     const { gate, act } = setup();
     // Other agents' failures trip the breaker.
     for (let i = 0; i < PLAN_OUTAGE_THRESHOLD; i++) gate.recordFailure(otherIds[i % otherIds.length], 'down');
-    expect(gate.isOutage()).toBe(true);
 
     expect(act()).toBeNull();
     expect(callOllamaChat).not.toHaveBeenCalled();
+  });
+
+  it('an unusable answer backs the agent off but resets the outage streak', async () => {
+    const { gate, queue, act } = setup();
+    gate.recordFailure(otherIds[0], 'down');
+    gate.recordFailure(otherIds[1], 'down');
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: 'Well, it depends.' }) as never);
+    act();
+    await settled(queue);
+    expect(backingOff(gate, agentId)).toBe(true);
+
+    // Had the unusable answer counted, this would be the third failure in a
+    // row and the breaker would now refuse a second concurrent agent.
+    gate.recordFailure(otherIds[0], 'down');
+    const m = gameMinuteOf({ day: 1, hour, minute });
+    const a = gate.tryAcquire(agentId + 1000, m);
+    const b = gate.tryAcquire(agentId + 1001, m);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Timing of actions that arrive late
+// ---------------------------------------------------------------------------
+
+describe('plan execution when actions arrive after a delay', () => {
+  it('starts the first action when the actions arrive, not when the block activated', async () => {
+    const { queue, act } = setup();
+    // Activation at tick 600; the first decomposition attempt fails.
+    fail();
+    act(600);
+    await settled(queue);
+
+    // 45 game minutes later the backoff is over and the retry succeeds with a
+    // single 60-minute action.
+    minute = 45;
+    wall += 3600_000;
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: `Bake loaves | ${bakery} | 60 minutes` }) as never);
+    act(645);
+    await settled(queue);
+
+    // First pass with actions, another 30 minutes on. Stamped at activation,
+    // the 60-minute action would count 105 minutes elapsed here and the block
+    // would complete on the spot.
+    minute = 15;
+    hour = 11;
+    const first = act(675);
+    expect(first).toMatchObject({ action: expect.any(String), source: 'plan:decomposed' });
+    expect(act(734)).toMatchObject({ source: 'plan:decomposed' }); // 59 min in: still going
+    expect(act(735)).toBeNull(); // 60 min in: done, block completed
   });
 });
 

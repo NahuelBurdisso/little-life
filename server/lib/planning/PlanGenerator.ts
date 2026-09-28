@@ -12,7 +12,23 @@ import { getAgentHobbies } from '../hobbyEngine';
 import { getReputation, getReputationLabel } from '../reputationEngine';
 import { getMoodMomentum } from '../moodMomentum';
 import { describeEvent } from '../memory/descriptionTemplates';
-import { gameMinuteOf, type GameClock, type PlanLLMGate } from './PlanLLMGate';
+import {
+  gameMinuteOf,
+  reportPlanningBug,
+  type BackoffStep,
+  type GameClock,
+  type PlanLLMGate,
+} from './PlanLLMGate';
+
+/** Run an optional context lookup; on failure log it and plan without it. */
+async function bestEffort<T>(what: string, fn: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await fn();
+  } catch (err) {
+    console.warn(`[PlanGenerator] ${what} unavailable, planning without it: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for injected singletons
@@ -177,21 +193,50 @@ export class PlanGenerator {
     }
 
     const epoch = this.gate.epoch;
-    let blocks: PlanBlock[];
+
+    // Three stages, three kinds of failure, each told to the gate differently
+    // (see PlanLLMGate): only the LLM call itself can signal an outage.
+    let prompt: { system: string; user: string };
     try {
-      blocks = await this.requestPlanBlocks(agentId, currentDay, ctx);
+      prompt = await this.buildPlanPrompt(agentId, currentDay, ctx);
     } catch (err) {
       if (epoch !== this.gate.epoch) return;
-      this.fallBack(agentId, currentDay, ctx, err instanceof Error ? err.message : String(err));
+      // Our bug, not the LLM's. Back off so it can't spin every pass, report
+      // it loudly (first time per streak), and leave the breaker alone.
+      const step = this.gate.backOff(agentId);
+      reportPlanningBug(`plan prompt for ${ctx.agentRow.name}`, err, step.failures);
+      this.fallBack(agentId, currentDay, ctx, 'prompt build failed', step);
+      return;
+    }
+
+    let text: string;
+    try {
+      const response = await callOllamaChat({
+        model: CONFIG.AI.LIGHT_MODEL,
+        system: prompt.system,
+        messages: [{ role: 'user', content: prompt.user }],
+        priority: 'normal',
+        options: { temperature: 0.7, num_predict: 512 },
+      });
+      text = response.text;
+    } catch (err) {
+      if (epoch !== this.gate.epoch) return;
+      const reason = err instanceof Error ? err.message : String(err);
+      this.fallBack(agentId, currentDay, ctx, reason, this.gate.recordFailure(agentId, reason));
       return;
     }
     if (epoch !== this.gate.epoch) return;
 
-    // An empty parse means the model answered with something we could not read.
-    // Asking again right away mostly gets the same kind of answer, so this is a
-    // failure like any other: fallback plan now, LLM again after the backoff.
+    const blocks = parsePlanBlocks(text, ctx.validLocations);
+
+    // An empty parse means the model answered with something we could not
+    // read. Asking again right away mostly gets the same kind of answer, so the
+    // agent backs off — but the LLM is plainly up, which resets the outage
+    // streak rather than feeding it.
     if (blocks.length === 0) {
-      this.fallBack(agentId, currentDay, ctx, 'unparseable plan output');
+      const step = this.gate.backOff(agentId);
+      this.gate.noteAnswered();
+      this.fallBack(agentId, currentDay, ctx, 'unparseable plan output', step);
       return;
     }
 
@@ -335,16 +380,20 @@ export class PlanGenerator {
   }
 
   /**
-   * Everything that can fail because the LLM stack is down or slow: memory
-   * retrieval (embeddings go through Ollama too), the chat call itself (throws
-   * on HTTP errors and on `AI.TIMEOUT_MS`), and parsing. Returns the parsed
-   * blocks, empty when the output was unreadable.
+   * Build the daily-plan prompt. No LLM call here, so a throw from this is a
+   * bug in our code, not an outage (see `generate`).
+   *
+   * Memory retrieval is best-effort: it embeds the query through Ollama, and
+   * when that times out `MemoryService.retrieve` throws. Reflections and
+   * yesterday's plan make the plan better but aren't worth losing it over,
+   * and letting an embedding timeout fail the plan would also have counted a
+   * memory problem as an LLM outage.
    */
-  private async requestPlanBlocks(
+  private async buildPlanPrompt(
     agentId: number,
     currentDay: number,
     ctx: PlanningContext,
-  ): Promise<PlanBlock[]> {
+  ): Promise<{ system: string; user: string }> {
     const { agentRow, currentNeeds, schedule, validLocations, workplaceName, homeName } = ctx;
 
     const agentEcon = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
@@ -353,15 +402,14 @@ export class PlanGenerator {
     const traits = agentRow.traits as string[];
 
     // 6. Retrieve 3 recent reflections
-    const reflectionResults = await this.memoryService.retrieve(
-      agentId,
-      'my recent reflections',
-      3,
-    );
-    const reflections = reflectionResults.map((r) => r.memory.description);
+    const reflections = (
+      await bestEffort('reflections', () => this.memoryService.retrieve(agentId, 'my recent reflections', 3))
+    ).map((r) => r.memory.description);
 
     // 7. Retrieve yesterday's plan
-    const planMemories = await this.memoryService.retrieveByType(agentId, 'plan', 1);
+    const planMemories = await bestEffort('yesterday plan', () =>
+      this.memoryService.retrieveByType(agentId, 'plan', 1),
+    );
     const yesterdayPlan = planMemories.length > 0 ? planMemories[0].description : null;
 
     // 8. Load active goals
@@ -370,7 +418,7 @@ export class PlanGenerator {
       .all();
 
     // 9. Build prompt
-    const prompt = buildDailyPlanPrompt({
+    return buildDailyPlanPrompt({
       name: agentRow.name,
       age: agentRow.age,
       traits,
@@ -407,32 +455,25 @@ export class PlanGenerator {
       reputationLabel: getReputationLabel(getReputation(agentId)),
       moodMomentum: getMoodMomentum(agentId),
     });
-
-    // 10. Call LLM
-    const response = await callOllamaChat({
-      model: CONFIG.AI.LIGHT_MODEL,
-      system: prompt.system,
-      messages: [{ role: 'user', content: prompt.user }],
-      priority: 'normal',
-      options: { temperature: 0.7, num_predict: 512 },
-    });
-
-    // 11. Parse blocks
-    return parsePlanBlocks(response.text, validLocations);
   }
 
   /**
-   * The LLM could not produce a plan: cache a schedule-derived one for today
-   * and hold further requests for this agent off for a backoff window.
+   * No LLM plan this time: cache a schedule-derived one for today. The caller
+   * has already told the gate what went wrong (which decides the backoff and
+   * whether it counts as an outage) and passes the resulting step for the log.
    *
    * Before this, a failure cached nothing, so the decisions phase saw the day
    * as still unplanned and asked again on the very next pass — every planless
    * agent re-requesting every pass, all of it queueing on the LLM semaphore in
    * front of conversations (B6).
    */
-  private fallBack(agentId: number, currentDay: number, ctx: PlanningContext, reason: string): void {
-    const { failures, wait } = this.gate.recordFailure(agentId, reason);
-
+  private fallBack(
+    agentId: number,
+    currentDay: number,
+    ctx: PlanningContext,
+    reason: string,
+    { failures, wait }: BackoffStep,
+  ): void {
     // Don't clobber a real plan for today with a fallback. Only reachable if a
     // caller forces a regeneration over an LLM plan; today nothing does.
     const existing = this.cache.get(agentId);
@@ -521,39 +562,47 @@ export class PlanGenerator {
     const personality = agentRow.personality as PersonalityProfile | null;
     const traits = agentRow.traits as string[];
 
-    // 6. Build replan prompt
-    const prompt = buildReplanPrompt({
-      name: agentRow.name,
-      personality: personality ?? {
-        honesty: 50,
-        aggression: 50,
-        warmth: 50,
-        impulsiveness: 50,
-        vanity: 50,
-        curiosity: 50,
-        loyalty: 50,
-        morality: 50,
-        sensuality: 50,
-        neuroticism: 50,
-      },
-      traits,
-      eventDescription: event.description,
-      remainingBlocks: remainingBlocks.map((b) => ({
-        start_hour: b.start_hour,
-        end_hour: b.end_hour,
-        broad_action: b.broad_action,
-        location_hint: b.location_hint,
-      })),
-      needs: currentNeeds,
-      currentHour,
-      sleepTime,
-      validLocations,
-    });
+    // 6. Build replan prompt. A throw here is our bug, not an outage: log it
+    //    and keep the plan. No backoff — replans are already rate-limited by
+    //    ReplanEvaluator's cooldown, and backing off would also hold up this
+    //    agent's plan and decomposition requests for a replan-only problem.
+    let prompt: { system: string; user: string };
+    try {
+      prompt = buildReplanPrompt({
+        name: agentRow.name,
+        personality: personality ?? {
+          honesty: 50,
+          aggression: 50,
+          warmth: 50,
+          impulsiveness: 50,
+          vanity: 50,
+          curiosity: 50,
+          loyalty: 50,
+          morality: 50,
+          sensuality: 50,
+          neuroticism: 50,
+        },
+        traits,
+        eventDescription: event.description,
+        remainingBlocks: remainingBlocks.map((b) => ({
+          start_hour: b.start_hour,
+          end_hour: b.end_hour,
+          broad_action: b.broad_action,
+          location_hint: b.location_hint,
+        })),
+        needs: currentNeeds,
+        currentHour,
+        sleepTime,
+        validLocations,
+      });
+    } catch (err) {
+      console.error(`[PlanGenerator] replan prompt for ${agentRow.name} failed, keeping existing plan:`, err);
+      return;
+    }
 
-    // 7. Call LLM. Failures keep the existing plan and count against the gate
-    //    like any other planning failure.
+    // 7. Call LLM. Only this call's errors count towards the outage breaker.
     const epoch = this.gate.epoch;
-    let newBlocks: PlanBlock[];
+    let text: string;
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
@@ -562,8 +611,7 @@ export class PlanGenerator {
         priority: 'normal',
         options: { temperature: 0.7, num_predict: 512 },
       });
-      // 8. Parse new blocks
-      newBlocks = parsePlanBlocks(response.text, validLocations);
+      text = response.text;
     } catch (err) {
       if (epoch !== this.gate.epoch) return;
       const reason = err instanceof Error ? err.message : String(err);
@@ -577,20 +625,22 @@ export class PlanGenerator {
     // stale copy would overwrite the newer plan.
     if (this.cache.get(agentId) !== existingPlan) return;
 
-    // The LLM answered, which is all the gate tracks. An unparseable replan is
-    // NOT counted as a failure: parsePlanBlocks demands at least 3 blocks, so
-    // an evening replan with only two hours left is rejected by design, and
-    // counting that against the gate would back healthy agents off and could
-    // even trip the town-wide outage breaker.
-    this.gate.recordSuccess(agentId);
+    // 8. Parse new blocks. The prompt asks for 2–8 blocks and an evening
+    //    replan legitimately has only one or two hours left, so a single
+    //    block is enough here (the daily plan keeps its 3-block minimum).
+    const newBlocks = parsePlanBlocks(text, validLocations, 1);
 
-    // 9. If parse fails, keep existing plan as-is
+    // 9. If parse fails, keep existing plan as-is. The LLM answered, so the
+    //    outage streak resets; the agent backs off like for any unusable answer.
     if (newBlocks.length === 0) {
+      this.gate.backOff(agentId);
+      this.gate.noteAnswered();
       console.warn(
         `[PlanGenerator] replan parse failed for agent ${agentRow.name}, keeping existing plan`,
       );
       return;
     }
+    this.gate.recordSuccess(agentId);
 
     // 10. Merge completed + new blocks; mark new blocks as replanned
     const mergedBlocks: PlanBlock[] = [

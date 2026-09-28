@@ -291,6 +291,18 @@ describe('inferActionType', () => {
   });
 });
 
+describe('parsePlanBlocks minBlocks', () => {
+  const one = '20:00-22:00 | Stew on it | Home';
+
+  it('rejects a one-block answer for a daily plan (default minimum 3)', () => {
+    expect(parsePlanBlocks(one, LOCATIONS)).toEqual([]);
+  });
+
+  it('accepts it when the caller allows a single block (replans)', () => {
+    expect(parsePlanBlocks(one, LOCATIONS, 1)).toHaveLength(1);
+  });
+});
+
 describe('isUnparsedDecomposition', () => {
   it('flags the parser idle fallback for empty or unreadable output', () => {
     expect(isUnparsedDecomposition(parseDecomposedActions('', LOCATIONS, AGENTS))).toBe(true);

@@ -62,7 +62,15 @@ function fuzzyMatchLocation(hint: string, validLocations: string[]): string {
   return hint.trim();
 }
 
-export function parsePlanBlocks(raw: string, validLocations: string[]): PlanBlock[] {
+/**
+ * Parse `HH:00-HH:00 | action | location` lines into plan blocks.
+ *
+ * `minBlocks`: fewer valid blocks than this and the whole answer is rejected
+ * (empty result). A full daily plan with one or two blocks means the model
+ * lost the format, so it defaults to 3; replans pass 1, because the rest of an
+ * evening can honestly be a single block and the replan prompt asks for 2–8.
+ */
+export function parsePlanBlocks(raw: string, validLocations: string[], minBlocks = 3): PlanBlock[] {
   if (!raw || !raw.trim()) return [];
 
   const lines = raw.split('\n');
@@ -100,8 +108,8 @@ export function parsePlanBlocks(raw: string, validLocations: string[]): PlanBloc
     blockIndex++;
   }
 
-  // Require at least 3 valid blocks; otherwise return empty to trigger fallback
-  if (blocks.length < 3) return [];
+  // Too few valid blocks: return empty to trigger the caller's fallback
+  if (blocks.length < minBlocks) return [];
 
   return blocks;
 }

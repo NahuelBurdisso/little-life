@@ -7,7 +7,7 @@ import type { PersonalityProfile } from '../personality';
 import { buildDecompositionPrompt } from './planPrompts';
 import { parseDecomposedActions, isUnparsedDecomposition } from './planParser';
 import type { DailyPlan } from './types';
-import type { PlanLLMGate } from './PlanLLMGate';
+import { reportPlanningBug, type PlanLLMGate } from './PlanLLMGate';
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for the injected singletons
@@ -149,37 +149,45 @@ export class PlanDecomposer {
     const personality = agentRow.personality as PersonalityProfile | null;
     const traits = agentRow.traits as string[];
 
-    const prompt = buildDecompositionPrompt({
-      name: agentRow.name,
-      personality: personality ?? {
-        honesty: 50,
-        aggression: 50,
-        warmth: 50,
-        impulsiveness: 50,
-        vanity: 50,
-        curiosity: 50,
-        loyalty: 50,
-        morality: 50,
-        sensuality: 50,
-        neuroticism: 50,
-      },
-      traits,
-      blockAction: block.broad_action,
-      locationHint: block.location_hint,
-      needs: currentNeeds,
-      money: agentEcon?.money,
-      startHour: block.start_hour,
-      endHour: block.end_hour,
-      validLocations,
-      validAgents: validAgentNames.filter((n) => n !== agentRow.name),
-    });
+    let prompt: { system: string; user: string };
+    try {
+      prompt = buildDecompositionPrompt({
+        name: agentRow.name,
+        personality: personality ?? {
+          honesty: 50,
+          aggression: 50,
+          warmth: 50,
+          impulsiveness: 50,
+          vanity: 50,
+          curiosity: 50,
+          loyalty: 50,
+          morality: 50,
+          sensuality: 50,
+          neuroticism: 50,
+        },
+        traits,
+        blockAction: block.broad_action,
+        locationHint: block.location_hint,
+        needs: currentNeeds,
+        money: agentEcon?.money,
+        startHour: block.start_hour,
+        endHour: block.end_hour,
+        validLocations,
+        validAgents: validAgentNames.filter((n) => n !== agentRow.name),
+      });
+    } catch (err) {
+      // Our bug, not an outage: back off so the executor's re-asks don't spin
+      // on it every pass, report it, and leave the breaker alone.
+      const { failures } = this.gate.backOff(agentId);
+      reportPlanningBug(`decomposition prompt for ${agentRow.name}`, err, failures);
+      return;
+    }
 
-    // 8. Call LLM. A failure is recorded with the shared gate, which backs this
-    //    agent off (and trips the outage breaker when it's town-wide); the
-    //    executor yields to the utility layer meanwhile and asks again once the
-    //    gate reopens.
+    // 8. Call LLM. Only this call's errors count towards the outage breaker
+    //    (see PlanLLMGate); the executor yields to the utility layer meanwhile
+    //    and asks again once the gate reopens.
     const epoch = this.gate.epoch;
-    let actions: ReturnType<typeof parseDecomposedActions>;
+    let text: string;
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
@@ -188,8 +196,7 @@ export class PlanDecomposer {
         priority: 'normal',
         options: { temperature: 0.7, num_predict: 256 },
       });
-      // 9. Parse decomposed actions
-      actions = parseDecomposedActions(response.text, validLocations, validAgentNames);
+      text = response.text;
     } catch (err) {
       if (epoch !== this.gate.epoch) return;
       const reason = err instanceof Error ? err.message : String(err);
@@ -206,13 +213,18 @@ export class PlanDecomposer {
     // decomposition.
     if (this.cache.get(agentId) !== plan) return;
 
+    // 9. Parse decomposed actions
+    const actions = parseDecomposedActions(text, validLocations, validAgentNames);
+
     // Nothing usable. The parser's answer to unreadable output is one hour of
     // 'idle', which used to be stored as the block's actions and pinned the
-    // agent in the plan layer's idle (score 6000) for that hour. Count it as a
-    // failed call instead: nothing is written, the executor yields to the
-    // utility layer, and the retry waits out the backoff.
+    // agent in the plan layer's idle (score 6000) for that hour. Now nothing is
+    // written, the executor yields to the utility layer, and this agent backs
+    // off before asking again. The LLM did answer, though, so the outage
+    // streak resets instead of growing.
     if (isUnparsedDecomposition(actions)) {
-      this.gate.recordFailure(agentId, 'unparseable decomposition output');
+      this.gate.backOff(agentId);
+      this.gate.noteAnswered();
       console.warn(`[PlanDecomposer] ${agentRow.name} block ${blockId}: no usable actions`);
       return;
     }

@@ -1,4 +1,5 @@
 import { logActivity } from '../activityLogger';
+import { CONFIG } from '../constants';
 
 // ---------------------------------------------------------------------------
 // Game clock
@@ -67,10 +68,26 @@ export const PLAN_RETRY_JITTER = 0.2;
 export const PLAN_OUTAGE_THRESHOLD = 3;
 export const PLAN_OUTAGE_PROBE_SECONDS = 60;
 
+/**
+ * How long an unreleased probe may stay out before the gate stops waiting for
+ * it: the LLM timeout plus the same again for the semaphore queue ahead of it.
+ * Normally the job's `finally` hands the probe back long before this. The
+ * expiry covers the paths where that never happens — a queued probe dropped by
+ * a world replace whose cache-clearing threw before reaching `gate.clear()` —
+ * which would otherwise keep the breaker shut, and planning off, for good.
+ */
+export const PLAN_PROBE_EXPIRY_MS = CONFIG.AI.TIMEOUT_MS * 2;
+
 /** Permission for one request; hand it back with `release` when the job ends. */
 export interface PlanLLMTicket {
   /** Set when this request is the breaker's probe. */
   probe: object | null;
+}
+
+/** Attempt number and game-minute wait of a fresh backoff, for log lines. */
+export interface BackoffStep {
+  failures: number;
+  wait: number;
 }
 
 /**
@@ -79,6 +96,18 @@ export interface PlanLLMTicket {
  * LLM health. A decomposition failing tells us as much about Ollama as a plan
  * failing does, and an agent whose plan request just timed out shouldn't turn
  * round and fire a decomposition at the same dead server.
+ *
+ * Callers report one of four outcomes, and the distinction matters:
+ *   - `recordSuccess`  usable answer: clear the agent's backoff, LLM is up.
+ *   - `recordFailure`  transport error / timeout: agent backs off AND it counts
+ *                      towards the outage breaker.
+ *   - `backOff` + `noteAnswered`  the LLM answered but the text was unusable:
+ *                      the agent backs off (asking again at once mostly gets the
+ *                      same), but the LLM is evidently up, so the outage streak
+ *                      resets. Counting these as outage used to let a model
+ *                      that rambles trip the town-wide breaker.
+ *   - `backOff` alone  our own code failed before the call (prompt building):
+ *                      no retry storm, and no verdict on the LLM either way.
  *
  * Also owns the world epoch the planning jobs use to drop results that land
  * after a world replace.
@@ -105,10 +134,9 @@ export class PlanLLMGate {
    * The one probe allowed through while the breaker is open, or null. Released
    * by the job's `finally` so a probe that ends without reaching the LLM (plan
    * already present, world replaced) can't wedge the breaker shut; `clear()`
-   * releases it too, since the queue drops queued jobs on a world replace and
-   * their `finally` never runs.
+   * releases it too, and it expires on its own after PLAN_PROBE_EXPIRY_MS.
    */
-  private probe: object | null = null;
+  private probe: { token: object; issuedAtMs: number } | null = null;
 
   private _epoch = 0;
 
@@ -151,21 +179,33 @@ export class PlanLLMGate {
     if (gate && (gameMinute < gate.retryAt || wall < gate.retryAtMs)) return null;
 
     if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
+      if (this.probe && wall - this.probe.issuedAtMs >= PLAN_PROBE_EXPIRY_MS) {
+        console.warn('[PlanLLMGate] probe never came back; issuing a new one');
+        this.probe = null;
+      }
       if (wall < this.outage.openUntilMs || this.probe) return null;
-      const probe = {};
-      this.probe = probe;
-      return { probe };
+      const token = {};
+      this.probe = { token, issuedAtMs: wall };
+      return { probe: token };
     }
     return { probe: null };
   }
 
   release(ticket: PlanLLMTicket): void {
-    if (ticket.probe && this.probe === ticket.probe) this.probe = null;
+    if (ticket.probe && this.probe?.token === ticket.probe) this.probe = null;
   }
 
   /** The LLM answered usefully for `agentId`. Ends the agent's streak and any outage. */
   recordSuccess(agentId: number): void {
     this.backoff.delete(agentId);
+    this.noteAnswered();
+  }
+
+  /**
+   * The LLM responded (whatever the quality of the answer), so it is not down.
+   * Resets the outage streak and closes the breaker.
+   */
+  noteAnswered(): void {
     if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
       console.log('[PlanLLMGate] LLM answered again; planning requests resume');
     }
@@ -173,28 +213,36 @@ export class PlanLLMGate {
   }
 
   /**
-   * A request for `agentId` failed (threw, timed out, unusable output). Starts
-   * or extends the agent's backoff, counts towards the breaker, and reports the
-   * outage to the activity feed once when the breaker trips. Returns the
-   * agent's attempt number and the game-minute wait, for the caller's log line.
+   * Start or extend `agentId`'s backoff without any verdict on LLM health.
+   * On its own: for failures of our own code before the call. With
+   * `noteAnswered`: for answers that arrived but could not be used.
    */
-  recordFailure(agentId: number, reason: string): { failures: number; wait: number } {
+  backOff(agentId: number): BackoffStep {
     const prev = this.backoff.get(agentId);
     const failures = (prev?.failures ?? 0) + 1;
     const step = Math.min(failures, PLAN_RETRY_BACKOFF_MINUTES.length) - 1;
     const jitter = 1 + (this.random() * 2 - 1) * PLAN_RETRY_JITTER;
     const wait = Math.round(PLAN_RETRY_BACKOFF_MINUTES[step] * jitter);
-    const wall = this.wallNow();
     this.backoff.set(agentId, {
       failures,
       retryAt: this.now() + wait,
-      retryAtMs: wall + Math.round(PLAN_RETRY_FLOOR_SECONDS[step] * 1000 * jitter),
+      retryAtMs: this.wallNow() + Math.round(PLAN_RETRY_FLOOR_SECONDS[step] * 1000 * jitter),
     });
+    return { failures, wait };
+  }
+
+  /**
+   * The call itself failed — connection refused, HTTP error, timeout. Backs
+   * the agent off, counts towards the breaker, and reports the outage to the
+   * activity feed once when the breaker trips.
+   */
+  recordFailure(agentId: number, reason: string): BackoffStep {
+    const step = this.backOff(agentId);
 
     this.outage.failures++;
     if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
-      this.outage.openUntilMs = wall + PLAN_OUTAGE_PROBE_SECONDS * 1000;
-      // One activity-feed entry per outage, re-armed by the next success.
+      this.outage.openUntilMs = this.wallNow() + PLAN_OUTAGE_PROBE_SECONDS * 1000;
+      // One activity-feed entry per outage, re-armed by the next answer.
       // Per-agent entries flooded the feed with a dozen identical errors every
       // time Ollama went away; a lone blip that one agent's retry absorbs isn't
       // worth the player's attention at all.
@@ -213,17 +261,7 @@ export class PlanLLMGate {
         }
       }
     }
-    return { failures, wait };
-  }
-
-  /** Game minute before which no request for `agentId` is admitted, or null. */
-  getRetryAt(agentId: number): number | null {
-    return this.backoff.get(agentId)?.retryAt ?? null;
-  }
-
-  /** Whether the breaker currently counts the LLM as down. */
-  isOutage(): boolean {
-    return this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
+    return step;
   }
 
   /** Drop all per-world state. Called from `clearPerWorldCaches`. */
@@ -231,5 +269,22 @@ export class PlanLLMGate {
     this.backoff.clear();
     this.probe = null;
     this._epoch++;
+  }
+}
+
+/**
+ * Report a failure of our own planning code (prompt building, context
+ * loading) — not an LLM problem. Always to the console with the stack; to the
+ * activity feed only on the first failure of the agent's streak, since the
+ * caller's backoff will bring the same bug round again every few game hours.
+ */
+export function reportPlanningBug(what: string, err: unknown, failures: number): void {
+  const message = `${what} failed: ${err instanceof Error ? err.message : String(err)}`;
+  console.error(`[planning] ${message}`, err);
+  if (failures !== 1) return;
+  try {
+    logActivity({ type: 'error', templateData: { system: 'planning', message } });
+  } catch {
+    // Reporting must never turn a handled failure into an unhandled one.
   }
 }
