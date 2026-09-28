@@ -163,7 +163,7 @@ interface CacheEntry {
 
 let cache: CacheEntry | null = null;
 
-/** Drops the memo. Tests need this; production just waits out the TTL. */
+/** Drops the memo. Called on world replace (worldCaches) and by tests. */
 export function resetCliqueCache() {
   cache = null;
 }

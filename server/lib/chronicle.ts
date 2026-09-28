@@ -120,7 +120,7 @@ interface CacheEntry {
 
 let cache: CacheEntry | null = null;
 
-/** Drops the memo. Only tests need this — production just waits out the TTL. */
+/** Drops the memo. Called on world replace (worldCaches) and by tests. */
 export function resetChronicleCache() {
   cache = null;
 }

@@ -39,6 +39,8 @@ import { clearMoodTrackers } from '../lib/moodMomentum';
 import { clearAllConversationCaches } from '../helpers/conversationHelpers';
 import { clearConfrontationCooldowns } from '../lib/confrontationEngine';
 import { clearHungerTracking } from '../lib/lifeEventsEngine';
+import { resetChronicleCache } from '../lib/chronicle';
+import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 
 export function clearPerWorldCaches(): void {
@@ -73,4 +75,9 @@ export function clearPerWorldCaches(): void {
   // replace abandons the work in flight.
   clearAllConversationCaches();
   clearConfrontationCooldowns();
+
+  // Wall-clock memos over the whole town. Without a reset the first seconds of a
+  // new world showed the previous world's story arcs and cliques.
+  resetChronicleCache();
+  resetCliqueCache();
 }
