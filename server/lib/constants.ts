@@ -5,7 +5,10 @@
  * `CONFIG.TYPO` a compile error and `CONFIG.AI.BACKEND` a literal union again.
  */
 export const AUTOPLAY_CONFIG = {
-  ENABLED: true,
+  // Opt-in via `autoplay.configure({ enabled: true })`. Off by default: the
+  // profiler adds per-tick DB reads and the nudger injects events into the
+  // player's town outside the tick transactions, and there is no UI yet.
+  ENABLED: false,
   WINDOW_SIZE: 60,           // ticks per analysis window (~1 game hour)
   BOREDOM_THRESHOLD: 55,     // score to trigger auto-nudges
   AUTO_NUDGE: true,
