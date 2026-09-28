@@ -44,6 +44,19 @@ export function buildTileSet(tiles: Iterable<TileXY>): Set<number> {
   return set;
 }
 
+/** First occurrence of each (x, y), input order kept. Worldgen emits crossing
+ *  tiles twice (one per road) and overlapping lanes more; drawn twice, a
+ *  translucent rut or wear patch would come out darker there. */
+export function uniqueTiles<T extends TileXY>(tiles: readonly T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const t of tiles) {
+    const k = tileKey(t.x, t.y);
+    if (!seen.has(k)) { seen.add(k); out.push(t); }
+  }
+  return out;
+}
+
 export function hasTile(set: TileSet, x: number, y: number): boolean {
   return set.has(tileKey(x, y));
 }
@@ -64,19 +77,33 @@ const NEIGHBOUR_OFFSETS: ReadonlyArray<readonly [bit: number, dx: number, dy: nu
   [S, 0, 1], [SW, -1, 1], [W, -1, 0], [NW, -1, -1],
 ];
 
-/** Bitmask of which of the 8 surrounding tiles are in `set` (N=1 … NW=128, clockwise). */
-export function neighbourMask(set: TileSet, x: number, y: number): number {
+/** Map size in tiles. */
+export interface MapBounds { width: number; height: number }
+
+/**
+ * Bitmask of which of the 8 surrounding tiles are in `set` (N=1 … NW=128,
+ * clockwise). With `bounds`, neighbours off the map count as present: a road
+ * that runs into the map edge carries on past it rather than ending there, so
+ * it must not get a rounded cap, lip or halo along the border.
+ */
+export function neighbourMask(set: TileSet, x: number, y: number, bounds?: MapBounds): number {
   let mask = 0;
   for (const [bit, dx, dy] of NEIGHBOUR_OFFSETS) {
-    if (set.has(tileKey(x + dx, y + dy))) mask |= bit;
+    const nx = x + dx, ny = y + dy;
+    if (set.has(tileKey(nx, ny)) || (bounds && isOffMap(bounds, nx, ny))) mask |= bit;
   }
   return mask;
+}
+
+export function isOffMap(bounds: MapBounds, x: number, y: number): boolean {
+  return x < 0 || y < 0 || x >= bounds.width || y >= bounds.height;
 }
 
 export interface Sides { n: boolean; e: boolean; s: boolean; w: boolean }
 export interface Corners { nw: boolean; ne: boolean; se: boolean; sw: boolean }
 
-/** Sides that border a tile outside the set — where an edge/lip is drawn. */
+/** Sides that border a tile outside the set — pulled in by the style's inset
+ *  and traced by the lip. */
 export function exposedEdges(mask: number): Sides {
   return { n: !(mask & N), e: !(mask & E), s: !(mask & S), w: !(mask & W) };
 }
@@ -94,8 +121,9 @@ export function outerCorners(mask: number): Corners {
 }
 
 /** Concave corners: both orthogonal neighbours present but the diagonal one
- *  missing. Edge strips drawn per side never reach this point (neither side is
- *  exposed), which is the "notch" in the outline the renderer has to fill. */
+ *  missing. Neither of this tile's sides is exposed, yet the outline turns here
+ *  (e.g. the inside of a bend); the rasteriser cuts back to the neighbours'
+ *  inset lines and chamfers the turn so it isn't a hard right-angle notch. */
 export function innerCorners(mask: number): Corners {
   return {
     nw: !!(mask & N) && !!(mask & W) && !(mask & NW),
@@ -242,8 +270,15 @@ export interface BlobStyle {
    *  into the outside quadrant at the concave vertex. 0 = sharp. */
   filletSize: number;
   /** Diagonal-step bridge: stepped triangle legs (cells) filled into the two
-   *  empty tiles of the pinch. 0 = treat diagonal steps as plain outer corners. */
+   *  empty tiles of the pinch. 0 = treat diagonal steps as plain outer corners.
+   *  Assumes zero inset: the triangles are anchored at the two tiles' shared
+   *  corner point, so with an inset they would float free of both shapes. Inset
+   *  styles (dirt, wear) use 0. */
   bridgeSize: number;
+  /** Map size in tiles. Tiles off the map count as present (see
+   *  `neighbourMask`), and off-map cells count as inside when classifying, so a
+   *  shape touching the border gets no cap, lip or halo along it. */
+  bounds?: MapBounds;
 }
 
 export interface BlobRaster {
@@ -256,126 +291,146 @@ export interface BlobRaster {
   cells: Uint8Array;
   cellsPerTile: number;
   /** Per tile of the raster (row-major, `width / cellsPerTile` wide): 1 if the
-   *  tile holds any non-OUT cell. Lets scans skip the empty bulk of the map. */
+   *  tile may hold a non-OUT cell (a shape tile or one of its 8 neighbours).
+   *  Lets scans skip the empty bulk of the map. */
   active: Uint8Array;
 }
 
 interface CornerDef {
+  key: keyof Corners;
   dx: -1 | 1;
   dy: -1 | 1;
-  hBit: number;
-  vBit: number;
-  dBit: number;
   hSide: Side;
   vSide: Side;
 }
 
 const CORNER_DEFS: readonly CornerDef[] = [
-  { dx: -1, dy: -1, hBit: W, vBit: N, dBit: NW, hSide: 'w', vSide: 'n' },
-  { dx: 1, dy: -1, hBit: E, vBit: N, dBit: NE, hSide: 'e', vSide: 'n' },
-  { dx: 1, dy: 1, hBit: E, vBit: S, dBit: SE, hSide: 'e', vSide: 's' },
-  { dx: -1, dy: 1, hBit: W, vBit: S, dBit: SW, hSide: 'w', vSide: 's' },
+  { key: 'nw', dx: -1, dy: -1, hSide: 'w', vSide: 'n' },
+  { key: 'ne', dx: 1, dy: -1, hSide: 'e', vSide: 'n' },
+  { key: 'se', dx: 1, dy: 1, hSide: 'e', vSide: 's' },
+  { key: 'sw', dx: -1, dy: 1, hSide: 'w', vSide: 's' },
 ];
 
 const EMPTY_RASTER: BlobRaster = {
   x0: 0, y0: 0, width: 0, height: 0, cells: new Uint8Array(0), cellsPerTile: 1, active: new Uint8Array(0),
 };
 
+/** `inside` values while rasterising. VIRTUAL = off the map: inside for the
+ *  outline scan (no lip/halo against the border) but never emitted. */
+const IN_NONE = 0;
+const IN_REAL = 1;
+const IN_VIRTUAL = 2;
+
 /**
  * Rasterise a tile set into outline-classified cells.
  *
- * Per tile, each row of cells spans [left, right) where exposed sides are pulled
- * in by `inset`. Then per corner:
- * - convex (both orthogonals missing): shave `outerProfile` off the corner;
- * - diagonal step (and `bridgeSize` > 0): keep the corner square and fill a
- *   stepped triangle into each of the two empty orthogonal tiles at the pinch;
- * - concave (both orthogonals present, diagonal missing): the neighbours' insets
- *   meet at a vertex inside (or, with no inset, at the corner of) this tile; cut
- *   back to that vertex and add a `filletSize` chamfer into the outside quadrant.
+ * Per tile, each row of cells spans [left, right) where exposed sides
+ * (`exposedEdges`) are pulled in by `inset`. Then per corner:
+ * - diagonal step (`diagonalSteps`, and `bridgeSize` > 0): keep the corner
+ *   square and fill a stepped triangle into each empty orthogonal tile at the
+ *   pinch;
+ * - otherwise convex (`outerCorners`): shave `outerProfile` off the corner;
+ * - concave (`innerCorners`): the neighbours' insets meet at a vertex inside
+ *   (or, with no inset, at the corner of) this tile; cut back to that vertex
+ *   and add a `filletSize` chamfer into the outside quadrant.
  * The raster spans the tiles' bounding box plus one tile of margin, which holds
- * every fillet, bridge and halo cell.
+ * every fillet, bridge and halo cell. Duplicate tiles are ignored.
  */
 export function rasterizeBlobs(tiles: readonly TileXY[], style: BlobStyle): BlobRaster {
-  if (tiles.length === 0) return EMPTY_RASTER;
+  const unique = uniqueTiles(tiles);
+  if (unique.length === 0) return EMPTY_RASTER;
   const C = style.cellsPerTile;
   const inset = style.inset ?? (() => 0);
-  const set = buildTileSet(tiles);
+  const bounds = style.bounds;
+  const set = buildTileSet(unique);
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const t of tiles) {
+  for (const t of unique) {
     if (t.x < minX) minX = t.x;
     if (t.y < minY) minY = t.y;
     if (t.x > maxX) maxX = t.x;
     if (t.y > maxY) maxY = t.y;
   }
-  const x0 = (minX - 1) * C;
-  const y0 = (minY - 1) * C;
-  const width = (maxX - minX + 3) * C;
-  const height = (maxY - minY + 3) * C;
+  const tx0 = minX - 1;
+  const ty0 = minY - 1;
+  const tw = maxX - minX + 3;
+  const th = maxY - minY + 3;
+  const x0 = tx0 * C;
+  const y0 = ty0 * C;
+  const width = tw * C;
+  const height = th * C;
   const inside = new Uint8Array(width * height);
 
-  // The raster's outermost cell ring is never marked, so every inside cell has
-  // its full 8-neighbourhood in bounds and classification can index blindly.
+  if (bounds) {
+    for (let ty = 0; ty < th; ty++) {
+      for (let tx = 0; tx < tw; tx++) {
+        if (!isOffMap(bounds, tx0 + tx, ty0 + ty)) continue;
+        for (let r = 0; r < C; r++) inside.fill(IN_VIRTUAL, (ty * C + r) * width + tx * C, (ty * C + r) * width + tx * C + C);
+      }
+    }
+  }
+
+  // The raster's outermost cell ring is never marked, so every real inside cell
+  // has its full 8-neighbourhood in bounds and classification indexes blindly.
   // (Fillets and bridges are clamped well inside the one-tile margin anyway.)
   const mark = (cx: number, cy: number) => {
     const lx = cx - x0;
     const ly = cy - y0;
     if (lx < 1 || ly < 1 || lx >= width - 1 || ly >= height - 1) return;
-    inside[ly * width + lx] = 1;
+    const i = ly * width + lx;
+    if (inside[i] === IN_NONE) inside[i] = IN_REAL;
   };
   const bridgeSize = Math.min(style.bridgeSize, C - 2);
   const filletSize = Math.min(style.filletSize, C - 2);
 
   const left = new Int32Array(C);
   const right = new Int32Array(C);
-  const done = new Set<number>();
+  const active = new Uint8Array(tw * th);
 
-  for (const t of tiles) {
-    const key = tileKey(t.x, t.y);
-    if (done.has(key)) continue;
-    done.add(key);
-    const { x, y } = t;
-    const m = neighbourMask(set, x, y);
+  for (const { x, y } of unique) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) active[(y - ty0 + dy) * tw + (x - tx0 + dx)] = 1;
+    }
+    const m = neighbourMask(set, x, y, bounds);
+    const exposed = exposedEdges(m);
+    const outer = outerCorners(m);
+    const inner = innerCorners(m);
+    const steps = diagonalSteps(m);
     const ox = x * C;
     const oy = y * C;
-    const iN = m & N ? 0 : inset(x, y, 'n');
-    const iE = m & E ? 0 : inset(x, y, 'e');
-    const iS = m & S ? 0 : inset(x, y, 's');
-    const iW = m & W ? 0 : inset(x, y, 'w');
+    const iN = exposed.n ? inset(x, y, 'n') : 0;
+    const iE = exposed.e ? inset(x, y, 'e') : 0;
+    const iS = exposed.s ? inset(x, y, 's') : 0;
+    const iW = exposed.w ? inset(x, y, 'w') : 0;
     left.fill(iW);
     right.fill(C - iE);
 
     for (const c of CORNER_DEFS) {
-      const hPres = (m & c.hBit) !== 0;
-      const vPres = (m & c.vBit) !== 0;
-      const dPres = (m & c.dBit) !== 0;
-
-      if (!hPres && !vPres) {
-        if (dPres && bridgeSize > 0) {
-          // Bridge the pinch at this tile's corner point P.
-          const K = bridgeSize;
-          const px = c.dx < 0 ? 0 : C;
-          const py = c.dy < 0 ? 0 : C;
-          for (let i = 0; i < K; i++) {
-            for (let j = 0; i + j < K; j++) {
-              // Into the vertical orthogonal tile (x, y+dy), on the side toward dx.
-              mark(ox + (c.dx < 0 ? px + i : px - 1 - i), oy + (c.dy < 0 ? py - 1 - j : py + j));
-              // Into the horizontal orthogonal tile (x+dx, y), on the side toward dy.
-              mark(ox + (c.dx < 0 ? px - 1 - i : px + i), oy + (c.dy < 0 ? py + j : py - 1 - j));
-            }
+      if (steps[c.key] && bridgeSize > 0) {
+        // Bridge the pinch at this tile's corner point P.
+        const K = bridgeSize;
+        const px = c.dx < 0 ? 0 : C;
+        const py = c.dy < 0 ? 0 : C;
+        for (let i = 0; i < K; i++) {
+          for (let j = 0; i + j < K; j++) {
+            // Into the vertical orthogonal tile (x, y+dy), on the side toward dx.
+            mark(ox + (c.dx < 0 ? px + i : px - 1 - i), oy + (c.dy < 0 ? py - 1 - j : py + j));
+            // Into the horizontal orthogonal tile (x+dx, y), on the side toward dy.
+            mark(ox + (c.dx < 0 ? px - 1 - i : px + i), oy + (c.dy < 0 ? py + j : py - 1 - j));
           }
-        } else {
-          const iV = c.dy < 0 ? iN : iS;
-          style.outerProfile.forEach((cut, k) => {
-            const r = c.dy < 0 ? iV + k : C - 1 - iV - k;
-            if (r < 0 || r >= C) return;
-            if (c.dx < 0) left[r] = Math.max(left[r], iW + cut);
-            else right[r] = Math.min(right[r], C - iE - cut);
-          });
         }
-      } else if (hPres && vPres && !dPres) {
+      } else if (outer[c.key]) {
+        const iV = c.dy < 0 ? iN : iS;
+        style.outerProfile.forEach((cut, k) => {
+          const r = c.dy < 0 ? iV + k : C - 1 - iV - k;
+          if (r < 0 || r >= C) return;
+          if (c.dx < 0) left[r] = Math.max(left[r], iW + cut);
+          else right[r] = Math.min(right[r], C - iE - cut);
+        });
+      } else if (inner[c.key]) {
         // The vertical neighbour's inset on our horizontal side, and the
         // horizontal neighbour's inset on our vertical side, meet at vertex V.
+        // (Both neighbours are on the map: an off-map diagonal counts as present.)
         const cutX = inset(x, y + c.dy, c.hSide);
         const cutY = inset(x + c.dx, y, c.vSide);
         const r0 = c.dy < 0 ? 0 : C - cutY;
@@ -386,9 +441,8 @@ export function rasterizeBlobs(tiles: readonly TileXY[], style: BlobStyle): Blob
         }
         const vx = c.dx < 0 ? cutX : C - cutX;
         const vy = c.dy < 0 ? cutY : C - cutY;
-        const F = filletSize;
-        for (let i = 0; i < F; i++) {
-          for (let j = 0; i + j < F; j++) {
+        for (let i = 0; i < filletSize; i++) {
+          for (let j = 0; i + j < filletSize; j++) {
             mark(ox + (c.dx < 0 ? vx - 1 - i : vx + i), oy + (c.dy < 0 ? vy - 1 - j : vy + j));
           }
         }
@@ -396,41 +450,52 @@ export function rasterizeBlobs(tiles: readonly TileXY[], style: BlobStyle): Blob
     }
 
     for (let r = iN; r < C - iS; r++) {
-      const ly = oy + r - y0;
-      const base = ly * width + (ox - x0);
-      for (let cx = left[r]; cx < right[r]; cx++) inside[base + cx] = 1;
+      const base = (oy + r - y0) * width + (ox - x0);
+      inside.fill(IN_REAL, base + left[r], base + Math.max(left[r], right[r]));
     }
   }
 
-  // Classify, visiting only inside cells (a small share of a town-sized
-  // raster): EDGE/BODY from `inside`, then RING from EDGE, and HALO by stamping
-  // the outside 4-neighbours of inside cells. No bounds checks needed — see `mark`.
-  const cells = new Uint8Array(width * height);
-  const tw = width / C;
-  const active = new Uint8Array(tw * (height / C));
-  const touch = (i: number) => {
-    active[((i / width) / C | 0) * tw + ((i % width) / C | 0)] = 1;
+  // Real inside cells, gathered from active tiles only (every shape, fillet,
+  // bridge and halo cell lies in a shape tile or one of its 8 neighbours).
+  let count = 0;
+  const forActiveCells = (fn: (i: number) => void) => {
+    for (let ty = 0; ty < th; ty++) {
+      for (let tx = 0; tx < tw; tx++) {
+        if (!active[ty * tw + tx]) continue;
+        for (let r = 0; r < C; r++) {
+          const base = (ty * C + r) * width + tx * C;
+          for (let k = 0; k < C; k++) if (inside[base + k] === IN_REAL) fn(base + k);
+        }
+      }
+    }
   };
+  forActiveCells(() => { count++; });
+  const insideIdx = new Int32Array(count);
+  count = 0;
+  forActiveCells((i) => { insideIdx[count++] = i; });
+
+  // Classify: EDGE/BODY from `inside`, RING from EDGE, HALO by stamping the
+  // outside 4-neighbours of lip cells. No bounds checks needed — see `mark`.
+  const cells = new Uint8Array(width * height);
   const n8 = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1];
   const n4 = [-width, -1, 1, width];
-  const insideIdx: number[] = [];
-  for (let i = 0; i < inside.length; i++) if (inside[i]) insideIdx.push(i);
-
-  for (const i of insideIdx) {
+  for (let k = 0; k < insideIdx.length; k++) {
+    const i = insideIdx[k];
     let edge = false;
-    for (const d of n8) if (!inside[i + d]) { edge = true; break; }
+    for (let d = 0; d < 8; d++) if (inside[i + n8[d]] === IN_NONE) { edge = true; break; }
     cells[i] = edge ? CELL_EDGE : CELL_BODY;
-    touch(i);
   }
-  for (const i of insideIdx) {
+  for (let k = 0; k < insideIdx.length; k++) {
+    const i = insideIdx[k];
     if (cells[i] !== CELL_BODY) continue;
-    for (const d of n8) if (cells[i + d] === CELL_EDGE) { cells[i] = CELL_RING; break; }
+    for (let d = 0; d < 8; d++) if (cells[i + n8[d]] === CELL_EDGE) { cells[i] = CELL_RING; break; }
   }
-  for (const i of insideIdx) {
+  for (let k = 0; k < insideIdx.length; k++) {
+    const i = insideIdx[k];
     if (cells[i] !== CELL_EDGE) continue; // only lip cells can touch the outside
-    for (const d of n4) {
-      const j = i + d;
-      if (!inside[j] && cells[j] !== CELL_HALO) { cells[j] = CELL_HALO; touch(j); }
+    for (let d = 0; d < 4; d++) {
+      const j = i + n4[d];
+      if (inside[j] === IN_NONE) cells[j] = CELL_HALO;
     }
   }
 
@@ -446,42 +511,54 @@ export interface CellRect {
 }
 
 /**
- * Cover every cell matching `pred` with non-overlapping rectangles: horizontal
- * runs per row, extended downward while the next row has the identical run. A
- * straight road then costs a handful of rects instead of one per cell, and
- * non-overlap matters because the layers are drawn translucent.
+ * Sort cells into buckets in a single scan and cover each bucket with
+ * non-overlapping rectangles: horizontal runs of the same bucket per row,
+ * extended downward while the next row has the identical run. A straight road
+ * then costs a handful of rects instead of one per cell, and non-overlap
+ * matters because the layers are drawn translucent.
+ *
+ * `bucket` returns 1..bucketCount for a cell, or 0 to skip it; it is only
+ * called for non-OUT cells in active tiles. Result: one rect list per bucket
+ * (index 0 = bucket 1).
  */
-export function mergeCellRects(
+export function bucketCellRects(
   raster: BlobRaster,
-  pred: (cls: number, cx: number, cy: number) => boolean,
-): CellRect[] {
+  bucket: (cls: number, cx: number, cy: number) => number,
+  bucketCount: number,
+): CellRect[][] {
   const { x0, y0, width, height, cells, cellsPerTile: C, active } = raster;
+  const out: CellRect[][] = Array.from({ length: bucketCount }, () => []);
+  if (width === 0) return out;
   const tw = width / C;
-  const out: CellRect[] = [];
   let open = new Map<number, CellRect>();
-  // OUT cells never match (so `pred` needn't handle them) and whole empty tiles
-  // are skipped: on a town-sized road raster most cells are neither.
-  const match = (i: number, lx: number, ly: number) =>
-    cells[i] !== CELL_OUT && pred(cells[i], x0 + lx, y0 + ly);
   for (let ly = 0; ly < height; ly++) {
     const next = new Map<number, CellRect>();
     const rowActive = (ly / C | 0) * tw;
     const rowBase = ly * width;
+    const cy = y0 + ly;
+    const keyAt = (lx: number) => {
+      const cls = cells[rowBase + lx];
+      return cls === CELL_OUT ? 0 : bucket(cls, x0 + lx, cy);
+    };
     let lx = 0;
+    let k = -1; // key of cell lx when already computed by the run scan
     while (lx < width) {
-      if (lx % C === 0 && !active[rowActive + lx / C]) { lx += C; continue; }
-      if (!match(rowBase + lx, lx, ly)) { lx++; continue; }
-      const start = lx;
-      while (lx < width && match(rowBase + lx, lx, ly)) lx++;
-      const key = start * (width + 1) + lx;
-      const prev = open.get(key);
+      if (lx % C === 0 && !active[rowActive + lx / C]) { lx += C; k = -1; continue; }
+      const b = k >= 0 ? k : keyAt(lx);
+      k = -1;
+      if (b === 0) { lx++; continue; }
+      const start = lx++;
+      while (lx < width && (k = keyAt(lx)) === b) lx++;
+      if (lx >= width) k = -1;
+      const runKey = (start * (width + 1) + lx) * (bucketCount + 1) + b;
+      const prev = open.get(runKey);
       if (prev) {
         prev.h++;
-        next.set(key, prev);
+        next.set(runKey, prev);
       } else {
-        const rect = { x: x0 + start, y: y0 + ly, w: lx - start, h: 1 };
-        out.push(rect);
-        next.set(key, rect);
+        const rect = { x: x0 + start, y: cy, w: lx - start, h: 1 };
+        out[b - 1].push(rect);
+        next.set(runKey, rect);
       }
     }
     open = next;

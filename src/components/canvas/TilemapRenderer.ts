@@ -5,8 +5,8 @@ import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getTerrainTexture } from "./textures";
 import {
   type BlobRaster, type BlobStyle, type Side,
-  buildTileSet, classifyRoadTile, connectedComponents, hash2, hasTile, isInsideCell,
-  mergeCellRects, rasterizeBlobs,
+  bucketCellRects, buildTileSet, classifyRoadTile, connectedComponents, hash2, hasTile,
+  isInsideCell, isOffMap, rasterizeBlobs, uniqueTiles,
   CELL_BODY, CELL_EDGE, CELL_HALO, CELL_RING,
 } from "../../lib/autotile";
 
@@ -60,19 +60,24 @@ const DIRT_STYLE: BlobStyle = {
   bridgeSize: 0,
 };
 
-/** One path + one fill for every raster cell matching `pred` (merged rects never
- *  overlap, so translucent fills don't double up). */
-function fillCells(
+/** Sort raster cells into buckets in one scan, then one path + one fill per
+ *  bucket (`styles[i]` fills bucket i + 1). Merged rects never overlap, so
+ *  translucent fills don't double up. */
+function fillCellBuckets(
   g: PIXI.Graphics,
   raster: BlobRaster,
-  pred: (cls: number, cx: number, cy: number) => boolean,
-  style: { color: number; alpha?: number },
+  bucket: (cls: number, cx: number, cy: number) => number,
+  styles: ReadonlyArray<{ color: number; alpha?: number }>,
 ): void {
-  const rects = mergeCellRects(raster, pred);
-  if (rects.length === 0) return;
-  for (const r of rects) g.rect(r.x * CELL_PX, r.y * CELL_PX, r.w * CELL_PX, r.h * CELL_PX);
-  g.fill(style);
+  const buckets = bucketCellRects(raster, bucket, styles.length);
+  buckets.forEach((rects, i) => {
+    if (rects.length === 0) return;
+    for (const r of rects) g.rect(r.x * CELL_PX, r.y * CELL_PX, r.w * CELL_PX, r.h * CELL_PX);
+    g.fill(styles[i]);
+  });
 }
+
+const insideBucket = (cls: number) => (isInsideCell(cls) ? 1 : 0);
 
 /** Checkerboard parity of a cell: dither only ever lights alternate cells, so
  *  two dithered pixels never touch edge-to-edge and read as texture, not blobs. */
@@ -156,7 +161,6 @@ export class TilemapRenderer {
    *  a redraw while a texture fetch is in flight would otherwise let the stale
    *  callback add a duplicate tile group to the freshly cleared container. */
   private zoneGeneration = 0;
-  private roadGeneration = 0;
 
   constructor(_app: PIXI.Application) {
     this.container = new PIXI.Container();
@@ -347,27 +351,39 @@ export class TilemapRenderer {
 
   /**
    * Draw road tiles as an autotiled surface plus a detail layer (wear, ruts,
-   * lip, edge dither), with an optional texture upgrade of the surface.
-   * Two Graphics total, built once per road set — nothing runs per frame.
-   * Idempotent — re-running replaces prior road graphics.
+   * lip, edge dither). Two Graphics total, built once per road set — nothing
+   * runs per frame. Idempotent — re-running replaces prior road graphics.
+   *
+   * Roads are procedural only. There used to be a per-tile texture upgrade
+   * here, but no road texture ever shipped, and square tile sprites would undo
+   * the autotiled shape (caps, chamfers, diagonal bridges) anyway.
    */
-  setRoadTiles(tiles: Array<{ x: number; y: number }>): void {
+  setRoadTiles(rawTiles: Array<{ x: number; y: number }>): void {
     // Detach first: `destroy()` splices the child out of `children`, so
     // iterating the live array skips every second entry and leaks it.
     for (const child of this.roadContainer.removeChildren()) child.destroy();
-    const myGeneration = ++this.roadGeneration;
 
-    if (!Array.isArray(tiles) || tiles.length === 0) return;
+    if (!Array.isArray(rawTiles) || rawTiles.length === 0) return;
+    // Worldgen lists crossing tiles once per road; drawn twice, a translucent
+    // rut would come out darker on exactly those tiles.
+    const tiles = uniqueTiles(rawTiles);
 
+    // Off-map neighbours count as road, so a road meeting the map edge runs
+    // off it instead of ending in a rounded, lipped cap. Unknown until resize().
+    const bounds = this.mapWidth > 0 && this.mapHeight > 0
+      ? { width: Math.round(this.mapWidth / TILE_SIZE), height: Math.round(this.mapHeight / TILE_SIZE) }
+      : undefined;
     const roadSet = buildTileSet(tiles);
-    const raster = rasterizeBlobs(tiles, ROAD_STYLE);
+    const roadAt = (x: number, y: number) =>
+      hasTile(roadSet, x, y) || (bounds !== undefined && isOffMap(bounds, x, y));
+    const raster = rasterizeBlobs(tiles, { ...ROAD_STYLE, bounds });
 
     // Road surface: the autotiled shape (rounded ends, chamfered bend insides,
     // bridged diagonal steps) as merged rects — a straight road is a few rects.
-    const fallback = new PIXI.Graphics();
-    fallback.eventMode = 'none';
-    fillCells(fallback, raster, isInsideCell, { color: ROAD_COLOR });
-    this.roadContainer.addChild(fallback);
+    const surface = new PIXI.Graphics();
+    surface.eventMode = 'none';
+    fillCellBuckets(surface, raster, insideBucket, [{ color: ROAD_COLOR }]);
+    this.roadContainer.addChild(surface);
 
     const edges = new PIXI.Graphics();
     edges.eventMode = 'none';
@@ -384,8 +400,8 @@ export class TilemapRenderer {
       else if (cls === 'h' || cls === 'v') ruts.push({ x: t.x, y: t.y, axis: cls });
     }
     if (junctions.length > 0) {
-      fillCells(edges, rasterizeBlobs(junctions, WEAR_STYLE), isInsideCell,
-        { color: ROAD_EDGE_COLOR, alpha: 0.18 });
+      fillCellBuckets(edges, rasterizeBlobs(junctions, WEAR_STYLE), insideBucket,
+        [{ color: ROAD_EDGE_COLOR, alpha: 0.18 }]);
     }
 
     // Wheel ruts: two worn tracks per lane along straight runs distinguish
@@ -400,67 +416,44 @@ export class TilemapRenderer {
       const px = r.x * TILE_SIZE;
       const py = r.y * TILE_SIZE;
       if (r.axis === 'h') {
-        const x0 = px + (hasTile(roadSet, r.x - 1, r.y) ? 0 : RUT_END_GAP);
-        const x1 = px + TILE_SIZE - (hasTile(roadSet, r.x + 1, r.y) ? 0 : RUT_END_GAP);
+        const x0 = px + (roadAt(r.x - 1, r.y) ? 0 : RUT_END_GAP);
+        const x1 = px + TILE_SIZE - (roadAt(r.x + 1, r.y) ? 0 : RUT_END_GAP);
         edges.rect(x0, py + RUT_OFFSET, x1 - x0, 2);
         edges.rect(x0, py + TILE_SIZE - RUT_OFFSET - 2, x1 - x0, 2);
       } else {
-        const y0 = py + (hasTile(roadSet, r.x, r.y - 1) ? 0 : RUT_END_GAP);
-        const y1 = py + TILE_SIZE - (hasTile(roadSet, r.x, r.y + 1) ? 0 : RUT_END_GAP);
+        const y0 = py + (roadAt(r.x, r.y - 1) ? 0 : RUT_END_GAP);
+        const y1 = py + TILE_SIZE - (roadAt(r.x, r.y + 1) ? 0 : RUT_END_GAP);
         edges.rect(px + RUT_OFFSET, y0, 2, y1 - y0);
         edges.rect(px + TILE_SIZE - RUT_OFFSET - 2, y0, 2, y1 - y0);
       }
     }
     if (ruts.length > 0) edges.fill({ color: ROAD_EDGE_COLOR, alpha: 0.35 });
 
-    // Carved lip: a solid 2px dark line on the outermost cells, so roads read
-    // as cut into the ground rather than as flat colour bands. It follows the
-    // rasterised outline, so concave corners close up instead of notching.
-    fillCells(edges, raster, (c) => c === CELL_EDGE, { color: ROAD_EDGE_COLOR, alpha: 0.8 });
-    // Inner dither band (art bible: "2px noise dither at edges"): a sparse,
-    // hash-thinned checkerboard of darker grit and lighter dust just inside the
-    // lip softens the step from lip to surface.
-    fillCells(edges, raster, (c, cx, cy) =>
-      c === CELL_RING && onChecker(cx, cy) && (hash2(cx, cy) & 3) !== 0,
-    { color: ROAD_EDGE_COLOR, alpha: 0.4 });
-    fillCells(edges, raster, (c, cx, cy) =>
-      c === CELL_RING && !onChecker(cx, cy) && hash2(cx, cy, 1) % 3 === 0,
-    { color: ROAD_DUST_COLOR, alpha: 0.35 });
-    // Outer dither: occasional road-coloured grit kicked onto the verge breaks
-    // the ruled line between road and grass.
-    fillCells(edges, raster, (c, cx, cy) =>
-      c === CELL_HALO && onChecker(cx, cy) && (hash2(cx, cy, 2) & 3) === 0,
-    { color: ROAD_COLOR, alpha: 0.6 });
+    // Outline detail, one raster scan for all four buckets:
+    // 1. Carved lip: a solid 2px dark line on the outermost cells, so roads read
+    //    as cut into the ground rather than as flat colour bands. It follows the
+    //    rasterised outline, so concave corners close up instead of notching.
+    // 2-3. Inner dither band (art bible: "2px noise dither at edges"): a sparse,
+    //    hash-thinned checkerboard of darker grit and lighter dust just inside
+    //    the lip softens the step from lip to surface.
+    // 4. Outer dither: occasional road-coloured grit kicked onto the verge
+    //    breaks the ruled line between road and grass.
+    fillCellBuckets(edges, raster, (c, cx, cy) => {
+      if (c === CELL_EDGE) return 1;
+      if (c === CELL_RING) {
+        if (onChecker(cx, cy)) return (hash2(cx, cy) & 3) !== 0 ? 2 : 0;
+        return hash2(cx, cy, 1) % 3 === 0 ? 3 : 0;
+      }
+      if (c === CELL_HALO) return onChecker(cx, cy) && (hash2(cx, cy, 2) & 3) === 0 ? 4 : 0;
+      return 0;
+    }, [
+      { color: ROAD_EDGE_COLOR, alpha: 0.8 },
+      { color: ROAD_EDGE_COLOR, alpha: 0.4 },
+      { color: ROAD_DUST_COLOR, alpha: 0.35 },
+      { color: ROAD_COLOR, alpha: 0.6 },
+    ]);
 
     this.roadContainer.addChild(edges);
-
-    // Async texture upgrade — replace color fill with sprites if a road texture exists
-    const container = this.roadContainer;
-    const tilesSnapshot = tiles.slice();
-    getTerrainTexture('road')
-      ?.then((texture) => {
-        if (container.destroyed || this.roadGeneration !== myGeneration) return;
-        // Sprites are square per tile, so a textured road loses the rounded
-        // caps and the fillet/bridge cells outside its tiles; the lip still
-        // traces the autotiled outline on top.
-        container.removeChild(fallback);
-        fallback.destroy();
-        const tileGroup = new PIXI.Container();
-        for (const tile of tilesSnapshot) {
-          const sprite = new PIXI.Sprite(texture);
-          sprite.x = tile.x * TILE_SIZE;
-          sprite.y = tile.y * TILE_SIZE;
-          sprite.width = TILE_SIZE;
-          sprite.height = TILE_SIZE;
-          tileGroup.addChild(sprite);
-        }
-        container.addChild(tileGroup);
-        // Keep edge strips on top of the texture sprites.
-        if (!edges.destroyed) container.addChild(edges);
-      })
-      .catch(() => {
-        // Fallback stays.
-      });
   }
 
   /**
@@ -511,7 +504,7 @@ export class TilemapRenderer {
         g.circle(px + TILE_SIZE / 2 + 4, py + TILE_SIZE / 2 + 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
         g.circle(px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 5, 2.5).fill({ color: 0xd98aaa, alpha: 0.3 });
       } else if (tile.kind === 'grass_tuft') {
-        this.drawTuft(g, px, py, h);
+        this.drawTuft(g, px, py, tile.x, tile.y);
       } else if (tile.kind === 'tall_grass') {
         // Legacy: ~42% of tall grass grows into a tree, ~40% into a bush, rest
         // stays as the flat blotch — a mix of heights keeps the fields from
@@ -544,14 +537,14 @@ export class TilemapRenderer {
       // Body at full strength; the rim cells alternate full/faded on a
       // checkerboard and a few stray cells land just outside — a soft, dithered
       // edge instead of a ruled one.
-      fillCells(g, raster, (c, cx, cy) =>
-        c === CELL_BODY || c === CELL_RING || (c === CELL_EDGE && onChecker(cx, cy)),
-      { color: DIRT_COLOR, alpha });
-      fillCells(g, raster, (c, cx, cy) => c === CELL_EDGE && !onChecker(cx, cy),
-        { color: DIRT_COLOR, alpha: alpha * 0.5 });
-      fillCells(g, raster, (c, cx, cy) =>
-        c === CELL_HALO && onChecker(cx, cy) && hash2(cx, cy, 3) % 3 === 0,
-      { color: DIRT_COLOR, alpha: alpha * 0.5 });
+      fillCellBuckets(g, raster, (c, cx, cy) => {
+        if (c === CELL_BODY || c === CELL_RING) return 1;
+        if (c === CELL_EDGE) return onChecker(cx, cy) ? 1 : 2;
+        return onChecker(cx, cy) && hash2(cx, cy, 3) % 3 === 0 ? 2 : 0; // halo
+      }, [
+        { color: DIRT_COLOR, alpha },
+        { color: DIRT_COLOR, alpha: alpha * 0.5 },
+      ]);
     }
 
     // ── Prop pass ── painter's order by row (stable sort keeps x order within a row).
@@ -573,10 +566,12 @@ export class TilemapRenderer {
    * low-alpha — tufts are ground texture, not props (art bible: terrain stays
    * background). Every coordinate is on the 2px grid so blades stay crisp.
    */
-  private drawTuft(g: PIXI.Graphics, px: number, py: number, h: number): void {
-    const clumps = (h >>> 20) % 100 < 45 ? 2 : 1;
+  private drawTuft(g: PIXI.Graphics, px: number, py: number, tx: number, ty: number): void {
+    // hash2, not the legacy per-tile hash: tufts are new (no saved look to
+    // preserve) and that hash's near-periodic bits line clustered tufts up.
+    const clumps = hash2(tx, ty, 4) % 100 < 45 ? 2 : 1;
     for (let k = 0; k < clumps; k++) {
-      const hk = k === 0 ? h : hash2(px, py, 5);
+      const hk = hash2(tx, ty, 5 + k);
       const baseX = px + 4 + 2 * ((hk >>> 4) % 10);   // 4-22
       const baseY = py + 12 + 2 * ((hk >>> 9) % 8);   // 12-26
       const blades = 3 + ((hk >>> 14) & 1);

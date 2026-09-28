@@ -4,7 +4,7 @@ import {
   buildTileSet, hasTile, tileKey, neighbourMask,
   exposedEdges, outerCorners, innerCorners, diagonalSteps,
   runLengths, classifyRoadTile, connectedComponents, hash2,
-  rasterizeBlobs, mergeCellRects, isInsideCell,
+  rasterizeBlobs, bucketCellRects, isInsideCell, isOffMap, uniqueTiles,
   CELL_OUT, CELL_BODY, CELL_EDGE, CELL_RING, CELL_HALO,
   type BlobRaster, type BlobStyle, type TileXY,
 } from '../autotile';
@@ -209,8 +209,25 @@ describe('connectedComponents', () => {
     expect(comps[1]).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }]);
   });
 
-  it('is deterministic', () => {
+  it('finds the same components whatever the input order', () => {
     const tiles = pic(['##..#', '#..##', '...#.', '#....']);
+    // Components as a canonical set of sets, independent of listing order.
+    const canon = (comps: TileXY[][]) =>
+      comps.map((c) => c.map((t) => `${t.x},${t.y}`).sort().join(' ')).sort();
+    const base = canon(connectedComponents(tiles));
+    expect(base).toEqual(['0,0 0,1 1,0', '0,3', '3,1 3,2 4,0 4,1']);
+    // Seeded Fisher-Yates so the shuffles are reproducible.
+    let seed = 12345;
+    const rand = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32);
+    for (let n = 0; n < 10; n++) {
+      const shuffled = [...tiles];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      expect(canon(connectedComponents(shuffled))).toEqual(base);
+    }
+    // Same input → identical output, order included.
     expect(connectedComponents(tiles)).toEqual(connectedComponents([...tiles]));
     expect(connectedComponents([])).toEqual([]);
   });
@@ -364,43 +381,97 @@ describe('rasterizeBlobs (inset style, dirt)', () => {
   });
 });
 
-describe('mergeCellRects', () => {
-  it('covers exactly the matching cells with non-overlapping rects', () => {
+describe('bucketCellRects', () => {
+  // Class → bucket: 1 lip, 2 ring, 3 halo (body skipped), plus a checker split
+  // of the ring so buckets interleave within a run.
+  const bucketOf = (c: number, cx: number, cy: number) =>
+    c === CELL_EDGE ? 1 : c === CELL_RING ? (((cx + cy) & 1) === 0 ? 2 : 4) : c === CELL_HALO ? 3 : 0;
+
+  it('covers exactly each bucket\'s cells with non-overlapping rects', () => {
     const r = rasterizeBlobs(pic(['##..', '####', '.#.#']), ROAD);
-    for (const pred of [isInsideCell, (c: number) => c === CELL_EDGE, (c: number) => c === CELL_HALO]) {
-      const rects = mergeCellRects(r, (c) => pred(c));
-      const covered = new Map<string, number>();
+    const buckets = bucketCellRects(r, bucketOf, 4);
+    expect(buckets).toHaveLength(4);
+    const covered = new Map<string, number>();
+    buckets.forEach((rects, bi) => {
       for (const q of rects) {
         for (let y = q.y; y < q.y + q.h; y++) {
           for (let x = q.x; x < q.x + q.w; x++) {
             const k = `${x},${y}`;
             covered.set(k, (covered.get(k) ?? 0) + 1);
-            expect(pred(cellAt(r, x, y))).toBe(true);
+            expect(bucketOf(cellAt(r, x, y), x, y)).toBe(bi + 1);
           }
         }
       }
-      expect([...covered.values()].every((n) => n === 1)).toBe(true);
-      let expected = 0;
-      for (const c of r.cells) if (pred(c)) expected++;
-      expect(covered.size).toBe(expected);
+    });
+    expect([...covered.values()].every((n) => n === 1)).toBe(true);
+    let expected = 0;
+    for (let ly = 0; ly < r.height; ly++) {
+      for (let lx = 0; lx < r.width; lx++) {
+        if (bucketOf(r.cells[ly * r.width + lx], r.x0 + lx, r.y0 + ly) !== 0) expected++;
+      }
     }
+    expect(covered.size).toBe(expected);
   });
 
   it('merges a straight road body into few rects', () => {
     const r = rasterizeBlobs(pic(['##########', '##########']), ROAD);
-    const rects = mergeCellRects(r, isInsideCell);
+    const [rects] = bucketCellRects(r, (c) => (isInsideCell(c) ? 1 : 0), 1);
     // Rounded ends make a few distinct rows; the long middle is one tall rect.
     expect(rects.length).toBeLessThanOrEqual(5);
   });
 
-  it('passes absolute cell coordinates to the predicate', () => {
+  it('passes absolute cell coordinates and never OUT cells', () => {
     const r = rasterizeBlobs([{ x: 4, y: 4 }], ROAD);
     const seen: Array<[number, number]> = [];
-    mergeCellRects(r, (c, cx, cy) => {
+    bucketCellRects(r, (c, cx, cy) => {
+      expect(c).not.toBe(CELL_OUT);
       if (c === CELL_BODY && seen.length === 0) seen.push([cx, cy]);
-      return false;
-    });
+      return 0;
+    }, 1);
     expect(seen[0][0]).toBeGreaterThanOrEqual(4 * C);
     expect(seen[0][1]).toBeGreaterThanOrEqual(4 * C);
+  });
+
+  it('handles an empty raster', () => {
+    expect(bucketCellRects(rasterizeBlobs([], ROAD), () => 1, 2)).toEqual([[], []]);
+  });
+});
+
+describe('map bounds', () => {
+  const bounds = { width: 6, height: 4 };
+
+  it('neighbourMask counts off-map neighbours as present', () => {
+    const set = buildTileSet([{ x: 0, y: 1 }]);
+    expect(neighbourMask(set, 0, 1)).toBe(0);
+    expect(neighbourMask(set, 0, 1, bounds)).toBe(W | NW | SW);
+    expect(isOffMap(bounds, -1, 0)).toBe(true);
+    expect(isOffMap(bounds, 5, 3)).toBe(false);
+    expect(isOffMap(bounds, 6, 3)).toBe(true);
+  });
+
+  it('a road running off the map edge gets no cap, lip or halo along the border', () => {
+    const tiles = pic(['......', '###...', '###...', '......']);
+    const capped = rasterizeBlobs(tiles, ROAD);
+    const open = rasterizeBlobs(tiles, { ...ROAD, bounds });
+    // Without bounds the west end is a rounded, lipped cap with halo beyond it.
+    expect(inside(capped, 0, C)).toBe(false);
+    expect(cellAt(capped, 0, C + 8)).toBe(CELL_EDGE);
+    expect(cellAt(capped, -1, C + 8)).toBe(CELL_HALO);
+    // With bounds the road is square and unlipped at x = 0, and nothing is off-map.
+    expect(inside(open, 0, C)).toBe(true);
+    expect(cellAt(open, 0, C + 8)).toBe(CELL_BODY);
+    expect(cellAt(open, -1, C + 8)).toBe(CELL_OUT);
+    // The on-map sides are still outlined.
+    expect(cellAt(open, 8, C)).toBe(CELL_EDGE);
+    expect(cellAt(open, 8, C - 1)).toBe(CELL_HALO);
+    expect(inside(open, 3 * C - 1, C)).toBe(false); // east cap still rounded
+  });
+});
+
+describe('uniqueTiles', () => {
+  it('drops repeats and keeps first-seen order', () => {
+    const a = { x: 1, y: 1, tag: 'a' };
+    const b = { x: 2, y: 1, tag: 'b' };
+    expect(uniqueTiles([a, b, { x: 1, y: 1, tag: 'dup' }, b])).toEqual([a, b]);
   });
 });
