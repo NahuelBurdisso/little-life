@@ -498,8 +498,9 @@ export const nudgeRouter = router({
               money: CONFIG.ECONOMY.STARTING_MONEY,
               daily_expenses: CONFIG.ECONOMY.DAILY_EXPENSES.min,
               inventory: [],
-              // economy.last_payday is wall-clock ms (economy.ts compares it to Date.now()).
-              last_payday: Date.now(),
+              // CLOCK: economy.last_payday is GAME MINUTES (economy.ts payday). Stamping
+              // "now" means a newcomer isn't paid on arrival, only at their next shift end.
+              last_payday: nowGameMinutes,
               production_remainder: 0,
             })
             .run();

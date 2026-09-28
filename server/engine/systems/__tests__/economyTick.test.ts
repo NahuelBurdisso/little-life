@@ -12,10 +12,11 @@ import { economyTick, clearPurchaseTracking } from '../economy';
 
 type Inv = { itemId: string; quantity: number; acquiredAt: number }[];
 
-function ensureWorld(): void {
+function ensureWorld(day = 1, hour = 9, minute = 0): void {
   // No pending transitions: day-change living costs and crisis events would
   // otherwise move the buyer's money under the test.
-  const time = { day: 1, hour: 9, minute: 0, totalTicks: 1980, seasonDay: 1, season: 'spring' as const };
+  const totalTicks = day * 1440 + hour * 60 + minute;
+  const time = { day, hour, minute, totalTicks, seasonDay: 1, season: 'spring' as const };
   const existing = db.select().from(worldState).get();
   if (existing) {
     db.update(worldState).set({ time, pending_transitions: [], tick_speed: 1 }).where(eq(worldState.id, existing.id)).run();
@@ -254,5 +255,58 @@ describe('shop purchases', () => {
 
     expect(purchasesBy(owner)).toHaveLength(0);
     expect(count(owner, 'food_prepared')).toBe(1);
+  });
+});
+
+/**
+ * `economy.last_payday` was Date.now() compared against 6 game hours converted to
+ * real ms by assuming one tick per real second, so paydays depended on how fast
+ * the game ran in real time. It is game minutes now.
+ */
+describe('payday interval', () => {
+  const salaryRows = (agentId: number) =>
+    db.select().from(economyTransactions).where(and(
+      eq(economyTransactions.to_agent, agentId),
+      eq(economyTransactions.reason, 'salary'),
+    )).all();
+
+  function worker(lastPayday = 0): number {
+    n++;
+    const home = insertLocation(`payday home ${n}`, 'home', null);
+    const agent = insertAgent(`Worker ${n}`, home); // shift ends at 20:00
+    insertEconomy(agent, 10, []);
+    db.update(economy).set({ salary: 50, last_payday: lastPayday }).where(eq(economy.agent_id, agent)).run();
+    return agent;
+  }
+
+  it('pays once per shift end and again the next game day, however fast real time runs', () => {
+    const agent = worker();
+
+    ensureWorld(3, 20, 0);
+    economyTick();
+    expect(salaryRows(agent)).toHaveLength(1);
+    expect(econ(agent).last_payday).toBe(3 * 1440 + 20 * 60);
+
+    // Still inside the 20:00-21:59 window: no second salary.
+    ensureWorld(3, 21, 30);
+    economyTick();
+    expect(salaryRows(agent)).toHaveLength(1);
+
+    // Next game day's shift end — milliseconds later in real time. The wall-clock
+    // check wanted 6 real minutes to pass and skipped this payday.
+    ensureWorld(4, 20, 0);
+    economyTick();
+    expect(salaryRows(agent)).toHaveLength(2);
+    expect(econ(agent).money).toBe(110);
+  });
+
+  it('pays an agent whose last payday is a wall-clock stamp from an older save', () => {
+    const agent = worker(Date.now());
+
+    ensureWorld(5, 20, 0);
+    economyTick();
+
+    expect(salaryRows(agent)).toHaveLength(1);
+    expect(econ(agent).last_payday).toBe(5 * 1440 + 20 * 60);
   });
 });

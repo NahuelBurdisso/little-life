@@ -288,7 +288,12 @@ export function economyTick(): void {
   }
 
   // ========== 2. PAYDAY ==========
-  const minPaydayIntervalHours = CONFIG.ECONOMY.MIN_PAYDAY_INTERVAL_HOURS;
+  // `economy.last_payday` is GAME MINUTES (day*1440 + hour*60 + minute). It used
+  // to be Date.now() compared against "6 hours" converted to real ms by
+  // assuming one tick per real second — wrong whenever a tick isn't a second
+  // (the loop runs every TICK_INTERVAL_MS / tick_speed) or the game is paused.
+  const minPaydayIntervalMinutes = CONFIG.ECONOMY.MIN_PAYDAY_INTERVAL_HOURS * 60;
+  const nowGameMinute = world.time!.day * 1440 + world.time!.hour * 60 + world.time!.minute;
 
   for (const agent of activeAgents) {
     const econ = econByAgent.get(agent.id);
@@ -299,11 +304,12 @@ export function economyTick(): void {
     // Consider payday if current hour matches workEnd (or just passed it)
     if (currentHour < workEnd || currentHour > workEnd + 1) continue;
 
-    // Check lastPayday interval.
-    const minPaydayIntervalMs =
-      (minPaydayIntervalHours * 60 * 1000) / world.tick_speed;
-
-    if (econ.last_payday !== 0 && now - econ.last_payday < minPaydayIntervalMs) {
+    // Check lastPayday interval. 0 = never paid. A stamp AHEAD of the clock is a
+    // wall-clock ms value from a save made before the switch to game minutes
+    // (~1.7e12); treat it as "long ago" so those agents get their next payday
+    // instead of never being paid again.
+    const last = econ.last_payday;
+    if (last !== 0 && last <= nowGameMinute && nowGameMinute - last < minPaydayIntervalMinutes) {
       continue;
     }
 
@@ -323,10 +329,10 @@ export function economyTick(): void {
     const newMoney = econ.money + effectiveSalary;
     db.update(economy).set({
       money: newMoney,
-      last_payday: now,
+      last_payday: nowGameMinute,
     }).where(eq(economy.id, econ.id)).run();
     econ.money = newMoney;
-    econ.last_payday = now;
+    econ.last_payday = nowGameMinute;
 
     // Log transaction
     db.insert(economyTransactions).values({
