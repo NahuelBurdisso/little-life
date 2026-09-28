@@ -1,7 +1,8 @@
 import type { LocationSeed } from '../types';
-import { FitError, type Stage } from '../types';
-import { TILE, BORDER_BUFFER, ROAD_BUFFER, BUILDING_GAP } from '../config';
+import { FitError, type Stage, type StageExtras } from '../types';
+import { TILE, BORDER_BUFFER, ROAD_BUFFER, BUILDING_GAP, type WorldGenConfig } from '../config';
 import { buildRoadDistance } from './roads';
+import { SOCIAL_WEIGHTS, assignHomeLabels, edgesToLabelPairs } from '../social';
 /** Derived plots that are circulation space rather than a destination, and so
  *  are exempt from PUBLIC_BUFFER. Deliberately narrower than
  *  DERIVED_LOCATION_TYPES — see the comment in `buildBlockedMask`. */
@@ -208,18 +209,97 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
         `not enough spots for ${homeCount} homes (found ${chosen.length})`);
     }
 
+    // Which plot is `Home k`. Selection above decides *where* the houses are;
+    // this decides *who* lives in each, from the relationship graph. It draws
+    // nothing from `rng`, so the description shuffle below sees the same stream
+    // either way, and with no social input `plotOf` is the identity and the
+    // output is exactly what it was before social placement existed.
+    const plotOf = socialAssignment(chosen, cfg, extras, ctx.publicBuildings);
+
     // One shuffled pass over the description pool instead of an independent
     // `rng.pick` per home: with 15 descriptions and up to 16 homes, drawing with
     // replacement duplicated 26.4% of descriptions per world, so neighbouring
     // houses read identically in the inspector and in LLM prompts.
+    //
+    // Indexed by plot, not by label: a description is the house ("a bright
+    // cottage with a red roof"), and the house stays put when a different
+    // household is assigned to it. Emitted in label order so `Home 1` is still
+    // first in the output.
     const descriptions = rng.shuffle(HOME_DESCRIPTIONS);
-    const homes: LocationSeed[] = chosen.map((c, i) =>
-      emitHome({ x: c.tx * TILE, y: c.ty * TILE }, i, descriptions[i % descriptions.length]));
+    const homes: LocationSeed[] = plotOf.map((plot, label) => {
+      const c = chosen[plot];
+      return emitHome({ x: c.tx * TILE, y: c.ty * TILE }, label, descriptions[plot % descriptions.length]);
+    });
     return { homes };
   },
 };
 
 // --- Helpers ---
+
+/**
+ * Map each home label (index k for `Home k+1`) to one of the chosen plots so the
+ * relationship graph shapes the neighbourhood — see `social.ts` for the why and
+ * the weights. Returns the identity when social placement is off, when no edges
+ * were supplied, or when none of them joins two *different* generated homes
+ * (housemate-only or unknown-agent edges): the workplace pull alone is not a
+ * reason to reshuffle a world whose caller asked for nothing social.
+ *
+ * The pinned-override path never reaches here — a pinned `homePositions[i]` is
+ * the user saying where `Home i+1` goes.
+ */
+function socialAssignment(
+  chosen: ReadonlyArray<{ tx: number; ty: number }>,
+  cfg: WorldGenConfig,
+  extras: StageExtras,
+  publicBuildings: ReadonlyArray<LocationSeed>,
+): number[] {
+  const identity = chosen.map((_, i) => i);
+  const edges = extras.social?.edges;
+  if (cfg.socialPlacement === false || !edges?.length || !extras.agents) return identity;
+
+  const n = chosen.length;
+  // Same `Home (\d+)` parse the home count uses above.
+  const labelOfHome = (homeName: string | undefined): number | undefined => {
+    const m = homeName?.match(/Home (\d+)/);
+    if (!m) return undefined;
+    const k = Number(m[1]) - 1;
+    return k >= 0 && k < n ? k : undefined;
+  };
+  const homeByAgent = new Map<string, number>();
+  for (const a of extras.agents) {
+    const label = labelOfHome(a.homeName);
+    if (a.name !== undefined && label !== undefined && !homeByAgent.has(a.name)) {
+      homeByAgent.set(a.name, label);
+    }
+  }
+  const pairs = edgesToLabelPairs(edges, (name) => homeByAgent.get(name));
+  if (pairs.length === 0) return identity;
+
+  // Workplace pull: each resident with a workplace that exists in this world
+  // adds a light tie from their home to its entry.
+  const workDoor = new Map<string, { x: number; y: number }>();
+  for (const b of publicBuildings) {
+    workDoor.set(b.name, {
+      x: Math.floor(b.entry_point.x / TILE),
+      y: Math.floor(b.entry_point.y / TILE),
+    });
+  }
+  const anchors: Array<Array<{ x: number; y: number; weight: number }>> =
+    Array.from({ length: n }, () => []);
+  for (const a of extras.agents) {
+    const label = labelOfHome(a.homeName);
+    const door = a.workplaceName ? workDoor.get(a.workplaceName) : undefined;
+    if (label !== undefined && door) anchors[label].push({ ...door, weight: SOCIAL_WEIGHTS.workplace });
+  }
+
+  return assignHomeLabels({
+    // Door tile, south-centre — the same tile `frontage` scores and `emitHome`
+    // puts the entry on.
+    plotDoors: chosen.map((c) => ({ x: c.tx + 1, y: c.ty + HOME_TILES })),
+    pairs,
+    anchors,
+  });
+}
 
 function buildBlockedMask(
   publicBuildings: LocationSeed[],

@@ -189,9 +189,13 @@ export interface WorldGenConfig {
   sizeTier: 'medium' | 'large' | 'auto' | 'custom';
   customDimensions?: { width: number; height: number };
   overrides: WorldGenOverrides;
+  /** Place households by the relationship graph (rivals near, secret lovers
+   *  apart). Optional to match the server type; absent means on. */
+  socialPlacement?: boolean;
 }
 
 export const DEFAULT_WORLDGEN: WorldGenConfig = {
   sizeTier: 'auto',
   overrides: {},
+  socialPlacement: true,
 };

@@ -149,6 +149,7 @@ const SetupConfigSchema = z.object({
   worldgen: WorldGenConfigObjectSchema.default({
     sizeTier: 'auto',
     overrides: {},
+    socialPlacement: true,
   }),
 });
 

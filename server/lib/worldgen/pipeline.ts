@@ -111,6 +111,7 @@ function runStages(
     const rng = forkRng(seed, stage.name);
     const extras: StageExtras = {};
     if (stage.needsAgents && opts.agents) extras.agents = opts.agents;
+    if (stage.needsAgents && opts.social) extras.social = opts.social;
     if (stage.name === 'dimensions' && expandPin) extras.expandPin = expandPin;
 
     const partial = stage.run(ctx, rng, cfg, agentCount, extras);

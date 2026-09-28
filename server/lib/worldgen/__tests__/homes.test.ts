@@ -269,3 +269,36 @@ describe('homes stage', () => {
       .toBeLessThan(0.15); // uniform baseline is 0.252
   });
 });
+
+/**
+ * Social placement at stage level. The pipeline-level behaviour (distances over
+ * many seeds, byte-identity without edges) lives in `social.test.ts`; this pins
+ * the stage contract: the same plots come out, only which label sits on which
+ * plot changes, and the rng stream is untouched.
+ */
+describe('homes stage — social placement', () => {
+  const agents = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ name: `A${n}`, homeName: `Home ${n}` }));
+  const edges = [
+    { a: 'A1', b: 'A8', kind: 'rival' as const },
+    { a: 'A2', b: 'A3', kind: 'secret_lovers' as const },
+  ];
+  const door = (h: LocationSeed) => ({ x: h.entry_point.x / 32, y: h.entry_point.y / 32 });
+  const d = (a: LocationSeed, b: LocationSeed) =>
+    Math.abs(door(a).x - door(b).x) + Math.abs(door(a).y - door(b).y);
+
+  it("keeps the plot set and each plot's description, and pulls the rivals together", () => {
+    let closer = 0;
+    for (let i = 0; i < 10; i++) {
+      const ctx = ctxWith(60, 45);
+      const base = homesStage.run(ctx, forkRng(`social-${i}`, 'homes'), CFG, 16, { agents }).homes!;
+      const soc = homesStage.run(ctx, forkRng(`social-${i}`, 'homes'), CFG, 16, {
+        agents, social: { edges },
+      }).homes!;
+      expect(soc.map((h) => h.name)).toEqual(base.map((h) => h.name));
+      const plot = (h: LocationSeed) => `${h.position.x},${h.position.y}|${h.description}`;
+      expect(new Set(soc.map(plot))).toEqual(new Set(base.map(plot)));
+      if (d(soc[0], soc[7]) <= d(base[0], base[7])) closer++;
+    }
+    expect(closer).toBe(10);
+  });
+});
