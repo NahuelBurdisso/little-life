@@ -49,6 +49,12 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
   const { data: economyStats } = trpc.economy.getTownStats.useQuery();
   const { agents } = useAgents();
   const { data: relationships } = trpc.relationships.getGraph.useQuery();
+  const { data: secretNetwork } = trpc.knowledge.getSecretNetwork.useQuery(undefined, {
+    enabled: isOpen,
+  });
+  const { data: cliques } = trpc.relationships.getCliques.useQuery(undefined, {
+    enabled: isOpen,
+  });
 
   if (!isOpen) return null;
 
@@ -109,6 +115,13 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
     sleeping: '💤', eating: '🍽️', working: '🔨', talking: '💬',
     walking: '🚶', shopping: '🛒', socializing: '👋', idle: '⏸️',
   };
+
+  // Widest-spread first: a secret half the town knows is the live scandal, a
+  // secret one agent holds is a fuse that hasn't been lit.
+  const secrets = (secretNetwork ?? [])
+    .slice()
+    .sort((a, b) => b.knownByCount - a.knownByCount || b.sensitivity - a.sensitivity)
+    .slice(0, 10);
 
   const STATE_COLORS: Record<string, string> = {
     angry: '#ef4444', jealous: '#f43f5e', heartbroken: '#fb7185', infatuated: '#ec4899',
@@ -251,6 +264,79 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
             </div>
           </div>
         </div>
+
+        {/* Social Circles */}
+        {(cliques?.length ?? 0) > 0 && (
+          <div className="px-5 py-3 border-b border-gray-700">
+            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+              👥 Social Circles
+            </div>
+            <div className="space-y-1.5">
+              {cliques!.map((clique) => (
+                <div key={clique.id}>
+                  <div className="flex items-center gap-2">
+                    <div className="text-[11px] text-white flex-1 truncate">{clique.name}</div>
+                    <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-sky-400"
+                        style={{ width: `${clique.cohesion * 100}%` }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-gray-500 w-10 text-right">
+                      {clique.members.length}
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-gray-500 truncate">
+                    {clique.memberNames.join(', ')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Town Secrets */}
+        {secrets.length > 0 && (
+          <div className="px-5 py-3 border-b border-gray-700">
+            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+              🤫 Town Secrets
+            </div>
+            <div className="space-y-1">
+              {secrets.map((secret) => {
+                const spread = secret.totalAgents > 0
+                  ? secret.knownByCount / secret.totalAgents
+                  : 0;
+                return (
+                  <div key={secret.id} className="flex items-center gap-2">
+                    {secret.isPublic && (
+                      <span className="text-[9px] font-bold uppercase tracking-wide px-1 py-px rounded bg-red-500/20 text-red-300 shrink-0">
+                        Public
+                      </span>
+                    )}
+                    <div
+                      className="text-[11px] text-gray-300 flex-1 truncate"
+                      title={`${secret.content}\nKnown by: ${secret.knownByNames.join(', ')}`}
+                    >
+                      {secret.content}
+                    </div>
+                    <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${spread * 100}%`,
+                          backgroundColor: secret.sensitivity >= 3 ? '#ef4444' : '#f59e0b',
+                        }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-gray-500 w-10 text-right">
+                      {secret.knownByCount}/{secret.totalAgents}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Per-agent mood breakdown */}
         <div className="px-5 py-3">

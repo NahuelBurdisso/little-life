@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNudge } from "../../hooks/useNudge";
+import { trpc } from "../../lib/trpc";
 
 interface NudgeMenuProps {
   agentId: string;
@@ -11,7 +12,7 @@ interface NudgeMenuProps {
   onSelectAgent: (id: string) => void;
 }
 
-type SubMenu = "talk" | "goto" | "money" | "topic" | null;
+type SubMenu = "talk" | "goto" | "money" | "topic" | "secret" | null;
 
 export function NudgeMenu({
   agentId,
@@ -22,7 +23,7 @@ export function NudgeMenu({
   onClose,
   onSelectAgent,
 }: NudgeMenuProps) {
-  const { suggestTalk, suggestGoTo, giveMoney, removeAgent } = useNudge();
+  const { suggestTalk, suggestGoTo, giveMoney, removeAgent, tellSecret, forceConfront } = useNudge();
   const [subMenu, setSubMenu] = useState<SubMenu>(null);
   const [topicText, setTopicText] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -54,6 +55,21 @@ export function NudgeMenu({
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [onClose, subMenu]);
+
+  // Only the secret picker needs this, and it is a full-table scan server-side.
+  const { data: knownFacts } = trpc.knowledge.getKnownBy.useQuery(
+    { agentId: Number(agentId) },
+    { enabled: subMenu === "secret" },
+  );
+
+  // A secret the listener already knows is not a reveal, so drop those.
+  const tellableSecrets = (knownFacts ?? [])
+    .filter(
+      (f: any) =>
+        f.sensitivity >= 2 && !(f.known_by as number[]).includes(Number(selectedAgentId)),
+    )
+    .sort((a: any, b: any) => b.sensitivity - a.sensitivity)
+    .slice(0, 8);
 
   // Clamp position to viewport
   const left = Math.min(position.x, window.innerWidth - 220);
@@ -100,6 +116,34 @@ export function NudgeMenu({
               Send
             </button>
           </div>
+        ) : subMenu === "secret" ? (
+          <div className="max-h-48 overflow-y-auto">
+            <button
+              className="w-full text-left px-3 py-1 text-[10px] text-gray-500"
+              onClick={() => setSubMenu(null)}
+            >
+              ← Back
+            </button>
+            {tellableSecrets.length === 0 ? (
+              <p className="px-3 py-2 text-[11px] text-gray-500">
+                {currentAgent?.name ?? "They"} knows no secrets the other doesn't.
+              </p>
+            ) : (
+              tellableSecrets.map((f: any) => (
+                <button
+                  key={f.id}
+                  className={menuItemClass}
+                  title={f.content}
+                  onClick={() => {
+                    tellSecret(agentId, selectedAgentId!, f.id);
+                    onClose();
+                  }}
+                >
+                  🤫 {f.content}
+                </button>
+              ))
+            )}
+          </div>
         ) : (
           <>
             <button
@@ -113,6 +157,18 @@ export function NudgeMenu({
             </button>
             <button className={menuItemClass} onClick={() => setSubMenu("topic")}>
               📝 Suggest topic...
+            </button>
+            <button className={menuItemClass} onClick={() => setSubMenu("secret")}>
+              🤫 Tell a secret...
+            </button>
+            <button
+              className={menuItemClass}
+              onClick={() => {
+                forceConfront(agentId, selectedAgentId!);
+                onClose();
+              }}
+            >
+              ⚔️ Force confrontation
             </button>
             <button
               className={menuItemClass}
@@ -220,6 +276,9 @@ export function NudgeMenu({
             👁️ View memories
           </button>
           <div className="border-t border-gray-700 my-1" />
+          <p className="px-3 py-1 text-[10px] text-gray-500 leading-tight">
+            Select an agent, then right-click another for secrets and confrontations.
+          </p>
           <button
             className={`${menuItemClass} text-red-400 hover:bg-red-900/30`}
             onClick={() => setConfirmRemove(true)}

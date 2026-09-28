@@ -8,6 +8,7 @@ import { ConversationPanel } from "./components/ui/ConversationPanel";
 import { ResizeHandle } from "./components/ui/ResizeHandle";
 import { GameCanvas } from "./components/canvas/GameCanvas";
 import { AgentTooltip } from "./components/overlays/AgentTooltip";
+import { DramaAlerts } from "./components/overlays/DramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
 import { EventMenu } from "./components/ui/EventMenu";
 import { TownStats } from "./components/ui/TownStats";
@@ -31,14 +32,21 @@ export default function App() {
 
   const [setupComplete, setSetupComplete] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null); // string representation of numeric ID
+  const [focusNonce, setFocusNonce] = useState(0);
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
+  const [autoCut, setAutoCut] = useState(false);
 
   // Reset all UI state when world returns to wizard state (after resetToWizard)
-  const isNewSimulation = world && world.time?.totalTicks === 0 && world.is_paused;
+  // `resetToWizard` is the only thing that nulls `setup_config`, so that is what
+  // actually distinguishes "no world yet" from a live one. Keying on
+  // `totalTicks === 0 && is_paused` instead meant pausing inside the first
+  // second of a fresh simulation threw the user back into the wizard on top of
+  // a fully seeded world.
+  const isNewSimulation = Boolean(world) && world?.setup_config == null;
   useEffect(() => {
     if (isNewSimulation) {
       setSetupComplete(false);
@@ -87,6 +95,10 @@ export default function App() {
           setShowTownStats(false);
         } else if (showNewAgent) {
           setShowNewAgent(false);
+        } else if (showConvoHistory) {
+          // Escape closes the topmost layer, so this chain must match paint
+          // order: ConversationHistory is rendered last and covers the graph.
+          setShowConvoHistory(false);
         } else if (showRelGraph) {
           setShowRelGraph(false);
         } else if (selectedAgentId) {
@@ -96,13 +108,15 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, selectedAgentId]);
+  }, [contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, showConvoHistory, selectedAgentId]);
 
   // Keyboard controls
   useKeyboardControls({
+    // The wizard and loading screen render before the sim exists; Space there
+    // would unpause an unseeded world and drop the user into the main UI.
+    enabled: Boolean(world) && !worldLoading && !(isNewSimulation && !setupComplete),
     onTogglePause: () => nudge.togglePause(),
     onChangeSpeed: (speed: number) => nudge.changeSpeed(speed),
-    onDeselect: () => setSelectedAgentId(null),
   });
 
   // Canvas callbacks
@@ -121,6 +135,12 @@ export default function App() {
     },
     [agents]
   );
+
+  // Select an agent AND re-center on them, even if they were already selected.
+  const focusAgent = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+    setFocusNonce(n => n + 1);
+  }, []);
 
   const handleAgentContextMenu = useCallback(
     (agentId: string, pos: { x: number; y: number }) => {
@@ -162,6 +182,11 @@ export default function App() {
       <TopBar
         world={world}
         events={events ?? []}
+        liveConversations={conversations?.length ?? 0}
+        awakeAgents={agents.filter((a) => {
+          const t = (a as { current_action?: { type?: string } }).current_action?.type;
+          return t !== 'sleeping' && t !== 'dead';
+        }).length}
         onShowEvents={() => setShowEventMenu(true)}
         onShowStats={() => setShowTownStats(true)}
       />
@@ -175,6 +200,7 @@ export default function App() {
         <GameCanvas
           agents={agents}
           world={world}
+          events={events}
           conversations={conversations ?? []}
           locations={locations ?? []}
           relationships={allRelationships ?? []}
@@ -182,6 +208,7 @@ export default function App() {
           onAgentContextMenu={handleAgentContextMenu}
           onAgentHover={handleAgentHover}
           selectedAgentId={selectedAgentId}
+          focusNonce={focusNonce}
         />
         {/* AgentPanel sidebar */}
         {selectedAgentId && (
@@ -198,7 +225,7 @@ export default function App() {
       </div>
       <ResizeHandle direction="vertical" onResize={handleBottomResize} />
       <div style={{ height: bottomHeight }} className="flex-shrink-0 overflow-hidden">
-        <ActivityFeed />
+        <ActivityFeed onSelectAgent={focusAgent} />
       </div>
 
       {/* Floating toolbar for extra actions */}
@@ -218,6 +245,18 @@ export default function App() {
           🔗 Relationships
         </button>
         <button
+          onClick={() => setAutoCut(v => !v)}
+          aria-pressed={autoCut}
+          className={`px-3 py-1.5 text-xs border rounded-lg shadow transition-colors ${
+            autoCut
+              ? "bg-[#a03028] hover:bg-[#8a2822] border-[#c04038]"
+              : "bg-gray-700 hover:bg-gray-600 border-gray-600"
+          }`}
+          title="Jump the camera to whoever the next dramatic event is about"
+        >
+          🎬 Auto-Cut{autoCut ? " On" : " Off"}
+        </button>
+        <button
           onClick={() => setShowConvoHistory(true)}
           className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow transition-colors"
           title="Conversation history"
@@ -225,6 +264,9 @@ export default function App() {
           📜 History
         </button>
       </div>
+
+      {/* Drama alerts + optional camera auto-cut */}
+      <DramaAlerts autoFollow={autoCut} onFocusAgent={focusAgent} />
 
       {/* Tooltip overlay */}
       <AgentTooltip agent={hoveredAgent} position={hoverPos} />

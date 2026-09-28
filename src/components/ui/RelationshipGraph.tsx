@@ -81,6 +81,13 @@ function getEdgeWidth(edge: GraphEdge): number {
   return Math.max(0.5, strength / 25);
 }
 
+/** Stable identity for an edge. `edgesRef` is rebuilt from scratch whenever the
+ *  relationship query refetches, so object identity is not usable for "is this
+ *  the edge the cursor is on". */
+function edgeKey(edge: GraphEdge): string {
+  return `${edge.source}|${edge.target}`;
+}
+
 function passesFilter(edge: GraphEdge, filter: FilterMode): boolean {
   if (filter === 'all') return true;
   const avgF = (edge.friendshipAB + edge.friendshipBA) / 2;
@@ -108,6 +115,13 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<GraphEdge | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  // The draw loop reads hover through refs rather than the state above: state
+  // would have to be in the effect's dependency list, which would tear down and
+  // restart the animation frame on every mouse move. The state drives the
+  // tooltips only.
+  const hoveredNodeIdRef = useRef<string | null>(null);
+  const hoveredEdgeKeyRef = useRef<string | null>(null);
 
   // Camera state
   const cameraRef = useRef({ offsetX: 0, offsetY: 0, zoom: 1 });
@@ -236,6 +250,8 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
         setHoveredNode(node);
         setHoveredEdge(null);
         setTooltipPos({ x: sx, y: sy });
+        hoveredNodeIdRef.current = node.id;
+        hoveredEdgeKeyRef.current = null;
         foundNode = true;
         break;
       }
@@ -243,6 +259,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
 
     if (!foundNode) {
       setHoveredNode(null);
+      hoveredNodeIdRef.current = null;
 
       // Hover detection — edges
       let foundEdge = false;
@@ -263,16 +280,30 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
         if (dist < 8) {
           setHoveredEdge(edge);
           setTooltipPos({ x: sx, y: sy });
+          hoveredEdgeKeyRef.current = edgeKey(edge);
           foundEdge = true;
           break;
         }
       }
-      if (!foundEdge) setHoveredEdge(null);
+      if (!foundEdge) {
+        setHoveredEdge(null);
+        hoveredEdgeKeyRef.current = null;
+      }
     }
   }, [filter, screenToWorld]);
 
   const handleMouseUp = useCallback(() => {
     dragRef.current = null;
+  }, []);
+
+  // Leaving the canvas has to drop the hover too, or the tooltip stays pinned
+  // over whatever the cursor last touched.
+  const handleMouseLeave = useCallback(() => {
+    dragRef.current = null;
+    setHoveredNode(null);
+    setHoveredEdge(null);
+    hoveredNodeIdRef.current = null;
+    hoveredEdgeKeyRef.current = null;
   }, []);
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -345,9 +376,11 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
         tickCountRef.current++;
         const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-        // Repulsion
+        // Repulsion. Every pair is visited even when one end is pinned: the
+        // per-node `pinned` guards below already stop a pinned node from
+        // moving, whereas skipping the outer iteration also cancelled the push
+        // a pinned node exerts on everything after it in the array.
         for (let i = 0; i < nodes.length; i++) {
-          if (nodes[i].pinned) continue;
           for (let j = i + 1; j < nodes.length; j++) {
             const a = nodes[i];
             const b = nodes[j];
@@ -426,7 +459,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
 
         const color = getEdgeColor(edge);
         const width = getEdgeWidth(edge);
-        const isHovered = hoveredEdge === edge;
+        const isHovered = hoveredEdgeKeyRef.current === edgeKey(edge);
 
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
@@ -472,7 +505,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
       // Nodes
       for (const node of nodes) {
         const isDimmed = filter !== 'all' && !connectedIds.has(node.id);
-        const isHovered = hoveredNode?.id === node.id;
+        const isHovered = hoveredNodeIdRef.current === node.id;
 
         ctx.globalAlpha = isDimmed ? 0.3 : 1;
 
@@ -527,7 +560,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
     return () => {
       cancelAnimationFrame(animRef.current);
     };
-  }, [isOpen, buildGraph, filter, hoveredNode, hoveredEdge]);
+  }, [isOpen, buildGraph, filter]);
 
   if (!isOpen) return null;
 
@@ -578,7 +611,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
             onWheel={handleWheel}
             onDoubleClick={handleDoubleClick}
           />

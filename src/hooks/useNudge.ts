@@ -20,5 +20,9 @@ export function useNudge() {
       mutation.mutateAsync({ action: { type: "introduce_agent", name, bio, traits, job } }),
     removeAgent: (agentId: number | string) =>
       mutation.mutateAsync({ action: { type: "remove_agent", agentId: Number(agentId) } }),
+    tellSecret: (agentId: number | string, targetId: number | string, factId: number) =>
+      mutation.mutateAsync({ action: { type: "tell_secret", agentId: Number(agentId), targetId: Number(targetId), factId } }),
+    forceConfront: (agentA: number | string, agentB: number | string) =>
+      mutation.mutateAsync({ action: { type: "force_confront", agentA: Number(agentA), agentB: Number(agentB) } }),
   };
 }

@@ -163,10 +163,6 @@ function rgbToHex(r: number, g: number, b: number): number {
   return ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
 }
 
-function hexToRgb(hex: number): [number, number, number] {
-  return [(hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF];
-}
-
 // ─── LightingSystem ──────────────────────────────────────────────────────────
 
 export class LightingSystem {
@@ -193,6 +189,7 @@ export class LightingSystem {
   // Lightning state
   private lightningTimer = 0;
   private lightningIntensity = 0;
+  private stormyNight = false;
 
   // Dimensions
   private lmW = 1;
@@ -458,14 +455,11 @@ export class LightingSystem {
       }
     }
 
-    // Storm lightning tracking
-    if (world.weather === 'stormy' && this.isNightish) {
-      this.lightningTimer += 1;
-      if (this.lightningTimer > 180 && Math.random() < 0.02) {
-        this.lightningIntensity = 1.0;
-        this.lightningTimer = 0;
-      }
-    }
+    // The countdown itself lives in `render()`. `update()` runs once per server
+    // poll (~1 Hz), so advancing a 180-*frame* timer here meant a night storm
+    // needed ~3 real minutes before lightning could even become eligible, and
+    // then only had a 2% chance per poll — it effectively never struck.
+    this.stormyNight = world.weather === 'stormy' && this.isNightish;
   }
 
   /**
@@ -513,6 +507,15 @@ export class LightingSystem {
     let aR = Math.round(this.currentAmbient.r * b);
     let aG = Math.round(this.currentAmbient.g * b);
     let aB = Math.round(this.currentAmbient.b * b);
+
+    // Storm lightning: per-frame, so the 180 is the ~3s of frames it reads as.
+    if (this.stormyNight) {
+      this.lightningTimer += 1;
+      if (this.lightningTimer > 180 && Math.random() < 0.02) {
+        this.lightningIntensity = 1.0;
+        this.lightningTimer = 0;
+      }
+    }
 
     // Lightning flash
     if (this.lightningIntensity > 0) {
@@ -571,8 +574,12 @@ export class LightingSystem {
       }
       intensity = Math.max(0, Math.min(1, intensity));
 
-      // Decompose light color and scale by intensity
-      const [cr, cg, cb] = hexToRgb(light.color);
+      // Decompose light color and scale by intensity. Inlined rather than via
+      // `hexToRgb` to keep this loop — which runs for every visible light on
+      // every frame — from allocating a tuple per light.
+      const cr = (light.color >> 16) & 0xFF;
+      const cg = (light.color >> 8) & 0xFF;
+      const cb = light.color & 0xFF;
       const fr = Math.round(cr * intensity);
       const fg = Math.round(cg * intensity);
       const fb = Math.round(cb * intensity);

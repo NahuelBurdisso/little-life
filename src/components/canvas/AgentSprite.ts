@@ -3,6 +3,37 @@ import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 
 const LERP_SPEED = 0.12;
 
+// Procedural animation tuning (audit H1: static sprites glide like chess pieces).
+const WALK_BOB_RATE = 0.55;      // walk-cycle radians advanced per pixel traveled
+const WALK_BOB_HEIGHT = 1.6;     // px of vertical hop at bob peak
+const WALK_SWAY = 0.055;         // radians of side-to-side lean while walking
+const WALK_MIN_STEP = 0.08;      // px moved per frame below which agent counts as idle
+const FLIP_MIN_DX = 0.04;        // horizontal px per frame needed to change facing
+const IDLE_BREATH_RATE = 0.028;  // radians per frame (~3.7s period at 60fps)
+const IDLE_BREATH_SCALE = 0.02;  // peak scale.y delta while breathing
+const SETTLE = 0.75;             // per-frame decay pulling walk offsets back to rest
+
+// Sleep pose (audit M4: sleeping agents looked identical to idle ones).
+const SLEEP_ROTATION = Math.PI / 2;  // lie down, pivoting on the feet anchor
+// Rotating about the feet anchor throws the body sideways and half of it below the
+// ground line, so recenter it over the agent's position.
+const SLEEP_SHIFT_X = 12.8;          // px back toward the agent after the rotation
+const SLEEP_GROUND_DROP = 2;         // px the lying body sinks toward the ground line
+const SLEEP_BREATH_RATE = 0.012;     // slower than idle — deep sleep breathing
+const SLEEP_BREATH_SCALE = 0.035;    // deeper than idle so it reads at low zoom
+const POSE_LERP = 0.15;              // per-frame blend into/out of the lying pose
+
+// Sitting pose — driven by `current_action.pose`, which the server stamps for
+// agents parked in a seated zone (bar stools, benches, booths, desks).
+const SIT_DROP = 3.5;                // px the body settles down onto the seat
+const SIT_SQUASH = 0.14;             // scale.y compression: knees bent, torso lower
+const SIT_LEAN = 0.05;               // radians of slouch toward `facing`
+
+// Working pose — a repeating effort motion so labour reads as labour.
+const WORK_RATE = 0.09;              // radians per frame (~1.2s per stroke at 60fps)
+const WORK_BOB_HEIGHT = 2.2;         // px the body dips at the bottom of a stroke
+const WORK_LEAN = 0.13;              // radians of forward lean at full stroke
+
 /** Priority-ordered state ring colors. First match wins. */
 const STATE_RING_COLORS: Record<string, number> = {
   angry: 0xef4444,
@@ -42,6 +73,17 @@ export class AgentSprite {
   private stateRing: PIXI.Graphics;
 
   private targetPos = { x: 0, y: 0 };
+
+  // Procedural animation state
+  private walkPhase = 0;
+  private idlePhase = Math.random() * Math.PI * 2; // desync breathing across agents
+  private facing: 1 | -1 = 1;
+  private actionType = 'idle';
+  private poseBlend = 0; // 0 = upright, 1 = fully lying down
+  private sitBlend = 0;  // 0 = standing, 1 = fully seated
+  private workBlend = 0; // 0 = still, 1 = full work motion
+  private workPhase = 0;
+  private seated = false;
 
   constructor(name: string, spriteKey?: string) {
     this.container = new PIXI.Container();
@@ -171,11 +213,14 @@ export class AgentSprite {
     this.container.addChild(letter);
   }
 
-  /** Set target and lerp toward it. */
-  update(targetX: number, targetY: number, deltaTime: number) {
+  /**
+   * Record where the server says the agent is. Stepping toward it is the
+   * ticker's job — `lerp` also advances the procedural animation, so moving
+   * from the data path too would give sprites extra frames on every sim tick.
+   */
+  setTarget(targetX: number, targetY: number) {
     this.targetPos.x = targetX;
     this.targetPos.y = targetY;
-    this.lerp(deltaTime);
   }
 
   /** Lerp container position toward stored target without changing it. */
@@ -183,8 +228,121 @@ export class AgentSprite {
     const dx = this.targetPos.x - this.container.x;
     const dy = this.targetPos.y - this.container.y;
     const t = Math.min(1, deltaTime * LERP_SPEED);
-    this.container.x += dx * t;
-    this.container.y += dy * t;
+    const stepX = dx * t;
+    const stepY = dy * t;
+    this.container.x += stepX;
+    this.container.y += stepY;
+    this.animate(stepX, stepY, deltaTime);
+  }
+
+  /** Current server-side action, used to pick a pose (e.g. lying down while asleep). */
+  setActionType(actionType: string) {
+    this.actionType = actionType;
+  }
+
+  /**
+   * Whether the agent's current action places them on furniture they'd sit on.
+   * Comes from the server (`current_action.pose`) because the zone that decides
+   * it is not part of the client's world model.
+   */
+  setSeated(seated: boolean) {
+    this.seated = seated;
+  }
+
+  /**
+   * 0 = upright, 1 = fully lying down. Head-anchored overlays (bubbles, emotes)
+   * use this to drop with the body instead of floating where the head used to be.
+   */
+  get lyingBlend(): number {
+    return this.poseBlend;
+  }
+
+  /**
+   * Procedural motion: walk bob + lean driven by distance traveled, facing flip
+   * from horizontal direction, breathing while idle, lying down while asleep. All
+   * transforms apply to the body sprite only — rings, label, and glow stay planted
+   * at the feet.
+   *
+   * The pose/phase bookkeeping runs whether or not the body sprite exists: an
+   * agent still rendering as a fallback circle (texture failed, or not loaded
+   * yet) otherwise kept `poseBlend` at 0 forever, which anchored its sleep
+   * bubbles at standing head height. Only the sprite transforms are guarded.
+   */
+  private animate(stepX: number, stepY: number, deltaTime: number) {
+    const body = this.sprite;
+
+    const dist = Math.hypot(stepX, stepY);
+
+    const sleeping = this.actionType === 'sleeping';
+    this.poseBlend += ((sleeping ? 1 : 0) - this.poseBlend) * Math.min(1, POSE_LERP * deltaTime);
+
+    // Facing freezes once the body commits to lying down — otherwise a sub-pixel
+    // nudge would snap the sleeper's head 180 degrees.
+    if (this.poseBlend < 0.01 && Math.abs(stepX) > FLIP_MIN_DX * deltaTime) {
+      this.facing = stepX < 0 ? -1 : 1;
+    }
+
+    if (this.poseBlend > 0.01) {
+      // Lying down: rotate about the feet anchor so the head falls toward `facing`.
+      this.walkPhase = 0;
+      this.idlePhase += SLEEP_BREATH_RATE * deltaTime;
+      if (body) {
+        body.rotation = this.facing * SLEEP_ROTATION * this.poseBlend;
+        body.x = -this.facing * SLEEP_SHIFT_X * this.poseBlend;
+        body.y = SLEEP_GROUND_DROP * this.poseBlend;
+        const breath = Math.sin(this.idlePhase) * SLEEP_BREATH_SCALE * this.poseBlend;
+        body.scale.set(this.facing, 1 + breath);
+      }
+      return;
+    }
+
+    if (body) body.x *= SETTLE; // decay the lying offset after waking
+
+    const walking = dist > WALK_MIN_STEP * deltaTime;
+
+    // Standing poses blend rather than snap, so an agent dropping onto a bar
+    // stool eases into it the same way a sleeper eases into the bed.
+    const blendStep = Math.min(1, POSE_LERP * deltaTime);
+    this.sitBlend += ((this.seated && !walking ? 1 : 0) - this.sitBlend) * blendStep;
+    this.workBlend +=
+      ((this.actionType === 'working' && !walking ? 1 : 0) - this.workBlend) * blendStep;
+    if (this.workBlend > 0.01) this.workPhase += WORK_RATE * deltaTime;
+
+    if (walking) {
+      // Walking: hop + lean, cycle speed tied to actual ground covered.
+      this.walkPhase += dist * WALK_BOB_RATE;
+      if (body) {
+        body.y = -Math.abs(Math.sin(this.walkPhase)) * WALK_BOB_HEIGHT;
+        body.rotation = Math.sin(this.walkPhase) * WALK_SWAY;
+        body.scale.set(this.facing, 1);
+      }
+    } else {
+      // Idle: breathe, plus whatever the current pose adds. Offsets are absolute
+      // rather than decayed so sitting and working hold their shape instead of
+      // being pulled back to rest every frame.
+      this.idlePhase += IDLE_BREATH_RATE * deltaTime;
+      if (body) {
+        const breath = Math.sin(this.idlePhase) * IDLE_BREATH_SCALE;
+        // Half-wave: the effort stroke dips and returns, it does not rise above rest.
+        const stroke = Math.abs(Math.sin(this.workPhase)) * this.workBlend;
+        body.y = SIT_DROP * this.sitBlend + stroke * WORK_BOB_HEIGHT;
+        body.rotation = this.facing * (SIT_LEAN * this.sitBlend + WORK_LEAN * stroke);
+        body.scale.set(
+          this.facing * (1 - breath * 0.5),
+          (1 + breath) * (1 - SIT_SQUASH * this.sitBlend),
+        );
+      }
+    }
+  }
+
+  /**
+   * Override the horizontal facing. Normally facing follows the step delta, but a
+   * standing conversation produces no delta, so participants keep whatever
+   * direction they happened to arrive in — often back to back. The next walk step
+   * takes it over again, and a sleeping body ignores it (facing is frozen there).
+   */
+  setFacing(dir: 1 | -1) {
+    if (this.poseBlend < 0.01) this.facing = dir;
   }
 
   /** Snap position without lerp (e.g. on first placement). */

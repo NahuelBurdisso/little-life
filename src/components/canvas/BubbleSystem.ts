@@ -1,11 +1,24 @@
 import * as PIXI from "pixi.js";
-import { AGENT_RADIUS } from "../../lib/spriteConfig";
 import type { SpritePool } from "./SpritePool";
 
 const BUBBLE_MAX_CHARS = 60;
+/** px a head-anchored overlay must fall to stay with a fully lying-down body. */
+const LYING_HEAD_DROP = 15;
 const SPEECH_DURATION_MS = 4000;
 const EMOTE_DURATION_MS = 1500;
-const EMOTE_FLOAT_SPEED = 0.3; // pixels per tick
+/** px per second — `update` is handed `ticker.deltaTime / 60`, not raw ticks. */
+const EMOTE_FLOAT_SPEED = 18;
+
+/** Module scope: `update` runs per frame, so these must not be rebuilt per agent. */
+const STATE_EMOTES: Record<string, string> = {
+  drunk: 'drink', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
+  confident: 'star', jealous: 'fire', sick: 'sick', stressed: 'sweat',
+  infatuated: 'heart', lonely: 'think', depressed: 'cry',
+};
+const ACTIVITY_EMOTES: Record<string, string> = {
+  fish: 'fish', garden: 'flower', perform: 'music',
+  contemplate: 'think', forage: 'flower', browse: 'sparkle',
+};
 
 interface BubbleEntry {
   container: PIXI.Container;
@@ -13,6 +26,13 @@ interface BubbleEntry {
   type: "speech" | "thought" | "emote";
   createdAt: number;
   duration: number; // ms, 0 = indefinite
+  /**
+   * Layout as chosen at creation time, so the per-frame reposition can reproduce
+   * it. Measuring the container instead loses the multi-speaker nudge and picks
+   * up the speech bubble's tail, which shifts it a few px on the first reflow.
+   */
+  dx: number; // container.x relative to the agent's world x
+  bgH: number; // background height, excluding any tail
 }
 
 const THOUGHT_STYLE = new PIXI.TextStyle({
@@ -25,6 +45,15 @@ const SPEECH_STYLE = new PIXI.TextStyle({
   fontFamily: "monospace",
   fontSize: 7,
   fill: 0xd4c9a8,
+  wordWrap: true,
+  wordWrapWidth: 100,
+});
+
+const TEXT_THOUGHT_STYLE = new PIXI.TextStyle({
+  fontFamily: "monospace",
+  fontSize: 7,
+  fill: 0x8a7f65,
+  fontStyle: "italic",
   wordWrap: true,
   wordWrapWidth: 100,
 });
@@ -50,7 +79,15 @@ const EMOTE_EMOJIS: Record<string, string> = {
   drink: "🍺",
   sick: "🤢",
   think: "💭",
+  work: "🔨",
 };
+
+/**
+ * Emotes re-puffed on a loop for as long as a pose holds, rather than fired once
+ * on an edge. They get their own bubble slot so they and the edge-triggered
+ * mood/state emotes don't evict each other every few seconds.
+ */
+const LOOPED_EMOTES = new Set(['zzz', 'work']);
 
 /** Renders speech, thought, and emote bubbles above agents. */
 export class BubbleSystem {
@@ -59,12 +96,22 @@ export class BubbleSystem {
   private prevMoodMap: Map<string, number> = new Map();
   private prevStatesMap: Map<string, string[]> = new Map();
   private prevActionMap: Map<string, string> = new Map();
+  private prevEmoteStampMap: Map<string, number> = new Map();
   private shownMessageCounts = new Map<string, number>(); // agentId → message count when last bubble shown
+  private lyingBlendMap = new Map<string, number>(); // agentId → 0 upright .. 1 lying down
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
     this.container.eventMode = 'none'; // transparent to clicks — let agents below receive events
     parentContainer.addChild(this.container);
+  }
+
+  /**
+   * Overlay anchors assume a standing sprite, so a sleeping agent's bubbles
+   * would float where its head used to be. Drop them with the lying body.
+   */
+  private headY(agentId: string, y: number): number {
+    return y + LYING_HEAD_DROP * (this.lyingBlendMap.get(agentId) ?? 0);
   }
 
   /** Show a speech bubble with text above the agent. Auto-dismisses. */
@@ -100,11 +147,12 @@ export class BubbleSystem {
 
     // Position above agent sprite head.
     // Formula: agent.y - 32 (sprite half-height) - 4 (gap) - bgH
-    // AGENT_RADIUS is 8; the sprite is 32px tall with feet at agent.y + ~8,
-    // so head top is approximately agent.y - 24. The -32 constant matches
+    // The sprite is 32px tall with feet at agent.y + ~8, so head top is
+    // approximately agent.y - 24. The -32 constant matches
     // proposal-readability.md §4a for a 32px tall sprite.
-    bubbleContainer.x = position.x - bgW / 2 + offsetX;
-    bubbleContainer.y = position.y - 32 - 4 - bgH;
+    const dx = -bgW / 2 + offsetX;
+    bubbleContainer.x = position.x + dx;
+    bubbleContainer.y = this.headY(agentId, position.y) - 32 - 4 - bgH;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -113,6 +161,8 @@ export class BubbleSystem {
       type: "speech",
       createdAt: Date.now(),
       duration: SPEECH_DURATION_MS,
+      dx,
+      bgH,
     });
   }
 
@@ -138,7 +188,7 @@ export class BubbleSystem {
 
     // Thought bubble: 28×18 box. Place above head like speech bubble.
     bubbleContainer.x = position.x - 14;
-    bubbleContainer.y = position.y - 32 - 4 - 18;
+    bubbleContainer.y = this.headY(agentId, position.y) - 32 - 4 - 18;
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -147,6 +197,8 @@ export class BubbleSystem {
       type: "thought",
       createdAt: Date.now(),
       duration: 0, // stays until removed
+      dx: -14,
+      bgH: 18,
     });
   }
 
@@ -162,16 +214,7 @@ export class BubbleSystem {
 
     const bubbleContainer = new PIXI.Container();
 
-    const textStyle = new PIXI.TextStyle({
-      fontFamily: 'monospace',
-      fontSize: 7,
-      fill: 0x8a7f65,
-      fontStyle: 'italic',
-      wordWrap: true,
-      wordWrapWidth: 100,
-    });
-
-    const textObj = new PIXI.Text({ text: `💭 ${truncated}`, style: textStyle });
+    const textObj = new PIXI.Text({ text: `💭 ${truncated}`, style: TEXT_THOUGHT_STYLE });
     const padX = 5;
     const padY = 3;
     const bgW = textObj.width + padX * 2;
@@ -186,7 +229,7 @@ export class BubbleSystem {
 
     bubbleContainer.addChild(bg, textObj);
     bubbleContainer.x = position.x - bgW / 2;
-    bubbleContainer.y = position.y - 32 - 4 - bgH; // above sprite head
+    bubbleContainer.y = this.headY(agentId, position.y) - 32 - 4 - bgH; // above sprite head
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
@@ -195,13 +238,18 @@ export class BubbleSystem {
       type: 'thought',
       createdAt: Date.now(),
       duration: 4000, // 4 seconds
+      dx: -bgW / 2,
+      bgH,
     });
   }
 
   /** Show a small emote that floats up and fades out. */
   showEmote(agentId: string, emoteType: string, position: { x: number; y: number }) {
-    // Emotes use a separate key so they don't replace speech bubbles
-    const emoteKey = `${agentId}__emote`;
+    // Emotes use a separate key so they don't replace speech bubbles. Looped
+    // pose emotes get a slot of their own — see LOOPED_EMOTES. The key still
+    // contains `__emote`, which the lifetime sweep in `update` keys off.
+    const looped = LOOPED_EMOTES.has(emoteType);
+    const emoteKey = looped ? `${agentId}__emote_${emoteType}` : `${agentId}__emote`;
     this.removeBubbleByKey(emoteKey);
 
     const bubbleContainer = new PIXI.Container();
@@ -213,9 +261,13 @@ export class BubbleSystem {
     });
     bubbleContainer.addChild(label);
 
-    // Emote floats above sprite head: same baseline as bubbles
-    bubbleContainer.x = position.x - 8;
-    bubbleContainer.y = position.y - 32 - 20; // 20px above head top
+    // Emote floats above sprite head: same baseline as bubbles.
+    // Looped emotes live in their own slot, so a sleeping agent who also gains
+    // e.g. `sick` renders two emotes at once — offset the looped one so they
+    // read as two glyphs instead of stacking on the identical origin.
+    const dx = looped ? 6 : -8;
+    bubbleContainer.x = position.x + dx;
+    bubbleContainer.y = this.headY(agentId, position.y) - 32 - 20 - (looped ? 12 : 0); // 20px above head top
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(emoteKey, {
@@ -224,6 +276,12 @@ export class BubbleSystem {
       type: "emote",
       createdAt: Date.now(),
       duration: EMOTE_DURATION_MS,
+      // Emotes float on their own and are never repositioned, but the stored
+      // layout still has to describe where they were placed: `-32 - 4 - 16` is
+      // the same baseline as the `-32 - 20` used above, and the looped slot's
+      // extra 12px of lift makes that `-32 - 4 - 28`.
+      dx,
+      bgH: looped ? 28 : 16,
     });
   }
 
@@ -258,8 +316,18 @@ export class BubbleSystem {
       const sprite = spritePool?.getSprite(aid);
       if (sprite) {
         posMap.set(aid, { x: sprite.container.x, y: sprite.container.y });
+        this.lyingBlendMap.set(aid, sprite.lyingBlend);
       } else {
         posMap.set(aid, { x: a.position?.x ?? 0, y: a.position?.y ?? 0 });
+        this.lyingBlendMap.delete(aid);
+      }
+    }
+
+    // Drop per-agent history for anyone who left the roster (death, deactivation),
+    // otherwise these grow for the lifetime of the session.
+    for (const map of [this.prevMoodMap, this.prevStatesMap, this.prevActionMap, this.prevEmoteStampMap, this.lyingBlendMap]) {
+      for (const aid of map.keys()) {
+        if (!posMap.has(aid)) map.delete(aid);
       }
     }
 
@@ -278,6 +346,16 @@ export class BubbleSystem {
           }
         }
       }
+    }
+
+    // Clear the watermark as soon as an agent leaves every conversation. Doing
+    // it only when they still own a live bubble was not enough: speech bubbles
+    // expire after 4s, so a conversation that ended later stranded the count,
+    // and the agent then stayed mute through their whole next conversation
+    // until it exceeded the old message total. Also keeps the map from growing
+    // for agents that leave the roster.
+    for (const aid of this.shownMessageCounts.keys()) {
+      if (!convoAgents.has(aid)) this.shownMessageCounts.delete(aid);
     }
 
     // Show thought bubbles for agents in conversation without recent messages
@@ -312,11 +390,14 @@ export class BubbleSystem {
     // Remove bubbles for agents no longer in conversations (except emotes/timed)
     for (const [key, entry] of this.bubbles) {
       if (key.includes("__emote")) continue;
-      if ((entry.type === "speech" || entry.type === "thought") && !convoAgents.has(entry.agentId)) {
-        entry.container.destroy({ children: true });
-        this.bubbles.delete(key);
-        this.shownMessageCounts.delete(entry.agentId);
-      }
+      if (entry.type !== "speech" && entry.type !== "thought") continue;
+      if (convoAgents.has(entry.agentId)) continue;
+      // Timed bubbles own their lifetime — `update` expires them above. Killing
+      // them here cut every 4s speech bubble and action thought to one frame,
+      // since the agent whose action changed is usually not in a conversation.
+      if (entry.duration > 0) continue;
+      entry.container.destroy({ children: true });
+      this.bubbles.delete(key);
     }
 
     // Auto-emote triggers based on mood changes
@@ -334,11 +415,6 @@ export class BubbleSystem {
       // State-triggered emotes — show when a new state appears
       const curStates: string[] = ((a as any).activeStates ?? []).map((s: any) => s.type);
       const prevStates = this.prevStatesMap.get(aid) ?? [];
-      const STATE_EMOTES: Record<string, string> = {
-        drunk: 'drink', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
-        confident: 'star', jealous: 'fire', sick: 'sick', stressed: 'sweat',
-        infatuated: 'heart', lonely: 'think', depressed: 'cry',
-      };
       for (const state of curStates) {
         if (!prevStates.includes(state) && STATE_EMOTES[state]) {
           this.showEmote(aid, STATE_EMOTES[state], pos);
@@ -351,15 +427,20 @@ export class BubbleSystem {
       const curAction = (a as any).current_action?.zoneActivity ?? '';
       const prevAct = this.prevActionMap.get(aid) ?? '';
       if (curAction && curAction !== prevAct) {
-        const ACTIVITY_EMOTES: Record<string, string> = {
-          fish: 'fish', garden: 'flower', perform: 'music',
-          contemplate: 'think', forage: 'flower', browse: 'sparkle',
-        };
         if (ACTIVITY_EMOTES[curAction]) {
           this.showEmote(aid, ACTIVITY_EMOTES[curAction], pos);
         }
       }
       this.prevActionMap.set(aid, curAction);
+
+      // Server-stamped one-shot emote (perception greetings). `emote_at` is the
+      // edge, not `emote` — two greetings in a row carry the same emoji.
+      const stampedAt = (a as any).current_action?.emote_at ?? 0;
+      const stampedEmote = (a as any).current_action?.emote;
+      if (stampedAt && stampedEmote && stampedAt !== this.prevEmoteStampMap.get(aid)) {
+        this.showEmote(aid, stampedEmote, pos);
+      }
+      this.prevEmoteStampMap.set(aid, stampedAt);
     }
 
     // Update positions and lifetimes
@@ -382,10 +463,8 @@ export class BubbleSystem {
       if (entry.type !== "emote") {
         const pos = posMap.get(entry.agentId);
         if (pos) {
-          const w = entry.container.width;
-          entry.container.x = pos.x - w / 2;
-          // Consistent with showSpeechBubble: agent.y - 32 - 4 - bubbleHeight
-          entry.container.y = pos.y - 32 - 4 - entry.container.height;
+          entry.container.x = pos.x + entry.dx;
+          entry.container.y = this.headY(entry.agentId, pos.y) - 32 - 4 - entry.bgH;
         }
       }
     }

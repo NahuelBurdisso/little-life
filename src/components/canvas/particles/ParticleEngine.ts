@@ -34,7 +34,11 @@ export class ParticleEngine {
   private emitters: Map<string, ActiveEmitter> = new Map();
   private profiles: Map<string, ParticleProfile> = new Map();
   private textures: Map<ParticleShape, PIXI.Texture> = new Map();
+  /** Subset of `textures` this engine created and must free. The rest are owned
+   *  by the global `Assets` cache. */
+  private ownedTextures: PIXI.Texture[] = [];
   private initialized = false;
+  private destroyed = false;
 
   // Index: trigger type → profiles that match
   private triggerIndex: Map<string, ParticleProfile[]> = new Map();
@@ -55,8 +59,17 @@ export class ParticleEngine {
 
   /** Call once after PixiJS renderer is ready to load/render shape textures. */
   async initTextures(renderer: PIXI.Renderer): Promise<void> {
-    if (this.initialized) return;
-    this.textures = await createShapeTextures(renderer);
+    if (this.initialized || this.destroyed) return;
+    const { textures, owned } = await createShapeTextures(renderer);
+    // The canvas can unmount while the Kenney PNGs are still loading. Without
+    // this the RenderTextures created above would be attached to a destroyed
+    // engine and leaked for the lifetime of the tab.
+    if (this.destroyed) {
+      for (const tex of owned) tex.destroy(true);
+      return;
+    }
+    this.textures = textures;
+    this.ownedTextures = owned;
     this.initialized = true;
     console.log(`[ParticleEngine] Loaded ${this.textures.size} shape textures`);
   }
@@ -152,10 +165,13 @@ export class ParticleEngine {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.pool.destroy();
     this.emitters.clear();
-    // RenderTextures
-    for (const tex of this.textures.values()) tex.destroy(true);
+    // Only the RenderTextures we made — the Kenney glows belong to the `Assets`
+    // cache and destroying them hands dead textures to the next mount.
+    for (const tex of this.ownedTextures) tex.destroy(true);
+    this.ownedTextures = [];
     this.textures.clear();
   }
 

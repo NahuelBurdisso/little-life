@@ -6,7 +6,7 @@ export function useAgents() {
 
   trpc.agents.onUpdate.useSubscription(undefined, {
     onData: () => {
-      utils.agents.invalidate(); // invalidates getActive, getFull, getStates, getAgent — all at once
+      utils.agents.invalidate(); // invalidates getActive, getAgent, getAgentSummary, getAgentThoughts
     },
   });
 

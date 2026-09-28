@@ -127,7 +127,9 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
 
   {
     id: 'weather_rain',
-    trigger: { type: 'weather', weather: 'rain' },
+    // `WeatherType` spells it "rainy" — "rain" never matched the trigger index,
+    // so this profile had never spawned a particle.
+    trigger: { type: 'weather', weather: 'rainy' },
     appearance: {
       shape: 'raindrop',
       colors: [0x1a2830, 0x1e3040],

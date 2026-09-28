@@ -1,4 +1,5 @@
-import { useNudge } from "../../hooks/useNudge";
+import { trpc } from "../../lib/trpc";
+import { weatherEmoji } from "../../lib/formatters";
 
 interface EventMenuProps {
   isOpen: boolean;
@@ -6,16 +7,23 @@ interface EventMenuProps {
   activeEvents: any[];
 }
 
+// Durations mirror `world.triggerEvent`'s EVENT_DEFS, which is the endpoint
+// these cards call. Keep them in step when the server-side defs change.
 const EVENT_CARDS = [
-  { type: "festival", icon: "🎉", name: "Town Festival", duration: "4 hours", description: "Everyone gathers for food and music!" },
+  { type: "festival", icon: "🎉", name: "Town Festival", duration: "6 hours", description: "Everyone gathers for food and music!" },
   { type: "market_day", icon: "🏪", name: "Market Day", duration: "8 hours", description: "Special prices at all shops." },
   { type: "storm", icon: "⛈️", name: "Storm", duration: "3 hours", description: "Everyone heads indoors." },
   { type: "sickness", icon: "🤒", name: "Flu Outbreak", duration: "24 hours", description: "Energy drains faster." },
   { type: "harvest", icon: "🌾", name: "Harvest Bounty", duration: "12 hours", description: "Farm production doubles!" },
-];
+  { type: "scandal", icon: "🗞️", name: "Town Scandal", duration: "4 hours", description: "A shocking rumor puts everyone on edge." },
+  { type: "blessing", icon: "🌤️", name: "Beautiful Day", duration: "6 hours", description: "Everyone feels lighter." },
+] as const;
+
+const WEATHERS = ["sunny", "cloudy", "rainy", "stormy", "foggy", "snowy", "windy", "hot"] as const;
 
 export function EventMenu({ isOpen, onClose, activeEvents }: EventMenuProps) {
-  const { triggerEvent } = useNudge();
+  const triggerEventMutation = trpc.world.triggerEvent.useMutation();
+  const setWeatherMutation = trpc.world.setWeather.useMutation();
 
   if (!isOpen) return null;
 
@@ -84,7 +92,7 @@ export function EventMenu({ isOpen, onClose, activeEvents }: EventMenuProps) {
                   <button
                     disabled={isActive}
                     onClick={() => {
-                      triggerEvent(card.type);
+                      triggerEventMutation.mutate({ type: card.type });
                       onClose();
                     }}
                     className={`w-full px-2 py-1 text-xs rounded transition-colors ${
@@ -98,6 +106,24 @@ export function EventMenu({ isOpen, onClose, activeEvents }: EventMenuProps) {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Weather */}
+        <div className="px-5 py-3 border-t border-gray-700">
+          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
+            Set Weather
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {WEATHERS.map((weather) => (
+              <button
+                key={weather}
+                onClick={() => setWeatherMutation.mutate({ weather, durationHours: 4 })}
+                className="px-2 py-1 text-xs rounded bg-gray-700/50 border border-gray-600 hover:bg-gray-700 text-white capitalize transition-colors"
+              >
+                {weatherEmoji(weather)} {weather}
+              </button>
+            ))}
           </div>
         </div>
       </div>

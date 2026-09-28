@@ -3,6 +3,8 @@ import { trpc } from "../../lib/trpc";
 interface GoalsViewProps {
   agentId: number;
   worldTick: number;
+  tickSpeed: number;
+  isPaused: boolean;
 }
 
 const AMBITION_COLORS: Record<string, string> = {
@@ -53,13 +55,26 @@ const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
   relationship: { label: "social", className: "bg-pink-900/40 text-pink-300" },
 };
 
-function daysActive(createdAt: number, worldTick: number): number {
-  // Each tick is roughly a game minute; 1440 ticks = 1 game day
-  const ticksActive = worldTick - createdAt;
-  return Math.max(0, Math.floor(ticksActive / 1440));
+function daysActive(
+  createdAt: number,
+  worldTick: number,
+  tickSpeed: number,
+  isPaused: boolean,
+): number {
+  // `advanceClock` adds `tick_speed` minutes per tick, so a tick is a game
+  // minute only at 1x — this used to divide raw ticks by 1440 and a goal read
+  // "0 days" for four times too long at 4x. Same normalisation as `timeAgo` in
+  // src/lib/formatters.ts (see the comment there): pausing keeps the user's
+  // tick_speed rather than zeroing it, and `change_speed(0)` writes tick_speed
+  // 0 with is_paused true, so both fall back to 1 minute/tick.
+  // Kept as two lines here rather than shared; if a third caller needs it,
+  // hoist it into formatters.ts as `effectiveTickSpeed()`.
+  const speed = isPaused || tickSpeed <= 0 ? 1 : tickSpeed;
+  const minutesActive = (worldTick - createdAt) * speed;
+  return Math.max(0, Math.floor(minutesActive / 1440));
 }
 
-export function GoalsView({ agentId, worldTick }: GoalsViewProps) {
+export function GoalsView({ agentId, worldTick, tickSpeed, isPaused }: GoalsViewProps) {
   const { data, isLoading } = trpc.agents.getAgentThoughts.useQuery({ agentId });
 
   if (isLoading) {
@@ -124,7 +139,7 @@ export function GoalsView({ agentId, worldTick }: GoalsViewProps) {
         <div className="space-y-2">
           {goals.map((goal) => {
             const progress = Math.min(100, Math.max(0, goal.progress * 100));
-            const days = daysActive(goal.created_at, worldTick);
+            const days = daysActive(goal.created_at, worldTick, tickSpeed, isPaused);
             const sourceBadge = SOURCE_BADGE[goal.source] ?? SOURCE_BADGE.reactive;
             const typeLabel = GOAL_TYPE_LABELS[goal.type] ?? goal.type.replace(/_/g, " ");
 

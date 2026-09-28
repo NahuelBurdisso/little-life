@@ -6,7 +6,7 @@ export interface AgentData {
   name: string;
   position: { x: number; y: number };
   sprite_sheet?: string;
-  current_action?: { type?: string } | string;
+  current_action?: { type?: string; pose?: string } | string;
   current_location?: number | null;
   needs?: {
     mood?: number;
@@ -18,6 +18,21 @@ export interface AgentData {
     thresholds?: { critical?: number };
   } | null;
   activeStates?: Array<{ type: string; severity?: number; target_agent_id?: number | null; metadata?: any }>;
+}
+
+/** `current_action` arrives as either a bare string or a `{ type }` object. */
+export function actionTypeOf(agent: { current_action?: { type?: string } | string }): string {
+  const a = agent.current_action;
+  return (typeof a === "string" ? a : a?.type) ?? "idle";
+}
+
+/**
+ * Server-stamped cosmetic pose hint, set when the action's target zone is
+ * furniture you sit on. Absent for every action that isn't zone-bound.
+ */
+export function poseOf(agent: { current_action?: { pose?: string } | string }): string | null {
+  const a = agent.current_action;
+  return (typeof a === "string" ? null : a?.pose) ?? null;
 }
 
 /** Manages all AgentSprite instances, creating/removing as needed. */
@@ -34,7 +49,7 @@ export class SpritePool {
    * Sync the pool with the current list of agents.
    * Creates new sprites, updates existing ones, removes stale ones.
    */
-  update(agents: AgentData[], deltaTime: number, selectedAgentId: string | null) {
+  update(agents: AgentData[], selectedAgentId: string | null) {
     const activeIds = new Set<string>();
 
     for (const agent of agents) {
@@ -52,7 +67,9 @@ export class SpritePool {
         this.container.addChild(sprite.container);
       }
 
-      sprite.update(px, py, deltaTime);
+      sprite.setActionType(actionTypeOf(agent));
+      sprite.setSeated(poseOf(agent) === "sitting");
+      sprite.setTarget(px, py);
       sprite.setSelected(id === selectedAgentId);
       sprite.updateStates(agent.activeStates ?? []);
       sprite.updateMood(agent.needs?.mood ?? 50);

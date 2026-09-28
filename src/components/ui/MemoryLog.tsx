@@ -15,6 +15,7 @@ interface MemoryLogProps {
   memories: Memory[];
   worldTick: number;
   tickSpeed: number;
+  isPaused: boolean;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -62,7 +63,7 @@ const TYPE_FILTER_BUTTONS: { label: string; value: string | null }[] = [
   { label: "📋", value: "plan" },
 ];
 
-export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
+export function MemoryLog({ memories, worldTick, tickSpeed, isPaused }: MemoryLogProps) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
 
   const filteredMemories = typeFilter
@@ -114,7 +115,7 @@ export function MemoryLog({ memories, worldTick, tickSpeed }: MemoryLogProps) {
               </span>
               {importanceDots(memory.importance)}
               <span className="text-[10px] text-gray-600 ml-auto">
-                {timeAgo(memory.created_at, worldTick, tickSpeed)}
+                {timeAgo(memory.created_at, worldTick, tickSpeed, isPaused)}
               </span>
             </div>
             <div className={`text-[11px] leading-tight ${memory.type === 'reflection' ? 'text-purple-300 italic' : 'text-gray-300'}`}>

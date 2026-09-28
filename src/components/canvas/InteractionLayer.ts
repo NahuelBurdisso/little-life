@@ -22,6 +22,8 @@ export class InteractionLayer {
   private onPointerDown: ((e: PointerEvent) => void) | null = null;
   private _onPointerUp: ((e: PointerEvent) => void) | null = null;
   private onPointerMove: ((e: PointerEvent) => void) | null = null;
+  private onPointerCancel: (() => void) | null = null;
+  private onLostPointerCapture: (() => void) | null = null;
   private onContextMenu: ((e: MouseEvent) => void) | null = null;
   private _clickStart: { x: number; y: number } | null = null;
 
@@ -36,6 +38,19 @@ export class InteractionLayer {
 
     this.onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return; // only left click
+      // Capture so the matching pointerup lands here even if the cursor left the
+      // canvas. Without it a press released outside leaves `_clickStart` set, and
+      // the next unrelated pointerup over the canvas (e.g. finishing a resize-handle
+      // drag) is measured against that stale origin and can deselect the agent.
+      // Throws `NotFoundError` for a pointerId the browser no longer considers
+      // active. Letting that escape skipped the `_clickStart` assignment below
+      // and silently swallowed the click, so capture is best-effort.
+      try {
+        this.canvas!.setPointerCapture(e.pointerId);
+      } catch {
+        // No capture — a release outside the canvas won't reach us, which
+        // `lostpointercapture`/`pointercancel` already have to cover anyway.
+      }
       // Record click start position — we'll check on pointerup if it was a click vs drag
       this._clickStart = { x: e.clientX, y: e.clientY };
     };
@@ -58,6 +73,19 @@ export class InteractionLayer {
     this._onPointerUp = onPointerUp;
 
     this.onPointerMove = (e: PointerEvent) => {
+      // `pointerdown` takes pointer capture, so while a button is held every
+      // move is routed here even when the cursor is over the sidebars — the
+      // hit test would then keep raising agent tooltips off-canvas. Drop the
+      // current hover once and stay quiet until the press ends.
+      if (this._clickStart) {
+        if (this.hoveredId !== null) {
+          this.hoveredId = null;
+          this.callbacks.onAgentHover(null);
+          this.canvas!.style.cursor = "";
+        }
+        return;
+      }
+
       const hit = this.hitTest(e);
       if (hit !== this.hoveredId) {
         if (hit) {
@@ -74,6 +102,18 @@ export class InteractionLayer {
       }
     };
 
+    // A cancelled pointer (system gesture, touch turned into a scroll) never
+    // delivers pointerup, so drop the origin rather than measure the next
+    // unrelated release against it.
+    this.onPointerCancel = () => { this._clickStart = null; };
+
+    // `pointerup` early-returns on a non-left button, and a press can end without
+    // any pointerup at all (capture released because the node moved, tab switch,
+    // a system dialog stealing the pointer). `_clickStart` would then stay set
+    // forever, and the hover-suppression branch in `pointermove` would kill agent
+    // tooltips and the pointer cursor for the rest of the layer's life.
+    this.onLostPointerCapture = () => { this._clickStart = null; };
+
     this.onContextMenu = (e: MouseEvent) => {
       const hit = this.hitTest(e);
       if (hit) {
@@ -85,6 +125,8 @@ export class InteractionLayer {
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointerup", this._onPointerUp!);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("pointercancel", this.onPointerCancel);
+    this.canvas.addEventListener("lostpointercapture", this.onLostPointerCapture);
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
   }
 
@@ -136,6 +178,8 @@ export class InteractionLayer {
       if (this.onPointerDown) this.canvas.removeEventListener("pointerdown", this.onPointerDown);
       if (this._onPointerUp) this.canvas.removeEventListener("pointerup", this._onPointerUp);
       if (this.onPointerMove) this.canvas.removeEventListener("pointermove", this.onPointerMove);
+      if (this.onPointerCancel) this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+      if (this.onLostPointerCapture) this.canvas.removeEventListener("lostpointercapture", this.onLostPointerCapture);
       if (this.onContextMenu) this.canvas.removeEventListener("contextmenu", this.onContextMenu);
     }
     this.canvas = null;

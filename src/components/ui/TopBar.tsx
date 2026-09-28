@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { formatTime, weatherEmoji, seasonEmoji } from "../../lib/formatters";
 import { SpeedControls } from "./SpeedControls";
 import { trpc } from "../../lib/trpc";
@@ -12,11 +12,14 @@ interface TopBarProps {
     setup_config?: unknown;
   };
   events: unknown[];
+  /** Conversations currently in progress — the headline "is anything happening" number. */
+  liveConversations: number;
+  awakeAgents: number;
   onShowEvents: () => void;
   onShowStats: () => void;
 }
 
-export function TopBar({ world, events, onShowEvents, onShowStats }: TopBarProps) {
+export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -39,6 +42,25 @@ export function TopBar({ world, events, onShowEvents, onShowStats }: TopBarProps
     }
   };
 
+  // This dialog is the topmost layer (z-50) but App owns the Escape chain and
+  // can't see it, so Escape used to close the panel *underneath* and leave the
+  // destructive prompt up. Capture phase + stopPropagation means the event never
+  // reaches App's document listener while the dialog is open.
+  useEffect(() => {
+    if (!confirmAction || isResetting) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setConfirmAction(null);
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [confirmAction, isResetting]);
+
+  // Polled, not subscribed: the semaphore is in-memory and changes between
+  // ticks, so there is no dirty-channel to hang a subscription off.
+  const { data: llm } = trpc.world.getLLMStats.useQuery(undefined, { refetchInterval: 2000 });
+
   const hasConfig = !!world.setup_config;
 
   return (
@@ -53,6 +75,21 @@ export function TopBar({ world, events, onShowEvents, onShowStats }: TopBarProps
             {seasonEmoji(world.time.season)} {world.time.season}
           </span>
           <span className="text-gray-600 text-xs">tick:{world.time.totalTicks}</span>
+        </div>
+
+        {/* Live activity readout */}
+        <div className="flex items-center gap-3 text-xs text-gray-400">
+          <span title="Conversations happening right now">💬 {liveConversations}</span>
+          <span title="Agents awake">🚶 {awakeAgents}</span>
+          {llm && (
+            <span
+              className={llm.waiting > 0 ? "text-yellow-400" : ""}
+              title="LLM calls running / queued — a growing queue means the model can't keep up with this speed"
+            >
+              🧠 {llm.active}
+              {llm.waiting > 0 && `+${llm.waiting}`}
+            </span>
+          )}
         </div>
 
         {/* Center: Speed controls */}
