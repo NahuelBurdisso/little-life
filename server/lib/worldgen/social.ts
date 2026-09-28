@@ -41,7 +41,6 @@ export interface SocialScenario {
     template_id: string;
     romance_values: ReadonlyArray<{ from: number; to: number; value: number }>;
     friendship_deltas?: ReadonlyArray<{ from: number; to: number; delta: number }>;
-    secret?: unknown;
   }>;
   rivalPairs: ReadonlyArray<readonly [number, number]>;
 }
@@ -55,8 +54,15 @@ export type SocialRelationship = Pick<
  *  `enemies` are the wizard's statuses. */
 const RIVAL_STATUSES: ReadonlySet<string> = new Set(['rival', 'rivals', 'enemies']);
 const RIVAL_TAGS: ReadonlySet<string> = new Set(['rival', 'grudge', 'antagonist']);
-/** Romance templates that are secret by their nature, whether or not the
- *  generator attached a `secret` row to the thread. */
+/**
+ * The only romance templates that make a pair secret lovers: an affair the pair
+ * has to hide. Deliberately *not* "any thread carrying a `secret` row" — nearly
+ * every template attaches one (mutual_crush, unrequited, love_triangle,
+ * jealousy_seed), but those secrets are about hidden feelings, not a hidden
+ * relationship, and pushing a crush across town would starve exactly the
+ * encounters the thread exists to produce. Those threads only contribute their
+ * romance values and fall through to lovers / friends / rival like any pair.
+ */
 const SECRET_ROMANCE_TEMPLATES: ReadonlySet<string> = new Set(['secret_fling', 'forbidden']);
 /** Both directions must reach this for a pair to count as friends / lovers. A
  *  one-sided feeling is not a reason to move a household. */
@@ -87,10 +93,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
  * that will actually be seeded, not just the wizard's table. The trust delta is
  * ignored: no edge kind depends on trust.
  *
- * One kind per pair, by precedence secret_lovers > rival > lovers > friends. A
- * secret thread outranks a rivalry because the generator draws rival pairs at
- * random from the trust slider while a romance thread is a deliberate story, and
- * the story only works if the pair has to cross town to meet; rivalry outranks
+ * One kind per pair, by precedence secret_lovers > rival > lovers > friends. An
+ * affair thread (`secret_fling` / `forbidden`) outranks a rivalry because the
+ * generator draws rival pairs at random from the trust slider while a romance
+ * thread is a deliberate story, and the story only works if the pair has to
+ * cross town to meet; rivalry outranks
  * open affection because it is the tie with the most to gain from proximity.
  *
  * Pairs that share a home are dropped — housemates already share a door, and no
@@ -137,7 +144,7 @@ export function buildSocialEdges(
   if (scenario) {
     const nameAt = (i: number): string | undefined => agents[i]?.name;
     for (const thread of scenario.romanceThreads) {
-      const secret = SECRET_ROMANCE_TEMPLATES.has(thread.template_id) || !!thread.secret;
+      const secret = SECRET_ROMANCE_TEMPLATES.has(thread.template_id);
       for (const rv of thread.romance_values) {
         const from = nameAt(rv.from), to = nameAt(rv.to);
         if (from === undefined || to === undefined) continue;

@@ -57,17 +57,28 @@ describe('buildSocialEdges — classification', () => {
     expect(buildSocialEdges([], scenario, CAST)).toEqual([{ a: 'Bob', b: 'Eve', kind: 'secret_lovers' }]);
   });
 
-  it('any thread carrying a secret → secret_lovers, even with high mutual romance', () => {
-    const scenario: SocialScenario = {
-      romanceThreads: [{
-        template_id: 'mutual_crush',
+  it.each(['mutual_crush', 'unrequited', 'love_triangle', 'jealousy_seed'])(
+    '%s is not an affair: a thread carrying a secret row still classifies by its values',
+    (template_id) => {
+      // The generator attaches a `secret` to these threads; it must not matter.
+      const thread = {
+        template_id,
         romance_values: [{ from: 0, to: 1, value: 80 }, { from: 1, to: 0, value: 80 }],
         secret: { content: 'Ann has a crush on Bob' },
-      }],
-      rivalPairs: [],
-    };
-    expect(buildSocialEdges([], scenario, CAST)).toEqual([{ a: 'Ann', b: 'Bob', kind: 'secret_lovers' }]);
-  });
+      };
+      const scenario: SocialScenario = { romanceThreads: [thread], rivalPairs: [] };
+      expect(buildSocialEdges([], scenario, CAST)).toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
+      // One-sided (the unrequited shape) with no friendship → no edge at all.
+      const oneSided: SocialScenario = {
+        romanceThreads: [{ ...thread, romance_values: [{ from: 0, to: 1, value: 55 }, { from: 1, to: 0, value: 0 }] }],
+        rivalPairs: [],
+      };
+      expect(buildSocialEdges([], oneSided, CAST)).toEqual([]);
+      // And a rivalry on the same pair still wins.
+      expect(buildSocialEdges([rel('Ann', 'Bob', { status: 'rivals' })], scenario, CAST))
+        .toEqual([{ a: 'Ann', b: 'Bob', kind: 'rival' }]);
+    },
+  );
 
   it('a non-secret thread only sets romance; mutual ≥ 50 makes lovers', () => {
     const scenario: SocialScenario = {
