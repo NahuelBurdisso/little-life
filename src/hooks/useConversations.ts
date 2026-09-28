@@ -6,7 +6,7 @@ export function useConversations() {
 
   trpc.conversations.onUpdate.useSubscription(undefined, {
     onData: () => {
-      utils.conversations.invalidate(); // invalidates getActive, getRecent, getOne, getHistory
+      utils.conversations.invalidate(); // invalidates getActive, getAll, getRecent, getImpact
     },
   });
 

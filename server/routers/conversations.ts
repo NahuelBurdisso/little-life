@@ -14,16 +14,6 @@ export const conversationsRouter = router({
       .all();
   }),
 
-  getOne: publicProcedure
-    .input(z.object({ conversationId: z.number() }))
-    .query(({ input }) => {
-      return db
-        .select()
-        .from(conversations)
-        .where(eq(conversations.id, input.conversationId))
-        .get() ?? null;
-    }),
-
   getAll: publicProcedure
     .input(z.object({ limit: z.number().optional().default(100) }))
     .query(({ input }) => {

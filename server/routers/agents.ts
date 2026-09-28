@@ -47,16 +47,6 @@ export const agentsRouter = router({
     });
   }),
 
-  getAgent: publicProcedure
-    .input(z.object({ agentId: z.number() }))
-    .query(({ input }) => {
-      return db
-        .select()
-        .from(agents)
-        .where(eq(agents.id, input.agentId))
-        .get() ?? null;
-    }),
-
   getAgentThoughts: publicProcedure
     .input(z.object({ agentId: z.number() }))
     .query(({ input }) => {

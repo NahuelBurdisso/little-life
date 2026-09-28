@@ -49,23 +49,6 @@ export const activityRouter = router({
         .all();
     }),
 
-  getByType: publicProcedure
-    .input(
-      z.object({
-        type: z.string(),
-        limit: z.number().optional().default(20),
-      })
-    )
-    .query(({ input }) => {
-      return db
-        .select()
-        .from(activityLog)
-        .where(eq(activityLog.type, input.type))
-        .orderBy(desc(activityLog.id))
-        .limit(input.limit)
-        .all();
-    }),
-
   /** Get dramatic events — high importance drama/relationship/state changes */
   getDramaticEvents: publicProcedure
     .input(z.object({ limit: z.number().optional().default(15) }).optional())

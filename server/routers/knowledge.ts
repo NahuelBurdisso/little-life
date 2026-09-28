@@ -15,16 +15,6 @@ export const knowledgeRouter = router({
         .filter(f => (f.known_by as number[]).includes(input.agentId));
     }),
 
-  /** What does everyone know about a specific agent? */
-  getAboutAgent: publicProcedure
-    .input(z.object({ agentId: z.number() }))
-    .query(({ input }) => {
-      return db.select().from(shared_knowledge)
-        .where(eq(shared_knowledge.is_active, true))
-        .all()
-        .filter(f => f.subject_id === input.agentId || f.target_id === input.agentId);
-    }),
-
   /** All active secrets (sensitivity >= 2) with who knows what */
   getSecretNetwork: publicProcedure.query(() => {
     const allFacts = db.select().from(shared_knowledge)

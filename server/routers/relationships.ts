@@ -1,32 +1,11 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
 import { relationships, agents } from '../db/schema';
-import { eq, or, and } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { getCliques } from '../lib/cliques';
 
 export const relationshipsRouter = router({
-  getOne: publicProcedure
-    .input(z.object({ agentA: z.number(), agentB: z.number() }))
-    .query(({ input }) => {
-      // Normalize ordering so agentA < agentB for consistent lookups
-      const [a, b] =
-        input.agentA < input.agentB
-          ? [input.agentA, input.agentB]
-          : [input.agentB, input.agentA];
-
-      return db
-        .select()
-        .from(relationships)
-        .where(
-          and(
-            eq(relationships.agent_a, a),
-            eq(relationships.agent_b, b)
-          )
-        )
-        .get() ?? null;
-    }),
-
   getAgentRelationships: publicProcedure
     .input(z.object({ agentId: z.number() }))
     .query(({ input }) => {
