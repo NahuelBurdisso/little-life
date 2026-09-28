@@ -276,42 +276,38 @@ export async function conversationsTick(): Promise<void> {
       return 'ok';
     };
 
-    // --- Step C: Process queue timeouts ---
+    // --- Steps C–E: work the queue, highest priority first ---
+    // One pass over the whole queue (sorted by priority, descending) for every
+    // path that can start a conversation: timed-out fallbacks (C), the template
+    // tier (D) and LLM slots (E). They used to run as separate passes in that
+    // order, so a low-priority timed-out or template chat could claim an agent a
+    // higher-priority LLM conversation needed in the same tick.
     const queueEntries = db
       .select()
       .from(conversationQueue)
       .orderBy(desc(conversationQueue.priority))
       .all();
 
-    const timedOutEntries: QueueRow[] = [];
-    const validEntries: QueueRow[] = [];
+    const time = world.time as { totalTicks: number };
+    let currentActive = updatedActiveLLM.length;
+    const fillEntries = [...updatedActiveLLM];
 
     for (const entry of queueEntries) {
       if (now > entry.queued_at + entry.max_wait) {
-        timedOutEntries.push(entry);
-      } else {
-        validEntries.push(entry);
+        // Step C: timed out — delete; async template processing happens outside.
+        // A timed-out entry has nowhere left to wait, so if its participants are
+        // taken it is simply dropped rather than becoming a parallel template chat.
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        queueTimeouts++;
+        changed = true;
+        if (claimParticipants(entry) !== 'ok') continue;
+        timedOutQueue.push({ entry, world });
+        templateTotal++;
+        continue;
       }
-    }
 
-    // Delete timed-out entries from queue; async template processing happens outside.
-    // A timed-out entry has nowhere left to wait, so if its participants are
-    // taken it is simply dropped rather than becoming a parallel template chat.
-    for (const entry of timedOutEntries) {
-      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-      queueTimeouts++;
-      changed = true;
-      if (claimParticipants(entry) !== 'ok') continue;
-      timedOutQueue.push({ entry, world });
-      templateTotal++;
-    }
-
-    // --- Step D: Process template-tier entries immediately (no LLM) ---
-    const time = world.time as { totalTicks: number };
-    const llmEntries: QueueRow[] = [];
-
-    for (const entry of validEntries) {
       if (entry.tier === 'template') {
+        // Step D: template tier — processed immediately, no LLM.
         // Busy participants keep the entry queued; it runs once they're free or
         // ages out through Step C.
         const claim = claimParticipants(entry);
@@ -325,21 +321,15 @@ export async function conversationsTick(): Promise<void> {
         timedOutQueue.push({ entry, world });
         templateTotal++;
         changed = true;
-      } else {
-        llmEntries.push(entry);
+        continue;
       }
-    }
 
-    // --- Step E: Fill open LLM slots with remaining entries ---
-    let currentActive = updatedActiveLLM.length;
-    const fillEntries = [...updatedActiveLLM];
+      // Step E: fill open LLM slots. `continue`, not `break`, once they're full:
+      // lower-priority template entries further down still get their turn.
+      if (currentActive >= schedulerState.max_concurrent_llm) continue;
 
-    for (const entry of llmEntries) {
-      if (currentActive >= schedulerState.max_concurrent_llm) break;
-
-      // Peek only: the claim is taken once the conversation actually opens below,
-      // so an entry that is merely staging (initiator still walking over) doesn't
-      // lock both agents out of everything else this pass.
+      // Peek only: the pair claim is taken once the conversation actually opens
+      // below. A staging entry reserves just the agents (see there).
       const claim = claimParticipants(entry, { peek: true });
       if (claim === 'duplicate') {
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
@@ -430,6 +420,10 @@ export async function conversationsTick(): Promise<void> {
             .run();
           changed = true;
         }
+        // Reserve both agents for the rest of this pass: the initiator is walking
+        // over to talk, so a lower-priority entry must not grab either of them.
+        // The pair key is not claimed, so this entry opens normally next tick.
+        for (const id of entry.participants as number[]) claimedAgents.add(id);
         continue;
       }
 

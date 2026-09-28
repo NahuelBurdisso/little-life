@@ -204,13 +204,54 @@ describe('conversationsTick — one conversation per agent', () => {
 
     await conversationsTick();
 
-    // Which one wins is Step D/E ordering (templates run first); the invariant
-    // is that Diego ends up in exactly one.
     const started = startedConversations();
     expect(started).toHaveLength(1);
-    expect(started[0].participants).toContain(c);
+    // Highest priority wins, whatever its tier.
+    expect(started[0].participants).toEqual([c, a]);
     // The losers wait their turn rather than being thrown away.
     expect(db.select().from(conversationQueue).all()).toHaveLength(2);
+  });
+
+  it('does not let a lower-priority template take an agent a higher-priority LLM entry needs', async () => {
+    enqueue([c, d], 'template', { priority: 10 });
+    enqueue([c, a], 'llm_deep', { priority: 90 });
+
+    await conversationsTick();
+
+    expect(startedConversations().map((x) => x.participants)).toEqual([[c, a]]);
+    expect(taskRunner.startConversation).toHaveBeenCalledTimes(1);
+    expect(db.select().from(conversationQueue).all().map((q) => q.participants)).toEqual([[c, d]]);
+  });
+
+  it('holds both agents of a higher-priority LLM entry that is still walking over', async () => {
+    // Omar is 60px away: the LLM entry stages (Sofia walks over) instead of opening.
+    db.update(agents).set({ position: { x: 160, y: 100 } }).where(eq(agents.id, b)).run();
+    try {
+      enqueue([a, b], 'llm_standard', { priority: 90 });
+      enqueue([b, c], 'template', { priority: 10 });
+
+      await conversationsTick();
+
+      expect(startedConversations()).toHaveLength(0);
+      expect(db.select().from(conversationQueue).all()).toHaveLength(2);
+      const sofia = db.select().from(agents).where(eq(agents.id, a)).get()!;
+      expect(sofia.current_action).toMatchObject({ type: 'walking', reason: 'approaching_conversation' });
+    } finally {
+      db.update(agents).set({ position: { x: 100, y: 100 }, current_destination: null })
+        .where(eq(agents.id, b)).run();
+    }
+  });
+
+  it('still runs lower-priority templates once the LLM slots are full', async () => {
+    const sched = db.select().from(conversationSchedulerState).get()!;
+    db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 })
+      .where(eq(conversationSchedulerState.id, sched.id)).run();
+    enqueue([a, b], 'llm_standard', { priority: 90 });
+    enqueue([c, d], 'template', { priority: 10 });
+
+    await conversationsTick();
+
+    expect(startedConversations().map((x) => x.participants)).toEqual([[c, d]]);
   });
 
   it('keeps an entry queued while a participant is in a live conversation', async () => {
