@@ -8,6 +8,7 @@ import {
   markConversationEnded,
 } from '../helpers/conversationHelpers';
 import { CONFIG } from '../lib/constants';
+import { autoPlayer } from '../autoplay';
 
 export interface GenerateResponseResult {
   messageCount: number;
@@ -78,8 +79,10 @@ export async function generateResponse(
 
   // 3. Call Ollama with retry
   let responseText: string | null = null;
+  const contextItemCount = memories.length + (gossipFacts?.length ?? 0) + (situationalPrompt ? 1 : 0) + (statePrompts?.length ?? 0);
 
   for (let attempt = 0; attempt < CONFIG.AI.RETRY_ATTEMPTS; attempt++) {
+    const llmStart = performance.now();
     try {
       const result = await callOllamaChat({
         model: CONFIG.AI.CHAT_MODEL,
@@ -96,9 +99,33 @@ export async function generateResponse(
         },
       });
       responseText = result.text;
+      // Only autoplay's analyze() drains perf records, so recording while it is
+      // disabled just grows an array that is never reset.
+      if (CONFIG.AUTOPLAY.ENABLED) {
+        autoPlayer.perf.recordLlmCall({
+          durationMs: performance.now() - llmStart,
+          success: true,
+          promptChars: system.length,
+          contextItems: contextItemCount,
+          retried: attempt > 0,
+        });
+      }
+      autoPlayer.recordLlmResponse(performance.now() - llmStart, true);
       break;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      const timedOut = msg.includes('timeout') || msg.includes('aborted');
+      if (CONFIG.AUTOPLAY.ENABLED) {
+        autoPlayer.perf.recordLlmCall({
+          durationMs: performance.now() - llmStart,
+          success: false,
+          timedOut,
+          promptChars: system.length,
+          contextItems: contextItemCount,
+          retried: attempt > 0,
+        });
+      }
+      autoPlayer.recordLlmResponse(performance.now() - llmStart, false);
       console.warn(`[generateResponse] Attempt ${attempt + 1}/${CONFIG.AI.RETRY_ATTEMPTS} failed for conversation ${conversationId}: ${msg}`);
       if (attempt < CONFIG.AI.RETRY_ATTEMPTS - 1) {
         await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
@@ -120,7 +147,12 @@ export async function generateResponse(
       (trimmed.length < 10 && Math.abs(sentiment) < 0.2);       // low-quality filler ("Ok", "Mm")
 
     if (isInvalid) {
-      // One retry with nudge
+      // One retry with nudge. The rejection is booked against this real call
+      // instead of a synthetic { durationMs: 0, success: true } record — that
+      // record counted as a completed request and pulled avgResponseMs and
+      // p95ResponseMs toward zero.
+      const nudgeStart = performance.now();
+      let nudgeSucceeded = false;
       try {
         const nudge = await callOllamaChat({
           model: CONFIG.AI.CHAT_MODEL,
@@ -138,12 +170,27 @@ export async function generateResponse(
             repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
           },
         });
+        // "Succeeded" means the retry produced text we actually used. A call
+        // that returned but was still too short falls through to the fallback,
+        // so booking it as a success overstated the retry's hit rate.
         if (nudge.text && nudge.text.trim().length >= 2) {
           responseText = nudge.text;
+          nudgeSucceeded = true;
         }
       } catch {
         // nudge failed, fall through to fallback
       }
+      const nudgeDurationMs = performance.now() - nudgeStart;
+      if (CONFIG.AUTOPLAY.ENABLED) {
+        autoPlayer.perf.recordLlmCall({
+          durationMs: nudgeDurationMs,
+          success: nudgeSucceeded,
+          rejected: true,
+        });
+      }
+      // Matches the two loop paths above — without this the response-time
+      // timeline silently omitted every nudge retry.
+      autoPlayer.recordLlmResponse(nudgeDurationMs, nudgeSucceeded);
     }
   }
 

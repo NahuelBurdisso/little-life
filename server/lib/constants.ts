@@ -1,3 +1,18 @@
+/**
+ * AutoPlay knobs, hoisted out of CONFIG because they are the only settings
+ * mutated at runtime (`autoplayRouter.configure`). Keeping them in a separate
+ * non-const object lets CONFIG itself stay `as const`, which is what makes
+ * `CONFIG.TYPO` a compile error and `CONFIG.AI.BACKEND` a literal union again.
+ */
+export const AUTOPLAY_CONFIG = {
+  ENABLED: true,
+  WINDOW_SIZE: 60,           // ticks per analysis window (~1 game hour)
+  BOREDOM_THRESHOLD: 55,     // score to trigger auto-nudges
+  AUTO_NUDGE: true,
+  MAX_NUDGES_PER_DAY: 12,
+  HISTORY_WINDOWS: 24,
+};
+
 export const CONFIG = {
   // Simulation
   TICK_INTERVAL_MS: 1000,
@@ -8,15 +23,26 @@ export const CONFIG = {
 
   // Needs
   NEEDS: {
+    // Per GAME HOUR (needs.ts multiplies by `gameHoursElapsed`). Social and fun
+    // are pushed hardest: they are what drives agents to seek each other out, and
+    // interaction is where the story comes from. Hunger and energy are nudged only
+    // slightly — steep values there produce a town that starves instead of one
+    // that argues.
     DEFAULT_DECAY_RATES: {
-      hunger: 4.2,
-      energy: 3.5,
-      social: 2.0,
-      comfort: 1.0,
-      fun: 2.5,
+      hunger: 4.8,
+      energy: 3.8,
+      social: 3.2,
+      comfort: 1.4,
+      fun: 3.6,
     },
     THRESHOLDS: { critical: 15, low: 35, satisfied: 70 },
-    MOOD_MODIFIER_DURATION_TICKS: 120,
+    // CLOCK: GAME MINUTES, not ticks. This is added to `needs.last_updated`
+    // (`day*1440 + hour*60 + minute`) to produce `mood_modifiers[].expiresAt`, which
+    // `needsTick` compares against the same game-minute clock. Ticks equal game
+    // minutes only at tick_speed 1, so at speed 4 this lasts 30 ticks of wall
+    // progress — that is correct and intended; the value was tuned against the game
+    // clock. Do NOT "fix" it by differencing it against `world.time.totalTicks`.
+    MOOD_MODIFIER_DURATION_GAME_MINUTES: 120,
     STRESS_DECAY_AMPLIFIER: 200,
     MOOD_CRITICAL_THRESHOLD: 10,
   },
@@ -48,13 +74,15 @@ export const CONFIG = {
   // Conversations
   CONVERSATIONS: {
     MAX_CONCURRENT_LLM: 4,
-    MAX_QUEUE_SIZE: 6,
+    // Headroom for the raised social drive — at 6 the queue capped out and
+    // decisions.ts silently dropped the surplus socializing intents.
+    MAX_QUEUE_SIZE: 10,
     MAX_TURNS_DEEP: 10,
     MAX_TURNS_STANDARD: 6,
     TEMPLATE_FALLBACK_MS: 10000,
     PLAYER_NUDGE_PRIORITY: 200,
     PLAYER_NUDGE_MAX_WAIT_MS: 30000,
-    COOLDOWN_SAME_PAIR_HOURS: 1,
+    COOLDOWN_SAME_PAIR_HOURS: 0.5,
     TEMPLATE_COOLDOWN_PER_PAIR: 2,
   },
 
@@ -111,8 +139,12 @@ export const CONFIG = {
 
   // Events
   EVENTS: {
-    RANDOM_EVENT_CHANCE_PER_HOUR: 0.05,
-    MAX_CONCURRENT_EVENTS: 3,
+    // Rolled once per game hour (events.ts gates on `minute === 0`), so 0.20 is
+    // ~5 world events a day against the old ~1. EVENT_DEFINITIONS is already a
+    // mix of good (festival, harvest, wedding, competition) and bad (storm,
+    // flu outbreak, fire), gated by season and day phase.
+    RANDOM_EVENT_CHANCE_PER_HOUR: 0.20,
+    MAX_CONCURRENT_EVENTS: 5,
     WEATHER_DURATION_RANGE: { min: 2, max: 8 },
   },
 
@@ -136,6 +168,10 @@ export const CONFIG = {
     MAX_VISIBLE_MEMORIES: 20,
     MAX_VISIBLE_TRANSACTIONS: 30,
   },
+
+
+  // AutoPlay (boredom detection + sim profiler) — mutable, see AUTOPLAY_CONFIG
+  AUTOPLAY: AUTOPLAY_CONFIG,
 } as const;
 
 export const SYSTEM_PHASES = [

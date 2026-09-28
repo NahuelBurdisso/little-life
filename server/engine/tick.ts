@@ -1,12 +1,12 @@
 import { db } from '../db';
 import { worldState, agents } from '../db/schema';
-import { eq } from 'drizzle-orm';
-import { logActivity } from '../lib/activityLogger';
+import { eq, sql } from 'drizzle-orm';
+import { logActivity, pruneActivityLog } from '../lib/activityLogger';
 import { emitter } from './emitter';
 import { needsTick } from './systems/needs';
 import { statesTick } from './systems/states';
 import { economyTick } from './systems/economy';
-import { tick as relationshipsTick } from './systems/relationships';
+import { tick as relationshipsTick, pruneRelationshipEvents } from './systems/relationships';
 import { conversationsTick } from './systems/conversations';
 import { tick as decisionsTick } from './systems/decisions';
 import { tick as movementTick } from './systems/movement';
@@ -25,6 +25,8 @@ import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import crypto from 'crypto';
+import { autoPlayer } from '../autoplay';
+import { conversationQueue, conversationSchedulerState } from '../db/schema';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,7 +126,15 @@ const SYSTEM_PHASES: Array<{
 
 // ─── Main gameTick ────────────────────────────────────────────────────────────
 
+/** Guards against overlapping autoplay analysis windows (see step 9 below). */
+let isAnalyzing = false;
+
 async function gameTick(): Promise<void> {
+  // Whole-tick budget: `perfCollector.flush` compares this against
+  // TICK_INTERVAL_MS, so it has to include the world read and clock advance,
+  // not just the phase loop.
+  const tickStart = performance.now();
+
   // 1. Read world state (better-sqlite3 is synchronous; use select for simplicity)
   const rows = db.select().from(worldState).limit(1).all();
   const world = rows[0];
@@ -168,6 +178,7 @@ async function gameTick(): Promise<void> {
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
     const phase = SYSTEM_PHASES[i];
     const phaseNumber = i + 1;
+    const phaseStart = performance.now();
 
     try {
       // Run phase. conversationsTick is async (dispatches LLM tasks) so we
@@ -188,6 +199,13 @@ async function gameTick(): Promise<void> {
         type: 'error',
         templateData: { system: phase.name, message: `System phase ${phaseNumber} (${phase.name}) error: ${message}` },
       });
+    }
+
+    // Only the autoplay analyzer drains these samples, and it only runs when
+    // AUTOPLAY is enabled — recording unconditionally accumulated ~950k phase
+    // samples a day in a process meant to stay up for days.
+    if (CONFIG.AUTOPLAY.ENABLED) {
+      autoPlayer.perf.recordPhase(phase.name, performance.now() - phaseStart);
     }
 
     // After the states phase completes, build the tick-level cache so that all
@@ -215,6 +233,44 @@ async function gameTick(): Promise<void> {
     }
   }
 
+  // Record tick timing + LLM slot state for the autoplay profiler. Both the
+  // samples and these two DB round-trips are pure overhead while autoplay is
+  // off, which is the default.
+  if (CONFIG.AUTOPLAY.ENABLED) {
+    autoPlayer.perf.recordTick(performance.now() - tickStart);
+    try {
+      const scheduler = db.select({
+        active_llm_conversations: conversationSchedulerState.active_llm_conversations,
+      }).from(conversationSchedulerState).limit(1).get();
+      const slotsInUse = (scheduler?.active_llm_conversations ?? []).length;
+      const queueDepth = db.select({ n: sql<number>`count(*)` })
+        .from(conversationQueue).get()?.n ?? 0;
+      autoPlayer.perf.recordSlotState(slotsInUse, queueDepth);
+    } catch { /* fresh DB */ }
+  }
+
+  // AutoPlay analysis window. `analyze` is not awaited, so a window that takes
+  // longer than WINDOW_SIZE ticks would otherwise start a second run that
+  // interleaves with the first over the same `perf.flush()` (which resets) and
+  // history state. markDirty has to wait for the report it announces.
+  if (
+    CONFIG.AUTOPLAY.ENABLED &&
+    newTime.totalTicks % CONFIG.AUTOPLAY.WINDOW_SIZE === 0 &&
+    !isAnalyzing
+  ) {
+    isAnalyzing = true;
+    // No markDirty here: nothing subscribes to an 'autoplay.report' channel, and
+    // markDirty/flush no-op on unknown channels, so announcing the report only
+    // read like a live-update path that does not exist. The UI polls instead.
+    autoPlayer.analyze(worldWithNewTime)
+      .catch(err => {
+        console.warn('[autoplay] Analysis failed:', (err as Error).message);
+      })
+      .finally(() => {
+        isAnalyzing = false;
+      });
+  }
+
   // Discard the tick-level cache before returning so stale data never leaks.
   clearAgentStatesCache();
 
@@ -229,7 +285,14 @@ async function gameTick(): Promise<void> {
   if (dayChanged) {
     memoryConsolidator.consolidate(newTime.day, newTime.totalTicks);
     // Regenerate self-descriptions for all agents (async, non-blocking)
-    const allAgentIds = db.select({ id: agents.id }).from(agents).all();
+    // Active only: self-description regeneration is an LLM call, and the dead
+    // never change. Unfiltered, every corpse cost one generation per game day
+    // for the rest of the run, and the result was never read by anything.
+    const allAgentIds = db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(eq(agents.is_active, true))
+      .all();
     for (const { id } of allAgentIds) {
       void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
     }
@@ -239,6 +302,10 @@ async function gameTick(): Promise<void> {
     processAllMoodMomentum();
     // Check for birthdays and handle aging
     agingTick(newTime.day);
+    // Enforce the activity log's declared retention tiers
+    pruneActivityLog(newTime.totalTicks);
+    // Drop processed relationship events older than every reader's window
+    pruneRelationshipEvents();
   }
 
   // 8. Finalize tick
