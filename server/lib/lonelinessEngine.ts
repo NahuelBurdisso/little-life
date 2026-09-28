@@ -2,7 +2,6 @@ import { db } from '../db';
 import { agents, needs, relationships, agentStates } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
-import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
 
 // ─── Loneliness Engine ────────────────────────────────────────────────────────
@@ -58,8 +57,6 @@ export function lonelinessCheck(totalTicks: number): void {
           templateData: { description: `${agent.name} has become lonely and withdrawn` },
         });
 
-        simEvents.emit('agent:lonely', { agentId: agent.id });
-
         // Trigger warm neighbor intervention
         triggerComfortVisit(agent.id, activeAgents);
       }
@@ -94,12 +91,7 @@ function triggerComfortVisit(lonelyAgentId: number, allAgents: (typeof agents.$i
     const visitChance = personality.warmth * 0.005 + friendship * 0.003;
     if (Math.random() > visitChance) continue;
 
-    // Emit comfort visit event — the decision system will pick this up
-    simEvents.emit('comfort:visit_needed', {
-      visitorId: other.id,
-      lonelyAgentId: lonelyAgentId,
-    });
-
+    // Only logged: nothing moves the visitor yet (see STATUS.md B14).
     const visitorName = other.name;
     const lonelyAgent = allAgents.find(a => a.id === lonelyAgentId);
     const lonelyName = lonelyAgent?.name ?? 'someone';

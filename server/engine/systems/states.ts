@@ -145,7 +145,6 @@ export function statesTick() {
               description: `${agent.name} was released from prison after ${Math.round(state.duration / 60)} hours.`,
             },
           });
-          simEvents.emit('crime:released', { agentId: agent.id });
         } else {
           logActivity({
             type: 'state_lost',

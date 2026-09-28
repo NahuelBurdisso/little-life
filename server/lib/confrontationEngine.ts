@@ -100,7 +100,7 @@ export function confrontationCheck(_totalTicks: number): void {
 
         // Confrontation happens!
         confrontationCooldown.set(key, now);
-        resolveConfrontation(agentA, agentB, rel, group, locationId);
+        resolveConfrontation(agentA, agentB, rel, locationId);
       }
     }
   }
@@ -110,7 +110,6 @@ function resolveConfrontation(
   agentA: typeof agents.$inferSelect,
   agentB: typeof agents.$inferSelect,
   _rel: typeof relationships.$inferSelect,
-  witnesses: (typeof agents.$inferSelect)[],
   locationId: number,
 ): void {
   const now = Date.now();
@@ -202,16 +201,6 @@ function resolveConfrontation(
 
     adjustReputation(agentA.id, -8);
     adjustReputation(agentB.id, -8);
-
-    // Witnesses pick sides
-    const bystanders = witnesses.filter(w => w.id !== agentA.id && w.id !== agentB.id);
-    for (const witness of bystanders) {
-      simEvents.emit('confrontation:witnessed', {
-        witnessId: witness.id,
-        agentAId: agentA.id,
-        agentBId: agentB.id,
-      });
-    }
   }
 
   // `agentId`/`perpetratorId`/`victimId` are the fields the cascade engine excludes

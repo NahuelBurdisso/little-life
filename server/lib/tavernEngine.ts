@@ -2,7 +2,6 @@ import { db } from '../db';
 import { agents, needs, economy, agentStates, locations } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
-import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
 import { adjustReputation } from './reputationEngine';
 
@@ -124,7 +123,6 @@ export function tavernTick(totalTicks: number): void {
           initiator: agent.id,
           templateData: { description: `${agent.name} is now drunk at the tavern!` },
         });
-        simEvents.emit('agent:drunk', { agentId: agent.id });
       }
     }
 

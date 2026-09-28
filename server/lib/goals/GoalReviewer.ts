@@ -403,13 +403,6 @@ export class GoalReviewer {
 
       if (!inserted) return null;
 
-      simEvents.emit('goal:ambition_generated', {
-        agentId,
-        agentName: agent.name,
-        ambition: parsed.description,
-        category: parsed.category,
-      });
-
       logActivity({
         type: 'goal_ambition_generated',
         initiator: agentId,
