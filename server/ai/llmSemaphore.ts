@@ -18,10 +18,27 @@ interface QueueEntry {
 }
 
 const PRIORITY_ORDER: Record<LLMPriority, number> = {
-  critical: 0,  // conversations, snap resolution
+  critical: 0,  // conversations, snap resolution, memory-query embeddings
   normal: 1,    // planning, reflections
-  low: 2,       // goal reviews, pivots, self-descriptions, embeddings
+  low: 2,       // goal reviews, pivots, self-descriptions, memory-write embeddings
 };
+
+/**
+ * A waiter climbs one priority level per this much time spent queued.
+ *
+ * Strict priority lets a steady stream of normal/critical requests starve the
+ * low tier forever. That used to be harmless-ish (a late goal review), but
+ * memory-write embeddings are low too, and MemoryService holds its flush —
+ * and lets its queue overflow and drop memories — until the embedding lands.
+ * Aging bounds any wait to roughly two steps plus one slot turnover; ties go
+ * to the earlier arrival, so an aged waiter beats fresh traffic of its level.
+ */
+export const PRIORITY_AGING_MS = 30_000;
+
+function effectivePriority(entry: QueueEntry, now: number): number {
+  const promoted = Math.floor((now - entry.enqueued) / PRIORITY_AGING_MS);
+  return Math.max(0, PRIORITY_ORDER[entry.priority] - promoted);
+}
 
 // Empirically tuned for an RTX 3090 24GB: deep enough to keep Ollama's internal
 // batching fed without pushing per-request latency past the conversation timeout.
@@ -46,11 +63,16 @@ function releaseSlot(): void {
 
   if (waiting.length === 0) return;
 
-  // Pick highest-priority waiter (stable sort by priority then FIFO)
+  // Pick the highest effective-priority waiter; `waiting` is in arrival order
+  // and only a strictly better entry replaces the pick, so ties stay FIFO.
+  const now = Date.now();
   let bestIdx = 0;
+  let bestPriority = effectivePriority(waiting[0], now);
   for (let i = 1; i < waiting.length; i++) {
-    if (PRIORITY_ORDER[waiting[i].priority] < PRIORITY_ORDER[waiting[bestIdx].priority]) {
+    const p = effectivePriority(waiting[i], now);
+    if (p < bestPriority) {
       bestIdx = i;
+      bestPriority = p;
     }
   }
 

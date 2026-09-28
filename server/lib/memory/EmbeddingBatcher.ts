@@ -9,6 +9,35 @@ import {
   EMBEDDING_DIMENSIONS,
 } from './constants';
 import { QueryCache } from './QueryCache';
+import { acquireLLMSlot, type LLMPriority } from '../../ai/llmSemaphore';
+
+/*
+ * Every request to the embedding endpoint goes through the global LLM
+ * semaphore. It used to call fetch directly, so memory writes and retrieval
+ * queries piled on top of the 8 chat requests the semaphore was admitting —
+ * on the same Ollama — exactly during the spikes the semaphore exists for.
+ *
+ * Slots are only ever held around the fetch itself (here and in ai/ollama.ts);
+ * nothing awaits an embedding while holding a slot, so the non-reentrant
+ * semaphore cannot deadlock on these calls. directEmbed/tryBatchEndpoint are
+ * raw and acquire nothing; the public paths take exactly one slot each.
+ */
+
+/**
+ * Query embeddings gate a prompt that is about to be sent: ContextBuilder
+ * retrieves memories for conversations, which are themselves `critical`. At a
+ * lower tier the lookup would queue behind every planning request and delay
+ * the conversation it feeds (priority inversion). They are tiny, so jumping
+ * the queue costs the chats behind them next to nothing.
+ */
+const READ_PRIORITY: LLMPriority = 'critical';
+
+/**
+ * Memory writes are background work. The semaphore ages waiters, so a busy
+ * spell delays them but cannot starve them (MemoryService holds its flush
+ * until they land).
+ */
+const WRITE_PRIORITY: LLMPriority = 'low';
 
 interface WriteQueueEntry {
   text: string;
@@ -58,7 +87,7 @@ export class EmbeddingBatcher implements EmbeddingProvider {
     if (existing) return existing;
 
     // 3. Direct call
-    const promise = this.directEmbed(text).then(
+    const promise = this.withSlot(READ_PRIORITY, () => this.directEmbed(text)).then(
       (vec) => {
         this.textCache.set(text, vec);
         this.inFlight.delete(text);
@@ -114,7 +143,8 @@ export class EmbeddingBatcher implements EmbeddingProvider {
 
     let vectors: Float32Array[];
     try {
-      vectors = await this.batchEmbed(texts);
+      // One slot for the whole batch, fallback included (see batchEmbed).
+      vectors = await this.withSlot(WRITE_PRIORITY, () => this.batchEmbed(texts));
     } catch (err) {
       console.warn('[EmbeddingBatcher] flushWrites batchEmbed failed:', err);
       vectors = texts.map(() => new Float32Array(EMBEDDING_DIMENSIONS));
@@ -144,8 +174,24 @@ export class EmbeddingBatcher implements EmbeddingProvider {
       }
     }
 
-    // Sequential fallback
-    return Promise.all(texts.map((t) => this.directEmbed(t)));
+    // Sequential fallback. Genuinely one at a time: the caller holds a single
+    // semaphore slot for this batch, and firing all of them in parallel (as
+    // this used to) would put up to WRITE_BATCH_MAX_SIZE requests on Ollama
+    // behind one slot's worth of accounting.
+    const vectors: Float32Array[] = [];
+    for (const t of texts) {
+      vectors.push(await this.directEmbed(t));
+    }
+    return vectors;
+  }
+
+  private async withSlot<T>(priority: LLMPriority, fn: () => Promise<T>): Promise<T> {
+    const release = await acquireLLMSlot(priority);
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 
   /** POST /api/embed with array input (newer Ollama) */
