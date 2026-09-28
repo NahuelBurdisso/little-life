@@ -44,10 +44,15 @@ export class PlanExecutor {
     private readonly decomposer: IPlanDecomposer,
   ) {}
 
+  /**
+   * `_currentTick` is no longer used: action timing runs on the world clock
+   * (see step 6). It stays in the signature so decisions.ts, which is being
+   * reworked in parallel, doesn't have to change with this module.
+   */
   getPlannedAction(
     agentId: number,
     currentHour: number,
-    currentTick: number,
+    _currentTick: number,
     currentDay?: number,
     currentMinute = 0,
   ): ScoredAction | null {
@@ -91,8 +96,8 @@ export class PlanExecutor {
       this.cache.setExecState(agentId, {
         currentBlockId: null,
         currentActionIndex: 0,
-        blockStartedAt: currentTick,
-        actionStartedAt: currentTick,
+        blockStartedAt: gameMinute,
+        actionStartedAt: gameMinute,
       });
     }
 
@@ -109,8 +114,8 @@ export class PlanExecutor {
       execState = {
         currentBlockId: block.id,
         currentActionIndex: 0,
-        blockStartedAt: currentTick,
-        actionStartedAt: currentTick,
+        blockStartedAt: gameMinute,
+        actionStartedAt: gameMinute,
       };
       this.cache.setExecState(agentId, execState);
     }
@@ -127,11 +132,14 @@ export class PlanExecutor {
     }
 
     const currentAction = actions[idx];
-    const elapsedTicks = currentTick - execState.actionStartedAt;
-    // duration_minutes maps 1:1 to ticks (the sim uses ticks-per-minute = 1 by default)
-    const durationTicks = currentAction.duration_minutes;
+    // Game minutes on the world clock. This compared elapsed *ticks* with
+    // `duration_minutes`, on the assumption that a tick is a game minute — but
+    // a tick advances the clock by `tick_speed` minutes, so at speed 4 a
+    // planned 60-minute action ran for 240 minutes of town time and a day's
+    // plan fell hours behind its own blocks.
+    const elapsedMinutes = gameMinute - execState.actionStartedAt;
 
-    if (elapsedTicks >= durationTicks) {
+    if (elapsedMinutes >= currentAction.duration_minutes) {
       // Advance to next action
       const newIdx = idx + 1;
       if (newIdx >= actions.length) {
@@ -143,7 +151,7 @@ export class PlanExecutor {
       const updatedState: PlanExecutionState = {
         ...execState,
         currentActionIndex: newIdx,
-        actionStartedAt: currentTick,
+        actionStartedAt: gameMinute,
       };
       this.cache.setExecState(agentId, updatedState);
 

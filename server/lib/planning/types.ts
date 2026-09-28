@@ -40,7 +40,9 @@ export interface DecomposedAction {
 export interface PlanExecutionState {
   currentBlockId: string | null;
   currentActionIndex: number;
+  /** Absolute game minute (`gameMinuteOf`), not a tick count. */
   blockStartedAt: number;
+  /** Absolute game minute (`gameMinuteOf`), not a tick count. */
   actionStartedAt: number;
 }
 
