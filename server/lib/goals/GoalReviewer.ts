@@ -10,9 +10,81 @@ import { buildGoalReviewPrompt, buildAmbitionGenerationPrompt } from './goalProm
 import type { GoalReviewAction } from './types';
 import { MAX_LLM_GOALS } from './types';
 import { CONFIG } from '../constants';
+import { GOAL_REGISTRY } from '../../data/goalRegistry';
 import { and, desc, eq, or } from 'drizzle-orm';
 
 const TICKS_PER_DAY = 1440;
+
+/**
+ * How long a finished goal blocks the review from re-adopting the same
+ * (type, target). Several days, not one: the morning review runs daily, so a
+ * one-day window would just move the churn to every other morning.
+ */
+const RECREATE_COOLDOWN_TICKS = 3 * TICKS_PER_DAY;
+
+function compareOp(actual: number, op: string, value: number): boolean {
+  switch (op) {
+    case '>':  return actual > value;
+    case '<':  return actual < value;
+    case '>=': return actual >= value;
+    case '<=': return actual <= value;
+    default:   return false;
+  }
+}
+
+/**
+ * Would this goal be dead on arrival? The morning review asks the LLM for fresh
+ * goals every day, and a warm agent keeps proposing "befriend <best friend>".
+ * `befriend` auto-completes at friendship > 50, so goalsTick closed it the very
+ * next tick and the next morning recreated it — a daily created→completed pair
+ * in the feed for every close friendship.
+ *
+ * Skips the goal when:
+ *  - an `auto` relationship rule in its registry entry already holds (it would
+ *    complete/fail/abandon on the first goals tick), or
+ *  - the agent already has, or recently finished, the same type for the same
+ *    target (`custom` goals are exempt: their type says nothing about content).
+ */
+export function isRedundantGoal(
+  agentId: number,
+  type: string,
+  targetId: number | null,
+  currentTick: number,
+): boolean {
+  if (targetId == null) return false;
+
+  const def = GOAL_REGISTRY[type];
+  if (def) {
+    const [a, b] = agentId < targetId ? [agentId, targetId] : [targetId, agentId];
+    const rel = db.select().from(relationships)
+      .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
+      .get();
+    if (rel) {
+      const isA = rel.agent_a === agentId;
+      for (const rule of def.abandonment) {
+        if (!rule.auto || !rule.condition.startsWith('relationship.')) continue;
+        const [lhs, op, raw] = rule.condition.split(' ');
+        const field = lhs.split('.')[1];
+        const actual =
+          field === 'friendship' ? (isA ? rel.friendship_ab : rel.friendship_ba)
+          : field === 'romance' ? (isA ? rel.romance_ab : rel.romance_ba)
+          : field === 'trust' ? (isA ? rel.trust_ab : rel.trust_ba)
+          : field === 'familiarity' ? rel.familiarity
+          : null;
+        if (actual != null && compareOp(actual, op, parseFloat(raw))) return true;
+      }
+    }
+  }
+
+  if (type === 'custom') return false;
+  const sameGoals = db.select().from(goals)
+    .where(and(eq(goals.agent_id, agentId), eq(goals.type, type), eq(goals.target_id, targetId)))
+    .all();
+  return sameGoals.some((g) =>
+    g.status === 'active' ||
+    (g.completed_at != null && currentTick - g.completed_at < RECREATE_COOLDOWN_TICKS),
+  );
+}
 
 // ─── GoalReviewer ─────────────────────────────────────────────────────────────
 
@@ -229,6 +301,7 @@ export class GoalReviewer {
 
       for (const ng of newGoalsToCreate) {
         const mapped = this.mapper.map(ng, allAgents);
+        if (isRedundantGoal(agentId, mapped.type, mapped.target_id, currentTick)) continue;
 
         const inserted = db.insert(goals).values({
           agent_id: agentId,
