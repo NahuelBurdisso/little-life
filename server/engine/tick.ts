@@ -3,6 +3,7 @@ import { worldState, agents } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { logActivity, pruneActivityLog } from '../lib/activityLogger';
 import { emitter } from './emitter';
+import { runGuarded } from './runGuarded';
 import { needsTick } from './systems/needs';
 import { statesTick } from './systems/states';
 import { economyTick } from './systems/economy';
@@ -174,7 +175,7 @@ async function gameTick(): Promise<void> {
     current_tick_phase: 1,
   };
 
-  // 7. Run 7 system phases sequentially
+  // 7. Run the system phases sequentially
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
     const phase = SYSTEM_PHASES[i];
     const phaseNumber = i + 1;
@@ -223,13 +224,16 @@ async function gameTick(): Promise<void> {
   }
 
   // Perception scan every 10 ticks: agents observe and react to nearby agents
-  if (worldWithNewTime.time.totalTicks % 10 === 0) {
-    perceptionSystem.scan(worldWithNewTime);
-    tavernTick(worldWithNewTime.time.totalTicks);
+  // Each step is guarded: unguarded, one throw here skipped the cache clear,
+  // tick finalize and emitter flush below.
+  const totalTicks = worldWithNewTime.time.totalTicks;
+  if (totalTicks % 10 === 0) {
+    runGuarded('perception', () => perceptionSystem.scan(worldWithNewTime));
+    runGuarded('tavern', () => tavernTick(totalTicks));
     // Check loneliness every 60 ticks (~1 game hour)
-    if (worldWithNewTime.time.totalTicks % 60 === 0) {
-      lonelinessCheck(worldWithNewTime.time.totalTicks);
-      confrontationCheck(worldWithNewTime.time.totalTicks);
+    if (totalTicks % 60 === 0) {
+      runGuarded('loneliness', () => lonelinessCheck(totalTicks));
+      runGuarded('confrontation', () => confrontationCheck(totalTicks));
     }
   }
 
@@ -275,37 +279,41 @@ async function gameTick(): Promise<void> {
   clearAgentStatesCache();
 
   // Check if any agents should reflect (async, doesn't block tick)
-  const agentsToReflect = reflectionTrigger.check(worldWithNewTime.time.totalTicks);
-  for (const agentId of agentsToReflect) {
-    reflectionRunner.queueReflection(agentId);
-  }
+  runGuarded('reflection', () => {
+    const agentsToReflect = reflectionTrigger.check(totalTicks);
+    for (const agentId of agentsToReflect) {
+      reflectionRunner.queueReflection(agentId);
+    }
+  });
 
   // On day change: run memory archival (tiered retention + summaries)
   const dayChanged = transitions.some(t => t.type === 'day_changed');
   if (dayChanged) {
-    memoryConsolidator.consolidate(newTime.day, newTime.totalTicks);
+    runGuarded('memoryConsolidation', () => memoryConsolidator.consolidate(newTime.day, newTime.totalTicks));
     // Regenerate self-descriptions for all agents (async, non-blocking)
     // Active only: self-description regeneration is an LLM call, and the dead
     // never change. Unfiltered, every corpse cost one generation per game day
     // for the rest of the run, and the result was never read by anything.
-    const allAgentIds = db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(eq(agents.is_active, true))
-      .all();
-    for (const { id } of allAgentIds) {
-      void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
-    }
+    runGuarded('selfDescriptions', () => {
+      const allAgentIds = db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(eq(agents.is_active, true))
+        .all();
+      for (const { id } of allAgentIds) {
+        void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
+      }
+    });
     // Refresh community reputation scores from accumulated facts
-    refreshAllReputations();
+    runGuarded('reputation', () => refreshAllReputations());
     // Process mood momentum: yesterday's mood affects today's emotional baseline
-    processAllMoodMomentum();
+    runGuarded('moodMomentum', () => processAllMoodMomentum());
     // Check for birthdays and handle aging
-    agingTick(newTime.day);
+    runGuarded('aging', () => agingTick(newTime.day));
     // Enforce the activity log's declared retention tiers
-    pruneActivityLog(newTime.totalTicks);
+    runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks));
     // Drop processed relationship events older than every reader's window
-    pruneRelationshipEvents();
+    runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents());
   }
 
   // 8. Finalize tick
