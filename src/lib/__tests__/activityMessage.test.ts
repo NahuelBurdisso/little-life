@@ -22,3 +22,22 @@ describe('renderMessage: plan_changed', () => {
     expect(msg).not.toMatch(/\.$/);
   });
 });
+
+describe('renderMessage — conversation_ended', () => {
+  it('names the place the conversation happened', () => {
+    expect(renderMessage({
+      type: 'conversation_ended',
+      timestamp: 0,
+      template_data: { agent1: 'Sofia', agent2: 'Omar', location: 'The Rusty Mug', topic: 'flirting' },
+    })).toBe('Sofia and Omar finished talking at The Rusty Mug.');
+  });
+
+  it('ignores `location` on legacy rows, where it held the topic', () => {
+    // Pre-fix rows: no `topic` key, and `location` was actually the topic.
+    expect(renderMessage({
+      type: 'conversation_ended',
+      timestamp: 0,
+      template_data: { agent1: 'Sofia', agent2: 'Omar', location: 'flirting' },
+    })).toBe('Sofia and Omar finished talking.');
+  });
+});

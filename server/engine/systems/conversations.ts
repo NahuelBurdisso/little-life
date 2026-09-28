@@ -1408,14 +1408,21 @@ async function processCompletedConversation(
 
   emitter.markDirty('agents.all');
 
-  // Log activity
+  // Log activity. `location` is the registry template's `{location}` slot; it
+  // used to be fed the topic, so the feed read "finished talking at flirting".
+  // The topic rides along under its own key.
+  const locationName = fresh.location != null
+    ? db.select({ name: locations.name }).from(locations).where(eq(locations.id, fresh.location)).get()?.name
+    : undefined;
   logActivity({
     type: 'conversation_ended',
     agents: participants.map((p) => p.id),
+    location: fresh.location ?? undefined,
     templateData: {
       agent1: participants[0]?.name ?? '',
       agent2: participants[1]?.name ?? '',
-      location: fresh.topic ?? '',
+      location: locationName ?? '',
+      topic: fresh.topic ?? '',
     },
   });
 }

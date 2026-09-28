@@ -91,7 +91,13 @@ export function renderMessage(entry: ActivityEntry): string {
 
   // Relationships
   if (d.agent1 && d.agent2 && d.status) return `${d.agent1} and ${d.agent2} are now ${d.status}.`;
-  if (d.agent1 && d.agent2 && d.location !== undefined) return `${d.agent1} and ${d.agent2} finished talking.`;
+  if (d.agent1 && d.agent2 && d.location !== undefined) {
+    // Rows written before `topic` existed carried the topic in `location`
+    // ("finished talking at flirting"), so only trust `location` on rows that
+    // also have the separate `topic` key.
+    const place = d.topic !== undefined && d.location ? ` at ${d.location}` : '';
+    return `${d.agent1} and ${d.agent2} finished talking${place}.`;
+  }
 
   // Economy
   // `item` is an ITEM_REGISTRY key like `food_raw`, so it needs the same
