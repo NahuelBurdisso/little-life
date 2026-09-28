@@ -1,20 +1,30 @@
 /**
  * Template Selection and Interpolation
  *
- * Selects conversation templates from the DB based on category and conditions,
- * respects cooldowns per agent pair, and interpolates variables.
+ * Selects conversation templates by category and conditions, respects
+ * cooldowns per agent pair, and interpolates variables.
+ *
+ * Templates are read from the static catalog (`server/data/templates.ts`), not
+ * the `templates` table. The table is only ever a verbatim copy written at seed
+ * / world setup, so reading it meant a fix to the catalog (a mis-tagged weather
+ * line, the old "{speaker.name}: " prefix) never reached an existing world.
  */
 
 import { eq, and, desc } from "drizzle-orm";
 import { db } from "../db";
-import { templates, templateUsage } from "../db/schema";
+import { templateUsage } from "../db/schema";
+import { CONVERSATION_TEMPLATES, type TemplateDef } from "../data/templates";
 
-interface CurrentState {
+export interface TemplateState {
   friendship: number;
   mood: number;
   timeOfDay: string;
   locationType: string | null;
   weather: string;
+  /** Whether the conversation happens indoors or on open ground; null = unknown. */
+  setting?: "indoor" | "outdoor" | null;
+  /** True when the listener is not at the conversation's location. */
+  listenerElsewhere?: boolean;
 }
 
 function matchesField(conditionValue: any, stateValue: string | null): boolean {
@@ -25,8 +35,8 @@ function matchesField(conditionValue: any, stateValue: string | null): boolean {
 }
 
 function conditionsMatch(
-  conditions: any,
-  state: CurrentState
+  conditions: TemplateDef["conditions"],
+  state: TemplateState
 ): boolean {
   if (!conditions || Object.keys(conditions).length === 0) return true;
 
@@ -45,10 +55,18 @@ function conditionsMatch(
   if (!matchesField(conditions.timeOfDay, state.timeOfDay)) {
     return false;
   }
-  if (!matchesField(conditions.locationType ?? conditions.location, state.locationType)) {
+  if (!matchesField(conditions.location, state.locationType)) {
     return false;
   }
   if (!matchesField(conditions.weather, state.weather)) {
+    return false;
+  }
+  if (!matchesField(conditions.setting, state.setting ?? null)) {
+    return false;
+  }
+  // Strict, unlike the fields above: "come to {location.name}" said to someone
+  // already standing there is exactly the bug, so unknown means no.
+  if (conditions.listenerElsewhere === true && state.listenerElsewhere !== true) {
     return false;
   }
 
@@ -59,14 +77,10 @@ export function selectTemplate(
   category: string,
   agentA: number,
   agentB: number,
-  currentState: CurrentState
+  currentState: TemplateState
 ): { text: string; sentiment: number } | null {
-  // 1. Query templates for this category
-  const categoryTemplates = db
-    .select()
-    .from(templates)
-    .where(eq(templates.category, category))
-    .all();
+  // 1. Templates for this category
+  const categoryTemplates = CONVERSATION_TEMPLATES.filter((t) => t.category === category);
 
   if (categoryTemplates.length === 0) return null;
 
@@ -101,7 +115,7 @@ export function selectTemplate(
   // Filter out templates whose cooldown hasn't expired
   const available = matching.filter((t) => {
     if (!recentUsage) return true;
-    return now - recentUsage.used_at >= t.cooldown_per_pair * 60_000;
+    return now - recentUsage.used_at >= t.cooldownPerPair * 60_000;
   });
 
   if (available.length === 0) return null;

@@ -32,6 +32,8 @@ import { clearConversationCache, fallbackDetector } from '../../helpers/conversa
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate } from '../../ai/templates';
+import { TEMPLATE_REPLY_FALLBACKS } from '../../data/templates';
+import { OUTDOOR_TYPES } from '../../lib/worldgen/buildingTemplates';
 import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
@@ -1431,6 +1433,14 @@ async function processCompletedConversation(
 // Process a timed-out queue entry with template fallback
 // ---------------------------------------------------------------------------
 
+/** A generic answer matching the opener's tone; see TEMPLATE_REPLY_FALLBACKS. */
+function fallbackReply(openerSentiment: number, openerName: string): { text: string; sentiment: number } {
+  const tone = openerSentiment <= -0.2 ? 'cold' : openerSentiment >= 0.3 ? 'warm' : 'neutral';
+  const pool = TEMPLATE_REPLY_FALLBACKS[tone];
+  const picked = pool[Math.floor(Math.random() * pool.length)];
+  return { text: interpolateTemplate(picked.text, { 'other.name': openerName }), sentiment: picked.sentiment };
+}
+
 function categoryToTopic(category: string): string | null {
   const map: Record<string, string> = {
     greeting_friendly: 'friendly greeting',
@@ -1551,6 +1561,11 @@ async function processTimedOutEntry(
 
   // Get location name for template interpolation
   const templateLocation = db.select({ name: locations.name }).from(locations).where(eq(locations.id, locationId)).get();
+  // Lines like "Perfect weather for being outdoors" or "I can barely see the
+  // hills through this fog" were said inside a house; templates now declare the
+  // setting they need.
+  const setting: 'indoor' | 'outdoor' | null =
+    loc0?.type != null ? (OUTDOOR_TYPES.has(loc0.type) ? 'outdoor' : 'indoor') : null;
 
   /**
    * Picks the first category that yields a template and renders it for the
@@ -1574,6 +1589,10 @@ async function processTimedOutEntry(
           timeOfDay: dayPhase,
           locationType: ignoreLocation ? null : (loc0?.type ?? null),
           weather: world.weather as string,
+          setting,
+          // `{location.name}` is the conversation's location; "you have to come
+          // to Home 4" is only sayable to a listener who isn't already there.
+          listenerElsewhere: agentList[speakerIdx === 0 ? 1 : 0].current_location !== locationId,
         },
       );
       if (!picked) continue;
@@ -1604,21 +1623,24 @@ async function processTimedOutEntry(
 
   // A single line reads as talking AT someone. Give the partner a reply and,
   // when one lands, let the opener sign off — still zero LLM cost.
+  // No speaker name in the text: the UI already labels every message with its
+  // speaker, so "Priya nodded at Omar." rendered as "Priya: Priya nodded at Omar."
   const turns: Array<{ text: string; sentiment: number }> = [
-    opener ?? { text: `${agentList[0].name} nodded at ${agentList[1].name}.`, sentiment: 0 },
+    opener ?? { text: `*nods at ${agentList[1].name}*`, sentiment: 0 },
   ];
 
   const replyCategories =
     turns[0].sentiment <= -0.2
       ? ['snide_remark', 'passive_aggressive', 'tense_encounter', 'greeting_cold']
       : ['small_talk_weather', 'small_talk_work', 'excited_event', fallbackCategory];
-  const reply = buildLine(replyCategories, 1);
-  if (reply) turns.push(reply);
+  // When every reply category is on its per-pair cooldown (pairs that keep
+  // bumping into each other exhaust them fast) the exchange used to stop at the
+  // opener. Fall back to a stock acknowledgement so both people always speak.
+  const reply = buildLine(replyCategories, 1) ?? fallbackReply(turns[0].sentiment, agentList[0].name);
+  turns.push(reply);
 
-  if (reply) {
-    const signOff = buildLine(['farewell'], 0);
-    if (signOff) turns.push(signOff);
-  }
+  const signOff = buildLine(['farewell'], 0);
+  if (signOff) turns.push(signOff);
 
   const messageSentiment = turns.reduce((sum, t) => sum + t.sentiment, 0) / turns.length;
 
