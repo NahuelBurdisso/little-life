@@ -45,8 +45,16 @@ export function fallbackReply(speakerName: string): string {
   return FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)](speakerName);
 }
 
-export function isFallbackReply(text: string): boolean {
+function isFallbackReply(text: string): boolean {
   return FALLBACK_REPLY.test(text.trim());
+}
+
+/**
+ * A stored conversation message that is a canned fallback, not speech. New ones
+ * carry `fallback: true`; the text match covers transcripts stored before that.
+ */
+export function isFallbackMessage(msg: { text?: string; fallback?: boolean }): boolean {
+  return msg.fallback === true || (typeof msg.text === 'string' && isFallbackReply(msg.text));
 }
 
 function firstName(fullName: string): string {

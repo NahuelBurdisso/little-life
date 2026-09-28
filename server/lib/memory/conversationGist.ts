@@ -13,13 +13,15 @@
  * the caller keeps the old topic template.
  */
 
-import { sanitizeDialogue, isFallbackReply } from '../../ai/sanitizeDialogue';
+import { sanitizeDialogue, isFallbackMessage } from '../../ai/sanitizeDialogue';
 
 export interface GistLine {
   speakerId: number;
   text: string;
   /** Per-message sentiment in [-1, 1], as stored on the conversation. */
   sentiment?: number;
+  /** Canned fallback action, not speech. */
+  fallback?: boolean;
 }
 
 export interface ConversationGist {
@@ -67,7 +69,7 @@ function shorten(text: string): string {
 export function pickConversationGist(lines: readonly GistLine[]): ConversationGist | null {
   let best: { line: GistLine; text: string; score: number } | null = null;
   for (const line of lines) {
-    if (!line.text || isFallbackReply(line.text)) continue;
+    if (!line.text || isFallbackMessage(line)) continue;
     // Stored lines are sanitised on the way in now, but older transcripts are
     // not — re-running the (idempotent) sanitiser keeps directions out of memory.
     const text = sanitizeDialogue(line.text, { speakerName: '', listenerName: '' });

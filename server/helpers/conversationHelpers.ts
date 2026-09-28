@@ -5,6 +5,7 @@ import { eq, and, inArray } from 'drizzle-orm';
 import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
 import { getShareableFacts, getAgentName } from '../lib/gossip';
 import type { MemoryRow } from '../ai/prompts';
+import { isFallbackMessage } from '../ai/sanitizeDialogue';
 import { contextBuilder, memoryService } from '../lib/memory/instance';
 import { generateSituationalPrompt } from '../lib/personality';
 import { getReputation, getReputationLabel } from '../lib/reputationEngine';
@@ -240,6 +241,8 @@ export function addMessage(
   sentiment: number,
   topics: string[],
   timestamp: number,
+  /** The text is a canned fallback action, not speech (see sanitizeDialogue.ts). */
+  fallback = false,
 ) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
   // A timeout force-end can land while taskRunner is mid-turn. Appending here
@@ -255,6 +258,7 @@ export function addMessage(
       sentiment,
       topics,
       timestamp,
+      ...(fallback ? { fallback: true } : {}),
     },
   ];
 
@@ -267,7 +271,9 @@ export function markConversationEnded(conversationId: number) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
   if (!conversation || conversation.status === 'ended') return;
 
-  const msgs = conversation.messages as Array<{ sentiment?: number }>;
+  // Canned fallback actions aren't speech; they don't count toward the mood.
+  const msgs = (conversation.messages as Array<{ text?: string; sentiment?: number; fallback?: boolean }>)
+    .filter((m) => !isFallbackMessage(m));
   const avgSentiment =
     msgs.length > 0
       ? msgs.reduce((sum, m) => sum + (m.sentiment ?? 0), 0) / msgs.length

@@ -71,6 +71,16 @@ export function ConversationViewer({
           const name =
             agentNames.get(speakerKey) ?? speakerKey.slice(-4);
 
+          // A canned fallback ("Omar smiled and nodded.") is an action, not a
+          // line: show it as italic narration instead of a speech bubble.
+          if (msg.fallback) {
+            return (
+              <div key={i} className="text-center text-[10px] italic text-gray-500">
+                {msg.text}
+              </div>
+            );
+          }
+
           return (
             <div
               key={i}

@@ -1,3 +1,5 @@
+import { isFallbackMessage } from '../ai/sanitizeDialogue';
+
 interface EvaluationInput {
   messages: Array<{ text: string; sentiment: number }>;
   injectedMemories: string[];
@@ -19,7 +21,11 @@ interface EvaluationResult {
 }
 
 export function evaluateConversation(params: EvaluationInput): EvaluationResult {
-  const { messages, injectedMemories, topic, maxTurns, relationshipDeltas } = params;
+  const { injectedMemories, topic, maxTurns, relationshipDeltas } = params;
+  // Content metrics judge what was said. Canned fallback actions ("Omar smiled
+  // and nodded.") are the LLM failing to say anything, so they are left out —
+  // except from turn engagement, which still counts every turn taken.
+  const messages = params.messages.filter((m) => !isFallbackMessage(m));
 
   // 1. Memory Reference (0-1): did messages reference injected memories?
   let memoryRef = 0;
@@ -51,7 +57,7 @@ export function evaluateConversation(params: EvaluationInput): EvaluationResult 
   const relationshipImpact = Math.min(1, totalDelta / 30); // 30 total delta = max score
 
   // 4. Turn Engagement (0-1): used the available turns?
-  const turnEngagement = maxTurns > 0 ? Math.min(1, messages.length / maxTurns) : 0.5;
+  const turnEngagement = maxTurns > 0 ? Math.min(1, params.messages.length / maxTurns) : 0.5;
 
   // 5. Topic Coherence (0-1): did conversation stay on topic?
   let topicCoherence = 0.5; // default: no topic provided

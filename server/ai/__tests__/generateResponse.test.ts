@@ -46,9 +46,13 @@ describe('generateResponse', () => {
 
     await generateResponse(1, 1);
 
-    const savedText = vi.mocked(addMessage).mock.calls[0][2];
+    const [, , savedText, sentiment, topics, , fallback] = vi.mocked(addMessage).mock.calls[0];
     expect(savedText).not.toBe('Ok');
     expect(savedText).toMatch(FALLBACK_PATTERN);
+    // Narration, not speech: flagged, and neither scored nor mined for topics.
+    expect(fallback).toBe(true);
+    expect(sentiment).toBe(0);
+    expect(topics).toEqual([]);
   });
 
   it('keeps the nudge retry text when it succeeds', async () => {
@@ -59,6 +63,7 @@ describe('generateResponse', () => {
     await generateResponse(1, 1);
 
     expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('The harvest looks better than last year, honestly.');
+    expect(vi.mocked(addMessage).mock.calls[0][6]).toBe(false);
   });
 
   it('stores the sanitised reply, not the raw model text', async () => {

@@ -37,6 +37,7 @@ describe('pickConversationGist', () => {
     expect(pickConversationGist([
       { speakerId: ROSA, text: 'Rosa Delgado smiled and nodded.', sentiment: 0.9 },
       { speakerId: YUKI, text: '"Hmm, interesting," Yuki Tanaka said.', sentiment: 0.9 },
+      { speakerId: YUKI, text: 'I am so sorry about everything that happened.', sentiment: 0.9, fallback: true },
     ])).toBeNull();
   });
 

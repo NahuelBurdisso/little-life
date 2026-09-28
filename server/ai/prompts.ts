@@ -8,6 +8,7 @@
 import { PersonalityProfile } from '../lib/personality';
 import { generateVoiceDirective } from './voiceDirective';
 import { selectConversationContext, ContextItem } from './contextSelector';
+import { isFallbackMessage } from './sanitizeDialogue';
 
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
@@ -540,10 +541,19 @@ export function buildConversationPrompt(
   const recentMessages = conversation.messages.slice(-6) as Array<{
     speakerId: number;
     text: string;
+    fallback?: boolean;
   }>;
   const otherFirstName = otherAgent.name.split(' ')[0];
 
   for (const msg of recentMessages) {
+    // A canned fallback ("Omar smiled and nodded.") is narration, not a line.
+    // As the speaker's own "assistant" turn it would teach them to narrate, so
+    // it is dropped; the other person's is kept as a bracketed action, like the
+    // [Memory]-style tags above, so the reply can still react to it.
+    if (isFallbackMessage(msg)) {
+      if (msg.speakerId !== speaker.id) push("user", `[${msg.text}]`);
+      continue;
+    }
     if (msg.speakerId === speaker.id) push("assistant", msg.text);
     else push("user", `${otherFirstName}: ${msg.text}`);
   }
@@ -567,7 +577,7 @@ function buildRepetitionHint(
   messages: Array<{ speakerId: number; text: string }>,
   speakerId: number,
 ): string {
-  const own = messages.filter((m) => m.speakerId === speakerId).slice(-2);
+  const own = messages.filter((m) => m.speakerId === speakerId && !isFallbackMessage(m)).slice(-2);
   const openers = new Set<string>();
   const questions = new Set<string>();
   for (const m of own) {

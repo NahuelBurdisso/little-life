@@ -189,6 +189,25 @@ describe('buildConversationPrompt', () => {
     expect(messages.find((m) => m.role === 'assistant')?.content).toBe('Fine.');
   });
 
+  it('keeps canned fallback narration out of the speech history', () => {
+    const msgs = [
+      { speakerId: 2, text: 'Carlos Mendez shrugged.', fallback: true },
+      { speakerId: 1, text: 'Ray Kowalski smiled and nodded.', fallback: true },
+      { speakerId: 2, text: 'So, about that debt.' },
+    ];
+    const { messages } = buildConversationPrompt({
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs, max_turns: 10 },
+    });
+    const transcript = messages.map((m) => m.content).join('\n');
+    // The other's action stays visible as a bracketed note, not as a spoken line.
+    expect(transcript).toContain('[Carlos Mendez shrugged.]');
+    expect(transcript).not.toContain('Carlos: Carlos Mendez shrugged.');
+    // The speaker's own narration is dropped — as an assistant turn it would teach narrating.
+    expect(transcript).not.toContain('smiled and nodded');
+    expect(messages.some((m) => m.role === 'assistant')).toBe(false);
+  });
+
   it('alternates user and assistant roles', () => {
     const msgs = Array.from({ length: 5 }, (_, i) => ({ speakerId: i % 2 === 0 ? 2 : 1, text: `Line ${i}` }));
     const { messages } = buildConversationPrompt({

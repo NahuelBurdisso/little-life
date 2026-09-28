@@ -34,6 +34,7 @@ import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate } from '../../ai/templates';
 import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
+import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
@@ -52,6 +53,7 @@ interface ConversationMessage {
   sentiment: number;
   topics: string[];
   timestamp: number;
+  fallback?: boolean;
 }
 
 interface ActiveLLMEntry {
@@ -545,10 +547,12 @@ async function processCompletedConversation(
   }
 
   // Calculate overall sentiment: average of all message sentiments
+  // (canned fallback actions are not speech and don't count — sanitizeDialogue.ts)
   let overallSentiment = 0;
-  if (messages.length > 0) {
-    const sentimentSum = messages.reduce((sum, m) => sum + m.sentiment, 0);
-    overallSentiment = sentimentSum / messages.length;
+  const spoken = messages.filter((m) => !isFallbackMessage(m));
+  if (spoken.length > 0) {
+    const sentimentSum = spoken.reduce((sum, m) => sum + m.sentiment, 0);
+    overallSentiment = sentimentSum / spoken.length;
   }
 
   // Get participant agents

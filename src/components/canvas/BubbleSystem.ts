@@ -302,7 +302,7 @@ export class BubbleSystem {
    * and sync positions with agent positions.
    */
   update(
-    conversations: Array<{ participants?: number[]; messages?: Array<{ speakerId?: number; text?: string }> }>,
+    conversations: Array<{ participants?: number[]; messages?: Array<{ speakerId?: number; text?: string; fallback?: boolean }> }>,
     agents: Array<{ id: number; position: { x: number; y: number } }>,
     deltaTime: number,
     spritePool?: SpritePool,
@@ -334,6 +334,9 @@ export class BubbleSystem {
     // Determine which agents are currently in conversations
     const convoAgents = new Set<string>();
     const latestMessages = new Map<string, string>();
+    // Agents whose newest message is a canned fallback action ("Omar smiled and
+    // nodded.") — narration, not speech, so it gets no speech bubble.
+    const latestIsAction = new Set<string>();
     if (conversations) {
       for (const convo of conversations) {
         for (const p of convo.participants ?? []) {
@@ -343,6 +346,8 @@ export class BubbleSystem {
         for (const msg of convo.messages ?? []) {
           if (msg.speakerId != null && msg.text) {
             latestMessages.set(String(msg.speakerId), msg.text);
+            if (msg.fallback) latestIsAction.add(String(msg.speakerId));
+            else latestIsAction.delete(String(msg.speakerId));
           }
         }
       }
@@ -380,7 +385,7 @@ export class BubbleSystem {
         const isMultiAgent = participantIds.length > 1;
         const participantIndex = participantIds.indexOf(aid);
         const offsetX = isMultiAgent ? (participantIndex === 0 ? -20 : 20) : 0;
-        this.showSpeechBubble(aid, lastMsg, pos, sentiment, offsetX);
+        if (!latestIsAction.has(aid)) this.showSpeechBubble(aid, lastMsg, pos, sentiment, offsetX);
       } else if (!lastMsg && !this.bubbles.has(aid)) {
         // No messages yet — show thought bubble while waiting
         this.showThoughtBubble(aid, pos);

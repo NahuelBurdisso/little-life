@@ -225,17 +225,22 @@ export async function generateResponse(
   }
 
   // 4. Fallback if LLM failed
+  let isFallback = false;
   if (!responseText) {
     responseText = fallbackReply(speaker.name);
+    isFallback = true;
   }
 
-  // 5. Analyze response
-  const sentiment = analyzeSentiment(responseText);
-  const topics = extractTopics([{ text: responseText }]);
+  // 5. Analyze response. A fallback is narration ("Omar smiled and nodded."),
+  // not something the agent said: scoring it read "smiled" as warmth and
+  // nudged the conversation's sentiment on a line nobody spoke.
+  const sentiment = isFallback ? 0 : analyzeSentiment(responseText);
+  const topics = isFallback ? [] : extractTopics([{ text: responseText }]);
   const now = Date.now();
 
-  // 6. Write message
-  const result = addMessage(conversationId, speakerId, responseText, sentiment, topics, now);
+  // 6. Write message — flagged, so sentiment averages, the evaluator, the
+  // memory gist, the prompt history and the UI can treat it as an action.
+  const result = addMessage(conversationId, speakerId, responseText, sentiment, topics, now, isFallback);
 
   if (!result) return null;
 

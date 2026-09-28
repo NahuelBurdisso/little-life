@@ -31,7 +31,7 @@ export function ConversationDetail({ conversationId, onClose }: ConversationDeta
 
   const { conversation: convo, names, relationshipEvents, createdFacts, totals } = impact;
   const participants = (convo.participants as number[]).map(id => names[id] ?? `Agent ${id}`);
-  const messages = (convo.messages as Array<{ speakerId: number; text: string; sentiment?: number }>) ?? [];
+  const messages = (convo.messages as Array<{ speakerId: number; text: string; sentiment?: number; fallback?: boolean }>) ?? [];
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -96,6 +96,13 @@ export function ConversationDetail({ conversationId, onClose }: ConversationDeta
             <div className="space-y-2">
               {messages.map((msg, i) => {
                 const speakerName = names[msg.speakerId] ?? 'Unknown';
+                // A canned fallback is narration that already names the actor —
+                // "Omar: Omar smiled and nodded." read as a spoken line.
+                if (msg.fallback) {
+                  return (
+                    <div key={i} className="text-xs italic text-gray-500">{msg.text}</div>
+                  );
+                }
                 return (
                   <div key={i} className="text-xs">
                     <span className="font-semibold text-gray-200">{speakerName}:</span>{' '}
