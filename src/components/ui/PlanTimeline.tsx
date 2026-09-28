@@ -11,6 +11,8 @@ interface PlanBlock {
 interface DailyPlan {
   day: number;
   blocks: PlanBlock[];
+  /** 'fallback' = schedule-derived plan cached while the LLM was failing. */
+  source?: "llm" | "fallback";
 }
 
 interface PlanTimelineProps {
@@ -41,13 +43,48 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
     );
   }
 
+  // A fallback plan is the agent's routine, written down because the LLM
+  // planner failed. The server never executes it (the utility AI runs the
+  // agent), so its blocks stay 'pending' all day; drawing them with the usual
+  // status icons would read as a plan that is stuck. Show it as a muted,
+  // clearly labelled routine instead.
+  const isFallback = dailyPlan.source === "fallback";
+
   return (
     <div className="px-3 py-2 border-b border-gray-700">
-      <div className="text-xs text-gray-500 font-medium mb-1">
-        Today's Plan (Day {dailyPlan.day})
+      <div className="text-xs text-gray-500 font-medium mb-1 flex items-center gap-1.5">
+        <span>Today's Plan (Day {dailyPlan.day})</span>
+        {isFallback && (
+          <span
+            className="text-[9px] px-1 py-0.5 rounded bg-amber-900/30 text-amber-400/80 font-normal"
+            title="The LLM planner didn't answer, so this is the agent's usual routine. It is replaced by a real plan once the planner is back."
+          >
+            routine · LLM offline
+          </span>
+        )}
       </div>
       <div className="max-h-48 overflow-y-auto space-y-0.5">
         {dailyPlan.blocks.map((block) => {
+          if (isFallback) {
+            return (
+              <div
+                key={block.id}
+                className="text-[11px] flex items-baseline gap-1.5 py-0.5 px-1 text-gray-500 italic"
+              >
+                <span className="text-gray-600 shrink-0 not-italic">·</span>
+                <span className="text-gray-600 shrink-0 not-italic">
+                  {formatHour(block.start_hour)}–{formatHour(block.end_hour)}
+                </span>
+                <span className="flex-1 min-w-0">{block.broad_action}</span>
+                {block.location_hint && (
+                  <span className="text-gray-600 shrink-0 text-[10px] not-italic">
+                    {block.location_hint}
+                  </span>
+                )}
+              </div>
+            );
+          }
+
           const icon = STATUS_ICON[block.status] ?? "○";
           const isActive = block.status === "active";
           const isInterrupted = block.status === "interrupted";
