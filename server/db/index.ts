@@ -126,12 +126,19 @@ function migrateSchema() {
 // it never see a trigger calling a function they lack) bump a JS counter on
 // every insert/delete, and on updates that change which agent/type a row is.
 // Readers compare the counter to the value they cached at and rebuild on change.
-// A rolled-back write still bumps it, which only costs a redundant rebuild.
+//
+// What the counter can NOT see is a ROLLBACK: no trigger fires when a
+// transaction is undone. If a phase writes a state, a reader rebuilds from that
+// uncommitted row, and the phase then throws, the snapshot keeps a state that no
+// longer exists. Whoever catches a rolled-back transaction must therefore call
+// `invalidateAgentStatesCache()` (lib/states.ts) — the tick's phase runner does.
 let agentStatesWriteVersion = 0;
 sqlite.function('ll_agent_states_written', { deterministic: false }, () => {
   agentStatesWriteVersion++;
   return null;
 });
+
+const AGENT_STATES_TRIGGERS = ['ll_agent_states_ai', 'll_agent_states_ad', 'll_agent_states_au'];
 
 let agentStatesHookInstalled = false;
 function installAgentStatesWriteHook(): boolean {
@@ -146,16 +153,43 @@ function installAgentStatesWriteHook(): boolean {
         BEGIN SELECT ll_agent_states_written(); END;
     `);
     agentStatesHookInstalled = true;
-  } catch {
-    // Table doesn't exist yet on a fresh DB — retried by initSchema() and lazily
-    // by the next getAgentStatesWriteVersion() call.
+  } catch (err) {
+    // Only a missing table is expected (fresh DB, before migrations) — retried by
+    // initSchema() and lazily by the next getAgentStatesWriteVersion() call.
+    // Anything else (SQLITE_BUSY, a broken DDL edit) would otherwise leave the
+    // state cache silently uncached forever, so it surfaces instead.
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/no such table/i.test(message)) throw err;
   }
   return agentStatesHookInstalled;
 }
 
 /**
+ * Re-check that the write triggers still exist and reinstall them if not.
+ *
+ * TEMP triggers die with their table: anything that drops and recreates
+ * `agent_states` on this connection (a migration, a test harness, a future
+ * schema reset) would silently disconnect the counter while
+ * `agentStatesHookInstalled` still claims it is live. One lookup in
+ * `sqlite_temp_master`, run once per tick from `cacheAllAgentStates()`, bounds
+ * that blind spot to a single tick. A reinstall also bumps the counter, since
+ * writes may have gone unseen while the triggers were missing.
+ */
+export function verifyAgentStatesWriteHook(): void {
+  const placeholders = AGENT_STATES_TRIGGERS.map(() => '?').join(', ');
+  const present = sqlite
+    .prepare(`SELECT count(*) AS n FROM sqlite_temp_master WHERE type = 'trigger' AND name IN (${placeholders})`)
+    .get(...AGENT_STATES_TRIGGERS) as { n: number };
+  if (present.n === AGENT_STATES_TRIGGERS.length) return;
+  agentStatesHookInstalled = false;
+  agentStatesWriteVersion++;
+  installAgentStatesWriteHook();
+}
+
+/**
  * Monotonic count of writes to `agent_states` on this connection. Compare two
  * readings to learn whether any state was inserted, ended or retyped in between.
+ * Blind to rollbacks — see the note above `agentStatesWriteVersion`.
  *
  * While the write hook can't be installed (no table yet) this returns a fresh
  * value on every call, so a caller caching against it simply never trusts its

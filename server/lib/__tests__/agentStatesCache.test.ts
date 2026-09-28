@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { db, sqlite } from '../../db';
 import { agentStates } from '../../db/schema';
 import { cacheAllAgentStates, clearAgentStatesCache, getAgentStates } from '../states';
+import { runSystemPhase } from '../../engine/tick';
 
 /**
  * B8 regression: the tick-level state cache is built right after the `states`
@@ -89,6 +90,50 @@ describe('tick-level agent states cache (B8)', () => {
     for (let i = 0; i < 50; i++) getAgentStates(AGENT + (i % 5));
     expect(select).toHaveBeenCalledTimes(1);
     expect(getAgentStates(AGENT).sort()).toEqual(['lonely', 'stressed']);
+  });
+
+  it('drops a state whose phase rolled back after it was read', async () => {
+    cacheAllAgentStates();
+    let seenInsidePhase: string[] = [];
+    const ok = await runSystemPhase(
+      {
+        name: 'phantom',
+        run: () => {
+          insertState('drunk');
+          // A read between the write and the rollback rebuilds from the
+          // uncommitted row — no trigger will fire when it is undone.
+          seenInsidePhase = [...getAgentStates(AGENT)];
+          throw new Error('phase blew up');
+        },
+      },
+      {} as Parameters<typeof runSystemPhase>[1],
+      99,
+    );
+
+    expect(ok).toBe(false);
+    expect(seenInsidePhase).toEqual(['drunk']);
+    expect(db.select().from(agentStates).where(eq(agentStates.agent_id, AGENT)).all()).toEqual([]);
+    expect(getAgentStates(AGENT)).toEqual([]);
+  });
+
+  it('reinstalls the write triggers at the next tick if they went missing', () => {
+    const triggerCount = () =>
+      (sqlite.prepare(`SELECT count(*) AS n FROM sqlite_temp_master WHERE type = 'trigger' AND name LIKE 'll_agent_states_%'`).get() as { n: number }).n;
+    cacheAllAgentStates();
+    expect(triggerCount()).toBe(3);
+
+    // What a drop-and-recreate of agent_states does to TEMP triggers.
+    for (const t of ['ll_agent_states_ai', 'll_agent_states_ad', 'll_agent_states_au']) {
+      sqlite.exec(`DROP TRIGGER temp.${t}`);
+    }
+    insertState('sick'); // unseen: nothing counts it any more
+
+    cacheAllAgentStates(); // next tick
+    expect(triggerCount()).toBe(3);
+    expect(getAgentStates(AGENT)).toEqual(['sick']);
+
+    insertState('lonely'); // and mid-tick writes are seen again
+    expect(getAgentStates(AGENT).sort()).toEqual(['lonely', 'sick']);
   });
 
   it('falls back to direct reads once the tick clears the cache', () => {

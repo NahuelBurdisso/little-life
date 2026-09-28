@@ -1,5 +1,5 @@
 import { PersonalityProfile } from './personality';
-import { db, getAgentStatesWriteVersion } from '../db';
+import { db, getAgentStatesWriteVersion, verifyAgentStatesWriteHook } from '../db';
 import { agentStates, agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -165,7 +165,18 @@ let agentStatesCache: Map<number, string[]> | null = null;
  */
 let agentStatesCacheVersion = -1;
 
+/**
+ * Build the tick-level snapshot. Called once per tick after the states phase, so
+ * it is also where the write triggers are re-verified (cheap, and bounds any
+ * period with a disconnected hook to one tick). Mid-tick refreshes go through
+ * `rebuildAgentStatesCache()` and skip that check.
+ */
 export function cacheAllAgentStates(): void {
+  verifyAgentStatesWriteHook();
+  rebuildAgentStatesCache();
+}
+
+function rebuildAgentStatesCache(): void {
   // Read the version BEFORE the select: a write racing in between (there is none
   // today, better-sqlite3 is synchronous) would then force a rebuild rather than
   // be absorbed silently.
@@ -186,6 +197,18 @@ export function clearAgentStatesCache(): void {
   agentStatesCache = null;
 }
 
+/**
+ * Force the next getAgentStates() to rebuild from the DB, keeping the cache on.
+ *
+ * Call this after catching a rolled-back transaction that may have written
+ * agent_states. The write triggers count the writes but nothing fires on
+ * ROLLBACK, so a rebuild taken between the write and the rollback would keep
+ * serving the vanished rows ("phantom states") for the rest of the tick.
+ */
+export function invalidateAgentStatesCache(): void {
+  agentStatesCacheVersion = -1;
+}
+
 // ─── Helper Accessors ─────────────────────────────────────────────────────────
 
 export function getAgentStates(agentId: number): StateType[] {
@@ -194,7 +217,7 @@ export function getAgentStates(agentId: number): StateType[] {
     // would send every remaining read this tick down the per-agent fallback
     // below — the query storm the cache exists to prevent. Writes after the
     // states phase come a handful per tick, so this rebuilds at most that often.
-    if (getAgentStatesWriteVersion() !== agentStatesCacheVersion) cacheAllAgentStates();
+    if (getAgentStatesWriteVersion() !== agentStatesCacheVersion) rebuildAgentStatesCache();
     return (agentStatesCache!.get(agentId) ?? []) as StateType[];
   }
   // Fallback to DB query if cache not initialized

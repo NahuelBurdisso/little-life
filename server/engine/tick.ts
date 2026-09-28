@@ -16,7 +16,7 @@ import { gossipTick } from './systems/gossipEngine';
 import { goalsTick } from './systems/goals';
 import { cascadeTick } from '../lib/cascade';
 import { CONFIG } from '../lib/constants';
-import { cacheAllAgentStates, clearAgentStatesCache } from '../lib/states';
+import { cacheAllAgentStates, clearAgentStatesCache, invalidateAgentStatesCache } from '../lib/states';
 import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
 import { perceptionSystem } from '../lib/perception/instance';
 import { refreshAllReputations } from '../lib/reputationEngine';
@@ -125,6 +125,45 @@ const SYSTEM_PHASES: Array<{
   { name: 'cascade',       run: () => cascadeTick() },
 ];
 
+/**
+ * Run one system phase, logging (not propagating) any throw. Returns false when
+ * the phase failed. Exported for tests.
+ */
+export async function runSystemPhase(
+  phase: { name: string; run: (world: WorldRow) => void | Promise<void> },
+  world: WorldRow,
+  phaseNumber: number,
+): Promise<boolean> {
+  try {
+    // Run phase. conversationsTick is async (dispatches LLM tasks) so we
+    // await it — its synchronous DB work runs inside a transaction, but
+    // the actual LLM dispatch happens asynchronously in the TaskRunner.
+    if (phase.name === 'conversations') {
+      // Async phase: conversationsTick queues LLM tasks outside the transaction
+      await phase.run(world);
+    } else {
+      // Synchronous phases: wrap in a transaction for atomicity
+      db.transaction(() => {
+        phase.run(world);
+      });
+    }
+    return true;
+  } catch (error) {
+    // A throw means the phase's transaction rolled back (conversationsTick runs
+    // its own). The agent-states cache counts writes through triggers, but no
+    // trigger fires on ROLLBACK: if the phase inserted a state and anything read
+    // it before the throw, the snapshot now holds a state that was never
+    // committed. Force a rebuild so later phases see the DB as it really is.
+    invalidateAgentStatesCache();
+    const message = error instanceof Error ? error.message : String(error);
+    logActivity({
+      type: 'error',
+      templateData: { system: phase.name, message: `System phase ${phaseNumber} (${phase.name}) error: ${message}` },
+    });
+    return false;
+  }
+}
+
 // ─── Main gameTick ────────────────────────────────────────────────────────────
 
 /** Guards against overlapping autoplay analysis windows (see step 9 below). */
@@ -181,26 +220,7 @@ async function gameTick(): Promise<void> {
     const phaseNumber = i + 1;
     const phaseStart = performance.now();
 
-    try {
-      // Run phase. conversationsTick is async (dispatches LLM tasks) so we
-      // await it — its synchronous DB work runs inside a transaction, but
-      // the actual LLM dispatch happens asynchronously in the TaskRunner.
-      if (phase.name === 'conversations') {
-        // Async phase: conversationsTick queues LLM tasks outside the transaction
-        await phase.run(worldWithNewTime);
-      } else {
-        // Synchronous phases: wrap in a transaction for atomicity
-        db.transaction(() => {
-          phase.run(worldWithNewTime);
-        });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logActivity({
-        type: 'error',
-        templateData: { system: phase.name, message: `System phase ${phaseNumber} (${phase.name}) error: ${message}` },
-      });
-    }
+    await runSystemPhase(phase, worldWithNewTime, phaseNumber);
 
     // Only the autoplay analyzer drains these samples, and it only runs when
     // AUTOPLAY is enabled — recording unconditionally accumulated ~950k phase
