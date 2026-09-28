@@ -90,6 +90,11 @@ const TALK_STAGE_OFFSET_PX = 24;
 /** Destination drift tolerated before the walk order is re-issued. */
 const TALK_STAGE_REISSUE_PX = 12;
 
+/** Order-independent key, so [A,B] and [B,A] are recognised as the same pair. */
+function conversationPairKey(participants: number[]): string {
+  return [...participants].sort((a, b) => a - b).join('-');
+}
+
 // ---------------------------------------------------------------------------
 // Main tick
 // ---------------------------------------------------------------------------
@@ -229,6 +234,46 @@ export async function conversationsTick(): Promise<void> {
       (e) => !toRemove.has(e.conversationId),
     );
 
+    // --- Participant claims ---
+    // Nothing downstream stopped one agent from being in two conversations at
+    // once: the queue can hold [A,B] and [B,A] (both decided to socialize with
+    // each other in the same decisions pass), or [A,B] and [A,C], and Steps C–E
+    // turned every entry into a conversation independently — four started in the
+    // same millisecond in one playtest. Every path that starts a conversation now
+    // claims its participants first; an agent can be claimed once per pass, and
+    // never while a live conversation still holds them. Conversations Step A just
+    // finished stay `active` until processed after this transaction, so their
+    // participants read as busy for the rest of this tick — that is deliberate.
+    const busyAgents = new Set<number>();
+    const livePairs = new Set<string>();
+    for (const c of db
+      .select({ participants: conversations.participants })
+      .from(conversations)
+      .where(eq(conversations.status, 'active'))
+      .all()) {
+      const p = c.participants as number[];
+      for (const id of p) busyAgents.add(id);
+      livePairs.add(conversationPairKey(p));
+    }
+    const claimedAgents = new Set<number>();
+    /**
+     * 'duplicate': this exact pair already has a live conversation or one started
+     *   this pass — the entry is redundant and should be dropped.
+     * 'busy': someone is tied up with a different partner — the entry can wait.
+     */
+    const claimParticipants = (
+      entry: QueueRow,
+      { peek = false }: { peek?: boolean } = {},
+    ): 'ok' | 'duplicate' | 'busy' => {
+      const p = entry.participants as number[];
+      if (livePairs.has(conversationPairKey(p))) return 'duplicate';
+      if (p.some((id) => busyAgents.has(id) || claimedAgents.has(id))) return 'busy';
+      if (peek) return 'ok';
+      for (const id of p) claimedAgents.add(id);
+      livePairs.add(conversationPairKey(p));
+      return 'ok';
+    };
+
     // --- Step C: Process queue timeouts ---
     const queueEntries = db
       .select()
@@ -247,13 +292,16 @@ export async function conversationsTick(): Promise<void> {
       }
     }
 
-    // Delete timed-out entries from queue; async template processing happens outside
+    // Delete timed-out entries from queue; async template processing happens outside.
+    // A timed-out entry has nowhere left to wait, so if its participants are
+    // taken it is simply dropped rather than becoming a parallel template chat.
     for (const entry of timedOutEntries) {
       db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-      timedOutQueue.push({ entry, world });
-      templateTotal++;
       queueTimeouts++;
       changed = true;
+      if (claimParticipants(entry) !== 'ok') continue;
+      timedOutQueue.push({ entry, world });
+      templateTotal++;
     }
 
     // --- Step D: Process template-tier entries immediately (no LLM) ---
@@ -262,8 +310,16 @@ export async function conversationsTick(): Promise<void> {
 
     for (const entry of validEntries) {
       if (entry.tier === 'template') {
+        // Busy participants keep the entry queued; it runs once they're free or
+        // ages out through Step C.
+        const claim = claimParticipants(entry);
+        if (claim === 'busy') continue;
         // Process as template — no LLM needed for trivial conversations
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        if (claim === 'duplicate') {
+          changed = true;
+          continue;
+        }
         timedOutQueue.push({ entry, world });
         templateTotal++;
         changed = true;
@@ -278,6 +334,17 @@ export async function conversationsTick(): Promise<void> {
 
     for (const entry of llmEntries) {
       if (currentActive >= schedulerState.max_concurrent_llm) break;
+
+      // Peek only: the claim is taken once the conversation actually opens below,
+      // so an entry that is merely staging (initiator still walking over) doesn't
+      // lock both agents out of everything else this pass.
+      const claim = claimParticipants(entry, { peek: true });
+      if (claim === 'duplicate') {
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        changed = true;
+        continue;
+      }
+      if (claim === 'busy') continue;
 
       // Depressed agents skip conversations — remove from queue.
       // Checked for every participant, not just the initiator: a depressed agent
@@ -374,6 +441,8 @@ export async function conversationsTick(): Promise<void> {
         entry.tier === 'llm_deep'
           ? schedulerState.max_turns_deep
           : schedulerState.max_turns_standard;
+
+      claimParticipants(entry);
 
       // Create conversation record
       const result = db

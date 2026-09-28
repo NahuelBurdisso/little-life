@@ -1736,7 +1736,11 @@ export function tick(world: WorldRow): void {
       const isComfortVisit = decision.source === 'comfort_visit';
       if (isComfortVisit && tier === 'template') tier = 'llm_standard';
 
-      db.insert(conversationQueue)
+      // Recorded in the per-tick snapshot too: it was read once at the top of the
+      // pass, so when A and B each decided to socialize with the other in the
+      // same tick, both saw an empty queue and [A,B] and [B,A] were both queued.
+      // The location-encounter pass below reads the same snapshot.
+      allQueuedConvos.push(db.insert(conversationQueue)
         .values({
           participants: [agentId, targetId],
           tier,
@@ -1746,7 +1750,8 @@ export function tick(world: WorldRow): void {
           queued_at: Date.now(),
           max_wait: 10000,
         })
-        .run();
+        .returning()
+        .get());
       if (isComfortVisit) completeComfortVisit(agentId);
     }
   }
