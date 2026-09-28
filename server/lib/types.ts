@@ -54,7 +54,8 @@ export type RelationshipStatus =
   | "enemies"
   | "romantic_interest"
   | "partners"
-  | "complicated";
+  | "complicated"
+  | "estranged";
 
 export type RelationshipEventType =
   | "conversation"

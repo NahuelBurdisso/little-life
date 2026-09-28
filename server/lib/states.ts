@@ -36,7 +36,8 @@ export type StateType =
   | 'confident'
   | 'jealous'
   | 'alcoholic'
-  | 'in_debt';
+  | 'in_debt'
+  | 'arrested';
 
 export interface StateDefinition {
   type: StateType;
@@ -142,6 +143,12 @@ export const STATE_DEFINITIONS: Record<StateType, StateDefinition> = {
     modifiers: { neuroticism: 15 },
     prompt: "You're broke and desperate. You can barely afford to eat. Every interaction is colored by your financial anxiety. You might need to ask for help — or take matters into your own hands.",
     conditionalExit: true,
+  },
+  arrested: {
+    type: 'arrested',
+    modifiers: { aggression: 15, warmth: -15, neuroticism: 20 },
+    prompt:
+      "You're locked in a cell. You cannot go anywhere or do anything until your sentence is served. You are humiliated, bored, and stewing on how you ended up here.",
   },
 };
 
