@@ -19,6 +19,16 @@ const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
 
 type WorldEventRow = typeof worldEvents.$inferSelect;
 
+/**
+ * Events that bring their own weather, held for the event's whole duration.
+ * The client draws rain and darkens the sky from `world.weather`, not from the
+ * event list, so a "Heavy Storm" under a cloudy sky looked like nothing was
+ * happening.
+ */
+const EVENT_WEATHER: Partial<Record<WorldEventType, string>> = {
+  storm: 'stormy',
+};
+
 export type StartWorldEventResult =
   | { ok: true; event: WorldEventRow }
   | { ok: false; reason: string };
@@ -75,6 +85,19 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
     is_active: true,
   }).returning().get();
 
+  const eventWeather = EVENT_WEATHER[type];
+  if (eventWeather) {
+    // Same write as the world router's setWeather; `world.state` is marked
+    // dirty below. Never shorten a spell of that weather already running.
+    const eventMinutes = def.durationHours * 60;
+    db.update(worldState).set({
+      weather: eventWeather,
+      weather_duration: world.weather === eventWeather
+        ? Math.max(world.weather_duration, eventMinutes)
+        : eventMinutes,
+    }).where(eq(worldState.id, world.id)).run();
+  }
+
   if (opts.announce ?? true) {
     logActivity({
       type: opts.triggeredBy === 'player' ? 'player_event' : 'world_event',
@@ -104,29 +127,44 @@ export function eventsTick(): void {
   // event: a 3-hour storm started at 4x and switched to 1x after 10 ticks ended
   // 35 game minutes later instead of 140.
   const nowMinutes = gameMinutes(world.time!);
+  const stillActive: WorldEventRow[] = [];
   for (const event of activeEvents) {
     if (nowMinutes >= event.started_at + event.duration * 60) {
       db.update(worldEvents).set({ is_active: false }).where(eq(worldEvents.id, event.id)).run();
       eventsChanged = true;
+    } else {
+      stillActive.push(event);
     }
   }
 
   // --- 2. Weather Transitions ---
   if (world.weather_duration <= 0) {
-    const season = world.time!.season;
-    const weights = WEATHER_WEIGHTS[season] ?? WEATHER_WEIGHTS.spring;
+    // An event that brings its own weather holds it until the event ends. It
+    // normally set a spell exactly as long as itself, but the player can
+    // override the weather mid-storm, and that spell running out must not roll
+    // clear skies under an active storm.
+    const forcing = stillActive.find((e) => EVENT_WEATHER[e.type as WorldEventType]);
+    let newWeather: string;
+    let newDuration: number; // game minutes; decremented by tick_speed below
+    if (forcing) {
+      newWeather = EVENT_WEATHER[forcing.type as WorldEventType]!;
+      newDuration = forcing.started_at + forcing.duration * 60 - nowMinutes;
+    } else {
+      const season = world.time!.season;
+      const weights = WEATHER_WEIGHTS[season] ?? WEATHER_WEIGHTS.spring;
 
-    const weatherItems = Object.entries(weights).map(([value, weight]) => ({
-      value,
-      weight,
-    }));
-    const newWeather = weightedRandom(weatherItems);
+      const weatherItems = Object.entries(weights).map(([value, weight]) => ({
+        value,
+        weight,
+      }));
+      newWeather = weightedRandom(weatherItems);
 
-    const minHours = CONFIG.EVENTS.WEATHER_DURATION_RANGE.min;
-    const maxHours = CONFIG.EVENTS.WEATHER_DURATION_RANGE.max;
-    const durationHours =
-      minHours + Math.floor(Math.random() * (maxHours - minHours + 1));
-    const newDuration = durationHours * 60; // convert hours to ticks (1 tick = 1 game minute)
+      const minHours = CONFIG.EVENTS.WEATHER_DURATION_RANGE.min;
+      const maxHours = CONFIG.EVENTS.WEATHER_DURATION_RANGE.max;
+      const durationHours =
+        minHours + Math.floor(Math.random() * (maxHours - minHours + 1));
+      newDuration = durationHours * 60;
+    }
 
     db.update(worldState).set({
       weather: newWeather,

@@ -219,6 +219,47 @@ describe('eventsTick random-event roll', () => {
   }
 });
 
+describe('storm weather', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const stormMinutes = WORLD_EVENTS.storm.durationHours * 60;
+  const weather = () => db.select({ weather: worldState.weather, duration: worldState.weather_duration })
+    .from(worldState).get()!;
+  const setWeather = (w: string, duration: number) =>
+    db.update(worldState).set({ weather: w, weather_duration: duration }).run();
+
+  it('turns the sky stormy for the length of the event', () => {
+    resetClock(15, 1);
+    startWorldEvent('storm', { triggeredBy: 'player', announce: false });
+    expect(weather()).toEqual({ weather: 'stormy', duration: stormMinutes });
+  });
+
+  it('does not cut short a longer storm spell already running', () => {
+    resetClock(15, 1);
+    setWeather('stormy', stormMinutes * 3);
+    startWorldEvent('storm', { triggeredBy: 'player', announce: false });
+    expect(weather()).toEqual({ weather: 'stormy', duration: stormMinutes * 3 });
+  });
+
+  it('keeps it stormy when the weather spell runs out mid-storm, then lets the roll resume', () => {
+    let time = resetClock(15, 4);
+    startWorldEvent('storm', { triggeredBy: 'player', announce: false });
+    vi.spyOn(Math, 'random').mockReturnValue(0.999); // a roll would pick the season's last entry, never stormy
+
+    // 5 ticks in, the player's own 0-length spell (or any shorter one) runs out.
+    for (let i = 0; i < 5; i++) time = tickEvents(time, 4);
+    setWeather('sunny', 0);
+    time = tickEvents(time, 4);
+    expect(weather()).toEqual({ weather: 'stormy', duration: stormMinutes - 6 * 4 });
+
+    // Storm over and its spell spent: the ordinary seasonal roll takes back over.
+    while (db.select().from(worldEvents).get()!.is_active) time = tickEvents(time, 4);
+    setWeather('stormy', 0);
+    tickEvents(time, 4);
+    expect(weather().weather).not.toBe('stormy');
+  });
+});
+
 describe('world event expiry', () => {
   afterEach(() => vi.restoreAllMocks());
 
