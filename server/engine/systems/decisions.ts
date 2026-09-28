@@ -38,6 +38,7 @@ import { planExecutor, planGenerator } from '../../lib/planning/instance';
 import { getReputationSocialModifier } from '../../lib/reputationEngine';
 import { getSharedHobbies } from '../../lib/hobbyEngine';
 import { getFavorSocialModifier } from '../../lib/favorEngine';
+import { getComfortVisit, completeComfortVisit } from '../../lib/lonelinessEngine';
 
 // --- Types ---
 
@@ -1185,6 +1186,32 @@ export function tick(world: WorldRow): void {
       );
     }
 
+    // Phase 1a: Comfort visit (score 7000 — above the day plan, below emergency).
+    // A warm friend promised to look in on a lonely neighbour (lonelinessEngine).
+    // Walk to wherever they are; the social-queue block below opens the
+    // conversation once the two are together.
+    if (!decision) {
+      const visit = getComfortVisit(agent.id, world.time.totalTicks);
+      if (visit) {
+        const lonely = activeAgents.find((a) => a.id === visit.lonelyAgentId);
+        const lonelyAction = (lonely?.current_action as { type?: string } | null)?.type;
+        if (!lonely || lonelyAction === 'dead') {
+          completeComfortVisit(agent.id);
+        } else if (lonelyAction !== 'sleeping') {
+          // Asleep: leave the visit pending; it keeps until its window closes.
+          decision = {
+            action: 'socializing',
+            score: 7000,
+            targetLocationId:
+              lonely.current_location ?? nearestLocation(lonely.position, allLocations, 'town_square')?.id,
+            targetAgentId: lonely.id,
+            topic: 'checking in on how they have been doing lately',
+            source: 'comfort_visit',
+          };
+        }
+      }
+    }
+
     // Phase 1b: Plan layer (score 6000 — above free-time, below emergency)
     if (!decision) {
       const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day);
@@ -1698,17 +1725,23 @@ export function tick(world: WorldRow): void {
 
       const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
 
+      // A comfort visit is the whole point of the walk over — never let it
+      // collapse into a one-line template exchange.
+      const isComfortVisit = decision.source === 'comfort_visit';
+      if (isComfortVisit && tier === 'template') tier = 'llm_standard';
+
       db.insert(conversationQueue)
         .values({
           participants: [agentId, targetId],
           tier,
           priority,
-          trigger_reason: 'needs_social',
+          trigger_reason: isComfortVisit ? 'comfort_visit' : 'needs_social',
           topic,
           queued_at: Date.now(),
           max_wait: 10000,
         })
         .run();
+      if (isComfortVisit) completeComfortVisit(agentId);
     }
   }
 

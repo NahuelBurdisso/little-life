@@ -6,16 +6,48 @@ import { getEffectivePersonality } from './states';
 
 // ─── Loneliness Engine ────────────────────────────────────────────────────────
 // Tracks chronic low social need. When social stays < 20 for extended periods,
-// the agent enters 'lonely' state. Warm agents who notice lonely neighbors
-// will visit them (comfort interaction via simEvents).
+// the agent enters 'lonely' state. A warm friend may then schedule a comfort
+// visit: decisions.ts walks the visitor to the lonely agent and, once they are
+// together, queues a conversation (see getComfortVisit).
 
 const lonelySince = new Map<number, number>(); // agentId → tick when social first dropped below 20
 const LONELY_THRESHOLD = 20;
 const LONELY_DURATION_TICKS = 720; // ~12 game hours of consecutive low social
 
+/** How long a scheduled visit stays on the visitor's agenda (~3 game hours). */
+export const COMFORT_VISIT_WINDOW_TICKS = 180;
+
+interface ComfortVisit {
+  lonelyAgentId: number;
+  expiresTick: number;
+}
+/** visitorId → the visit they have promised to make. */
+const pendingComfortVisits = new Map<number, ComfortVisit>();
+
+export function scheduleComfortVisit(visitorId: number, lonelyAgentId: number, currentTick: number): void {
+  pendingComfortVisits.set(visitorId, { lonelyAgentId, expiresTick: currentTick + COMFORT_VISIT_WINDOW_TICKS });
+}
+
+/** The visitor's pending visit, or null (expired visits are dropped here). */
+export function getComfortVisit(visitorId: number, currentTick: number): ComfortVisit | null {
+  const visit = pendingComfortVisits.get(visitorId);
+  if (!visit) return null;
+  if (currentTick > visit.expiresTick) {
+    pendingComfortVisits.delete(visitorId);
+    return null;
+  }
+  return visit;
+}
+
+/** Called when the visit's conversation is queued, or when it can no longer happen. */
+export function completeComfortVisit(visitorId: number): void {
+  pendingComfortVisits.delete(visitorId);
+}
+
 /** Drop per-agent loneliness tracking for a world replace (agent ids and ticks both reset). */
 export function clearLonelinessTracking(): void {
   lonelySince.clear();
+  pendingComfortVisits.clear();
 }
 
 /** Called periodically (every 60 ticks) from the tick loop. */
@@ -58,7 +90,7 @@ export function lonelinessCheck(totalTicks: number): void {
         });
 
         // Trigger warm neighbor intervention
-        triggerComfortVisit(agent.id, activeAgents);
+        triggerComfortVisit(agent.id, activeAgents, totalTicks);
       }
     } else {
       // Social is above threshold — reset tracker
@@ -67,7 +99,11 @@ export function lonelinessCheck(totalTicks: number): void {
   }
 }
 
-function triggerComfortVisit(lonelyAgentId: number, allAgents: (typeof agents.$inferSelect)[]): void {
+function triggerComfortVisit(
+  lonelyAgentId: number,
+  allAgents: (typeof agents.$inferSelect)[],
+  totalTicks: number,
+): void {
   // Find warm agents with positive relationship who might visit
   const rels = db.select().from(relationships).all();
 
@@ -91,7 +127,8 @@ function triggerComfortVisit(lonelyAgentId: number, allAgents: (typeof agents.$i
     const visitChance = personality.warmth * 0.005 + friendship * 0.003;
     if (Math.random() > visitChance) continue;
 
-    // Only logged: nothing moves the visitor yet (see STATUS.md B14).
+    // Used to be log-only: the feed announced a visit nobody ever made.
+    scheduleComfortVisit(other.id, lonelyAgentId, totalTicks);
     const visitorName = other.name;
     const lonelyAgent = allAgents.find(a => a.id === lonelyAgentId);
     const lonelyName = lonelyAgent?.name ?? 'someone';
