@@ -11,6 +11,13 @@ export const TEXT_CACHE_CAPACITY = 500;
 export const QUERY_CACHE_CAPACITY = 200;
 export const WRITE_QUEUE_FLUSH_MS = 50;
 export const WRITE_QUEUE_MAX_SIZE = 30;
+/**
+ * Memory-bound safety net for MemoryService's write queue, not a batch size:
+ * the backlog is flushed WRITE_QUEUE_MAX_SIZE at a time, and only past this
+ * many pending memories (an embedding server down for a long while) does it
+ * start dropping the least important ones, with a warning.
+ */
+export const WRITE_QUEUE_HARD_CAP = 5000;
 export const CONVERSATION_TOKEN_BUDGET = 300;
 export const CHARS_PER_TOKEN = 3.5;
 export const CONVERSATION_TOP_K = 5;

@@ -14,6 +14,7 @@ import { rankCandidates } from './RetrievalEngine';
 import {
   WRITE_QUEUE_FLUSH_MS,
   WRITE_QUEUE_MAX_SIZE,
+  WRITE_QUEUE_HARD_CAP,
   CACHE_CAPACITY_PER_AGENT,
   EMBEDDING_DIMENSIONS,
   CHARS_PER_TOKEN,
@@ -47,6 +48,7 @@ export class MemoryService {
 
   private currentTick = 0;
   private queue: QueueEntry[] = [];
+  private droppedMemories = 0;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushInProgress = false;
 
@@ -120,6 +122,8 @@ export class MemoryService {
       depth,
       parentIds,
     });
+
+    if (this.queue.length > WRITE_QUEUE_HARD_CAP) this.dropLeastImportant();
 
     this.scheduleFlush();
   }
@@ -343,7 +347,36 @@ export class MemoryService {
   }
 
   /**
-   * Flush the write queue: embed descriptions, batch-insert, update cache.
+   * Past WRITE_QUEUE_HARD_CAP, evict the pending memory with the lowest
+   * priority × importance. Only reachable when embeddings have been failing
+   * to come back for a long time; warns so the loss is never silent.
+   */
+  private dropLeastImportant(): void {
+    let worst = 0;
+    const score = (e: QueueEntry) => e.priority * e.importance;
+    for (let i = 1; i < this.queue.length; i++) {
+      if (score(this.queue[i]) < score(this.queue[worst])) worst = i;
+    }
+    this.queue.splice(worst, 1);
+    this.droppedMemories++;
+    if (this.droppedMemories === 1 || this.droppedMemories % 100 === 0) {
+      console.warn(
+        `[MemoryService] write queue over ${WRITE_QUEUE_HARD_CAP} pending; ` +
+        `dropped ${this.droppedMemories} least-important memories so far`,
+      );
+    }
+  }
+
+  /**
+   * Flush one batch of the write queue: embed descriptions, batch-insert,
+   * update cache — then keep going while a backlog remains.
+   *
+   * This used to drain the whole queue and, past WRITE_QUEUE_MAX_SIZE, keep
+   * the top entries and discard the rest, so a slow embedding (which is what
+   * lets the queue grow) silently cost agents their memories. It also never
+   * looked at the queue again when it finished: records that arrived while it
+   * was awaiting the embedding found `flushInProgress` set, their flush
+   * returned early, and they sat there until some unrelated record() came by.
    */
   private async flush(): Promise<void> {
     if (this.flushInProgress) return;
@@ -352,14 +385,8 @@ export class MemoryService {
     this.flushInProgress = true;
 
     try {
-      // Drain queue
-      let batch = this.queue.splice(0, this.queue.length);
-
-      // Overflow protection: if we have more than max, keep top priority entries
-      if (batch.length > WRITE_QUEUE_MAX_SIZE) {
-        batch.sort((a, b) => b.priority * b.importance - a.priority * a.importance);
-        batch = batch.slice(0, WRITE_QUEUE_MAX_SIZE);
-      }
+      // Oldest first, one batch at a time; the rest waits for the next round.
+      const batch = this.queue.splice(0, WRITE_QUEUE_MAX_SIZE);
 
       // Embed all descriptions
       const descriptions = batch.map((e) => e.description);
@@ -411,6 +438,9 @@ export class MemoryService {
       }
     } finally {
       this.flushInProgress = false;
+      // Backlog, or records that arrived mid-flush: flush again (immediately
+      // when a full batch is waiting, otherwise after the usual short delay).
+      if (this.queue.length > 0) this.scheduleFlush();
     }
   }
 }
