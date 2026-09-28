@@ -82,27 +82,13 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
   },
 
   // ── Season ────────────────────────────────────────────────────────────────
-
-  {
-    id: 'weather_snow',
-    trigger: { type: 'season', season: 'winter' },
-    appearance: {
-      shape: 'circle',
-      colors: [0xc8d0d8],
-      sizeRange: [0.03, 0.06],
-      alpha: 0.6,
-    },
-    motion: {
-      speedRange: [5, 15],
-      directionRange: [Math.PI * 0.35, Math.PI * 0.65],
-      gravity: 8,
-      spread: 400,
-      rotationSpeed: 1,
-    },
-    emission: { rate: 8, burst: 0, maxAlive: 80 },
-    lifecycle: { lifetimeRange: [4, 8], fadeIn: 0.5, fadeOut: 1 },
-    offset: { x: 0, y: -200 },
-  },
+  //
+  // No rain or snow here. Both used to exist as world emitters: `weather_rain`
+  // drew a second rain on top of WeatherEffects' screen-space rain (and only for
+  // "rainy" — storms got one layer, drizzle two), and `weather_snow` was
+  // triggered by *season*, so it snowed through every sunny winter day and
+  // double-snowed on snowy ones. WeatherEffects is the one precipitation
+  // renderer, driven by the actual weather; see `__tests__/profileRegistry.test.ts`.
 
   {
     id: 'autumn_leaves',
@@ -123,28 +109,5 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     emission: { rate: 5, burst: 0, maxAlive: 50 },
     lifecycle: { lifetimeRange: [4, 7], fadeIn: 0.3, fadeOut: 1 },
     offset: { x: 0, y: -180 },
-  },
-
-  {
-    id: 'weather_rain',
-    // `WeatherType` spells it "rainy" — "rain" never matched the trigger index,
-    // so this profile had never spawned a particle.
-    trigger: { type: 'weather', weather: 'rainy' },
-    appearance: {
-      shape: 'raindrop',
-      colors: [0x1a2830, 0x1e3040],
-      sizeRange: [0.03, 0.06],
-      alpha: 0.5,
-    },
-    motion: {
-      speedRange: [30, 60],
-      directionRange: [Math.PI * 0.45, Math.PI * 0.55],
-      gravity: 20,
-      spread: 400,
-      rotationSpeed: 0,
-    },
-    emission: { rate: 12, burst: 0, maxAlive: 100 },
-    lifecycle: { lifetimeRange: [0.6, 1.2], fadeIn: 0, fadeOut: 0.2 },
-    offset: { x: 0, y: -200 },
   },
 ];

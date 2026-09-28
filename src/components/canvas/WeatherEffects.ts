@@ -84,6 +84,8 @@ export class WeatherEffects {
     return g;
   }
 
+  // The only rain and snow renderer — the particle registry deliberately has no
+  // precipitation profiles, so each weather draws exactly one layer.
   private spawnParticles(weather: string, width: number, height: number) {
     switch (weather) {
       case "rainy":
