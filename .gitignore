@@ -3,3 +3,19 @@ dist
 .env.local
 .convex
 assets-raw
+
+# Runtime SQLite state. server/db/index.ts creates the file on first boot and
+# the setup wizard seeds it, so none of it belongs in version control. The live
+# DB was 8.6 MB of binary churn per commit; -wal/-shm are never meaningful.
+# Covers data/test.db too, the throwaway built by server/db/testSetup.ts.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db.bak-*
+
+# Screenshot output of docs/scratch/shot-*.mjs probes — regenerable, ~14 MB.
+docs/scratch/shots/
+# Brainstorm mockup sessions (superpowers skill) — local scratch.
+.superpowers/brainstorm/
+# Vite writes these next to the config on reload; never meaningful.
+vite.config.ts.timestamp-*
