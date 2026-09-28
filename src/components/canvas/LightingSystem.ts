@@ -3,6 +3,9 @@ import {
 } from 'pixi.js';
 import { OUTDOOR_TYPES } from '../../../server/lib/worldgen/buildingTemplates';
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
+import {
+  type AmbientProfile, PHASE_AMBIENT, computeAmbient, ambientKey, weatherMod,
+} from './ambient';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -13,13 +16,6 @@ interface LightSource {
   color: number;
   intensity: number;
   flicker: number;
-}
-
-interface AmbientProfile {
-  r: number;
-  g: number;
-  b: number;
-  brightness: number;
 }
 
 interface LocationData {
@@ -42,40 +38,6 @@ const SCALE = 8;  // Lightmap at 1/8 resolution
 // dark ground (fresh-eyes audit r27). Module scope: `render` walks every light
 // every frame, so a literal inside that loop allocated N arrays per frame.
 const RING_ALPHAS = [0.35, 0.25, 0.18, 0.12, 0.07, 0.04];
-
-const PHASE_AMBIENT: Record<string, AmbientProfile> = {
-  dawn:      { r: 255, g: 212, b: 160, brightness: 0.65 },
-  morning:   { r: 255, g: 248, b: 240, brightness: 0.95 },
-  afternoon: { r: 255, g: 250, b: 230, brightness: 1.0 },
-  evening:   { r: 255, g: 160, b: 96,  brightness: 0.55 },
-  night:     { r: 100, g: 110, b: 150, brightness: 0.45 },
-};
-
-const SEASON_TINT: Record<string, { r: number; g: number; b: number; mix: number }> = {
-  spring: { r: 224, g: 255, b: 224, mix: 0.05 },
-  summer: { r: 255, g: 250, b: 224, mix: 0.03 },
-  autumn: { r: 255, g: 224, b: 160, mix: 0.08 },
-  winter: { r: 208, g: 232, b: 255, mix: 0.10 },
-};
-
-const WEATHER_MODS: Record<string, {
-  brightnessMul: number;
-  radiusMul: number;
-  flickerMul: number;
-  tintR?: number;
-  tintG?: number;
-  tintB?: number;
-  tintMix?: number;
-}> = {
-  sunny:  { brightnessMul: 1.0,  radiusMul: 1.0, flickerMul: 1.0 },
-  cloudy: { brightnessMul: 0.85, radiusMul: 1.0, flickerMul: 1.0 },
-  rainy:  { brightnessMul: 0.7,  radiusMul: 0.9, flickerMul: 1.5, tintR: 180, tintG: 200, tintB: 230, tintMix: 0.06 },
-  stormy: { brightnessMul: 0.5,  radiusMul: 0.85, flickerMul: 2.0 },
-  foggy:  { brightnessMul: 0.75, radiusMul: 0.6, flickerMul: 0.5, tintR: 200, tintG: 200, tintB: 210, tintMix: 0.1 },
-  snowy:  { brightnessMul: 0.8,  radiusMul: 0.8, flickerMul: 0.8, tintR: 220, tintG: 230, tintB: 255, tintMix: 0.08 },
-  windy:  { brightnessMul: 0.9,  radiusMul: 1.0, flickerMul: 2.5 },
-  hot:    { brightnessMul: 1.0,  radiusMul: 1.0, flickerMul: 1.2, tintR: 255, tintG: 240, tintB: 200, tintMix: 0.04 },
-};
 
 const BUILDING_LIGHT: Record<string, {
   color: number; radius: number; intensity: number; flicker: number;
@@ -195,7 +157,7 @@ export class LightingSystem {
   private lmW = 1;
   private lmH = 1;
 
-  private lastPhase = '';
+  private lastAmbientKey = '';
   private isNightish = false;
 
   constructor(app: Application, _worldContainer: Container) {
@@ -263,33 +225,19 @@ export class LightingSystem {
       if (a.current_location != null) occupiedLocations.add(a.current_location);
     }
 
-    // Ambient transition
-    if (phase !== this.lastPhase) {
-      this.lastPhase = phase;
-      this.targetAmbient = { ...(PHASE_AMBIENT[phase] ?? PHASE_AMBIENT.morning) };
-
-      // Apply season tint
-      const season = world.time?.season ?? 'spring';
-      const st = SEASON_TINT[season];
-      if (st) {
-        this.targetAmbient.r = lerp(this.targetAmbient.r, st.r, st.mix);
-        this.targetAmbient.g = lerp(this.targetAmbient.g, st.g, st.mix);
-        this.targetAmbient.b = lerp(this.targetAmbient.b, st.b, st.mix);
-      }
-
-      // Apply weather brightness + tint
-      const wm = WEATHER_MODS[world.weather] ?? WEATHER_MODS.sunny;
-      this.targetAmbient.brightness *= wm.brightnessMul;
-      if (wm.tintR != null && wm.tintMix != null) {
-        this.targetAmbient.r = lerp(this.targetAmbient.r, wm.tintR!, wm.tintMix!);
-        this.targetAmbient.g = lerp(this.targetAmbient.g, wm.tintG!, wm.tintMix!);
-        this.targetAmbient.b = lerp(this.targetAmbient.b, wm.tintB!, wm.tintMix!);
-      }
-
+    // Ambient transition. Keyed on phase, season AND weather — it used to be
+    // keyed on phase alone, so changing the weather mid-phase didn't touch the
+    // light until the next phase boundary. Retargeting mid-transition is safe:
+    // `render` eases from whatever `currentAmbient` is at that moment.
+    const season = world.time?.season ?? 'spring';
+    const key = ambientKey(phase, season, world.weather);
+    if (key !== this.lastAmbientKey) {
+      this.lastAmbientKey = key;
+      this.targetAmbient = computeAmbient(phase, season, world.weather);
       this.lerpProgress = 0;
     }
 
-    const weatherMod = WEATHER_MODS[world.weather] ?? WEATHER_MODS.sunny;
+    const wm = weatherMod(world.weather);
 
     // ── Building lights ────────────────────────────────────────────────
     this.buildingLights = [];
@@ -301,10 +249,10 @@ export class LightingSystem {
           const cy = loc.position.y + loc.position.height / 2;
           this.buildingLights.push({
             x: cx, y: cy,
-            radius: 80 * weatherMod.radiusMul,
+            radius: 80 * wm.radiusMul,
             color: 0xFFE8B0,
             intensity: 0.4,
-            flicker: 0.08 * weatherMod.flickerMul,
+            flicker: 0.08 * wm.flickerMul,
           });
         }
         continue;
@@ -333,10 +281,10 @@ export class LightingSystem {
       this.buildingLights.push({
         x: loc.entry_point.x,
         y: loc.entry_point.y,
-        radius: def.radius * weatherMod.radiusMul,
+        radius: def.radius * wm.radiusMul,
         color: def.color,
         intensity: def.intensity,
-        flicker: def.flicker * weatherMod.flickerMul,
+        flicker: def.flicker * wm.flickerMul,
       });
     }
 
@@ -366,10 +314,10 @@ export class LightingSystem {
           this.buildingLights.push({
             x: wx,
             y: ey,
-            radius: WINDOW_GLOW_RADIUS * weatherMod.radiusMul,
+            radius: WINDOW_GLOW_RADIUS * wm.radiusMul,
             color: WINDOW_GLOW_COLOR,
             intensity: WINDOW_GLOW_INTENSITY,
-            flicker: WINDOW_GLOW_FLICKER * weatherMod.flickerMul,
+            flicker: WINDOW_GLOW_FLICKER * wm.flickerMul,
           });
         }
       }
@@ -398,10 +346,10 @@ export class LightingSystem {
         this.buildingLights.push({
           x: wx,
           y: wy,
-          radius: emDef.radius * weatherMod.radiusMul,
+          radius: emDef.radius * wm.radiusMul,
           color: emDef.color,
           intensity: emDef.intensity,
-          flicker: emDef.flicker * weatherMod.flickerMul,
+          flicker: emDef.flicker * wm.flickerMul,
         });
       }
     }
@@ -429,10 +377,10 @@ export class LightingSystem {
         this.agentLights.push({
           x: agent.position.x,
           y: agent.position.y,
-          radius: baseRadius * weatherMod.radiusMul,
+          radius: baseRadius * wm.radiusMul,
           color,
           intensity,
-          flicker: flicker * weatherMod.flickerMul,
+          flicker: flicker * wm.flickerMul,
         });
       }
     }
@@ -447,10 +395,10 @@ export class LightingSystem {
         const cy = sq.position.y + sq.position.height / 2;
         this.eventLights.push({
           x: cx, y: cy,
-          radius: 120 * weatherMod.radiusMul,
+          radius: 120 * wm.radiusMul,
           color: 0xFFDD88,
           intensity: 0.8,
-          flicker: 0.15 * weatherMod.flickerMul,
+          flicker: 0.15 * wm.flickerMul,
         });
       }
     }
