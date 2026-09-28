@@ -406,52 +406,10 @@ export function spreadGossip(
   }
 }
 
-// ─── spreadPublicKnowledge ────────────────────────────────────────────────────
-
-export function spreadPublicKnowledge(): void {
-  const publicFacts = db
-    .select()
-    .from(shared_knowledge)
-    .where(and(eq(shared_knowledge.is_active, true), eq(shared_knowledge.sensitivity, 1)))
-    .all();
-
-  if (publicFacts.length === 0) return;
-
-  // Load all agents with their current location
-  const allAgents = db
-    .select({ id: agents.id, current_location: agents.current_location })
-    .from(agents)
-    .where(eq(agents.is_active, true))
-    .all();
-
-  // Build a map: locationId -> agentIds
-  const locationMap = new Map<number, number[]>();
-  for (const agent of allAgents) {
-    if (agent.current_location == null) continue;
-    const existing = locationMap.get(agent.current_location) ?? [];
-    existing.push(agent.id);
-    locationMap.set(agent.current_location, existing);
-  }
-
-  for (const fact of publicFacts) {
-    // Find subject's current location
-    const subjectAgent = allAgents.find((a) => a.id === fact.subject_id);
-    if (!subjectAgent?.current_location) continue;
-
-    const coLocated = locationMap.get(subjectAgent.current_location) ?? [];
-    if (coLocated.length === 0) continue;
-
-    const knownBy: number[] = fact.known_by as number[];
-    const updated = [...new Set([...knownBy, ...coLocated])];
-
-    if (updated.length !== knownBy.length) {
-      db.update(shared_knowledge)
-        .set({ known_by: updated })
-        .where(eq(shared_knowledge.id, fact.id))
-        .run();
-    }
-  }
-}
+// Public-knowledge spread (co-located agents learn sensitivity-1 facts about
+// each other) lives in engine/systems/gossipEngine.ts, section 1. A second
+// copy here used to run from the states phase as well, so every tick did the
+// same full fact scan and known_by writes twice.
 
 // ─── deactivateStaleFacts ─────────────────────────────────────────────────────
 

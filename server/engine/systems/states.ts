@@ -25,7 +25,7 @@ import {
   setEffectivePersonality,
 } from '../../lib/states';
 import { emitter } from '../emitter';
-import { createFact, spreadPublicKnowledge, deactivateStaleFacts } from '../../lib/gossip';
+import { createFact, deactivateStaleFacts } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
@@ -237,7 +237,8 @@ export function statesTick() {
     }
   }
 
-  spreadPublicKnowledge();
+  // Public-knowledge spread is the gossip phase's job (gossipEngine.ts); it
+  // used to run here too, doubling the work without changing the outcome.
   deactivateStaleFacts();
 
   // ── Death check — runs after all state processing ────────────────────
