@@ -51,6 +51,8 @@ export class MemoryService {
   private droppedMemories = 0;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushInProgress = false;
+  /** Bumped by clear(); a flush only acts if the generation it started in is still current. */
+  private generation = 0;
 
   /** Tracks which agents have had their embeddings loaded into EmbeddingCache. */
   private loadedAgents: Set<number> = new Set();
@@ -84,6 +86,10 @@ export class MemoryService {
       this.flushTimer = null;
     }
     this.queue.length = 0;
+    // A flush may still be awaiting its embeddings. Bumping the generation
+    // disowns it: it will neither insert its (old-world) batch nor touch the
+    // flag below, which from here on belongs to the new world's flushes.
+    this.generation++;
     this.flushInProgress = false;
     this.loadedAgents.clear();
     this.cache.clear();
@@ -383,6 +389,7 @@ export class MemoryService {
     if (this.queue.length === 0) return;
 
     this.flushInProgress = true;
+    const generation = this.generation;
 
     try {
       // Oldest first, one batch at a time; the rest waits for the next round.
@@ -396,6 +403,11 @@ export class MemoryService {
       } catch {
         vectors = descriptions.map(() => new Float32Array(EMBEDDING_DIMENSIONS));
       }
+
+      // The world was replaced while we waited: these memories belong to agents
+      // that no longer exist, and SQLite reuses agent ids, so inserting them
+      // would hand strangers' memories to the new townsfolk.
+      if (generation !== this.generation) return;
 
       // Build insert items
       const tick = this.currentTick;
@@ -437,10 +449,15 @@ export class MemoryService {
         });
       }
     } finally {
-      this.flushInProgress = false;
-      // Backlog, or records that arrived mid-flush: flush again (immediately
-      // when a full batch is waiting, otherwise after the usual short delay).
-      if (this.queue.length > 0) this.scheduleFlush();
+      // A disowned flush leaves the flag and the queue to the new generation:
+      // clearing the flag here could let a second flush run alongside one the
+      // new world already started.
+      if (generation === this.generation) {
+        this.flushInProgress = false;
+        // Backlog, or records that arrived mid-flush: flush again (immediately
+        // when a full batch is waiting, otherwise after the usual short delay).
+        if (this.queue.length > 0) this.scheduleFlush();
+      }
     }
   }
 }

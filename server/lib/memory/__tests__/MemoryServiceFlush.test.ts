@@ -86,6 +86,54 @@ describe('MemoryService write flush', () => {
     expect(Math.max(...batches.map((b) => b.length))).toBeLessThanOrEqual(WRITE_QUEUE_MAX_SIZE);
   });
 
+  it('a flush from before clear() neither inserts nor frees the new world\'s flush flag', async () => {
+    const inserted: string[] = [];
+    let nextId = 1;
+    const store = {
+      insertBatch: vi.fn((items: Array<{ agentId: number; type: string; description: string; importance: number }>) => {
+        inserted.push(...items.map((i) => i.description));
+        return items.map((i) => ({
+          id: nextId++, agent_id: i.agentId, importance: i.importance, last_accessed: 0, type: i.type,
+        }));
+      }),
+    } as unknown as MemoryStore;
+    // Every embedding call hangs until the test lets it through.
+    const gates: Array<() => void> = [];
+    const batcher = {
+      embedForWrite: vi.fn(async (texts: string[]) => {
+        await new Promise<void>((r) => gates.push(r));
+        return texts.map(() => new Float32Array(4));
+      }),
+      clear: vi.fn(),
+    } as unknown as EmbeddingBatcher;
+    const service = new MemoryService(store, undefined, batcher);
+
+    service.record(1, 'observation', 'old world');
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS); // flush A awaits gate 0
+
+    service.clear(); // world replaced
+
+    service.record(1, 'observation', 'new 1');
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS); // flush B awaits gate 1
+    service.record(1, 'observation', 'new 2'); // arrives while B runs
+    expect(batcher.embedForWrite).toHaveBeenCalledTimes(2);
+
+    gates[0](); // A finishes late
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS * 3);
+
+    expect(inserted).toEqual([]); // A's old-world batch is discarded
+    // A left B's flag alone, so 'new 2' is still waiting for B instead of
+    // starting a third, concurrent flush.
+    expect(batcher.embedForWrite).toHaveBeenCalledTimes(2);
+
+    gates[1]();
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS * 2);
+    gates[2]?.();
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS * 2);
+
+    expect(inserted).toEqual(['new 1', 'new 2']);
+  });
+
   it('only drops past the hard cap, least important first, and says so', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { service, inserted, releaseFirst } = setup();
