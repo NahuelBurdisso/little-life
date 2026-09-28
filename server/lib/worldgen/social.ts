@@ -64,9 +64,19 @@ const RIVAL_TAGS: ReadonlySet<string> = new Set(['rival', 'grudge', 'antagonist'
  * romance values and fall through to lovers / friends / rival like any pair.
  */
 const SECRET_ROMANCE_TEMPLATES: ReadonlySet<string> = new Set(['secret_fling', 'forbidden']);
-/** Both directions must reach this for a pair to count as friends / lovers. A
- *  one-sided feeling is not a reason to move a household. */
-const MUTUAL_THRESHOLD = 50;
+/** Both directions must reach this for a pair to count as friends. A one-sided
+ *  feeling is not a reason to move a household. */
+const FRIENDS_THRESHOLD = 50;
+/**
+ * Both directions must reach this for a pair to count as lovers. Lower than the
+ * friendship bar because romance runs on a lower scale: at 50 the kind was
+ * dead — no romance template reaches it both ways (mutual_crush is 50/45) and
+ * the default cast's one couple, Lucia/Diego at 45/55, only registered as
+ * friends. 40 takes both while still excluding the one-sided shapes
+ * (unrequited 55/0, jealousy_seed 40/0) and the slow starters (emerging_tension
+ * 15/10, slow_burn 8/5).
+ */
+const LOVERS_THRESHOLD = 40;
 
 interface StagedPair {
   lo: string;
@@ -186,8 +196,8 @@ function classify(p: StagedPair): SocialEdgeKind | null {
   if (p.scenarioRival || RIVAL_STATUSES.has(p.status) || p.tags.some((t) => RIVAL_TAGS.has(t))) {
     return 'rival';
   }
-  if (Math.min(p.romanceLoHi, p.romanceHiLo) >= MUTUAL_THRESHOLD) return 'lovers';
-  if (Math.min(p.friendshipLoHi, p.friendshipHiLo) >= MUTUAL_THRESHOLD) return 'friends';
+  if (Math.min(p.romanceLoHi, p.romanceHiLo) >= LOVERS_THRESHOLD) return 'lovers';
+  if (Math.min(p.friendshipLoHi, p.friendshipHiLo) >= FRIENDS_THRESHOLD) return 'friends';
   return null;
 }
 

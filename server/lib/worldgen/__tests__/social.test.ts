@@ -80,7 +80,7 @@ describe('buildSocialEdges — classification', () => {
     },
   );
 
-  it('a non-secret thread only sets romance; mutual ≥ 50 makes lovers', () => {
+  it('a non-secret thread only sets romance; mutual ≥ 40 makes lovers', () => {
     const scenario: SocialScenario = {
       romanceThreads: [{
         template_id: 'slow_burn',
@@ -91,11 +91,29 @@ describe('buildSocialEdges — classification', () => {
     expect(buildSocialEdges([], scenario, CAST)).toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
   });
 
-  it('mutual romance ≥ 50 → lovers; one-sided romance is not', () => {
-    expect(buildSocialEdges([rel('Ann', 'Bob', { romanceAB: 50, romanceBA: 70 })], null, CAST))
+  it('mutual romance ≥ 40 → lovers; one-sided romance is not', () => {
+    expect(buildSocialEdges([rel('Ann', 'Bob', { romanceAB: 40, romanceBA: 70 })], null, CAST))
       .toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
-    expect(buildSocialEdges([rel('Ann', 'Bob', { romanceAB: 90, romanceBA: 49 })], null, CAST))
+    // Lucia/Diego in the default cast: 45/55, previously only friends.
+    expect(buildSocialEdges([rel('Ann', 'Bob', {
+      romanceAB: 45, romanceBA: 55, friendshipAB: 60, friendshipBA: 65,
+    })], null, CAST)).toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
+    expect(buildSocialEdges([rel('Ann', 'Bob', { romanceAB: 90, romanceBA: 39 })], null, CAST))
       .toEqual([]);
+  });
+
+  // The pool's own values (server/data/romancePool.ts), not idealised ones.
+  it('mutual_crush (50/45) → lovers; unrequited (55/0) → nothing', () => {
+    const thread = (template_id: string, ab: number, ba: number): SocialScenario => ({
+      romanceThreads: [{
+        template_id,
+        romance_values: [{ from: 0, to: 1, value: ab }, { from: 1, to: 0, value: ba }],
+      }],
+      rivalPairs: [],
+    });
+    expect(buildSocialEdges([], thread('mutual_crush', 50, 45), CAST))
+      .toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
+    expect(buildSocialEdges([], thread('unrequited', 55, 0), CAST)).toEqual([]);
   });
 
   it('mutual friendship ≥ 50 → friends; below it, nothing', () => {
@@ -248,6 +266,7 @@ describe('social placement in the pipeline (default cast)', () => {
     // Housemates (Elena/James, Rosa/Yuki, Sofia/Omar, Thomas/Priya) are absent.
     expect(EDGES).toContainEqual({ a: 'Carlos Mendez', b: 'Ray Kowalski', kind: 'rival' });
     expect(EDGES).toContainEqual({ a: 'Lucia Fernandez', b: 'Marco Rivera', kind: 'secret_lovers' });
+    expect(EDGES).toContainEqual({ a: 'Diego Santos', b: 'Lucia Fernandez', kind: 'lovers' });
     expect(EDGES.some((e) => e.a === 'Rosa Chen' && e.b === 'Yuki Tanaka')).toBe(false);
   });
 
