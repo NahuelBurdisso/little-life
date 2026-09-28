@@ -18,6 +18,123 @@ const GIFT_COOLDOWN_TICKS = 1440; // ~1 game day
 /** Drop per-agent gift cooldowns for a world replace (agent ids are reused). */
 export function clearGiftTracking(): void {
   lastGiftTick.clear();
+  lastImpulsiveGift.clear();
+}
+
+// ─── Impulsive (state-driven) gifts ───────────────────────────────────────────
+// `drunk` and `euphoric` make an agent hand cash to whoever is nearby. The
+// states phase used to roll this at 30% EVERY tick with no memory of it, so one
+// drunk evening at the tavern was ~14 gifts to the same person — a playtest saw
+// Priya go broke in a single episode, and $529 moved this way against $834 of
+// salary. None of it reached the activity feed, so for the player the money just
+// vanished. The rules below keep it a single, visible, affordable gesture.
+
+/**
+ * Minimum game time between two impulsive gifts from the same agent, shared by
+ * every state that gives. 4 game hours is longer than a drunk episode at
+ * tick_speed 1 (120-240 ticks), and it still spaces gifts out when a faster
+ * tick_speed stretches an episode across more game time.
+ */
+export const IMPULSIVE_GIFT_COOLDOWN_MINUTES = 240;
+/** Never give more than this share of what the giver has on hand. */
+export const IMPULSIVE_GIFT_MAX_FRACTION = 0.1;
+/** Never let an impulsive gift take the giver below this balance. */
+export const IMPULSIVE_GIFT_MONEY_FLOOR = 20;
+/** Below this the "gift" is pocket change — skip it rather than log noise. */
+const IMPULSIVE_GIFT_MIN_AMOUNT = 2;
+
+/**
+ * agentId → last impulsive gift. `stateId` makes it one gift per state episode
+ * even if a fast tick_speed stretches the episode past the cooldown; `atMinute`
+ * is absolute game minutes (world clock, not ticks — a tick is `tick_speed`
+ * minutes, so tick-count cooldowns shrink as the player speeds the game up).
+ */
+const lastImpulsiveGift = new Map<number, { atMinute: number; stateId: number }>();
+
+export type ImpulsiveGiftReason = 'drunk_gift' | 'euphoric_gift';
+
+const IMPULSIVE_GIFT_PHRASES: Record<ImpulsiveGiftReason, (giver: string, receiver: string, amount: number) => string> = {
+  drunk_gift: (g, r, a) => `${g}, a few drinks in, pressed $${a} on ${r}`,
+  euphoric_gift: (g, r, a) => `${g}, riding a high, gave $${a} to ${r}`,
+};
+
+function currentGameMinute(): number {
+  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
+  const t = world?.time;
+  if (!t) return 0;
+  return t.day * 1440 + t.hour * 60 + t.minute;
+}
+
+/**
+ * Hand `desiredAmount` (capped) from `giver` to `receiver` as a state-driven
+ * impulsive gift. Returns the amount actually given, or null when the cooldown,
+ * the episode limit or the giver's balance rules it out.
+ *
+ * Goes through the same ledger as conversation gifts: an `economy_transactions`
+ * row (reason = the state, so economy stats can tell them apart), a `gift`
+ * activity-feed entry, and `gift:given` so memories, favors and jealousy react
+ * exactly as they do to any other gift.
+ */
+export function giveImpulsiveGift(params: {
+  giver: { id: number; name: string; current_location: number | null };
+  receiver: { id: number; name: string };
+  reason: ImpulsiveGiftReason;
+  /** The `agentStates` row driving the gift — one gift per episode. */
+  stateId: number;
+  desiredAmount: number;
+}): number | null {
+  const { giver, receiver, reason, stateId } = params;
+
+  const nowMinute = currentGameMinute();
+  const last = lastImpulsiveGift.get(giver.id);
+  if (last) {
+    if (last.stateId === stateId) return null;
+    if (nowMinute - last.atMinute < IMPULSIVE_GIFT_COOLDOWN_MINUTES) return null;
+  }
+
+  const giverEcon = db.select().from(economy).where(eq(economy.agent_id, giver.id)).get();
+  // Resolve the receiver BEFORE debiting: the old code paid out even when the
+  // receiver had no economy row, so the money left the town entirely.
+  const receiverEcon = db.select().from(economy).where(eq(economy.agent_id, receiver.id)).get();
+  if (!giverEcon || !receiverEcon) return null;
+
+  const amount = Math.floor(Math.min(
+    params.desiredAmount,
+    giverEcon.money * IMPULSIVE_GIFT_MAX_FRACTION,
+    giverEcon.money - IMPULSIVE_GIFT_MONEY_FLOOR,
+  ));
+  if (amount < IMPULSIVE_GIFT_MIN_AMOUNT) return null;
+
+  db.update(economy).set({ money: giverEcon.money - amount }).where(eq(economy.id, giverEcon.id)).run();
+  db.update(economy).set({ money: receiverEcon.money + amount }).where(eq(economy.id, receiverEcon.id)).run();
+
+  db.insert(economyTransactions).values({
+    from_agent: giver.id,
+    to_agent: receiver.id,
+    amount,
+    reason,
+    items_exchanged: null,
+    location_id: giver.current_location,
+    timestamp: Date.now(), // ledger timestamps are wall-clock ms everywhere
+  }).run();
+
+  lastImpulsiveGift.set(giver.id, { atMinute: nowMinute, stateId });
+
+  logActivity({
+    type: 'gift',
+    initiator: giver.id,
+    target: receiver.id,
+    ...(giver.current_location != null ? { location: giver.current_location } : {}),
+    templateData: {
+      description: IMPULSIVE_GIFT_PHRASES[reason](giver.name, receiver.name, amount),
+      agent: giver.name,
+      target: receiver.name,
+      amount,
+    },
+  });
+
+  simEvents.emit('gift:given', { giverId: giver.id, receiverId: receiver.id, amount });
+  return amount;
 }
 
 // Items suitable for gifting, ordered by value

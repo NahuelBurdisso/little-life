@@ -30,6 +30,7 @@ import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 import { zoneOccupancy } from '../../lib/interiorGrid';
+import { giveImpulsiveGift } from '../../lib/giftEngine';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1363,44 +1364,15 @@ function processStateEffects(
         if (nearbyAgents.length === 0) break;
 
         const target = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
-        const amount = 5 + Math.random() * 10; // $5-15
-
-        const agentEconomy = db
-          .select()
-          .from(economyTable)
-          .where(eq(economyTable.agent_id, agent.id))
-          .get();
-        if (!agentEconomy || agentEconomy.money < amount) break;
-
-        db.update(economyTable)
-          .set({ money: agentEconomy.money - amount })
-          .where(eq(economyTable.agent_id, agent.id))
-          .run();
-
-        db.insert(economyTransactions)
-          .values({
-            from_agent: agent.id,
-            to_agent: target.id,
-            amount,
-            reason: 'drunk_gift',
-            items_exchanged: null,
-            location_id: agent.current_location,
-            timestamp: Date.now(),
-          })
-          .run();
-
-        // Credit receiver
-        const receiverEcon = db
-          .select()
-          .from(economyTable)
-          .where(eq(economyTable.agent_id, target.id))
-          .get();
-        if (receiverEcon) {
-          db.update(economyTable)
-            .set({ money: receiverEcon.money + amount })
-            .where(eq(economyTable.agent_id, target.id))
-            .run();
-        }
+        // Cooldown, per-episode limit, balance cap, ledger and feed entry all
+        // live in giftEngine — see giveImpulsiveGift for why.
+        giveImpulsiveGift({
+          giver: agent,
+          receiver: target,
+          reason: 'drunk_gift',
+          stateId: state.id,
+          desiredAmount: 5 + Math.random() * 10, // $5-15
+        });
         break;
       }
 
@@ -1581,44 +1553,14 @@ function processStateEffects(
         if (nearbyAgents.length === 0) break;
 
         const target = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
-        const amount = 5 + Math.random() * 5; // $5-10
-
-        const agentEconomy = db
-          .select()
-          .from(economyTable)
-          .where(eq(economyTable.agent_id, agent.id))
-          .get();
-        if (!agentEconomy || agentEconomy.money < amount) break;
-
-        db.update(economyTable)
-          .set({ money: agentEconomy.money - amount })
-          .where(eq(economyTable.agent_id, agent.id))
-          .run();
-
-        db.insert(economyTransactions)
-          .values({
-            from_agent: agent.id,
-            to_agent: target.id,
-            amount,
-            reason: 'euphoric_gift',
-            items_exchanged: null,
-            location_id: agent.current_location,
-            timestamp: Date.now(),
-          })
-          .run();
-
-        // Credit receiver
-        const receiverEcon = db
-          .select()
-          .from(economyTable)
-          .where(eq(economyTable.agent_id, target.id))
-          .get();
-        if (receiverEcon) {
-          db.update(economyTable)
-            .set({ money: receiverEcon.money + amount })
-            .where(eq(economyTable.agent_id, target.id))
-            .run();
-        }
+        const given = giveImpulsiveGift({
+          giver: agent,
+          receiver: target,
+          reason: 'euphoric_gift',
+          stateId: state.id,
+          desiredAmount: 5 + Math.random() * 5, // $5-10
+        });
+        if (given == null) break;
 
         // +3 friendship from generous gift
         const rel = db
