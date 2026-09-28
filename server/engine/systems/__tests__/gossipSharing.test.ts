@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { db } from '../../../db';
-import { agents, locations, shared_knowledge } from '../../../db/schema';
-import { eq } from 'drizzle-orm';
+import { activityLog, agents, locations, shared_knowledge } from '../../../db/schema';
+import { desc, eq } from 'drizzle-orm';
 import { gossipTick } from '../gossipEngine';
 import { getShareableFacts } from '../../../lib/gossip';
 import type { PersonalityProfile } from '../../../lib/personality';
@@ -108,6 +108,13 @@ describe('agents never gossip their own secrets', () => {
 
     expect(knownBy(own)).not.toContain(lucia);
     expect(knownBy(other)).toContain(lucia);
+
+    // The feed line splices the fact in once, with exactly one full stop.
+    const told = db.select().from(activityLog)
+      .where(eq(activityLog.type, 'drama')).orderBy(desc(activityLog.id)).all()
+      .map((r) => (r.template_data as { description?: string }).description)
+      .find((d) => d?.startsWith('Own Marco told'));
+    expect(told).toBe('Own Marco told Own Lucia that Own Carlos owes money to the baker.');
   });
 
   it('getShareableFacts leaves out facts whose subject is the speaker', () => {

@@ -5,6 +5,7 @@ import { logActivity } from './activityLogger';
 import { PersonalityProfile } from './personality';
 import { simEvents } from './simEvents';
 import { cliqueIdOf } from './cliques';
+import { thatSentence } from './factText';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -362,7 +363,7 @@ export function spreadGossip(
         type: 'drama',
         initiator: listenerId,
         target: fact.subject_id,
-        templateData: { description: `${listenerName} learned that ${fact.content}.` },
+        templateData: { description: thatSentence(`${listenerName} learned`, fact.content) },
       });
     }
   }

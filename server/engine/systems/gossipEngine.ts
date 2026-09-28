@@ -26,6 +26,7 @@ import { PersonalityProfile } from '../../lib/personality';
 import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
+import { thatSentence } from '../../lib/factText';
 
 interface AgentInfo {
   id: number;
@@ -151,7 +152,7 @@ export function gossipTick(currentTick: number): void {
               type: 'drama',
               initiator: eavesdropper.id,
               target: fact.subject_id,
-              templateData: { description: `${eavesdropper.name} overheard something about ${fact.content}.` },
+              templateData: { description: thatSentence(`${eavesdropper.name} overheard`, fact.content) },
             });
           }
               }
@@ -219,7 +220,7 @@ export function gossipTick(currentTick: number): void {
           initiator: agent.id,
           target: target.id,
           agents: [agent.id, target.id, fact.subject_id],
-          templateData: { description: `${agent.name} told ${target.name} that ${fact.content}.` },
+          templateData: { description: thatSentence(`${agent.name} told ${target.name}`, fact.content) },
         });
       }
       }
@@ -250,7 +251,7 @@ export function gossipTick(currentTick: number): void {
         type: 'drama',
         initiator: agent.id,
         target: fact.subject_id,
-        templateData: { description: `${agent.name} discovered that ${fact.content}.` },
+        templateData: { description: thatSentence(`${agent.name} discovered`, fact.content) },
       });
       }
   }
@@ -274,7 +275,7 @@ export function gossipTick(currentTick: number): void {
       initiator: fact.subject_id,
       severity: Math.min(1, 0.5 + fact.sensitivity * 0.15),
       templateData: {
-        description: `The whole town now knows that ${fact.content}.`,
+        description: thatSentence('The whole town now knows', fact.content),
       },
     });
     if (!subject) continue;
