@@ -101,8 +101,25 @@ export function getHomeOptions(agentCount: number): string[] {
   return Array.from({ length: homesNeeded }, (_, i) => `Home ${i + 1}`);
 }
 
-// Max homes per residential row × 2 rows
-export const MAX_AGENTS = 32; // 8 homes per row × 2 rows × 2 capacity
+// Re-exported from worldgen config so the wizard and the server enforce one
+// number. It used to be declared here only, and `setup.previewWorld` had no cap
+// at all. `TIER_DIMENSIONS` is re-exported for the same reason: the wizard's
+// size dropdown used to carry its own copy of the tier sizes.
+//
+// The size bounds are re-exported for the same reason again, and this one was
+// live: they were duplicated below under a "keep in sync" comment and had gone
+// stale at 48×37 against the server's 56×43. `WorldLayout` seeds the Custom
+// width/height inputs from the minimums, so picking "Custom" displayed 48×37 —
+// which the `customDimensions` Zod bound then rejected on both `previewWorld`
+// and `initialize`, making the Custom tier unusable.
+export {
+  MAX_AGENTS,
+  TIER_DIMENSIONS,
+  MIN_WIDTH as WORLDGEN_MIN_WIDTH,
+  MAX_WIDTH as WORLDGEN_MAX_WIDTH,
+  MIN_HEIGHT as WORLDGEN_MIN_HEIGHT,
+  MAX_HEIGHT as WORLDGEN_MAX_HEIGHT,
+} from '../../../server/lib/worldgen/config';
 
 // Drama setup types
 export interface SliderConfig {
@@ -110,6 +127,15 @@ export interface SliderConfig {
   romance: number;  // 0-100 — romantic tension probability
   crime: number;    // 0-100 — criminal behaviour rate
   trust: number;    // 0-100 — baseline inter-agent trust
+}
+
+/**
+ * What actually gets posted to `setup.initialize`. The seed is separate from
+ * the worldgen seed because the Preview step runs before the World Layout step,
+ * and the preview has to describe the town Start will really build.
+ */
+export interface ScenarioConfig extends SliderConfig {
+  seed: string;
 }
 
 export interface DramaPreset {
@@ -152,6 +178,13 @@ export const PRESETS: DramaPreset[] = [
   },
 ];
 
+/**
+ * What the wizard opens on. Resolved here so the sliders and the highlighted
+ * card can never disagree — the previous default named a preset id that no
+ * longer existed, leaving no card selected.
+ */
+export const DEFAULT_PRESET: DramaPreset = PRESETS.find(p => p.id === 'balanced')!;
+
 // ─── Worldgen ────────────────────────────────────────────────────────────────
 
 export interface WorldGenOverrides {
@@ -170,9 +203,3 @@ export const DEFAULT_WORLDGEN: WorldGenConfig = {
   sizeTier: 'auto',
   overrides: {},
 };
-
-// Size bounds — keep in sync with server/lib/worldgen/config.ts
-export const WORLDGEN_MIN_WIDTH = 48;
-export const WORLDGEN_MAX_WIDTH = 90;
-export const WORLDGEN_MIN_HEIGHT = 37;
-export const WORLDGEN_MAX_HEIGHT = 70;

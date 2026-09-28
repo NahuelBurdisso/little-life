@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { BUILDING_COLORS as TEMPLATE_COLORS } from '../../../server/lib/worldgen/buildingTemplates';
+import {
+  BUILDING_COLORS as TEMPLATE_COLORS,
+  DERIVED_LOCATION_TYPES,
+} from '../../../server/lib/worldgen/buildingTemplates';
 
 interface GenLocation {
   name: string;
@@ -26,8 +29,15 @@ const BG = '#2d2a24';
 const HOME_COLOR = '#6b5b45';
 const HOME_LABEL = '#a09070';
 const DOOR_COLOR = '#c8a84b';
-/** Outdoor location types — rendered as semi-transparent overlays, not solid blocks */
-const OUTDOOR_TYPES = new Set(['mainstreet', 'alley', 'farmyard', 'market_square']);
+/** Locations drawn as a faint dashed outline instead of a solid block.
+ *
+ *  This is `DERIVED_LOCATION_TYPES` (mainstreet, alley, farmyard, market_square),
+ *  NOT the renderer's `OUTDOOR_TYPES`. It was named `OUTDOOR_TYPES` here, which
+ *  read as if the preview and the live canvas shared a definition; they do not.
+ *  The difference is `OPEN_AREA_TYPES` — park, farm, town_square. Those are
+ *  outdoors and the canvas treats them as such, but at 320px an outline is
+ *  unreadable, so the preview keeps their template color and fills them. */
+const DERIVED_TYPES = DERIVED_LOCATION_TYPES;
 
 export function WorldPreview({ result, size = { width: 320, height: 240 } }: WorldPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -89,10 +99,10 @@ export function WorldPreview({ result, size = { width: 320, height: 240 } }: Wor
     // Buildings + outdoor locations.
     for (const loc of result.locations) {
       const isHome = loc.type === 'home';
-      const isOutdoor = OUTDOOR_TYPES.has(loc.type);
+      const isDerived = DERIVED_TYPES.has(loc.type);
 
-      if (isOutdoor) {
-        // Outdoor locations: subtle dashed outline, no solid fill
+      if (isDerived) {
+        // Derived plots: subtle dashed outline, no solid fill
         ctx.globalAlpha = 0.4;
         ctx.strokeStyle = '#8a7a5a';
         ctx.setLineDash([2, 2]);

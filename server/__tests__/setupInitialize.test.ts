@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { db } from '../db';
-import { locations, worldState } from '../db/schema';
+import { economy, locations, relationships, shared_knowledge, worldState } from '../db/schema';
 import { generateWorld } from '../lib/worldgen';
+import { stopTickLoopAndWait } from '../engine/tick';
 
 // ─── Minimal valid agent fixture ─────────────────────────────────────────────
 // AgentConfigSchema requires: id, name, age, gender, bio, traits, job,
@@ -94,11 +95,24 @@ describe('generateWorld determinism (pipeline boundary)', () => {
  * sequential calls with identical config + seed must produce identical rows.
  *
  * Note: we bypass the tRPC caller layer and invoke seedWorld directly via the
- * router's mutation handler to avoid spinning up a full tRPC context. Since
- * initialize only calls clearAllTables() + seedWorld() (no side-effects beyond
- * SQLite writes for this path), this is safe.
+ * router's mutation handler to avoid spinning up a full tRPC context.
+ *
+ * `initialize` is NOT side-effect-free beyond SQLite: it routes through
+ * `replaceWorld`, whose `finally` unconditionally calls `startTickLoop()`. The
+ * world seeded below has `is_paused: false` and `tick_speed: 1`, so without the
+ * teardown here the loop keeps ticking against the test DB (and issuing Ollama
+ * calls) after the assertions land, and vitest never exits cleanly.
+ *
+ * `stopTickLoopAndWait` (not `stopTickLoop`) is required: the sync variant only
+ * clears the pending `setTimeout`, so a `gameTick()` already in flight keeps
+ * writing to the shared test DB after `afterAll` returns and pollutes whatever
+ * test file vitest runs next in the same worker.
  */
 describe('initialize DB determinism', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
   function makeSetupConfig(seed: string) {
     return {
       agents: MINIMAL_AGENTS,
@@ -141,5 +155,59 @@ describe('initialize DB determinism', () => {
 
     const ws = db.select({ setup_config: worldState.setup_config }).from(worldState).get();
     expect((ws?.setup_config as any)?.worldgen?.seed).toBe(seed);
+  });
+});
+
+/**
+ * The drama sliders used to be decorative — the wizard previewed a scenario it
+ * fabricated client-side and `initialize` seeded none of it. This covers the DB
+ * half of the fix; the generator's determinism is pinned in
+ * `setupScenario.test.ts`.
+ *
+ * It lives in this file because `initialize` clears every table and vitest runs
+ * test *files* in parallel, so a second file calling it would race this one.
+ */
+describe('scenario seeding', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
+  it('persists secrets, rivalries and canonical relationship rows', async () => {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: [],
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: { sizeTier: 'auto', overrides: {}, seed: 'scenario-db' },
+      // trust 20 (→ 2) falls in the `trust <= 3` branch, so rivals are seeded.
+      scenario: { drama: 80, romance: 70, crime: 80, trust: 20, seed: 'scenario-db' },
+    } as any);
+
+    const facts = db.select().from(shared_knowledge).all();
+    expect(facts.length).toBeGreaterThan(0);
+
+    // `created_at: 0` would make every seeded secret older than any staleness
+    // window, so gossip.ts deactivated them all on its first sweep.
+    for (const f of facts) {
+      expect(f.created_at).toBeGreaterThan(0);
+      expect(f.known_by.length).toBe(new Set(f.known_by).size);
+    }
+
+    const rels = db.select().from(relationships).all();
+    expect(rels.length).toBeGreaterThan(0);
+    // idx_relationships_pair is on (agent_a, agent_b) in that order, so a
+    // reversed row duplicates a pair instead of colliding with it.
+    for (const r of rels) {
+      expect(r.agent_a).toBeLessThan(r.agent_b);
+    }
+    expect(rels.some(r => r.status === 'rival')).toBe(true);
+
+    // Money came from `economyAdjustments`, not one flat `startingMoney`.
+    const money = db.select({ money: economy.money }).from(economy).all().map(r => r.money);
+    expect(money.length).toBe(MINIMAL_AGENTS.length);
+    expect(new Set(money).size).toBeGreaterThan(1);
   });
 });

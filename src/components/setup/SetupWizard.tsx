@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AgentConfig, RelationshipConfig, SliderConfig, WorldGenConfig } from './types';
-import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN } from './types';
+import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } from './types';
 import { WorldLayout } from './WorldLayout';
 import { AgentEditor } from './AgentEditor';
 import { RelationshipEditor } from './RelationshipEditor';
@@ -24,6 +24,11 @@ const STEPS = [
 
 type StepId = typeof STEPS[number]['id'];
 
+/** Short, readable, and enough entropy that two towns never collide by accident. */
+function randomSeed(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 interface SetupWizardProps {
   onStart: () => void;
 }
@@ -35,9 +40,19 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
   const [world, setWorld] = useState(DEFAULT_WORLD);
   const [rules, setRules] = useState(DEFAULT_RULES);
   const [starting, setStarting] = useState(false);
-  const [sliders, setSliders] = useState<SliderConfig>({ drama: 7, romance: 6, crime: 5, trust: 5 });
-  const [selectedPreset, setSelectedPreset] = useState<string | null>('classic');
+  // Read out of PRESETS rather than repeated as a literal: the old default was
+  // `{drama:7, romance:6, crime:5, trust:5}`, 0-10 values on a 0-100 control, so
+  // the town opened at near-zero drama and matched no preset card.
+  const [sliders, setSliders] = useState<SliderConfig>(() => DEFAULT_PRESET.values);
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(DEFAULT_PRESET.id);
+  // Regenerating rerolls the scenario without touching the sliders.
+  const [scenarioSeed, setScenarioSeed] = useState(() => randomSeed());
   const [worldgen, setWorldgen] = useState<WorldGenConfig>(DEFAULT_WORLDGEN);
+  // Lives here, not in `WorldLayout`: that step unmounts when the user moves
+  // on, so its local error would be gone by the time Start is reachable.
+  // `setup.initialize` runs the same worldgen schema as `previewWorld`, so a
+  // config the preview rejected fails Start with the identical message.
+  const [worldgenError, setWorldgenError] = useState<string | null>(null);
   const initMutation = trpc.setup.initialize.useMutation();
 
   const stepIndex = STEPS.findIndex(s => s.id === step);
@@ -45,7 +60,14 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
   const handleStart = async () => {
     setStarting(true);
     try {
-      await initMutation.mutateAsync({ agents, relationships, world, rules, worldgen });
+      await initMutation.mutateAsync({
+        agents,
+        relationships,
+        world,
+        rules,
+        worldgen,
+        scenario: { ...sliders, seed: scenarioSeed },
+      });
       onStart();
     } catch (err) {
       console.error('Failed to start simulation:', err);
@@ -107,11 +129,20 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
           {step === 'preview' && (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-white">Drama Preview</h2>
-              <SimulationPreview sliders={sliders} agents={agents} />
+              <SimulationPreview
+                scenario={{ ...sliders, seed: scenarioSeed }}
+                agents={agents}
+                onRegenerate={() => setScenarioSeed(randomSeed())}
+              />
             </div>
           )}
           {step === 'worldlayout' && (
-            <WorldLayout config={worldgen} onChange={setWorldgen} agents={agents} />
+            <WorldLayout
+              config={worldgen}
+              onChange={setWorldgen}
+              agents={agents}
+              onErrorChange={setWorldgenError}
+            />
           )}
           {step === 'agents' && (
             <AgentEditor agents={agents} onChange={setAgents} />
@@ -152,13 +183,20 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
             Next
           </button>
         ) : (
-          <button
-            onClick={handleStart}
-            disabled={starting || agents.length < 2}
-            className="px-6 py-2 text-sm bg-green-600 hover:bg-green-500 rounded-lg transition-colors font-medium disabled:opacity-50"
-          >
-            {starting ? 'Starting...' : 'Start Simulation'}
-          </button>
+          <div className="flex items-center gap-3">
+            {worldgenError && (
+              <span className="text-xs text-red-400 max-w-xs text-right">
+                Fix the World Layout step: {worldgenError}
+              </span>
+            )}
+            <button
+              onClick={handleStart}
+              disabled={starting || agents.length < 2 || !!worldgenError}
+              className="px-6 py-2 text-sm bg-green-600 hover:bg-green-500 rounded-lg transition-colors font-medium disabled:opacity-50"
+            >
+              {starting ? 'Starting...' : 'Start Simulation'}
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -1,6 +1,8 @@
 import { router, publicProcedure } from '../trpc';
 import { db, sqlite } from '../db';
 import { generateFromSliders } from '../lib/setupGenerator';
+import { forkRng } from '../lib/worldgen/rng';
+import { clamp } from '../lib/utils';
 import { AGENT_SEEDS } from '../data/agents';
 import {
   agents,
@@ -27,7 +29,7 @@ import {
   aspirations,
   interactionCooldowns,
 } from '../db/schema';
-import { MIN_WIDTH, MIN_HEIGHT } from '../lib/worldgen/config';
+import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { eq } from 'drizzle-orm';
@@ -44,6 +46,9 @@ import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
 import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
 import { resetCascade } from '../lib/cascade';
+import { invalidateCostMap, clearMovementState } from '../engine/systems/movement';
+import { clearPerWorldCaches } from '../engine/worldCaches';
+import { autoPlayer } from '../autoplay';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -114,11 +119,33 @@ const WorldConfigSchema = z.object({
 // Dynamic rules — accepts any key/value pairs from the config registry
 const RulesConfigSchema = z.record(z.string(), z.union([z.boolean(), z.number(), z.string()]));
 
+/**
+ * The wizard's drama/romance/crime/trust sliders, on the 0-100 scale the UI
+ * uses. `generateFromSliders` works on 0-10, so `seedWorld` divides.
+ *
+ * Optional: `restart` replays a `setup_config` saved before this field existed,
+ * and the schema is also what the Start button posts.
+ */
+const ScenarioSlidersSchema = z.object({
+  drama: z.number().min(0).max(100),
+  romance: z.number().min(0).max(100),
+  crime: z.number().min(0).max(100),
+  trust: z.number().min(0).max(100),
+  /**
+   * Its own seed rather than the worldgen one: the Preview step runs before the
+   * World Layout step, so at preview time `worldgen.seed` may still be
+   * unresolved and Start would then build a different scenario than the one the
+   * player was shown.
+   */
+  seed: z.string().min(1).max(64),
+});
+
 const SetupConfigSchema = z.object({
   agents: z.array(AgentConfigSchema),
   relationships: z.array(RelationshipConfigSchema),
   world: WorldConfigSchema,
   rules: RulesConfigSchema,
+  scenario: ScenarioSlidersSchema.optional(),
   worldgen: WorldGenConfigObjectSchema.default({
     sizeTier: 'auto',
     overrides: {},
@@ -192,27 +219,81 @@ function getDayPhase(hour: number): string {
 
 // ─── Helper: clear all tables ─────────────────────────────────────────────────
 
-/** Clear all tables in reverse-dependency order */
-function clearAllTables() {
-  sqlite.exec('PRAGMA foreign_keys = OFF;');
+/** Delete every row in reverse-dependency order. The caller owns the
+ *  `foreign_keys` pragma, which SQLite ignores inside a transaction — so this is
+ *  split out for `replaceWorld`, which needs the delete to be part of one. */
+function deleteAllRows() {
   for (const table of ALL_TABLES) {
     db.delete(table).run();
   }
-  sqlite.exec('PRAGMA foreign_keys = ON;');
+}
+
+/** Clear all tables in reverse-dependency order */
+export function clearAllTables() {
+  sqlite.exec('PRAGMA foreign_keys = OFF;');
+  try {
+    deleteAllRows();
+  } finally {
+    sqlite.exec('PRAGMA foreign_keys = ON;');
+  }
+}
+
+// ─── Helper: scenario generation ─────────────────────────────────────────────
+
+/**
+ * Run the drama generator for a wizard config. Shared by `seedWorld` and the
+ * `generateDrama` preview endpoint so the preview cannot drift from what Start
+ * actually builds — they must stay a single call site with the same inputs.
+ *
+ * The UI sliders are 0-100; `generateFromSliders` is specified on 0-10.
+ */
+function buildScenario(
+  scenario: z.infer<typeof ScenarioSlidersSchema>,
+  agents: Array<z.infer<typeof AgentConfigSchema>>,
+) {
+  return generateFromSliders(
+    {
+      drama: scenario.drama / 10,
+      romance: scenario.romance / 10,
+      crime: scenario.crime / 10,
+      trust: scenario.trust / 10,
+    },
+    agents.map((a) => ({
+      name: a.name,
+      age: a.age,
+      personality: a.personality as unknown as Record<string, number>,
+      salary: a.salary,
+      job: a.job,
+    })),
+    forkRng(scenario.seed, 'scenario').next,
+  );
 }
 
 // ─── Helper: seed world from config ──────────────────────────────────────────
 
-function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: number; locationCount: number } {
+/**
+ * Persist `config` plus an already-generated world.
+ *
+ * `genResult` is a parameter rather than something this function produces,
+ * because `generateWorld` throws (unfittable content, dimensions cap) and every
+ * caller clears the database first — so generating in here meant a failed
+ * generation left an empty database behind. `replaceWorld` now generates before
+ * it destroys anything.
+ */
+function seedWorld(
+  config: z.infer<typeof SetupConfigSchema>,
+  genResult: ReturnType<typeof generateWorld>,
+): { agentCount: number; locationCount: number } {
   const now = Date.now();
 
-  // 2. Generate locations dynamically via the seeded worldgen pipeline.
-  // Phase 1 worldgen: delegate location generation to the seeded pipeline.
-  const genResult = generateWorld(config.worldgen, config.agents.length, {
-    agents: config.agents,
-  });
-  // Writeback the resolved seed so worldState.setup_config is deterministic for restart.
-  config.worldgen = { ...config.worldgen, seed: genResult.seed };
+  /**
+   * The scenario the sliders describe: secrets, romance threads, rivalries,
+   * starting money and starting mood. Seeded, so the wizard's Preview step, the
+   * Start that follows it and any later `restart` of the saved config all
+   * produce the same town. Indices below are positions in `config.agents`,
+   * which is exactly the array handed to the generator.
+   */
+  const scenario = config.scenario ? buildScenario(config.scenario, config.agents) : null;
 
   const dynamicLocations = genResult.locations;
   const dynamicCollisionGrid = genResult.collisionGrid;
@@ -240,6 +321,8 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
 
   // 3. Insert agents, build name → ID map
   const agentMap = new Map<string, number>();
+  /** Who starts inside each location, flushed to `current_occupants` after the loop. */
+  const startOccupants = new Map<number, number[]>();
 
   for (const agentCfg of config.agents) {
     const homeId = locationMap.get(agentCfg.homeName);
@@ -251,10 +334,18 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       : null;
 
     const homeLoc = dynamicLocations.find((l) => l.name === agentCfg.homeName)!;
-    const isAtWork =
-      workplaceId !== null &&
-      config.world.startHour >= agentCfg.schedule.workStart &&
-      config.world.startHour < agentCfg.schedule.workEnd;
+    // Shift windows may wrap past midnight. `ScheduleSchema` bounds workStart and
+    // workEnd to 0-23 with no ordering constraint, so a night shift — the natural
+    // configuration for The Dive, whose operating hours are 18→2 — made
+    // `start >= 18 && start < 2` unsatisfiable and always spawned the agent at
+    // home. No shipped agent has workStart > workEnd, so this is latent, but the
+    // wizard lets the user create one.
+    const { workStart, workEnd } = agentCfg.schedule;
+    const h = config.world.startHour;
+    const withinShift = workStart <= workEnd
+      ? h >= workStart && h < workEnd
+      : h >= workStart || h < workEnd;
+    const isAtWork = workplaceId !== null && withinShift;
 
     const startLocationId = isAtWork ? workplaceId! : homeId;
     const startLoc = isAtWork
@@ -307,6 +398,10 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       .get();
 
     agentMap.set(agentCfg.name, inserted.id);
+    startOccupants.set(startLocationId, [
+      ...(startOccupants.get(startLocationId) ?? []),
+      inserted.id,
+    ]);
 
     // Insert aspiration for this agent
     const aspConfig = agentCfg.aspiration ?? { type: 'freedom', intensity: 0.5 };
@@ -320,9 +415,26 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
     }).run();
   }
 
+  // 3b. Register the starting occupants.
+  //
+  // Worldgen emits every location with `current_occupants: []`, and movement.ts
+  // only maintains the list on a location *change* — so until an agent first
+  // walked somewhere else, every building in a freshly seeded world reported
+  // itself as empty while agents were standing in it. Anything reading occupancy
+  // (the location panel, the loneliness check in states.ts, the crowding metrics
+  // in autoplay) saw a ghost town for the first stretch of every new game.
+  for (const [locationId, occupantIds] of startOccupants) {
+    db.update(locations)
+      .set({ current_occupants: occupantIds })
+      .where(eq(locations.id, locationId))
+      .run();
+  }
+
   // 4. Insert needs + economy for each agent
-  for (const agentCfg of config.agents) {
+  for (let agentIdx = 0; agentIdx < config.agents.length; agentIdx++) {
+    const agentCfg = config.agents[agentIdx];
     const agentId = agentMap.get(agentCfg.name)!;
+    const scenarioMood = scenario?.moodAdjustments[agentIdx];
 
     db.insert(needs).values({
       agent_id: agentId,
@@ -331,8 +443,8 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       social: 30 + Math.floor(Math.random() * 40),
       comfort: 50 + Math.floor(Math.random() * 30),
       fun: 30 + Math.floor(Math.random() * 40),
-      mood: 55 + Math.floor(Math.random() * 25),
-      stress: 10 + Math.floor(Math.random() * 20),
+      mood: scenarioMood?.mood ?? 55 + Math.floor(Math.random() * 25),
+      stress: scenarioMood?.stress ?? 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
       thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
       mood_modifiers: [],
@@ -345,7 +457,12 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       job_title: agentCfg.jobTitle,
       salary: agentCfg.salary,
       work_performance: 70 + Math.floor(Math.random() * 20),
-      money: getJobStartingMoney(agentCfg.job, (config.rules.startingMoney as number) ?? 50),
+      // The crime slider decides inequality: it flattens everyone toward 60-80
+      // at low crime and pulls the tails apart at high crime. Falls back to the
+      // job table when no scenario was posted.
+      money:
+        scenario?.economyAdjustments[agentIdx] ??
+        getJobStartingMoney(agentCfg.job, (config.rules.startingMoney as number) ?? 50),
       daily_expenses:
         CONFIG.ECONOMY.DAILY_EXPENSES.min +
         Math.floor(
@@ -388,29 +505,149 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
     }
   }
 
-  // 6. Insert relationships from config
+  // 6. Insert relationships from config, with the scenario folded in.
+  //
+  // Rows are staged in a map first because the scenario's trust delta, romance
+  // threads and rival pairs all edit pairs that may or may not appear in
+  // `config.relationships`, and `idx_relationships_pair` is unique — a second
+  // INSERT for the same pair would throw and roll the whole seed back.
+  interface StagedRel {
+    agent_a: number;
+    agent_b: number;
+    friendship_ab: number;
+    friendship_ba: number;
+    romance_ab: number;
+    romance_ba: number;
+    trust_ab: number;
+    trust_ba: number;
+    familiarity: number;
+    tags: string[];
+    status: string;
+  }
+  const staged = new Map<string, StagedRel>();
+  const pairKey = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`;
+
+  /**
+   * Fetch or create the row for a pair, always stored with `agent_a < agent_b`.
+   * Every reader normalises with Math.min/Math.max before querying, so a row
+   * stored the other way round is invisible to the engine.
+   */
+  const relFor = (x: number, y: number): StagedRel => {
+    const key = pairKey(x, y);
+    const existing = staged.get(key);
+    if (existing) return existing;
+    const fresh: StagedRel = {
+      agent_a: Math.min(x, y),
+      agent_b: Math.max(x, y),
+      friendship_ab: 0,
+      friendship_ba: 0,
+      romance_ab: 0,
+      romance_ba: 0,
+      trust_ab: 0,
+      trust_ba: 0,
+      familiarity: 5,
+      tags: [],
+      status: 'acquaintance',
+    };
+    staged.set(key, fresh);
+    return fresh;
+  };
+
   for (const relCfg of config.relationships) {
     const agentAId = agentMap.get(relCfg.agentAName);
     const agentBId = agentMap.get(relCfg.agentBName);
     if (agentAId === undefined || agentBId === undefined) continue;
 
+    const row = relFor(agentAId, agentBId);
+    // `*AB` in the config means "A's feeling toward B". If the config listed the
+    // pair in the opposite order to the canonical one, the directional halves
+    // swap with it.
+    const flipped = agentAId > agentBId;
+    row.friendship_ab = flipped ? relCfg.friendshipBA : relCfg.friendshipAB;
+    row.friendship_ba = flipped ? relCfg.friendshipAB : relCfg.friendshipBA;
+    row.romance_ab = flipped ? relCfg.romanceBA : relCfg.romanceAB;
+    row.romance_ba = flipped ? relCfg.romanceAB : relCfg.romanceBA;
+    row.trust_ab = flipped ? relCfg.trustBA : relCfg.trustAB;
+    row.trust_ba = flipped ? relCfg.trustAB : relCfg.trustBA;
+    row.familiarity = relCfg.familiarity;
+    row.tags = relCfg.tags;
+    row.status = relCfg.status;
+  }
+
+  if (scenario) {
+    const idOf = (agentIdx: number): number | undefined =>
+      agentMap.get(config.agents[agentIdx]?.name ?? '');
+
+    /** Write a directional field, respecting canonical pair order. */
+    const setDirectional = (
+      row: StagedRel,
+      from: number,
+      field: 'friendship' | 'romance' | 'trust',
+      apply: (current: number) => number,
+    ) => {
+      const key = (from === row.agent_a ? `${field}_ab` : `${field}_ba`) as keyof StagedRel;
+      (row[key] as number) = apply(row[key] as number);
+    };
+
+    // The trust slider shifts the whole town's baseline, so it only touches
+    // pairs that already exist — it is a calibration, not a relationship source.
+    if (scenario.trustDelta !== 0) {
+      for (const row of staged.values()) {
+        row.trust_ab = clamp(row.trust_ab + scenario.trustDelta, -100, 100);
+        row.trust_ba = clamp(row.trust_ba + scenario.trustDelta, -100, 100);
+      }
+    }
+
+    for (const thread of scenario.romanceThreads) {
+      for (const rv of thread.romance_values) {
+        const from = idOf(rv.from);
+        const to = idOf(rv.to);
+        if (from === undefined || to === undefined || from === to) continue;
+        const row = relFor(from, to);
+        setDirectional(row, from, 'romance', () => clamp(rv.value, 0, 100));
+        row.familiarity = Math.max(row.familiarity, 40);
+        if (!row.tags.includes('romantic')) row.tags.push('romantic');
+      }
+      for (const fd of thread.friendship_deltas) {
+        const from = idOf(fd.from);
+        const to = idOf(fd.to);
+        if (from === undefined || to === undefined || from === to) continue;
+        setDirectional(relFor(from, to), from, 'friendship', (c) => clamp(c + fd.delta, -100, 100));
+      }
+      for (const td of thread.trust_deltas) {
+        const from = idOf(td.from);
+        const to = idOf(td.to);
+        if (from === undefined || to === undefined || from === to) continue;
+        setDirectional(relFor(from, to), from, 'trust', (c) => clamp(c + td.delta, -100, 100));
+      }
+    }
+
+    for (const [ai, bi] of scenario.rivalPairs) {
+      const a = idOf(ai);
+      const b = idOf(bi);
+      if (a === undefined || b === undefined || a === b) continue;
+      const row = relFor(a, b);
+      row.friendship_ab = clamp(Math.min(row.friendship_ab, -35), -100, 100);
+      row.friendship_ba = clamp(Math.min(row.friendship_ba, -35), -100, 100);
+      row.trust_ab = clamp(Math.min(row.trust_ab, -30), -100, 100);
+      row.trust_ba = clamp(Math.min(row.trust_ba, -30), -100, 100);
+      row.familiarity = Math.max(row.familiarity, 45);
+      row.status = 'rival';
+      if (!row.tags.includes('rival')) row.tags.push('rival');
+    }
+  }
+
+  for (const row of staged.values()) {
     db.insert(relationships).values({
-      agent_a: agentAId,
-      agent_b: agentBId,
-      friendship_ab: relCfg.friendshipAB,
-      friendship_ba: relCfg.friendshipBA,
-      romance_ab: relCfg.romanceAB,
-      romance_ba: relCfg.romanceBA,
-      trust_ab: relCfg.trustAB,
-      trust_ba: relCfg.trustBA,
-      familiarity: relCfg.familiarity,
+      ...row,
       interaction_count: 0,
-      last_interaction: 0,
+      // Wall-clock, not tick 0: the decay pass computes `Date.now() - it`, so a
+      // 0 here reads as ~57 years since the last interaction and decays every
+      // configured value toward 0 from the first hourly pass onward.
+      last_interaction: now,
       average_interaction_sentiment: 0,
-      tags: relCfg.tags,
-      status: relCfg.status,
-      created_at: 0,
-      last_updated: 0,
+      created_at: now,
+      last_updated: now,
     }).run();
   }
 
@@ -449,13 +686,13 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       type: 'crush', subject_id: diegoId, target_id: luciaId,
       content: 'Diego Santos has a crush on Lucia Fernandez',
       sensitivity: 2, known_by: [diegoId, marcoId],
-      created_at: 0, is_active: true, source: 'backstory',
+      created_at: now, is_active: true, source: 'backstory',
     }).run();
     db.insert(shared_knowledge).values({
       type: 'crush', subject_id: luciaId, target_id: diegoId,
       content: 'Lucia Fernandez has a crush on Diego Santos',
       sensitivity: 2, known_by: [luciaId, rosaId],
-      created_at: 0, is_active: true, source: 'backstory',
+      created_at: now, is_active: true, source: 'backstory',
     }).run();
   }
 
@@ -464,7 +701,7 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       type: 'financial', subject_id: carlosId, target_id: null,
       content: 'Carlos Mendez is struggling with money',
       sensitivity: 1, known_by: [carlosId, marcoId],
-      created_at: 0, is_active: true, source: 'backstory',
+      created_at: now, is_active: true, source: 'backstory',
     }).run();
   }
 
@@ -473,8 +710,51 @@ function seedWorld(config: z.infer<typeof SetupConfigSchema>): { agentCount: num
       type: 'secret_told', subject_id: rayId, target_id: marcoId,
       content: 'Ray Kowalski told Marco he was forced out of the city police after a disciplinary hearing — he hit a suspect during interrogation',
       sensitivity: 3, known_by: [rayId, marcoId],
-      created_at: 0, is_active: true, source: 'backstory',
+      created_at: now, is_active: true, source: 'backstory',
     }).run();
+  }
+
+  // 7c. Scenario secrets. The block above is keyed to the default cast's names
+  // and produces nothing for an edited or renamed town; these come from the
+  // drama/crime sliders and work for any cast.
+  if (scenario) {
+    const idOfAgent = (agentIdx: number | null): number | undefined =>
+      agentIdx === null ? undefined : agentMap.get(config.agents[agentIdx]?.name ?? '');
+
+    const scenarioSecrets = [
+      ...scenario.secrets,
+      ...scenario.romanceThreads.flatMap((t) => (t.secret ? [t.secret] : [])),
+    ];
+
+    for (const secret of scenarioSecrets) {
+      const subjectId = idOfAgent(secret.subject_index);
+      if (subjectId === undefined) continue;
+      const targetId = idOfAgent(secret.target_index) ?? null;
+
+      const knownBy = [
+        ...new Set(
+          secret.known_by_indices
+            .map((i) => idOfAgent(i))
+            .filter((id): id is number => id !== undefined),
+        ),
+      ];
+      if (!knownBy.includes(subjectId)) knownBy.push(subjectId);
+
+      db.insert(shared_knowledge).values({
+        type: secret.type,
+        subject_id: subjectId,
+        target_id: targetId,
+        content: secret.content,
+        sensitivity: secret.sensitivity,
+        known_by: knownBy,
+        // `now`, not 0: gossipTick expires theft/rumor/seduction/confession on
+        // `Date.now() - created_at`, so a 0 here deactivates the secret on the
+        // first pass — it reads as ~57 years old.
+        created_at: now,
+        is_active: true,
+        source: 'backstory',
+      }).run();
+    }
   }
 
   // 8. Insert conversation templates
@@ -554,14 +834,147 @@ function reloadMemoryService() {
   memoryService.clear();
 }
 
+/**
+ * Tear the running world down, seed a new one from `config`, and start it.
+ *
+ * `initialize` and `restart` both replace the world wholesale, and both have to
+ * do the same eleven things to do it safely. `initialize` did two of them —
+ * `clearAllTables()` and `seedWorld()` — so the world the wizard's Start button
+ * generated was persisted correctly and then never ticked: `resetToWizard`
+ * deliberately leaves the loop stopped on the way in, and nothing started it
+ * again. `nudge.setPaused` only flips a DB column, and nothing reads that column
+ * while the loop is down, so the only ways out were the TopBar Restart button
+ * and a server restart. It never reproduced from a cold boot, because
+ * `server/index.ts` starts the loop and nothing had stopped it.
+ *
+ * It also skipped every cache clear, which matters for the same reason it
+ * matters in `restart`: `invalidateCostMap` in particular guards a map keyed on
+ * season alone, which is read out of range when the new world has a different
+ * size.
+ *
+ * Failure used to be unrecoverable. `clearAllTables()` ran first and
+ * `startTickLoop()` last, so anything that threw in between — `generateWorld`
+ * on unfittable content, or the `Home location not found` guard in `seedWorld` —
+ * left an empty database with no `worldState` row and a permanently stopped tick
+ * loop. Since `initialize` routes through here too, a first-run failure bricked
+ * the app. Three things now prevent that:
+ *   1. the world is generated *before* anything is destroyed, and from inside
+ *      the `try`, so a worldgen throw still runs the recovery in the `finally`;
+ *   2. the clear and the seed are one sqlite transaction, so a mid-seed throw
+ *      rolls back to the previous world rather than half a new one;
+ *   3. the tick loop restarts from a `finally`.
+ */
+async function replaceWorld(
+  config: z.infer<typeof SetupConfigSchema>,
+): Promise<{ agentCount: number; locationCount: number }> {
+  await stopTickLoopAndWait();
+  await Promise.race([
+    taskRunner.drain(),
+    new Promise(resolve => setTimeout(resolve, 10_000)),
+  ]);
+  taskRunner.resetSlots();
+
+  try {
+    // Generate first: this is the throwing step, and the database is still
+    // intact if it does, so the caller gets the worldgen error and keeps its old
+    // world. It has to sit *inside* the `try` — the tick loop is already stopped
+    // and the task runner already reset by this point, so a throw from out here
+    // skipped the `finally` entirely and left the simulation permanently frozen
+    // against the old world with no client signal. Since `initialize` routes
+    // through here, that bricked the app on a first-run worldgen failure.
+    const genResult = generateWorld(config.worldgen, config.agents.length, {
+      agents: config.agents,
+    });
+    // Writeback the resolved seed so worldState.setup_config is deterministic for restart.
+    config.worldgen = { ...config.worldgen, seed: genResult.seed };
+
+    // `sqlite.transaction` wraps the clear and the seed together so neither can
+    // be observed half-applied.
+    //
+    // The delete order is freed with `defer_foreign_keys`, not by toggling
+    // `foreign_keys` around the outside. `foreign_keys` is ignored mid
+    // transaction, so it has to be set before BEGIN — which would also disable
+    // checking for every INSERT `seedWorld` makes, letting a bad home /
+    // workplace / current_location reference commit silently and surface much
+    // later. `defer_foreign_keys` is honoured mid transaction, permits arbitrary
+    // delete order, auto-resets at commit (and at rollback), and still enforces
+    // every constraint at COMMIT — which is exactly what this wants.
+    return sqlite.transaction(() => {
+      sqlite.exec('PRAGMA defer_foreign_keys = ON;');
+      deleteAllRows();
+      return seedWorld(config, genResult);
+    })();
+  } finally {
+    // Everything before `startTickLoop()` is wrapped so that nothing in here can
+    // skip the restart. The zone reconstruction below does real DB I/O and can
+    // throw on its own (SQLITE_BUSY past the 3s `busy_timeout` in `db/index.ts`
+    // while a concurrent tRPC handler holds the write lock); a throw out of a
+    // `finally` replaces the original error AND skips the rest of the block,
+    // which is the same permanent freeze this rewrite exists to prevent, through
+    // a different door.
+    //
+    // It is a `catch`, not an inner `finally`: an inner `finally` would let the
+    // throw keep propagating out of the outer `finally`, which is exactly the
+    // failure mode. Swallowing and logging is correct here — a stale cache or a
+    // stale zone index degrades the new world, a stopped tick loop bricks it. The
+    // ordering is unchanged on the happy path, so the caches are still cleared
+    // before any tick can observe them.
+    try {
+      clearEffectivePersonalities();
+      clearAgentStatesCache();
+      reloadMemoryService();
+      reflectionTrigger.clear();
+      reflectionRunner.clearQueue();
+      selfDescriptionGenerator.clear();
+      planCache.clear();
+      planLLMQueue.clear();
+      replanEvaluator.clear();
+      perceptionSystem.clear();
+      zoneOccupancy.clear();
+      resetCascade();
+      autoPlayer.reset();
+      // The terrain cost map was keyed on season only, so it survived into the new
+      // world and was read out of range whenever the map size changed.
+      invalidateCostMap();
+      // Agent ids restart at 1 after a wipe and totalTicks resets, so stale
+      // per-agent recalc/stuck timestamps would disable re-pathing in the new world.
+      clearMovementState();
+      clearPerWorldCaches();
+
+      // Reconstruct zone occupancy from the agent positions actually in the DB —
+      // the freshly seeded ones on success, the rolled-back ones on failure.
+      const activeAgentsForZone = db.select({
+        id: agents.id,
+        current_location: agents.current_location,
+        position: agents.position,
+      }).from(agents).where(eq(agents.is_active, true)).all();
+      const allLocsForZone = db.select({
+        id: locations.id,
+        type: locations.type,
+        position: locations.position,
+      }).from(locations).all();
+      reconstructZoneOccupancy(activeAgentsForZone, allLocsForZone);
+    } catch (err) {
+      console.error('[setup] replaceWorld cache reset failed (tick loop still restarts):', err);
+    }
+
+    // Unconditional: on the failure path this is what stops a thrown seed from
+    // leaving the simulation permanently frozen. `startTickLoop` is idempotent
+    // and `gameTick` no-ops when there is no world row or the world is paused,
+    // so it is safe even when the rollback restored the wizard placeholder.
+    startTickLoop();
+    emitter.markAllDirty();
+    emitter.flush();
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const setupRouter = router({
   initialize: publicProcedure
     .input(SetupConfigSchema)
     .mutation(async ({ input }) => {
-      clearAllTables();
-      const result = seedWorld(input);
+      const result = await replaceWorld(input);
       return { ok: true, ...result };
     }),
 
@@ -572,71 +985,31 @@ export const setupRouter = router({
     }
     const config = SetupConfigSchema.parse(world.setup_config);
 
-    await stopTickLoopAndWait();
-    await Promise.race([
-      taskRunner.drain(),
-      new Promise(resolve => setTimeout(resolve, 10_000)),
-    ]);
-    taskRunner.resetSlots();
-
-    clearAllTables();
-    seedWorld(config);
-
-    clearEffectivePersonalities();
-    clearAgentStatesCache();
-    reloadMemoryService();
-    reflectionTrigger.clear();
-    reflectionRunner.clearQueue();
-    selfDescriptionGenerator.clear();
-    planCache.clear();
-    planLLMQueue.clear();
-    replanEvaluator.clear();
-    perceptionSystem.clear();
-    zoneOccupancy.clear();
-    resetCascade();
-
-    // Reconstruct zone occupancy from freshly seeded agent positions
-    const activeAgentsForZone = db.select({
-      id: agents.id,
-      current_location: agents.current_location,
-      position: agents.position,
-    }).from(agents).where(eq(agents.is_active, true)).all();
-    const allLocsForZone = db.select({
-      id: locations.id,
-      type: locations.type,
-      position: locations.position,
-    }).from(locations).all();
-    reconstructZoneOccupancy(activeAgentsForZone, allLocsForZone);
-
-    startTickLoop();
-    emitter.markAllDirty();
-    emitter.flush();
+    await replaceWorld(config);
 
     return { ok: true };
   }),
 
+  /**
+   * Preview for the wizard's Scenario/Preview steps. Takes the wizard's own
+   * agent list — it used to run against `AGENT_SEEDS`, so a renamed or edited
+   * cast was previewed as the default one — and the same seed the Start button
+   * will post, so this returns the exact scenario the world will be seeded with.
+   */
   generateDrama: publicProcedure
     .input(z.object({
-      drama: z.number().min(0).max(10),
-      romance: z.number().min(0).max(10),
-      crime: z.number().min(0).max(10),
-      trust: z.number().min(0).max(10),
+      scenario: ScenarioSlidersSchema,
+      agents: z.array(AgentConfigSchema).min(2),
     }))
-    .query(({ input }) => {
-      const agents = AGENT_SEEDS.map(seed => ({
-        name: seed.name,
-        age: seed.age,
-        personality: seed.personality as Record<string, number>,
-        salary: seed.salary,
-        job: seed.job,
-      }));
-      return generateFromSliders(input, agents);
-    }),
+    .query(({ input }) => buildScenario(input.scenario, input.agents)),
 
   previewWorld: publicProcedure
     .input(
       WorldGenConfigObjectSchema.extend({
-        agentCount: z.number().int().min(1),
+        // Capped server-side too. The wizard enforces MAX_AGENTS, but this is a
+        // public procedure and an unbounded count was the only way to drive the
+        // worldgen expand ladder from the network.
+        agentCount: z.number().int().min(1).max(MAX_AGENTS),
         previewAgentHomes: z
           .array(z.object({ homeName: z.string() }))
           .optional(),
@@ -658,61 +1031,97 @@ export const setupRouter = router({
     ]);
     taskRunner.resetSlots();
 
-    clearAllTables();
+    try {
+      // Same transaction protection as `replaceWorld`, for the same reason: left
+      // unwrapped, a throw in either insert cleared every table and left no
+      // `worldState` row behind — the same brick, via a less likely path, since
+      // the values below are all static literals.
+      sqlite.transaction(() => {
+        sqlite.exec('PRAGMA defer_foreign_keys = ON;');
+        deleteAllRows();
 
-    // Insert minimal worldState for wizard detection (totalTicks === 0, is_paused)
-    db.insert(worldState).values({
-      time: { day: 0, hour: 8, minute: 0, totalTicks: 0, seasonDay: 0, season: 'spring' },
-      day_phase: 'morning',
-      weather: 'clear',
-      weather_duration: 6,
-      tick_speed: 0,
-      is_paused: true,
-      last_tick_completed: 0,
-      current_tick_phase: 0,
-      tick_id: 'reset',
-      pending_transitions: [],
-      tax_pool: 0,
-      map_width: MIN_WIDTH,
-      map_height: MIN_HEIGHT,
-      collision_grid: '',
-      road_tiles: [],
-      terrain_tiles: [],
-      setup_config: null,
-    }).run();
+        // Insert minimal worldState for wizard detection (totalTicks === 0, is_paused)
+        db.insert(worldState).values({
+          time: { day: 0, hour: 8, minute: 0, totalTicks: 0, seasonDay: 0, season: 'spring' },
+          day_phase: 'morning',
+          // 'sunny', not 'clear': every weather table in the client and the engine
+          // is keyed to the eight values in `WorldConfigSchema`, and 'clear' is not
+          // one of them — it only ever fell through the `?? sunny` guards.
+          weather: 'sunny',
+          weather_duration: 6,
+          tick_speed: 0,
+          is_paused: true,
+          last_tick_completed: 0,
+          current_tick_phase: 0,
+          tick_id: 'reset',
+          pending_transitions: [],
+          tax_pool: 0,
+          map_width: MIN_WIDTH,
+          map_height: MIN_HEIGHT,
+          collision_grid: '',
+          road_tiles: [],
+          terrain_tiles: [],
+          setup_config: null,
+        }).run();
 
-    // Minimal scheduler state
-    db.insert(conversationSchedulerState).values({
-      active_llm_conversations: [],
-      max_concurrent_llm: CONFIG.CONVERSATIONS.MAX_CONCURRENT_LLM,
-      max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
-      max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
-      max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
-      template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
-      stats: {
-        llmConversationsTotal: 0,
-        templateConversationsTotal: 0,
-        averageResponseTimeMs: 0,
-        queueTimeoutsTotal: 0,
-      },
-    }).run();
+        // Minimal scheduler state
+        db.insert(conversationSchedulerState).values({
+          active_llm_conversations: [],
+          max_concurrent_llm: CONFIG.CONVERSATIONS.MAX_CONCURRENT_LLM,
+          max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
+          max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
+          max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
+          template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
+          stats: {
+            llmConversationsTotal: 0,
+            templateConversationsTotal: 0,
+            averageResponseTimeMs: 0,
+            queueTimeoutsTotal: 0,
+          },
+        }).run();
+      })();
+    } finally {
+      // Symmetric with `replaceWorld`. Unwrapped, a throw from the transaction
+      // above skipped every cache clear and both emitter calls, leaving the old
+      // world in the DB with the tick loop already stopped, every module cache
+      // stale, and no signal to the client. The clears are all in-memory and
+      // idempotent, so running them on the failure path is strictly better than
+      // skipping them: the DB has rolled back to the previous world, but these
+      // caches would otherwise still describe it only by accident.
+      //
+      // The clears are wrapped exactly as in `replaceWorld`: unwrapped, a throw from
+      // any one of them would replace the original transaction error AND skip the
+      // emitter calls below, so the client would never learn the world was reset
+      // while the tick loop is already stopped.
+      try {
+        clearEffectivePersonalities();
+        clearAgentStatesCache();
+        memoryService.clear();
+        reflectionTrigger.clear();
+        reflectionRunner.clearQueue();
+        selfDescriptionGenerator.clear();
+        planCache.clear();
+        planLLMQueue.clear();
+        replanEvaluator.clear();
+        perceptionSystem.clear();
+        zoneOccupancy.clear();
+        resetCascade();
+        autoPlayer.reset();
+        // The terrain cost map was keyed on season only, so it survived into the new
+        // world and was read out of range whenever the map size changed.
+        invalidateCostMap();
+        clearMovementState();
+        clearPerWorldCaches();
+      } catch (err) {
+        console.error('[setup] resetToWizard cache reset failed (client is still notified):', err);
+      }
 
-    clearEffectivePersonalities();
-    clearAgentStatesCache();
-    memoryService.clear();
-    reflectionTrigger.clear();
-    reflectionRunner.clearQueue();
-    selfDescriptionGenerator.clear();
-    planCache.clear();
-    planLLMQueue.clear();
-    replanEvaluator.clear();
-    perceptionSystem.clear();
-    zoneOccupancy.clear();
-    resetCascade();
-
-    // Do NOT restart tick loop — leave paused for wizard
-    emitter.markAllDirty();
-    emitter.flush();
+      // Unconditional, and deliberately OUTSIDE the try above: this is the only
+      // signal the client gets that the world is gone.
+      // Do NOT restart tick loop — leave paused for wizard
+      emitter.markAllDirty();
+      emitter.flush();
+    }
 
     return { ok: true };
   }),
