@@ -93,13 +93,18 @@ async function callOllamaBackend(
 
     const content = (data.message?.content ?? '').trim();
     if (!content) {
-      // Thinking-only response (Gemma 4 thinking mode) — extract thinking as fallback
-      const thinking = data.message?.thinking ?? '';
-      if (thinking) {
-        // Use a brief summary from thinking if available
-        return { text: thinking.split('\n')[0].slice(0, 100) || 'Hmm...' };
-      }
-      throw new Error("Ollama response missing message content");
+      // Thinking-only response (Gemma 4 thinking mode, or the token cap spent
+      // entirely on reasoning). This used to return the first line of the
+      // reasoning as the answer, so a townsperson could say aloud "The user
+      // wants me to respond as Omar…" and a plan or reflection could be built
+      // from it. An empty answer is an error: every caller already has a
+      // retry/fallback path for that.
+      const thinkingOnly = Boolean(data.message?.thinking);
+      throw new Error(
+        thinkingOnly
+          ? "Ollama response had only thinking, no message content"
+          : "Ollama response missing message content",
+      );
     }
 
     return { text: content, truncated: data.done_reason === 'length' };

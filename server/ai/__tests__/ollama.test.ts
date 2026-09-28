@@ -34,6 +34,15 @@ describe('callOllamaChat — truncation flag', () => {
     await expect(callOllamaChat(request)).resolves.toEqual({ text: 'All done.', truncated: false });
   });
 
+  it('rejects a thinking-only Ollama reply instead of returning the reasoning as the answer', async () => {
+    ai.BACKEND = 'ollama';
+    mockFetch({
+      message: { content: '', thinking: 'The user wants me to respond as Omar.\nOmar is grumpy.' },
+      done_reason: 'length',
+    });
+    await expect(callOllamaChat(request)).rejects.toThrow(/only thinking/);
+  });
+
   it('flags an OpenAI-compatible reply with finish_reason "length"', async () => {
     ai.BACKEND = 'openai';
     mockFetch({ choices: [{ message: { content: 'Cut off mid' }, finish_reason: 'length' }] });
