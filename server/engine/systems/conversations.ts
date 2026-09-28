@@ -26,7 +26,7 @@ import {
   locations,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, gt, lt, sql } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { clearConversationCache } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
@@ -114,6 +114,22 @@ function releaseTalkingParticipants(conversation: ConversationRow): boolean {
     }
   }
   return released;
+}
+
+/**
+ * Keep only the newest MAX_ENDED_RETAINED ended conversations. The table was
+ * append-only, and each row carries its full message transcript. Run on day
+ * change. Returns the number of rows deleted.
+ */
+export function pruneEndedConversations(keep: number = CONFIG.CONVERSATIONS.MAX_ENDED_RETAINED): number {
+  return db.run(sql`
+    DELETE FROM conversations
+    WHERE status = 'ended'
+      AND id NOT IN (
+        SELECT id FROM conversations WHERE status = 'ended'
+        ORDER BY ended_at DESC, id DESC LIMIT ${keep}
+      )
+  `).changes;
 }
 
 export async function conversationsTick(): Promise<void> {
@@ -783,18 +799,19 @@ async function processCompletedConversation(
 
   // Reputation: negative conversation + agent has 3+ recent negative conversations
   if (overallSentiment < -0.2) {
-    // Load ended conversations once for all participants in this check
-    const endedConvosForReputation = db.select().from(conversations)
-      .where(eq(conversations.status, 'ended')).all();
+    // Filter in SQL: this used to load every ended conversation ever, messages
+    // included, each time a negative one finished.
+    const recentNegative = db.select({ participants: conversations.participants })
+      .from(conversations)
+      .where(and(
+        eq(conversations.status, 'ended'),
+        lt(conversations.sentiment, -0.2),
+        gt(conversations.ended_at, Date.now() - 1440000),
+      ))
+      .all();
 
     for (const pid of participantIds) {
-      const recentConvos = endedConvosForReputation
-        .filter(c => {
-          const cParticipants = c.participants as number[];
-          return cParticipants.includes(pid) &&
-                 (c.sentiment ?? 0) < -0.2 &&
-                 c.ended_at != null && c.ended_at > Date.now() - 1440000;
-        });
+      const recentConvos = recentNegative.filter(c => (c.participants as number[]).includes(pid));
       if (recentConvos.length >= 3) {
         createFact('reputation', pid, null, 1, [], 'observed');
       }

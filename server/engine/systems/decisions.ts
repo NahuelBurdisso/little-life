@@ -17,7 +17,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { findAvailableZone, zoneSlotOffset, fallbackInteriorTile } from '../../lib/interiorGrid';
 import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
@@ -69,6 +69,11 @@ export function clearWorkSkipCounts(): void {
 }
 
 // --- Helpers ---
+
+/** Order-independent key for an agent pair. */
+function pairKey(a: number, b: number): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
 
 function isActionComplete(agent: AgentRow, totalTicks: number): boolean {
   if (agent.current_action == null) return true;
@@ -1074,10 +1079,28 @@ export function tick(world: WorldRow): void {
   // Cache conversation/queue data once per tick to avoid repeated full-table scans
   const allQueuedConvos = db.select().from(conversationQueue).all();
   const allActiveConvos = db.select().from(conversations).where(eq(conversations.status, 'active')).all();
-  const allEndedConvos = db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
+  // Same-pair cooldown. Only conversations that ended inside the cooldown window
+  // can block a pair, so load just those and index them by pair. This used to
+  // load every ended conversation ever, every tick, then filter + sort that list
+  // once per candidate pair — cost grew without bound as the town talked.
+  const pairCooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
+  const lastEndedByPair = new Map<string, number>();
+  for (const c of db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
     .from(conversations)
-    .where(eq(conversations.status, 'ended'))
-    .all();
+    .where(and(eq(conversations.status, 'ended'), gt(conversations.ended_at, Date.now() - pairCooldownMs)))
+    .all()) {
+    const p = c.participants as number[];
+    for (let i = 0; i < p.length; i++) {
+      for (let j = i + 1; j < p.length; j++) {
+        const key = pairKey(p[i], p[j]);
+        lastEndedByPair.set(key, Math.max(lastEndedByPair.get(key) ?? 0, c.ended_at ?? 0));
+      }
+    }
+  }
+  const pairOnCooldown = (a: number, b: number) => {
+    const endedAt = lastEndedByPair.get(pairKey(a, b));
+    return endedAt !== undefined && Date.now() - endedAt < pairCooldownMs;
+  };
 
   // Cache shared_knowledge for arrest mechanic
   const allActiveKnowledge = db.select().from(shared_knowledge)
@@ -1531,14 +1554,7 @@ export function tick(world: WorldRow): void {
       if (existingActive.length > 0) continue; // Already talking
 
       // Cooldown: skip if this pair talked recently (prevents pair domination)
-      const cooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
-      const lastConvoForPair = allEndedConvos
-        .filter(c => {
-          const p = c.participants as number[];
-          return p.includes(agentId) && p.includes(targetId);
-        })
-        .sort((a, b) => (b.ended_at ?? 0) - (a.ended_at ?? 0))[0];
-      if (lastConvoForPair?.ended_at && Date.now() - lastConvoForPair.ended_at < cooldownMs) continue;
+      if (pairOnCooldown(agentId, targetId)) continue;
 
       const rel = getRelationshipValues(
         allRelationships,
@@ -1735,14 +1751,7 @@ export function tick(world: WorldRow): void {
     if (existingActive2.length > 0) continue;
 
     // Cooldown check (from cached data)
-    const cooldownMs2 = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
-    const lastConvo = allEndedConvos
-      .filter(c => {
-        const p = c.participants as number[];
-        return p.includes(a.id) && p.includes(b.id);
-      })
-      .sort((x, y) => (y.ended_at ?? 0) - (x.ended_at ?? 0))[0];
-    if (lastConvo?.ended_at && Date.now() - lastConvo.ended_at < cooldownMs2) continue;
+    if (pairOnCooldown(a.id, b.id)) continue;
 
     const rel = getRelationshipValues(allRelationships, a.id, b.id);
     const friendship = rel?.friendship ?? 0;

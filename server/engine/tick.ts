@@ -8,7 +8,7 @@ import { needsTick } from './systems/needs';
 import { statesTick } from './systems/states';
 import { economyTick } from './systems/economy';
 import { tick as relationshipsTick, pruneRelationshipEvents } from './systems/relationships';
-import { conversationsTick } from './systems/conversations';
+import { conversationsTick, pruneEndedConversations } from './systems/conversations';
 import { tick as decisionsTick } from './systems/decisions';
 import { tick as movementTick } from './systems/movement';
 import { eventsTick } from './systems/events';
@@ -314,6 +314,8 @@ async function gameTick(): Promise<void> {
     runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks));
     // Drop processed relationship events older than every reader's window
     runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents());
+    // Cap the conversation archive (each row holds its full transcript)
+    runGuarded('pruneEndedConversations', () => pruneEndedConversations());
   }
 
   // 8. Finalize tick

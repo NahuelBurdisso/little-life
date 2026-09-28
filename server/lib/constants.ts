@@ -87,6 +87,9 @@ export const CONFIG = {
     PLAYER_NUDGE_MAX_WAIT_MS: 30000,
     COOLDOWN_SAME_PAIR_HOURS: 0.5,
     TEMPLATE_COOLDOWN_PER_PAIR: 2,
+    // Ended conversations kept for history/UI; older ones are pruned on day change.
+    // Nothing references conversation ids, and every engine reader looks back hours, not weeks.
+    MAX_ENDED_RETAINED: 2000,
   },
 
   // AI / LLM
@@ -143,9 +146,10 @@ export const CONFIG = {
   // Events
   EVENTS: {
     // Rolled once per game hour (events.ts gates on `minute === 0`), so 0.20 is
-    // ~5 world events a day against the old ~1. EVENT_DEFINITIONS is already a
-    // mix of good (festival, harvest, wedding, competition) and bad (storm,
-    // flu outbreak, fire), gated by season and day phase.
+    // ~5 world events a day against the old ~1. The random pool in
+    // data/worldEventCatalog.ts mixes good (festival, harvest, wedding,
+    // competition) and bad (storm, flu outbreak, fire), gated by season and
+    // day phase.
     RANDOM_EVENT_CHANCE_PER_HOUR: 0.20,
     MAX_CONCURRENT_EVENTS: 5,
     WEATHER_DURATION_RANGE: { min: 2, max: 8 },
