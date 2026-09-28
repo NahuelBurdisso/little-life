@@ -53,6 +53,9 @@ export interface WorldContext {
   homes: LocationSeed[] | null;
   interiors: Record<number, InteriorData> | null;
   names: Record<string, string> | null;
+  /** Non-fatal notes about content the generator could not fit. Surfaced to the
+   *  wizard so the user can reroll; never a reason to fail generation. */
+  warnings: string[] | null;
 }
 
 /** Data passed to stages beyond ctx/rng/cfg/agentCount. The framework owns
@@ -100,6 +103,8 @@ export interface GenResult {
   collisionGrid: string;
   roads: Array<{ x: number; y: number }>;
   terrainTiles: TerrainTile[];
+  /** Optional content that could not be placed. Empty on a complete world. */
+  warnings: string[];
 }
 
 export interface GenerateOptions {

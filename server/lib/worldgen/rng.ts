@@ -24,7 +24,8 @@ export interface RNG {
   pick<T>(arr: readonly T[]): T;
   /** Return a new array that's a uniform random permutation of `arr`. */
   shuffle<T>(arr: readonly T[]): T[];
-  /** Pick an element weighted by each item's `weight` (must be > 0). */
+  /** Pick an element weighted by each item's `weight`. Weights may be 0 (never
+   *  picked); the total must be > 0. */
   weightedPick<T>(opts: ReadonlyArray<{ item: T; weight: number }>): T;
 }
 
@@ -63,7 +64,8 @@ export function makeRng(seed: number): RNG {
       let r = next() * total;
       for (const o of opts) {
         r -= o.weight;
-        if (r <= 0) return o.item;
+        // `<= 0` returned a zero-weight first entry whenever next() gave exactly 0.
+        if (r < 0) return o.item;
       }
       return opts[opts.length - 1].item;
     },

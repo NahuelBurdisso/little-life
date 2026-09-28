@@ -6,7 +6,7 @@ import type { WorldContext } from '../types';
 
 const EMPTY_CTX: WorldContext = {
   dimensions: null, terrainTiles: null, roads: null, publicBuildings: null,
-  homes: null, interiors: null, names: null,
+  homes: null, interiors: null, names: null, warnings: null,
 };
 const RNG = makeRng(0);
 
@@ -30,20 +30,26 @@ describe('dimensions stage', () => {
   });
 
   it('auto formula scales with agent count', () => {
-    // N=15 → 30 + ceil(1.8*15) = 30 + 27 = 57, clamped up to MIN_WIDTH=56 (57 > 56 OK)
-    // height: 20 + ceil(1.3*15) = 20 + 20 = 40, clamped up to MIN_HEIGHT=43
-    expect(run({ sizeTier: 'auto', overrides: {} }, 15)).toEqual({ width: 57, height: 43 });
+    // N=15 → 2 agents past the growth threshold of 13.
+    // width:  56 + ceil(0.30 * 2) = 56 + 1 = 57
+    // height: 43 + ceil(0.24 * 2) = 43 + 1 = 44
+    expect(run({ sizeTier: 'auto', overrides: {} }, 15)).toEqual({ width: 57, height: 44 });
+    // MAX_AGENTS is 32, the top of the range the formula is tuned for.
+    expect(run({ sizeTier: 'auto', overrides: {} }, 32)).toEqual({ width: 62, height: 48 });
   });
 
   it('auto formula clamps at MIN for low agent counts', () => {
-    // N=1 → 30 + 2 = 32, clamped up to MIN_WIDTH=48
-    //       20 + 2 = 22, clamped up to MIN_HEIGHT=37
+    // At or below the growth threshold the map is sized by MIN_WIDTH/MIN_HEIGHT,
+    // which exist to keep the 3×3 zone grid non-degenerate.
     expect(run({ sizeTier: 'auto', overrides: {} }, 1)).toEqual({ width: MIN_WIDTH, height: MIN_HEIGHT });
+    expect(run({ sizeTier: 'auto', overrides: {} }, 13)).toEqual({ width: MIN_WIDTH, height: MIN_HEIGHT });
   });
 
   it('auto formula clamps at MAX for high agent counts', () => {
-    // N=100 → clamps at MAX_WIDTH=90, MAX_HEIGHT=70
-    expect(run({ sizeTier: 'auto', overrides: {} }, 100)).toEqual({ width: MAX_WIDTH, height: MAX_HEIGHT });
+    // Unreachable through the wizard — MAX_AGENTS is 32, which the formula puts
+    // at 62×48 — but the clamp is the only thing between a bad caller and an
+    // allocation the renderer cannot handle.
+    expect(run({ sizeTier: 'auto', overrides: {} }, 1000)).toEqual({ width: MAX_WIDTH, height: MAX_HEIGHT });
   });
 
   it('overrides.dimensions short-circuits everything below it', () => {

@@ -1,10 +1,41 @@
 import type { LocationSeed } from '../types';
 import { FitError, type Stage } from '../types';
-import { TILE } from '../config';
+import { TILE, BORDER_BUFFER, ROAD_BUFFER, BUILDING_GAP } from '../config';
+import { buildRoadDistance } from './roads';
+/** Derived plots that are circulation space rather than a destination, and so
+ *  are exempt from PUBLIC_BUFFER. Deliberately narrower than
+ *  DERIVED_LOCATION_TYPES — see the comment in `buildBlockedMask`. */
+const CIRCULATION_TYPES: ReadonlySet<string> = new Set(['mainstreet', 'alley']);
 const HOME_TILES = 3;           // 3×3 tile footprint
 const HOME_PX = HOME_TILES * TILE;
-const PUBLIC_BUFFER = 2;        // tiles of buffer around public buildings
+// Buffer around public buildings. Uses the shared BUILDING_GAP rather than a
+// local copy — config.ts documents that these constants were centralised
+// precisely because this file drifted from them once already.
+const PUBLIC_BUFFER = BUILDING_GAP;
 const HOME_SPACING = 2;         // min Chebyshev distance between home footprints
+
+/** Beyond this many tiles from a road a lot is simply "off the street", and
+ *  further away is not meaningfully worse. */
+const FRONTAGE_CAP = 8;
+/**
+ * Weight multiplier for a lot whose door is directly on a road, tapering to 1×
+ * at FRONTAGE_CAP.
+ *
+ * Was 4, chosen to match the residential affinity range (0-5) so neither term
+ * would drown the other out. That reasoning ignored the pool: selection is an
+ * exponential race over hundreds of candidates for a handful of picks, and
+ * `layout` has already taken the road frontage for public buildings, so the
+ * road-front lots that remain sit disproportionately in low-affinity zones and
+ * the two weights partly cancel. Measured share of front doors more than 6 tiles
+ * from any road at 13/20/30/32 agents: 27/27/29/30% at 4, 20/19/21/23% at 12,
+ * 18/17/18/20% at 20. Past 12 the return is nearly flat while the frontage
+ * weight range (1-25) grows to four times the zoning range, so 12 is where it
+ * stops.
+ *
+ * Verified not to cost zoning: the realized distribution of homes over
+ * residential affinity is unchanged to within a point at both 13 and 30 agents.
+ */
+const FRONTAGE_BONUS = 12;
 
 /**
  * Home services — matches what getDefaultServices('home') in maps.ts returns.
@@ -42,6 +73,15 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
     if (!ctx.dimensions || !ctx.publicBuildings) {
       throw new Error('homes: missing dimensions or publicBuildings');
     }
+    // `roads` is declared in `dependsOn` and both of its fields are load-bearing:
+    // `tiles` keeps homes off the street and `zones` carries the residential
+    // affinities the candidate weighting is built on. This used to read
+    // `ctx.roads?.tiles ?? []` and `ctx.roads?.zones ?? []`, which turned a
+    // missing dependency into a silent road-free, zone-free world — every home
+    // weighted identically — instead of the error the other dependencies raise.
+    if (!ctx.roads) {
+      throw new Error('homes: roads not populated');
+    }
     const { width, height } = ctx.dimensions;
 
     // --- Compute homeCount (§7.4) ---
@@ -56,37 +96,103 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
     const homeCount = Math.max(halfAgents, maxReferenced);
     if (homeCount === 0) return { homes: [] };
 
-    const roadTiles = ctx.roads?.tiles ?? [];
+    const roadTiles = ctx.roads.tiles;
 
     // --- Override path ---
     if (cfg.overrides?.homePositions) {
       const pinned = cfg.overrides.homePositions;
       if (pinned.length !== homeCount) {
-        throw new FitError('homes',
-          `override length ${pinned.length} does not match homeCount ${homeCount}`);
+        // Plain Error, not FitError: a count mismatch is a config mistake and a
+        // bigger map will never fix it. As a FitError the pipeline retried it
+        // three times and reported "dimensions cap reached", discarding this
+        // message entirely.
+        throw new Error(
+          `[homes] override length ${pinned.length} does not match homeCount ${homeCount}`);
       }
-      // Validate each pin fits.
+      // Validate each pin fits, marking it as it is accepted. Pins used to be
+      // checked only against the border, roads and public buildings — never
+      // against each other — so two identical pins both passed and produced two
+      // homes stacked on the same tiles.
       const blocked = buildBlockedMask(ctx.publicBuildings, roadTiles, width, height);
       for (const p of pinned) {
+        // Misalignment is a malformed input, not a spatial constraint — no map
+        // size will ever make it fit, but as a FitError the pipeline retried it
+        // three times and reported "dimensions cap reached" instead.
+        if (p.x % TILE !== 0 || p.y % TILE !== 0) {
+          throw new Error(
+            `[homes] pinned position (${p.x}, ${p.y}) is not a multiple of TILE (${TILE})`);
+        }
         if (!pinFits(p, blocked, width, height)) {
           throw new FitError('homes',
             `pinned position at (${p.x}, ${p.y}) does not fit`);
         }
+        markPin(p, blocked, width, height);
       }
-      return { homes: pinned.map((p, i) => emitHome(p, i, rng)) };
+      const pinnedDescriptions = rng.shuffle(HOME_DESCRIPTIONS);
+      return {
+        homes: pinned.map((p, i) =>
+          emitHome(p, i, pinnedDescriptions[i % pinnedDescriptions.length])),
+      };
     }
 
     // --- Normal path: enumerate candidates → shuffle → greedy pick ---
     const blocked = buildBlockedMask(ctx.publicBuildings, roadTiles, width, height);
     const candidates: Array<{ tx: number; ty: number }> = [];
-    for (let ty = 1; ty + HOME_TILES <= height - 1; ty++) {
-      for (let tx = 1; tx + HOME_TILES <= width - 1; tx++) {
+    for (let ty = BORDER_BUFFER; ty + HOME_TILES <= height - BORDER_BUFFER; ty++) {
+      for (let tx = BORDER_BUFFER; tx + HOME_TILES <= width - BORDER_BUFFER; tx++) {
         if (footprintClear(tx, ty, blocked, width)) {
           candidates.push({ tx, ty });
         }
       }
     }
-    const shuffled = rng.shuffle(candidates);
+    // Order candidates by residential zoning, not by a flat shuffle.
+    //
+    // `dependsOn` has always listed 'roads', but only `roads.tiles` was ever read
+    // — `roads.zones` and its `residential` affinities were ignored outright. So
+    // homes were a pure free-space lottery: measured correlation of home share
+    // with available free space r=0.984, with residential affinity only r=0.526
+    // (itself an artifact, since free space correlates with affinity). The civic
+    // core `cm`, whose residential affinity is 0, was actually *over*-represented
+    // at ratio 1.14. No neighbourhoods formed, and the p90 home→food commute was
+    // 43.6 tiles on an 86-tile diagonal.
+    //
+    // Weighted sampling without replacement via the exponential race: a candidate
+    // with weight w gets key -ln(U)/w, and sorting ascending draws exactly in
+    // proportion to w. Zero-affinity zones still get weight 1, so they remain
+    // eligible and the FitError safety net below is preserved.
+    const zones = ctx.roads.zones;
+    const residentialAt = (tx: number, ty: number): number => {
+      const z = zones.find(
+        (z) => tx >= z.bounds.x1 && tx <= z.bounds.x2 && ty >= z.bounds.y1 && ty <= z.bounds.y2,
+      );
+      return z?.affinity.residential ?? 0;
+    };
+    // Second weight term: how close the front door lands to a road.
+    //
+    // Zoning alone put houses wherever the zone had room, which after `layout`
+    // started claiming the street frontage for public buildings meant the middle
+    // of the block — 56.8% of front doors more than 6 tiles from any road at 30
+    // agents. Residential streets are the point of a street grid, so the two
+    // weights multiply: a well-zoned lot on the street beats a well-zoned lot
+    // behind it, and a badly-zoned lot on the street still loses to both.
+    const roadDist = buildRoadDistance(width, height, roadTiles);
+    const frontage = (tx: number, ty: number): number => {
+      const dx = tx + 1, dy = ty + HOME_TILES;   // door tile, south-centre
+      if (dx < 0 || dy < 0 || dx >= width || dy >= height) return 1;
+      const d = Math.min(roadDist[dy * width + dx], FRONTAGE_CAP);
+      return 1 + FRONTAGE_BONUS * (1 - d / FRONTAGE_CAP);
+    };
+    const shuffled = candidates
+      .map((c) => ({
+        c,
+        // Centre tile of the 3×3 footprint, so a home straddling a zone edge is
+        // attributed to the zone it mostly sits in.
+        key:
+          -Math.log(1 - rng.next()) /
+          ((residentialAt(c.tx + 1, c.ty + 1) + 1) * frontage(c.tx, c.ty)),
+      }))
+      .sort((a, b) => a.key - b.key)
+      .map((e) => e.c);
 
     // Greedy select with Chebyshev spacing rule.
     const chosen: Array<{ tx: number; ty: number }> = [];
@@ -102,8 +208,13 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
         `not enough spots for ${homeCount} homes (found ${chosen.length})`);
     }
 
+    // One shuffled pass over the description pool instead of an independent
+    // `rng.pick` per home: with 15 descriptions and up to 16 homes, drawing with
+    // replacement duplicated 26.4% of descriptions per world, so neighbouring
+    // houses read identically in the inspector and in LLM prompts.
+    const descriptions = rng.shuffle(HOME_DESCRIPTIONS);
     const homes: LocationSeed[] = chosen.map((c, i) =>
-      emitHome({ x: c.tx * TILE, y: c.ty * TILE }, i, rng));
+      emitHome({ x: c.tx * TILE, y: c.ty * TILE }, i, descriptions[i % descriptions.length]));
     return { homes };
   },
 };
@@ -117,19 +228,25 @@ function buildBlockedMask(
   height: number,
 ): boolean[] {
   const mask = new Array<boolean>(width * height).fill(false);
-  // Map border (1-tile frame).
-  for (let x = 0; x < width; x++) {
-    mask[x] = true;
-    mask[(height - 1) * width + x] = true;
-  }
+  // Map border. This used to be a 1-tile frame while `layout.ts` reserved 2, so
+  // homes — and only homes — sat one tile from the edge, which was every border
+  // violation the layout audit reported.
   for (let y = 0; y < height; y++) {
-    mask[y * width] = true;
-    mask[y * width + (width - 1)] = true;
+    for (let x = 0; x < width; x++) {
+      if (
+        x < BORDER_BUFFER ||
+        x >= width - BORDER_BUFFER ||
+        y < BORDER_BUFFER ||
+        y >= height - BORDER_BUFFER
+      ) {
+        mask[y * width + x] = true;
+      }
+    }
   }
-  // Road tiles + 1-tile buffer (consistent with building↔road spacing rule)
+  // Road tiles + ROAD_BUFFER (consistent with the building↔road spacing rule)
   for (const t of roadTiles) {
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -ROAD_BUFFER; dy <= ROAD_BUFFER; dy++) {
+      for (let dx = -ROAD_BUFFER; dx <= ROAD_BUFFER; dx++) {
         const nx = t.x + dx, ny = t.y + dy;
         if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
           mask[ny * width + nx] = true;
@@ -138,11 +255,27 @@ function buildBlockedMask(
     }
   }
   // Public buildings + 2-tile buffer.
+  //
+  // `mainstreet` and `alley` are exempt from the buffer (their footprint is
+  // still blocked). They are circulation strips, not plots: Main Street *is* the
+  // road, so charging it PUBLIC_BUFFER on top of the ROAD_BUFFER already applied
+  // above pushed homes a full tile further off the street than the public
+  // buildings that front onto it, across the whole width of the map — precisely
+  // the tiles FRONTAGE_BONUS is trying to win. Both also put their entry_point
+  // *inside* their own footprint, so there is no doorstep tile outside to keep
+  // clear.
+  //
+  // The other two derived plots, `farmyard` and `market_square`, do NOT get the
+  // exemption even though they are equally "open ground". Their entry_point sits
+  // outside the footprint like an enclosed building's, so dropping the ring let
+  // a home occupy that tile (`farmyard entry (52,35) is blocked`) and let home
+  // doorways open into the middle of the plot.
   for (const loc of publicBuildings) {
-    const tx0 = Math.max(0, Math.floor(loc.position.x / TILE) - PUBLIC_BUFFER);
-    const ty0 = Math.max(0, Math.floor(loc.position.y / TILE) - PUBLIC_BUFFER);
-    const tx1 = Math.min(width - 1, Math.ceil((loc.position.x + loc.position.width) / TILE) + PUBLIC_BUFFER);
-    const ty1 = Math.min(height - 1, Math.ceil((loc.position.y + loc.position.height) / TILE) + PUBLIC_BUFFER);
+    const buffer = CIRCULATION_TYPES.has(loc.type) ? 0 : PUBLIC_BUFFER;
+    const tx0 = Math.max(0, Math.floor(loc.position.x / TILE) - buffer);
+    const ty0 = Math.max(0, Math.floor(loc.position.y / TILE) - buffer);
+    const tx1 = Math.min(width - 1, Math.ceil((loc.position.x + loc.position.width) / TILE) + buffer);
+    const ty1 = Math.min(height - 1, Math.ceil((loc.position.y + loc.position.height) / TILE) + buffer);
     for (let ty = ty0; ty < ty1; ty++) {
       for (let tx = tx0; tx < tx1; tx++) {
         mask[ty * width + tx] = true;
@@ -169,14 +302,41 @@ function pinFits(
 ): boolean {
   if (p.x % TILE !== 0 || p.y % TILE !== 0) return false;
   const tx = p.x / TILE, ty = p.y / TILE;
-  if (tx < 1 || ty < 1 || tx + HOME_TILES > width - 1 || ty + HOME_TILES > height - 1) return false;
+  // Same BORDER_BUFFER reserve the unpinned scan honours — a pinned home used to
+  // be allowed one tile from the edge while every generated one kept two.
+  if (
+    tx < BORDER_BUFFER ||
+    ty < BORDER_BUFFER ||
+    tx + HOME_TILES > width - BORDER_BUFFER ||
+    ty + HOME_TILES > height - BORDER_BUFFER
+  ) return false;
   return footprintClear(tx, ty, blocked, width);
+}
+
+/**
+ * Mark an accepted pin's footprint plus a HOME_SPACING ring into `blocked`, so
+ * the next pin is rejected unless it clears the same Chebyshev distance the
+ * greedy unpinned selector enforces (HOME_TILES + HOME_SPACING between origins).
+ */
+function markPin(
+  p: { x: number; y: number },
+  blocked: boolean[],
+  width: number,
+  height: number,
+): void {
+  const tx = p.x / TILE, ty = p.y / TILE;
+  for (let y = ty - HOME_SPACING; y < ty + HOME_TILES + HOME_SPACING; y++) {
+    for (let x = tx - HOME_SPACING; x < tx + HOME_TILES + HOME_SPACING; x++) {
+      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+      blocked[y * width + x] = true;
+    }
+  }
 }
 
 function emitHome(
   pos: { x: number; y: number },
   idx: number,
-  rng: import('../rng').RNG,
+  description: string,
 ): LocationSeed {
   return {
     name: `Home ${idx + 1}`,
@@ -187,7 +347,7 @@ function emitHome(
     current_occupants: [],
     operating_hours: null,
     services: HOME_SERVICES.map((s) => ({ ...s })),
-    description: rng.pick(HOME_DESCRIPTIONS),
+    description,
     owner: null,
   };
 }

@@ -13,6 +13,13 @@ export interface BuildingTemplate {
   furniture: Array<{ offsetX: number; offsetY: number; key: string }>;
   description: string;
   zoneWeights: Record<string, number>;
+  /**
+   * 0..1 pull toward the map centre, applied on top of zone affinity.
+   * Zone affinity alone is geometry-blind: the park's civic weight made a corner
+   * zone outscore the middle, stranding the town's highest-traffic venue in the
+   * furthest corner. Peripheral-by-design venues (farm, prison, divebar) stay 0.
+   */
+  centrality?: number;
   /** Enclosed buildings have walls + interior grids. Open-area buildings (farm, park, town_square) are walkable. */
   enclosed: boolean;
   /** Hex color for map preview rendering. */
@@ -39,6 +46,7 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: "The town's main shop, well-stocked and tidy. Rosa runs a tight operation with Lucia's help.",
     zoneWeights: { commercial: 5, mainStreet: 4, civic: 1 },
+    centrality: 0.6,
     enclosed: true,
     color: '#5a5040',
   },
@@ -59,6 +67,7 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'A cozy tavern where locals gather every evening. Marco serves drinks behind a weathered oak bar while Diego plays in the corner.',
     zoneWeights: { commercial: 4, mainStreet: 5, civic: 1 },
+    centrality: 0.7,
     enclosed: true,
     color: '#7a4f35',
   },
@@ -77,6 +86,7 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'A small but well-equipped medical clinic. Sofia and Omar keep the town healthy, one patient at a time.',
     zoneWeights: { commercial: 4, mainStreet: 3, civic: 3 },
+    centrality: 0.4,
     enclosed: true,
     color: '#d8e8e0',
   },
@@ -93,6 +103,7 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'The center of town governance, with a bell tower visible from anywhere. Mayor Park holds meetings here every morning.',
     zoneWeights: { civic: 5, commercial: 2, residential: 1 },
+    centrality: 0.5,
     enclosed: true,
     color: '#7a6a4a',
   },
@@ -112,6 +123,7 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'The heart of Little Life, where everyone meets under the old oak tree. A fountain sits in the center.',
     zoneWeights: { civic: 4, commercial: 3, mainStreet: 3 },
+    centrality: 1.0,
     enclosed: false,
     color: '#8a7a5a',
   },
@@ -128,6 +140,7 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: "The town's main source of food, with fields stretching to the river. Elena and James work the land from dawn to dusk.",
     zoneWeights: { residential: 4, civic: 3, commercial: 0 },
+    centrality: 0.0,
     enclosed: false,
     color: '#6b7c3a',
   },
@@ -147,6 +160,16 @@ const CORE: BuildingTemplate[] = [
     furniture: [],
     description: 'A peaceful park by the river with old willow trees and a stone bridge.',
     zoneWeights: { civic: 4, residential: 3, commercial: 1 },
+    // Was 1.0, which is not merely "very central": `layout` derives the slot
+    // bucket as `1 + 8 * (1 - centrality)`, so 1.0 means a 1-tile bucket, i.e.
+    // strictly nearest-the-centre-first with nothing left to shuffle. Combined
+    // with the park's zone score being a near-tie it won every seed, the park
+    // was placed on the *same tile in every world generated* — 1 distinct origin
+    // across 150 seeds. 0.7 gives a 3.4-tile bucket and 17 origins over the same
+    // seeds while keeping the same three candidate zones, so the park is still
+    // central, just not a fixed landmark. `town_square` keeps 1.0 on purpose: it
+    // is the centre by definition and is supposed to be in the same place.
+    centrality: 0.7,
     enclosed: false,
     color: '#4a6b3a',
   },
@@ -170,6 +193,7 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A warm bakery that fills the street with the smell of fresh bread every morning. Priya is here before dawn.',
     zoneWeights: { commercial: 4, mainStreet: 5, residential: 2 },
+    centrality: 0.5,
     enclosed: true,
     color: '#6B5B4A',
   },
@@ -186,6 +210,7 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A chaotic but functional workshop filled with tools, half-finished repairs, and sawdust. Carlos fixes everything here.',
     zoneWeights: { commercial: 4, residential: 3, civic: 1 },
+    centrality: 0.2,
     enclosed: true,
     color: '#4a4a42',
   },
@@ -202,6 +227,7 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A small stone jail behind the tavern. Rarely used, but the cells are always ready. The constable has the key.',
     zoneWeights: { civic: 4, commercial: 2, residential: 0 },
+    centrality: 0.0,
     enclosed: true,
     color: '#6A6A6A',
   },
@@ -220,6 +246,7 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: "A dusty shop packed with odds and ends. You never know what you'll find — or who sold it.",
     zoneWeights: { commercial: 5, mainStreet: 3, civic: 0 },
+    centrality: 0.2,
     enclosed: true,
     color: '#5a4a3a',
   },
@@ -239,6 +266,7 @@ const OPTIONAL: BuildingTemplate[] = [
     furniture: [],
     description: 'A dimly lit bar at the edge of town. No frills, no judgment — just cheap drinks and loud music.',
     zoneWeights: { commercial: 5, mainStreet: 2, residential: 1 },
+    centrality: 0.0,
     enclosed: true,
     color: '#6a3a2a',
   },
@@ -257,6 +285,30 @@ export const ENCLOSED_BUILDING_TYPES: ReadonlySet<string> = new Set([
 export const OPEN_AREA_TYPES: ReadonlySet<string> = new Set(
   [...CORE, ...OPTIONAL].filter((t) => !t.enclosed).map((t) => t.type),
 );
+
+/**
+ * Locations the layout stage *derives* from geometry rather than placing from a
+ * template. They have no `BuildingTemplate`, so they are in neither
+ * ENCLOSED_BUILDING_TYPES nor OPEN_AREA_TYPES.
+ */
+export const DERIVED_LOCATION_TYPES: ReadonlySet<string> = new Set([
+  'mainstreet',
+  'alley',
+  'farmyard',
+  'market_square',
+]);
+
+/**
+ * Everything that is *not* a building with walls. Anything testing "is this
+ * indoors?" must use this, not `!OPEN_AREA_TYPES.has(...)` — the derived types
+ * above are open ground but absent from OPEN_AREA_TYPES, so the negated test
+ * classified Main Street as a closed building and made the renderer paint an
+ * opaque roofed rect over 30% of the town's roads.
+ */
+export const OUTDOOR_TYPES: ReadonlySet<string> = new Set([
+  ...OPEN_AREA_TYPES,
+  ...DERIVED_LOCATION_TYPES,
+]);
 
 /** Type → hex color map for preview/rendering. */
 export const BUILDING_COLORS: Readonly<Record<string, string>> = Object.fromEntries(
@@ -300,7 +352,11 @@ export function templateToLocationSeed(
     entry_point: { x: pxX + pxW / 2, y: pxY + pxH },
     capacity: template.capacity,
     current_occupants: [],
-    operating_hours: template.operatingHours,
+    // Copied, not aliased. `services` and `furniture` are already copied; handing
+    // out `template.operatingHours` by reference shared one module-level object
+    // across every world ever generated in the process, so a single mutation
+    // downstream would have rewritten the template itself.
+    operating_hours: template.operatingHours ? { ...template.operatingHours } : null,
     services: template.services.map((s) => ({ ...s })),
     description: template.description,
     owner: null,

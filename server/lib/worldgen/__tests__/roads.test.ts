@@ -1,33 +1,70 @@
 import { describe, it, expect } from 'vitest';
 import { roadsStage, computeRoadPositions, deriveZones } from '../stages/roads';
 import { forkRng } from '../rng';
+import { BORDER_BUFFER, MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT } from '../config';
 import type { WorldContext } from '../types';
 
 function ctxWith(width: number, height: number): WorldContext {
   return {
     dimensions: { width, height },
     terrainTiles: [], roads: null,
-    publicBuildings: null, homes: null, interiors: null, names: null,
+    publicBuildings: null, homes: null, interiors: null, names: null, warnings: null,
   };
 }
 
 const CFG = { seed: 'test', sizeTier: 'medium' as const, overrides: {} };
 
+/** Every map size the pipeline can legally produce, plus the two extremes. */
+const SIZES: Array<[number, number]> = [
+  [MIN_WIDTH, MIN_HEIGHT], [57, 44], [59, 45], [62, 48], [70, 55], [MAX_WIDTH, MAX_HEIGHT],
+];
+
 describe('road positions', () => {
-  it('computes proportional positions for 60×45', () => {
-    const r = computeRoadPositions(60, 45);
-    expect(r.mainStreetY).toBe(Math.floor(45 * 0.33));
-    expect(r.crossPathY).toBe(Math.floor(45 * 0.70));
-    expect(r.vertWestX).toBe(Math.floor(60 * 0.27));
-    expect(r.vertEastX).toBe(Math.floor(60 * 0.60));
+  // These used to assert `mainStreetY === floor(h * 0.33)` and so on for all
+  // four roads, which is a restatement of the implementation: it can only fail
+  // when someone changes the constants, and it fails then whether or not the
+  // change was an improvement. It duly went red on a change that halved zone
+  // imbalance. Assert the properties the fractions were chosen for instead.
+
+  it('orders the roads and leaves a buildable band between them', () => {
+    for (const [w, h] of SIZES) {
+      const r = computeRoadPositions(w, h);
+      // Each road is 2 tiles wide and wants ROAD_BUFFER either side, so
+      // consecutive roads must be at least 4 apart to leave anything between.
+      expect(r.mainStreetY, `${w}×${h} mainStreetY`).toBeGreaterThanOrEqual(BORDER_BUFFER + 2);
+      expect(r.crossPathY - r.mainStreetY, `${w}×${h} row gap`).toBeGreaterThanOrEqual(4);
+      expect(h - 1 - BORDER_BUFFER - r.crossPathY, `${w}×${h} south band`).toBeGreaterThanOrEqual(4);
+      expect(r.vertWestX, `${w}×${h} vertWestX`).toBeGreaterThanOrEqual(BORDER_BUFFER + 2);
+      expect(r.vertEastX - r.vertWestX, `${w}×${h} col gap`).toBeGreaterThanOrEqual(4);
+      expect(w - 1 - BORDER_BUFFER - r.vertEastX, `${w}×${h} east band`).toBeGreaterThanOrEqual(4);
+    }
   });
 
-  it('computes proportional positions for 80×60', () => {
-    const r = computeRoadPositions(80, 60);
-    expect(r.mainStreetY).toBe(Math.floor(60 * 0.33));
-    expect(r.crossPathY).toBe(Math.floor(60 * 0.70));
-    expect(r.vertWestX).toBe(Math.floor(80 * 0.27));
-    expect(r.vertEastX).toBe(Math.floor(80 * 0.60));
+  it('produces nine near-equal zones at every legal map size', () => {
+    // This is the actual design goal of the fractions. Because the roads, their
+    // buffers and the border frame come off the columns unequally, evenly spaced
+    // fractions do *not* give evenly sized zones — the previous 0.27/0.60/0.70
+    // set put the largest zone at 2.0-2.3× the smallest at every size, which
+    // pushed the three biggest templates into the three smallest zones.
+    for (const [w, h] of SIZES) {
+      const zones = deriveZones(computeRoadPositions(w, h), w, h);
+      const areas = zones.map(
+        (z) => (z.bounds.x2 - z.bounds.x1 + 1) * (z.bounds.y2 - z.bounds.y1 + 1),
+      );
+      const ratio = Math.max(...areas) / Math.min(...areas);
+      expect(ratio, `${w}×${h} max:min zone area`).toBeLessThan(1.3);
+    }
+  });
+
+  it('keeps the largest template footprint inside every zone', () => {
+    // farm is 10×7 and town_square 9×8, so no zone may be under 10 wide or
+    // 8 tall or one of them has nowhere legal to go.
+    for (const [w, h] of SIZES) {
+      for (const z of deriveZones(computeRoadPositions(w, h), w, h)) {
+        expect(z.bounds.x2 - z.bounds.x1 + 1, `${w}×${h} ${z.id} width`).toBeGreaterThanOrEqual(10);
+        expect(z.bounds.y2 - z.bounds.y1 + 1, `${w}×${h} ${z.id} height`).toBeGreaterThanOrEqual(8);
+      }
+    }
   });
 });
 

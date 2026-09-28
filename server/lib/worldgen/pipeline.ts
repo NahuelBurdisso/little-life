@@ -18,16 +18,21 @@ import { namesStage } from './stages/names';
 import { generateCollisionGridForLocations } from './collisionGrid';
 import type { LocationSeed } from './types';
 
-const MAX_EXPAND_ATTEMPTS = 3;
+/** How many times the map may be grown after the base size fails. Renamed from
+ *  MAX_EXPAND_ATTEMPTS, which read as a run count and was used as one. */
+const MAX_EXPANSIONS = 3;
 const EXPAND_FACTOR = 1.2;
 
 /** Ordered pipeline — source of truth for stage order. */
 const PIPELINE: Array<Stage<any>> = [
   dimensionsStage,
-  terrainStage,
   roadsStage,
   layoutStage,
   homesStage,
+  // Terrain runs last of the spatial stages so it can skip roads and building
+  // footprints. It used to run second, which put ~39% of the decoration on top
+  // of roads or inside buildings.
+  terrainStage,
   interiorsStage,
   namesStage,
 ];
@@ -40,12 +45,23 @@ const PIPELINE: Array<Stage<any>> = [
     dimensions: ['dimensions'],
     terrain: ['terrainTiles'],
     roads: ['roads'],
-    layout: ['publicBuildings'],
+    layout: ['publicBuildings', 'warnings'],
     homes: ['homes'],
     interiors: ['interiors'],
     names: ['names'],
   };
   for (const stage of PIPELINE) {
+    // Every stage must be registered. `STAGE_OUTPUTS[stage.name] ?? []` used to
+    // let an unregistered stage validate clean and contribute nothing, so its
+    // outputs were invisible here — a downstream `dependsOn` on one of them then
+    // failed at boot with a message blaming the *consumer*, and if nothing
+    // happened to depend on it the omission never surfaced at all.
+    const outputs = STAGE_OUTPUTS[stage.name];
+    if (!outputs) {
+      throw new Error(
+        `[worldgen] stage '${stage.name}' has no STAGE_OUTPUTS entry — add one listing the WorldContext fields it populates`,
+      );
+    }
     for (const dep of stage.dependsOn) {
       if (!populated.has(dep)) {
         throw new Error(
@@ -53,7 +69,7 @@ const PIPELINE: Array<Stage<any>> = [
         );
       }
     }
-    for (const out of STAGE_OUTPUTS[stage.name] ?? []) populated.add(out);
+    for (const out of outputs) populated.add(out);
   }
 })();
 
@@ -61,6 +77,7 @@ function emptyCtx(): WorldContext {
   return {
     dimensions: null, terrainTiles: null, roads: null,
     publicBuildings: null, homes: null, interiors: null, names: null,
+    warnings: null,
   };
 }
 
@@ -129,6 +146,7 @@ function runStages(
     collisionGrid,
     roads: ctx.roads?.tiles ?? [],
     terrainTiles: ctx.terrainTiles ?? [],
+    warnings: ctx.warnings ?? [],
   };
 }
 
@@ -139,10 +157,33 @@ export function generateWorld(
 ): GenResult {
   const seed = cfg.seed ?? randomBase62(8);
   let expandPin: { width: number; height: number } | null = null;
+  // Both give-up paths used to throw a bare 'dimensions cap reached', discarding
+  // the FitError that actually explains what did not fit. A 20×20 request read as
+  // "cap reached" even though MAX is 90×70.
+  let lastFit: FitError | null = null;
+  // The size actually fed to `runStages`, not the one pinned on the way out. The
+  // give-up message used to name `expandPin`, which on the final iteration is a
+  // size that was computed, pinned, and then never run — so a base-56×43 failure
+  // reported "cannot fit at 90×70" while the largest map actually attempted was
+  // 82×63.
+  let lastRun: { width: number; height: number } | null = null;
+  const giveUp = (dims: { width: number; height: number }): never => {
+    throw new Error(
+      `worldgen: cannot fit content at ${dims.width}×${dims.height} ` +
+      `(max ${MAX_WIDTH}×${MAX_HEIGHT})` +
+      (lastFit ? `: ${lastFit.message}` : ''),
+    );
+  };
 
-  for (let attempt = 0; attempt < MAX_EXPAND_ATTEMPTS; attempt++) {
+  // `<=` because the bound counts *expansions*, not runs: attempt 0 is the base
+  // size, so `<` only ever ran 3 sizes and stopped one rung short of the cap.
+  // From a 56×43 base that left 82×63 as the biggest map ever tried — 69 home
+  // spots against the 91 that 90×70 fits, forfeiting a third of the configured
+  // capacity on worlds that would have generated fine.
+  for (let attempt = 0; attempt <= MAX_EXPANSIONS; attempt++) {
     try {
       const started = Date.now();
+      lastRun = expandPin ?? peekBaseDimensions(cfg, agentCount);
       const result = runStages({ ...cfg, seed }, agentCount, opts, expandPin);
       console.log(
         `[worldgen] done seed=${seed} dims=${result.dimensions.width}×${result.dimensions.height} ` +
@@ -152,11 +193,12 @@ export function generateWorld(
     } catch (e) {
       if (!(e instanceof FitError)) throw e;
       if (cfg.sizeTier === 'custom') throw e;
+      lastFit = e;
 
-      const currentDims = expandPin ?? peekBaseDimensions(cfg, agentCount);
+      const currentDims = lastRun!;
       const grown = expandDimensions(currentDims, EXPAND_FACTOR);
       if (grown.width === currentDims.width && grown.height === currentDims.height) {
-        throw new Error('worldgen: dimensions cap reached, cannot fit content');
+        giveUp(currentDims);
       }
       expandPin = grown;
       console.warn(
@@ -164,5 +206,5 @@ export function generateWorld(
       );
     }
   }
-  throw new Error('worldgen: dimensions cap reached, cannot fit content');
+  return giveUp(lastRun!);
 }

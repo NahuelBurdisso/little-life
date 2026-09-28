@@ -63,10 +63,13 @@ const MOOD_LOW_AGENT_RATIO = 0.4;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function shuffle<T>(arr: T[]): T[] {
+/** Uniform float in [0,1). Injected so a world can regenerate its own scenario. */
+export type RandomFn = () => number;
+
+function shuffle<T>(arr: T[], rand: RandomFn): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
@@ -94,10 +97,16 @@ function checkPersonalityConstraint(
 /**
  * Pure function — no DB access, no side effects.
  * Takes agent data and slider values, returns a GenerationResult.
+ *
+ * `rand` defaults to `Math.random`, but callers that need the same town twice —
+ * the wizard preview and the `setup.initialize` that follows it, or a `restart`
+ * of a saved world — must pass a seeded source or the preview describes a
+ * scenario the player never gets.
  */
 export function generateFromSliders(
   sliders: SliderConfig,
   agents: GeneratorAgent[],
+  rand: RandomFn = Math.random,
 ): GenerationResult {
   const { drama, romance, crime, trust } = sliders;
 
@@ -111,7 +120,7 @@ export function generateFromSliders(
     // at higher drama include sensitivity=2 and 3.
     const maxSensitivity = drama <= SENSITIVITY_BREAKPOINTS.low ? 1 : drama <= SENSITIVITY_BREAKPOINTS.medium ? 2 : 3;
     const eligiblePool = SECRETS_POOL.filter(t => t.sensitivity <= maxSensitivity);
-    const shuffledPool = shuffle(eligiblePool);
+    const shuffledPool = shuffle(eligiblePool, rand);
 
     for (const template of shuffledPool) {
       if (secrets.length >= targetSecrets) break;
@@ -123,7 +132,7 @@ export function generateFromSliders(
         .map((_, i) => i)
         .filter(i => !usedInThis.has(i));
       if (validSubjects.length === 0) continue;
-      const subjectIdx = validSubjects[Math.floor(Math.random() * validSubjects.length)];
+      const subjectIdx = validSubjects[Math.floor(rand() * validSubjects.length)];
       usedInThis.add(subjectIdx);
 
       // Pick target if template uses {target}
@@ -133,7 +142,7 @@ export function generateFromSliders(
           .map((_, i) => i)
           .filter(i => !usedInThis.has(i));
         if (validTargets.length === 0) continue;
-        targetIdx = validTargets[Math.floor(Math.random() * validTargets.length)];
+        targetIdx = validTargets[Math.floor(rand() * validTargets.length)];
         usedInThis.add(targetIdx);
       }
 
@@ -159,7 +168,7 @@ export function generateFromSliders(
   // ── 2. Romance threads ───────────────────────────────────────────────────────
   const targetRomance = Math.round(romance * ROMANCE_THREAD_MULTIPLIER);
   const romanceThreads: RomanceThread[] = [];
-  const shuffledRomance = shuffle(ROMANCE_POOL);
+  const shuffledRomance = shuffle(ROMANCE_POOL, rand);
   const usedRomanceAgents = new Set<number>();
 
   for (const template of shuffledRomance) {
@@ -171,7 +180,7 @@ export function generateFromSliders(
 
     if (available.length < template.agent_count) continue;
 
-    const candidates = shuffle(available);
+    const candidates = shuffle(available, rand);
     const selected: number[] = [];
 
     for (const { agent, index } of candidates) {
@@ -226,7 +235,7 @@ export function generateFromSliders(
         // 'friend' — pick a random agent not in the thread
         const friends = agents.map((_, i) => i).filter(i => !selected.includes(i));
         return friends.length > 0
-          ? friends[Math.floor(Math.random() * friends.length)]
+          ? friends[Math.floor(rand() * friends.length)]
           : selected[0];
       });
 
@@ -255,16 +264,16 @@ export function generateFromSliders(
     const { index } = baseMoney[i];
     if (crime <= 3) {
       // Flatten toward 60-80 — low inequality
-      economyAdjustments[index] = 60 + Math.round(Math.random() * 20);
+      economyAdjustments[index] = 60 + Math.round(rand() * 20);
     } else if (crime >= 7) {
       // Amplify gaps — strong inequality
       const rank = i / baseMoney.length;
       if (rank < ECONOMY_PERCENTILES.rich) {
-        economyAdjustments[index] = 100 + Math.round(Math.random() * 50);
+        economyAdjustments[index] = 100 + Math.round(rand() * 50);
       } else if (rank > ECONOMY_PERCENTILES.poor) {
-        economyAdjustments[index] = 10 + Math.round(Math.random() * 15);
+        economyAdjustments[index] = 10 + Math.round(rand() * 15);
       } else {
-        economyAdjustments[index] = 40 + Math.round(Math.random() * 30);
+        economyAdjustments[index] = 40 + Math.round(rand() * 30);
       }
     } else {
       // Moderate scaling
@@ -281,7 +290,7 @@ export function generateFromSliders(
 
   if (trust <= 3) {
     const numRivals = Math.round((4 - trust) * RIVAL_PAIR_MULTIPLIER);
-    const agentIndices = shuffle(agents.map((_, i) => i));
+    const agentIndices = shuffle(agents.map((_, i) => i), rand);
     for (let i = 0; i < numRivals * 2 && i + 1 < agentIndices.length; i += 2) {
       rivalPairs.push([agentIndices[i], agentIndices[i + 1]]);
     }
@@ -290,19 +299,19 @@ export function generateFromSliders(
   // ── 5. Mood adjustments ───────────────────────────────────────────────────────
   const moodAdjustments: Record<number, { mood: number; stress: number }> = {};
   const numLowMood = Math.round(drama * MOOD_LOW_AGENT_RATIO);
-  const moodTargets = new Set(shuffle(agents.map((_, i) => i)).slice(0, numLowMood));
+  const moodTargets = new Set(shuffle(agents.map((_, i) => i), rand).slice(0, numLowMood));
 
   for (let i = 0; i < agents.length; i++) {
     if (moodTargets.has(i)) {
       moodAdjustments[i] = {
-        mood: 30 + Math.round(Math.random() * 15),
-        stress: 40 + Math.round(Math.random() * 20),
+        mood: 30 + Math.round(rand() * 15),
+        stress: 40 + Math.round(rand() * 20),
       };
     } else {
       const baseMoodVal = 55 + Math.round((10 - drama) * 2);
       moodAdjustments[i] = {
-        mood: Math.min(80, baseMoodVal + Math.round(Math.random() * 10)),
-        stress: 10 + Math.round(Math.random() * 15),
+        mood: Math.min(80, baseMoodVal + Math.round(rand() * 10)),
+        stress: 10 + Math.round(rand() * 15),
       };
     }
   }

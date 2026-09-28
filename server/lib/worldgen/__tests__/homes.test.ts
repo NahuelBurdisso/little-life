@@ -1,22 +1,35 @@
 import { describe, it, expect } from 'vitest';
 import { homesStage } from '../stages/homes';
-import { roadsStage } from '../stages/roads';
+import { roadsStage, buildRoadDistance } from '../stages/roads';
 import { forkRng } from '../rng';
+import { BORDER_BUFFER } from '../config';
 import { FitError } from '../types';
 import type { WorldContext } from '../types';
 import type { LocationSeed } from '../types';
 
+const CFG = { seed: 'test', sizeTier: 'medium' as const, overrides: {} };
+
+/**
+ * Fixture ctx with roads built by the real `roadsStage`.
+ *
+ * This used to pass `roads: null`, which `homes` accepted via
+ * `ctx.roads?.tiles ?? []`. Every default-fixture test therefore exercised a
+ * road-free, zone-free world, and the residential-affinity and road-frontage
+ * weighting the stage is built around had no covering assertion at all — only
+ * the one road-aware test below, which checks avoidance rather than preference.
+ * `homes` now throws on a missing `roads`, so the fixture has to be real.
+ */
 function ctxWith(width: number, height: number, publicBuildings: LocationSeed[] = []): WorldContext {
-  return {
+  const ctx: WorldContext = {
     dimensions: { width, height },
     terrainTiles: [],
     roads: null,
     publicBuildings,
-    homes: null, interiors: null, names: null,
+    homes: null, interiors: null, names: null, warnings: null,
   };
+  ctx.roads = roadsStage.run(ctx, forkRng('test', 'roads'), CFG, 10, {}).roads!;
+  return ctx;
 }
-
-const CFG = { seed: 'test', sizeTier: 'medium' as const, overrides: {} };
 
 describe('homes stage', () => {
   it('is deterministic: same seed + ctx → same positions', () => {
@@ -128,7 +141,12 @@ describe('homes stage', () => {
   it('override path: pinned positions returned verbatim when valid', () => {
     const ctx = ctxWith(60, 45);
     const rng = forkRng('test', 'homes');
-    const pinned = [{ x: 32, y: 32 }, { x: 32, y: 160 }];
+    // Tiles (2,2) and (2,7) — tile (1,1) is inside the 2-tile border reserve,
+    // and the two must be HOME_TILES + HOME_SPACING = 5 tiles apart, the same
+    // Chebyshev rule the greedy unpinned selector enforces. The old fixture used
+    // (2,6), 4 apart, which only passed because pins were never checked against
+    // each other.
+    const pinned = [{ x: 64, y: 64 }, { x: 64, y: 224 }];
     const cfg = { ...CFG, overrides: { homePositions: pinned } };
     const homes = homesStage.run(ctx, rng, cfg, 4, {}).homes!;
     expect(homes).toHaveLength(2);
@@ -136,34 +154,45 @@ describe('homes stage', () => {
     expect(homes[0].position.y).toBe(pinned[0].y);
   });
 
-  it('override path: mismatched count throws FitError', () => {
+  it('override path: mismatched count throws a non-retryable error', () => {
     const ctx = ctxWith(60, 45);
     const rng = forkRng('test', 'homes');
     const cfg = { ...CFG, overrides: { homePositions: [{ x: 32, y: 32 }] } };
-    expect(() => homesStage.run(ctx, rng, cfg, 10, {}).homes).toThrowError(FitError);
+    // Deliberately NOT a FitError: the pipeline retries those on a bigger map, so
+    // this config mistake was retried three times and surfaced as
+    // 'dimensions cap reached' with the real message thrown away.
+    expect(() => homesStage.run(ctx, rng, cfg, 10, {}).homes)
+      .toThrowError(/override length 1 does not match homeCount 5/);
+    expect(() => homesStage.run(ctx, rng, cfg, 10, {}).homes).not.toThrowError(FitError);
   });
 
-  it('home footprint must stay within [1, width-1] × [1, height-1] border', () => {
+  it('override path: overlapping pins are rejected', () => {
+    const ctx = ctxWith(60, 45);
+    const rng = forkRng('test', 'homes');
+    const cfg = { ...CFG, overrides: { homePositions: [{ x: 64, y: 64 }, { x: 64, y: 64 }] } };
+    expect(() => homesStage.run(ctx, rng, cfg, 4, {}).homes)
+      .toThrowError(/pinned position at \(64, 64\) does not fit/);
+  });
+
+  it('home footprint keeps BORDER_BUFFER tiles clear of the map edge', () => {
     const ctx = ctxWith(60, 45);
     const rng = forkRng('test', 'homes');
     const homes = homesStage.run(ctx, rng, CFG, 20, {}).homes!;
     for (const h of homes) {
       const tx = h.position.x / 32;
       const ty = h.position.y / 32;
-      expect(tx).toBeGreaterThanOrEqual(1);
-      expect(ty).toBeGreaterThanOrEqual(1);
-      expect(tx + 3).toBeLessThanOrEqual(60 - 1);
-      expect(ty + 3).toBeLessThanOrEqual(45 - 1);
+      expect(tx).toBeGreaterThanOrEqual(BORDER_BUFFER);
+      expect(ty).toBeGreaterThanOrEqual(BORDER_BUFFER);
+      expect(tx + 3).toBeLessThanOrEqual(60 - BORDER_BUFFER);
+      expect(ty + 3).toBeLessThanOrEqual(45 - BORDER_BUFFER);
     }
   });
 
   it('homes do not overlap road tiles', () => {
-    const baseCtx = ctxWith(60, 45);
-    const roadResult = roadsStage.run(baseCtx, forkRng('test', 'roads'), CFG, 10, {});
-    const ctx: WorldContext = { ...baseCtx, roads: roadResult.roads, publicBuildings: [] };
+    const ctx = ctxWith(60, 45);
     const rng = forkRng('test', 'homes');
     const homes = homesStage.run(ctx, rng, CFG, 10, {}).homes!;
-    const roadSet = new Set(roadResult.roads!.tiles.map((t) => `${t.x},${t.y}`));
+    const roadSet = new Set(ctx.roads!.tiles.map((t) => `${t.x},${t.y}`));
     for (const h of homes) {
       const tx = h.position.x / 32;
       const ty = h.position.y / 32;
@@ -173,5 +202,70 @@ describe('homes stage', () => {
         }
       }
     }
+  });
+
+  it('throws rather than silently degrading when the roads dependency is missing', () => {
+    // `dependsOn` lists 'roads', but the stage read it through `?? []` and would
+    // happily build a road-free, uniformly-weighted world instead. The other two
+    // dependencies have always thrown; this one now does too.
+    const ctx = ctxWith(60, 45);
+    ctx.roads = null;
+    expect(() => homesStage.run(ctx, forkRng('test', 'homes'), CFG, 10, {}))
+      .toThrowError(/roads not populated/);
+  });
+
+  // ── Candidate weighting ───────────────────────────────────────────────────
+  // Both terms of the weight in `homes.ts` are rates, so they need a sample:
+  // the project rule is >=60 seeds for any rate assertion, and these are
+  // aggregated over 60 forked RNGs against one fixed 60×45 road layout.
+  //
+  // Baselines are the same statistics taken uniformly over the *whole* legal
+  // candidate pool (border, roads and road buffer already excluded), i.e. what
+  // the flat lottery this weighting replaced would produce:
+  //   mean residential affinity  2.667
+  //   front doors >6 tiles from a road  25.2%
+  // Measured for the weighted selector across nine disjoint 60-seed families:
+  //   mean residential affinity  3.107 - 3.310
+  //   front doors >6 tiles out   7.5% - 11.2%
+  // The `weighting-*` family the assertions below actually sample sits at 3.170
+  // and 9.67%, i.e. below the middle of both spreads. The stated range used to
+  // be 3.22-3.29 / 8.5-9.3%, which excluded the very family being measured and
+  // made the affinity bar look further from the data than it is: the worst
+  // family clears `> 3.0` by 0.107, and `< 0.15` by 0.038.
+
+  const weightingSample = () => {
+    const ctx = ctxWith(60, 45);
+    const zones = ctx.roads!.zones;
+    const roadDist = buildRoadDistance(60, 45, ctx.roads!.tiles);
+    const residentialAt = (tx: number, ty: number) =>
+      zones.find((z) => tx >= z.bounds.x1 && tx <= z.bounds.x2 && ty >= z.bounds.y1 && ty <= z.bounds.y2)
+        ?.affinity.residential ?? 0;
+
+    let n = 0, farDoors = 0, residentialSum = 0;
+    for (let i = 0; i < 60; i++) {
+      const homes = homesStage.run(ctxWith(60, 45), forkRng(`weighting-${i}`, 'homes'), CFG, 20, {}).homes!;
+      for (const h of homes) {
+        const tx = h.position.x / 32, ty = h.position.y / 32;
+        n++;
+        // Door tile is south-centre and sits outside the footprint.
+        if (roadDist[(ty + 3) * 60 + (tx + 1)] > 6) farDoors++;
+        // Centre tile, so a home straddling a zone edge is attributed to the
+        // zone it mostly sits in — same rule the stage itself uses.
+        residentialSum += residentialAt(tx + 1, ty + 1);
+      }
+    }
+    return { n, farShare: farDoors / n, meanResidential: residentialSum / n };
+  };
+
+  it('prefers residentially-zoned lots over the flat free-space lottery', () => {
+    const { meanResidential } = weightingSample();
+    expect(meanResidential, 'mean residential affinity of chosen lots')
+      .toBeGreaterThan(3.0); // uniform baseline is 2.667
+  });
+
+  it('puts front doors on the street rather than mid-block', () => {
+    const { farShare } = weightingSample();
+    expect(farShare, 'share of front doors more than 6 tiles from a road')
+      .toBeLessThan(0.15); // uniform baseline is 0.252
   });
 });
