@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-28 — `tsc` 0 errors, vitest 43 files / 503 tests passing.
+**Last verified:** 2026-09-28 — `tsc` 0 errors, vitest 46 files / 518 tests passing.
 Branch `feat/living-agents-phase1`, working tree clean.
 
 ## Where the project is
@@ -39,8 +39,6 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 - **B3 [M]** `truncated` flag collected (`conversations.ts:~203`) but never passed on (`:~461`).
 - **B6 [M]** Plan retry storm when LLM down: `PlanGenerator.ts:235` throws uncaught →
   no plan cached → decisions re-queue every pass (`decisions.ts:~1137`); `PlanLLMQueue` doesn't dedupe.
-- **B7 [M]** Unbounded growth: decisions loads *every* ended conversation each tick
-  (`decisions.ts:~1077`) and filters per pair; conversations table never pruned.
 - **B8 [M]** Stale per-tick state cache: built after `states` (`tick.ts:~215`), not
   invalidated when later phases insert states.
 - **B9 [M]** In-memory sim state lost on restart (hobby skills, favors, tension, momentum);
@@ -49,9 +47,8 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
   same-pair cooldown uses wall-clock (`decisions.ts:~1534`).
 - **B12 [L]** `EmbeddingBatcher` bypasses the LLM semaphore (`EmbeddingBatcher.ts:158,187`).
 - **B13 [L]** Public-knowledge spread runs twice per tick (`states.ts:241` + `gossipEngine.ts:99-114`).
-- **B14 [M]** Comfort visits are fake: `lonelinessEngine.triggerComfortVisit` logs "X decided to
-  visit" to the feed but nothing moves X (the event it emitted had no listener).
-  Either route the visitor via decisions/planning or stop logging it.
+- **B15 [L]** `needs.ts` sums event effects across active events, so two `energy_drain`
+  multipliers (1.5 + 1.3) compound oddly; economy multiplies instead. Pick one rule per key.
 
 ### Client
 - **C2 [M]** TopBar restart (`TopBar.tsx:~26`) doesn't `utils.invalidate()` → old-world
@@ -60,8 +57,6 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
   `null` into `undefined` → `isLoading` stays true.
 - **C4 [M]** Weather change doesn't update ambient light until next day phase
   (`LightingSystem.ts:267-290`).
-- **C5 [M]** Three diverging `EVENT_DEFS` (`routers/world.ts:37`, `routers/nudge.ts:23`,
-  `engine/systems/events.ts`); `scandal`/`blessing` effects read by nothing; `force_indoors` read nowhere.
 - **C6 [L]** Agent lanterns use server position, not interpolated sprite position, and
   render for indoor agents (`LightingSystem.ts:~429`).
 - **C7 [L]** Rain drawn twice (WeatherEffects + `weather_rain` particles); snow particles
@@ -90,10 +85,13 @@ Re-check with `npm run deadcode` (clean as of this sweep).
 
 - 2026-09-28: B1+B2 `3ccf5ad`, B4 `64032b6`, C1 `0345aed` (with regression tests; C1 verified live).
 - 2026-09-28: B5 autoplay off by default `afa02d7`; B11 memo reset on world replace `a3f3f4f`.
+- 2026-09-28: C5 single world-event catalog + `startWorldEvent` `42f4919` (also fixed 240-hour
+  funerals and 120-hour autoplay events); B7 bounded conversation reads + archive cap `1c4b751`;
+  B14 real comfort visits `31566d4` (verified end to end on a DB copy).
 
 ## Next steps (suggested order)
 
-1. Unify the three `EVENT_DEFS` and make `scandal`/`blessing`/`force_indoors` do something (C5).
-2. Bound growth (B7) — prune/limit ended conversations.
-3. Make comfort visits real or drop the feed line (B14).
-4. Small client fixes: C2 restart invalidation, C3 panel spinner, C4 weather lighting.
+1. Small client fixes: C2 restart invalidation, C3 panel spinner, C4 weather lighting.
+2. B6 plan retry storm when the LLM is down (dedupe PlanLLMQueue, cache a fallback plan).
+3. B3 pass the `truncated` flag through; B8 invalidate the per-tick state cache on insert.
+4. Worldgen stubs: `interiors` / `names` stages.
