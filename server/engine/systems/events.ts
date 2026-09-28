@@ -2,7 +2,7 @@ import { db } from '../../db';
 import { worldState, worldEvents, agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
-import { hourChanged } from '../../lib/gameClock';
+import { gameMinutes, hourChanged } from '../../lib/gameClock';
 import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
@@ -66,7 +66,8 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
     type,
     name,
     description,
-    started_at: world.time.totalTicks,
+    // CLOCK: GAME MINUTES, so expiry holds across speed changes (see eventsTick).
+    started_at: gameMinutes(world.time),
     duration: def.durationHours,
     effects: def.effects,
     location_id: opts.locationId ?? null,
@@ -98,11 +99,13 @@ export function eventsTick(): void {
   // --- 1. Expire Events ---
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
 
+  // Game minutes on both sides. The expiry used to be a tick stamp converted
+  // with the CURRENT tick_speed, so changing speed mid-event rescaled the whole
+  // event: a 3-hour storm started at 4x and switched to 1x after 10 ticks ended
+  // 35 game minutes later instead of 140.
+  const nowMinutes = gameMinutes(world.time!);
   for (const event of activeEvents) {
-    const effectiveTickSpeed = Math.max(world.tick_speed, 0.5);
-    const expirationTick =
-      event.started_at + (event.duration * 60) / effectiveTickSpeed;
-    if (world.time!.totalTicks > expirationTick) {
+    if (nowMinutes >= event.started_at + event.duration * 60) {
       db.update(worldEvents).set({ is_active: false }).where(eq(worldEvents.id, event.id)).run();
       eventsChanged = true;
     }

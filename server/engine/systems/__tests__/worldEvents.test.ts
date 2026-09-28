@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
 import { worldEvents, worldState } from '../../../db/schema';
 import { CONFIG } from '../../../lib/constants';
+import { gameMinutes } from '../../../lib/gameClock';
 import { eventsTick, startWorldEvent } from '../events';
 import { advanceClock, computeDayPhase, detectTransitions } from '../../tick';
 import {
@@ -14,9 +15,10 @@ import {
   type WorldEventType,
 } from '../../../data/worldEventCatalog';
 
+/** Ensure a world row exists; returns its clock in game minutes. */
 function ensureWorld(): number {
   const existing = db.select().from(worldState).get();
-  if (existing) return existing.time.totalTicks;
+  if (existing) return gameMinutes(existing.time);
   db.insert(worldState).values({
     time: { day: 1, hour: 9, minute: 0, totalTicks: 540, seasonDay: 1, season: 'spring' },
     day_phase: 'morning',
@@ -33,7 +35,7 @@ function ensureWorld(): number {
     map_height: 30,
     collision_grid: '',
   }).run();
-  return 540;
+  return gameMinutes({ day: 1, hour: 9, minute: 0 });
 }
 
 describe('world event catalog', () => {
@@ -113,13 +115,13 @@ describe('aggregateEventEffects', () => {
 });
 
 describe('startWorldEvent', () => {
-  let tick: number;
+  let nowMinutes: number;
   beforeEach(() => {
     db.delete(worldEvents).run();
-    tick = ensureWorld();
+    nowMinutes = ensureWorld();
   });
 
-  it('inserts the catalog definition stamped with the current tick', () => {
+  it('inserts the catalog definition stamped with the current game minute', () => {
     const result = startWorldEvent('scandal', { triggeredBy: 'player' });
 
     expect(result.ok).toBe(true);
@@ -129,7 +131,7 @@ describe('startWorldEvent', () => {
       name: WORLD_EVENTS.scandal.name,
       duration: WORLD_EVENTS.scandal.durationHours,
       effects: WORLD_EVENTS.scandal.effects,
-      started_at: tick,
+      started_at: nowMinutes,
       triggered_by: 'player',
       is_active: true,
     });
@@ -167,29 +169,42 @@ describe('startWorldEvent', () => {
   });
 });
 
+type WorldTime = typeof worldState.$inferSelect['time'];
+
+/** Put the world clock at day 1, 08:<startMinute>, running at `speed`, with no weather roll due. */
+function resetClock(startMinute: number, speed: number): WorldTime {
+  db.delete(worldEvents).run();
+  ensureWorld();
+  const world = db.select().from(worldState).get()!;
+  const time = { ...world.time, day: 1, hour: 8, minute: startMinute };
+  db.update(worldState)
+    .set({ time, tick_speed: speed, weather: 'sunny', weather_duration: 1_000_000, pending_transitions: [] })
+    .where(eq(worldState.id, world.id)).run();
+  return time;
+}
+
+/**
+ * One tick of the real clock through eventsTick, the way tick.ts does it: the
+ * new time and this tick's transitions are in world_state before the phase runs.
+ */
+function tickEvents(time: WorldTime, speed: number): WorldTime {
+  const world = db.select().from(worldState).get()!;
+  const next = advanceClock(time, speed);
+  const transitions = detectTransitions(time, computeDayPhase(time.hour), next, computeDayPhase(next.hour));
+  db.update(worldState).set({ time: next, tick_speed: speed, pending_transitions: transitions })
+    .where(eq(worldState.id, world.id)).run();
+  eventsTick();
+  return next;
+}
+
 describe('eventsTick random-event roll', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  // Drive the real clock through eventsTick the way tick.ts does: new time and
-  // this tick's transitions are in world_state before the phase runs.
-  function runHours(speed: number, startMinute: number, hours: number): number {
-    db.delete(worldEvents).run();
-    ensureWorld();
-    const world = db.select().from(worldState).get()!;
-    let time = { ...world.time, day: 1, hour: 8, minute: startMinute };
-    // No weather roll in the window, so the hourly gate is the only Math.random call.
-    db.update(worldState).set({ tick_speed: speed, weather_duration: 1_000_000 })
-      .where(eq(worldState.id, world.id)).run();
+  function rollsOver(speed: number, startMinute: number, hours: number): number {
+    let time = resetClock(startMinute, speed);
+    // With no weather roll due, the hourly gate is the only Math.random call.
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.999); // roll, but never start one
-
-    for (let i = 0; i < (hours * 60) / speed; i++) {
-      const next = advanceClock(time, speed);
-      const transitions = detectTransitions(time, computeDayPhase(time.hour), next, computeDayPhase(next.hour));
-      db.update(worldState).set({ time: next, pending_transitions: transitions })
-        .where(eq(worldState.id, world.id)).run();
-      eventsTick();
-      time = next;
-    }
+    for (let i = 0; i < (hours * 60) / speed; i++) time = tickEvents(time, speed);
     const calls = random.mock.calls.length;
     random.mockRestore();
     return calls;
@@ -198,8 +213,28 @@ describe('eventsTick random-event roll', () => {
   for (const speed of [1, 2, 4]) {
     it(`rolls once per game hour at ${speed}x from an off-hour start`, () => {
       // The old `minute === 0` gate never rolled at 2x/4x from :15 (17, 19, ... / 19, 23, ...).
-      expect(runHours(speed, 15, 6)).toBe(6);
-      expect(runHours(speed, 0, 6)).toBe(6);
+      expect(rollsOver(speed, 15, 6)).toBe(6);
+      expect(rollsOver(speed, 0, 6)).toBe(6);
     });
   }
+});
+
+describe('world event expiry', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('lasts its catalog duration in game minutes across a speed change', () => {
+    let time = resetClock(15, 4);
+    const startedAt = gameMinutes(time);
+    expect(startWorldEvent('scandal', { triggeredBy: 'player', announce: false }).ok).toBe(true);
+    vi.spyOn(Math, 'random').mockReturnValue(0.999); // no random events on top
+
+    // 10 ticks at 4x, then the player drops to 1x. Converting a tick stamp with
+    // the current speed used to cut the rest of the event to a quarter.
+    let ticks = 0;
+    while (db.select().from(worldEvents).get()!.is_active) {
+      time = tickEvents(time, ticks < 10 ? 4 : 1);
+      if (++ticks > 10_000) throw new Error('event never expired');
+    }
+    expect(gameMinutes(time) - startedAt).toBe(WORLD_EVENTS.scandal.durationHours * 60);
+  });
 });

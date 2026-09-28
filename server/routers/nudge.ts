@@ -93,7 +93,7 @@ export const nudgeRouter = router({
       if (!world) throw new Error('World not initialized');
 
       // CLOCK: `now` is the TICK clock (`world.time.totalTicks`) — the right unit for
-      // `activityLog.timestamp`, `worldEvents.started_at`.
+      // `activityLog.timestamp`.
       const now = (world.time as any).totalTicks as number;
       // CLOCK: GAME MINUTES (day*1440 + hour*60 + minute) — the unit `needs.last_updated`
       // and `agents.action_started` are written and read in. Not interchangeable with `now`: the two only agree at
