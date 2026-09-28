@@ -79,11 +79,11 @@ describe('PlanLLMQueue dedupe', () => {
     await vi.waitFor(() => expect(job).toHaveBeenCalledTimes(2), { timeout: 2000 });
   });
 
-  it('releases the keys of jobs dropped by clearAgent and clear', () => {
+  it('releases the keys of jobs dropped by clear', () => {
     const q = new PlanLLMQueue();
     q.enqueue(1, deferredJob().run); // in flight, keeps the queue busy
     q.enqueue(1, async () => {}, 'generate'); // queued behind it
-    q.clearAgent(1);
+    q.clear();
     expect(q.isPending(1, 'generate')).toBe(false);
     expect(q.enqueue(1, async () => {}, 'generate')).toBe(true);
 

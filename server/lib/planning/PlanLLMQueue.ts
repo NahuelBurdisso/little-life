@@ -81,18 +81,6 @@ export class PlanLLMQueue {
     this.running.set(agentId, false);
   }
 
-  clearAgent(agentId: number): void {
-    const queue = this.queues.get(agentId);
-    if (!queue) return;
-    // Dropped jobs must give their keys back, or the agent could never queue
-    // that kind of job again.
-    const keys = this.pending.get(agentId);
-    for (const entry of queue) {
-      if (entry.key !== undefined) keys?.delete(entry.key);
-    }
-    queue.length = 0;
-  }
-
   clear(): void {
     // Empty the arrays in place rather than dropping them: a `process` loop
     // that is mid-await still holds a reference and must see them empty.
