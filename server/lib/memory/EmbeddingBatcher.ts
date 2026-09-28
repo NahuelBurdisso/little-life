@@ -9,34 +9,27 @@ import {
   EMBEDDING_DIMENSIONS,
 } from './constants';
 import { QueryCache } from './QueryCache';
-import { acquireLLMSlot, type LLMPriority } from '../../ai/llmSemaphore';
+import { acquireEmbeddingSlot, type LLMPriority } from '../../ai/llmSemaphore';
 
 /*
- * Every request to the embedding endpoint goes through the global LLM
- * semaphore. It used to call fetch directly, so memory writes and retrieval
- * queries piled on top of the 8 chat requests the semaphore was admitting —
- * on the same Ollama — exactly during the spikes the semaphore exists for.
+ * Every request to the embedding endpoint goes through the embedding pool of
+ * ai/llmSemaphore.ts. It used to call fetch directly, so any number of memory
+ * writes and retrieval queries could hit the embedding server at once during
+ * the same spikes the chat semaphore exists to smooth. The pool is separate
+ * from the chat slots on purpose (see the header there).
  *
- * Slots are only ever held around the fetch itself (here and in ai/ollama.ts);
- * nothing awaits an embedding while holding a slot, so the non-reentrant
- * semaphore cannot deadlock on these calls. directEmbed/tryBatchEndpoint are
- * raw and acquire nothing; the public paths take exactly one slot each.
+ * Slots are only ever held around the fetch itself; nothing awaits an
+ * embedding while holding a slot, so the non-reentrant semaphore cannot
+ * deadlock on these calls. directEmbed/tryBatchEndpoint are raw and acquire
+ * nothing; the public paths take exactly one slot each.
  */
 
 /**
- * Query embeddings gate a prompt that is about to be sent: ContextBuilder
- * retrieves memories for conversations, which are themselves `critical`. At a
- * lower tier the lookup would queue behind every planning request and delay
- * the conversation it feeds (priority inversion). They are tiny, so jumping
- * the queue costs the chats behind them next to nothing.
+ * Query embeddings gate a prompt that is about to be sent (ContextBuilder
+ * feeds conversation turns), so inside the embedding pool they go ahead of
+ * write batches, which are background work.
  */
-const READ_PRIORITY: LLMPriority = 'critical';
-
-/**
- * Memory writes are background work. The semaphore ages waiters, so a busy
- * spell delays them but cannot starve them (MemoryService holds its flush
- * until they land).
- */
+const READ_PRIORITY: LLMPriority = 'normal';
 const WRITE_PRIORITY: LLMPriority = 'low';
 
 interface WriteQueueEntry {
@@ -186,7 +179,7 @@ export class EmbeddingBatcher implements EmbeddingProvider {
   }
 
   private async withSlot<T>(priority: LLMPriority, fn: () => Promise<T>): Promise<T> {
-    const release = await acquireLLMSlot(priority);
+    const release = await acquireEmbeddingSlot(priority);
     try {
       return await fn();
     } finally {

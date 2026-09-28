@@ -7,6 +7,15 @@
  *
  * Priority levels ensure conversations and planning aren't starved
  * by bulk operations like goal reviews.
+ *
+ * There are two independent pools:
+ *  - chat (`acquireLLMSlot`, 8 slots) for every chat/completion request;
+ *  - embeddings (`acquireEmbeddingSlot`, 3 slots) for every embedding request.
+ * Embeddings deliberately do not share the chat slots. A conversation turn
+ * embeds its memory query and then chats, all inside the 15 s wall-clock turn
+ * budget (conversations.ts MS_PER_LLM_TURN); queueing twice on the same pool
+ * force-ends more conversations. And EMBED_BASE_URL may point at a different
+ * server than chat, where gating on chat slots would protect nothing.
  */
 
 export type LLMPriority = 'critical' | 'normal' | 'low';
@@ -18,26 +27,92 @@ interface QueueEntry {
 }
 
 const PRIORITY_ORDER: Record<LLMPriority, number> = {
-  critical: 0,  // conversations, snap resolution, memory-query embeddings
-  normal: 1,    // planning, reflections
-  low: 2,       // goal reviews, pivots, self-descriptions, memory-write embeddings
+  critical: 0,  // conversations, snap resolution
+  normal: 1,    // planning, reflections; memory-query embeddings (embedding pool)
+  low: 2,       // goal reviews, pivots, self-descriptions; memory-write embeddings (embedding pool)
 };
 
 /**
- * A waiter climbs one priority level per this much time spent queued.
- *
- * Strict priority lets a steady stream of normal/critical requests starve the
- * low tier forever. That used to be harmless-ish (a late goal review), but
- * memory-write embeddings are low too, and MemoryService holds its flush —
- * and lets its queue overflow and drop memories — until the embedding lands.
- * Aging bounds any wait to roughly two steps plus one slot turnover; ties go
- * to the earlier arrival, so an aged waiter beats fresh traffic of its level.
+ * A counting semaphore with strict priority: a freed slot goes to the
+ * highest-priority waiter, FIFO among equals.
  */
-export const PRIORITY_AGING_MS = 30_000;
+export class PrioritySemaphore {
+  private active = 0;
+  private readonly waiting: QueueEntry[] = [];
 
-function effectivePriority(entry: QueueEntry, now: number): number {
-  const promoted = Math.floor((now - entry.enqueued) / PRIORITY_AGING_MS);
-  return Math.max(0, PRIORITY_ORDER[entry.priority] - promoted);
+  // Stats for diagnostics
+  private totalAcquired = 0;
+  private totalWaited = 0;
+  private peakActive = 0;
+  private peakQueue = 0;
+
+  constructor(private readonly maxConcurrent: number) {}
+
+  private releaseSlot(): void {
+    this.active--;
+
+    if (this.waiting.length === 0) return;
+
+    // Pick highest-priority waiter (stable sort by priority then FIFO)
+    let bestIdx = 0;
+    for (let i = 1; i < this.waiting.length; i++) {
+      if (PRIORITY_ORDER[this.waiting[i].priority] < PRIORITY_ORDER[this.waiting[bestIdx].priority]) {
+        bestIdx = i;
+      }
+    }
+
+    const next = this.waiting.splice(bestIdx, 1)[0];
+    this.active++;
+    if (this.active > this.peakActive) this.peakActive = this.active;
+    next.resolve();
+  }
+
+  /** Acquire a slot. Returns a release function; call it in a `finally`. */
+  async acquire(priority: LLMPriority = 'normal'): Promise<() => void> {
+    this.totalAcquired++;
+
+    // One-shot release: a double call (e.g. a `finally` plus an explicit release
+    // on an error path) used to decrement `active` twice and permanently
+    // over-subscribe the pool, since nothing ever raises it back.
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      this.releaseSlot();
+    };
+
+    if (this.active < this.maxConcurrent) {
+      this.active++;
+      if (this.active > this.peakActive) this.peakActive = this.active;
+      return release;
+    }
+
+    // Wait for a slot
+    this.totalWaited++;
+    await new Promise<void>((resolve) => {
+      this.waiting.push({ priority, resolve, enqueued: Date.now() });
+      if (this.waiting.length > this.peakQueue) this.peakQueue = this.waiting.length;
+    });
+
+    return release;
+  }
+
+  /** Non-blocking stats snapshot for diagnostics / activity log */
+  stats() {
+    return {
+      active: this.active,
+      waiting: this.waiting.length,
+      totalAcquired: this.totalAcquired,
+      totalWaited: this.totalWaited,
+      peakActive: this.peakActive,
+      peakQueue: this.peakQueue,
+      waitingByPriority: {
+        critical: this.waiting.filter(w => w.priority === 'critical').length,
+        normal: this.waiting.filter(w => w.priority === 'normal').length,
+        low: this.waiting.filter(w => w.priority === 'low').length,
+      },
+    };
+  }
 }
 
 // Empirically tuned for an RTX 3090 24GB: deep enough to keep Ollama's internal
@@ -49,41 +124,18 @@ function effectivePriority(entry: QueueEntry, now: number): number {
 // Ollama instead of here; this limit only bounds how many we hand it at once.
 const MAX_CONCURRENT = 8;
 
-let active = 0;
-const waiting: QueueEntry[] = [];
+/**
+ * Embedding requests are short, and a write batch carries up to 20 texts in
+ * one request. Three slots let a query embedding run alongside a write batch
+ * or two without handing the embedding server an unbounded burst.
+ */
+const EMBEDDING_MAX_CONCURRENT = 3;
 
-// Stats for diagnostics
-let totalAcquired = 0;
-let totalWaited = 0;
-let peakActive = 0;
-let peakQueue = 0;
-
-function releaseSlot(): void {
-  active--;
-
-  if (waiting.length === 0) return;
-
-  // Pick the highest effective-priority waiter; `waiting` is in arrival order
-  // and only a strictly better entry replaces the pick, so ties stay FIFO.
-  const now = Date.now();
-  let bestIdx = 0;
-  let bestPriority = effectivePriority(waiting[0], now);
-  for (let i = 1; i < waiting.length; i++) {
-    const p = effectivePriority(waiting[i], now);
-    if (p < bestPriority) {
-      bestIdx = i;
-      bestPriority = p;
-    }
-  }
-
-  const next = waiting.splice(bestIdx, 1)[0];
-  active++;
-  if (active > peakActive) peakActive = active;
-  next.resolve();
-}
+const chatSemaphore = new PrioritySemaphore(MAX_CONCURRENT);
+const embeddingSemaphore = new PrioritySemaphore(EMBEDDING_MAX_CONCURRENT);
 
 /**
- * Acquire a slot. Returns a release function.
+ * Acquire a chat slot. Returns a release function.
  * Callers MUST call release() in a finally block.
  *
  * Usage:
@@ -95,48 +147,16 @@ function releaseSlot(): void {
  *     release();
  *   }
  */
-export async function acquireLLMSlot(priority: LLMPriority = 'normal'): Promise<() => void> {
-  totalAcquired++;
-
-  // One-shot release: a double call (e.g. a `finally` plus an explicit release
-  // on an error path) used to decrement `active` twice and permanently
-  // over-subscribe the pool, since nothing ever raises it back.
-  let released = false;
-  const release = (): void => {
-    if (released) return;
-    released = true;
-    releaseSlot();
-  };
-
-  if (active < MAX_CONCURRENT) {
-    active++;
-    if (active > peakActive) peakActive = active;
-    return release;
-  }
-
-  // Wait for a slot
-  totalWaited++;
-  await new Promise<void>((resolve) => {
-    waiting.push({ priority, resolve, enqueued: Date.now() });
-    if (waiting.length > peakQueue) peakQueue = waiting.length;
-  });
-
-  return release;
+export function acquireLLMSlot(priority: LLMPriority = 'normal'): Promise<() => void> {
+  return chatSemaphore.acquire(priority);
 }
 
-/** Non-blocking stats snapshot for diagnostics / activity log */
+/** Acquire an embedding slot (separate pool, see the header). Same contract as acquireLLMSlot. */
+export function acquireEmbeddingSlot(priority: LLMPriority = 'normal'): Promise<() => void> {
+  return embeddingSemaphore.acquire(priority);
+}
+
+/** Non-blocking stats snapshot of the chat pool for diagnostics / activity log */
 export function getLLMStats() {
-  return {
-    active,
-    waiting: waiting.length,
-    totalAcquired,
-    totalWaited,
-    peakActive,
-    peakQueue,
-    waitingByPriority: {
-      critical: waiting.filter(w => w.priority === 'critical').length,
-      normal: waiting.filter(w => w.priority === 'normal').length,
-      low: waiting.filter(w => w.priority === 'low').length,
-    },
-  };
+  return chatSemaphore.stats();
 }

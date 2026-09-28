@@ -12,7 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { CONFIG } from '../lib/constants';
-import { acquireLLMSlot, type LLMPriority } from './llmSemaphore';
+import { acquireLLMSlot, acquireEmbeddingSlot, type LLMPriority } from './llmSemaphore';
 
 export interface OllamaChatRequest {
   model: string;
@@ -181,7 +181,8 @@ export async function callOllamaEmbedding(
   const url_base = baseUrl ?? CONFIG.AI.EMBED_BASE_URL;
   const url = `${url_base}/api/embeddings`;
 
-  const release = await acquireLLMSlot('low');
+  // Embedding pool, not the chat slots: see the header of llmSemaphore.ts.
+  const release = await acquireEmbeddingSlot('low');
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);

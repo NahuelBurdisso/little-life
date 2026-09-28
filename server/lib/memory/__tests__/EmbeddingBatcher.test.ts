@@ -1,15 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
- * B12: the batcher called the embedding endpoint with a bare fetch, outside the
- * global LLM semaphore. These pin down that every request now holds a slot for
- * exactly its own duration, at the intended tier, and gives it back on failure.
+ * B12: the batcher called the embedding endpoint with a bare fetch, outside any
+ * semaphore. These pin down that every request now holds a slot of the
+ * embedding pool (never a chat slot) for exactly its own duration, at the
+ * intended tier, and gives it back on failure.
  */
 
 const release = vi.fn();
+const acquireEmbeddingSlot = vi.fn(async (_priority: string) => release);
 const acquireLLMSlot = vi.fn(async (_priority: string) => release);
 
 vi.mock('../../../ai/llmSemaphore', () => ({
+  acquireEmbeddingSlot: (priority: string) => acquireEmbeddingSlot(priority),
   acquireLLMSlot: (priority: string) => acquireLLMSlot(priority),
 }));
 
@@ -23,6 +26,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   release.mockClear();
+  acquireEmbeddingSlot.mockClear();
   acquireLLMSlot.mockClear();
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
@@ -30,14 +34,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  expect(acquireLLMSlot).not.toHaveBeenCalled(); // chat slots are never touched
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe('EmbeddingBatcher and the LLM semaphore', () => {
-  it('holds a critical slot around a query embedding, not before it is granted', async () => {
+describe('EmbeddingBatcher and the embedding pool', () => {
+  it('holds a normal slot around a query embedding, not before it is granted', async () => {
     let grant!: () => void;
-    acquireLLMSlot.mockImplementationOnce(
+    acquireEmbeddingSlot.mockImplementationOnce(
       (_p: string) => new Promise((resolve) => { grant = () => resolve(release); }),
     );
     fetchMock.mockResolvedValueOnce(jsonResponse({ embedding: [1, 2, 3] }));
@@ -46,7 +51,7 @@ describe('EmbeddingBatcher and the LLM semaphore', () => {
     const pending = batcher.embedForRead('who is Rosa?');
 
     await Promise.resolve();
-    expect(acquireLLMSlot).toHaveBeenCalledWith('critical');
+    expect(acquireEmbeddingSlot).toHaveBeenCalledWith('normal');
     expect(fetchMock).not.toHaveBeenCalled(); // still queued behind the semaphore
 
     grant();
@@ -72,8 +77,24 @@ describe('EmbeddingBatcher and the LLM semaphore', () => {
     const vecs = await new EmbeddingBatcher('http://embed.test').embedForWrite(['a', 'b', 'c']);
 
     expect(vecs.map((v) => v[0])).toEqual([1, 2, 3]);
-    expect(acquireLLMSlot).toHaveBeenCalledTimes(1);
-    expect(acquireLLMSlot).toHaveBeenCalledWith('low');
+    expect(acquireEmbeddingSlot).toHaveBeenCalledTimes(1);
+    expect(acquireEmbeddingSlot).toHaveBeenCalledWith('low');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the slot when a write batch fails', async () => {
+    const batcher = new EmbeddingBatcher('http://embed.test');
+    // First batch succeeds so the batch endpoint is known to work; the second
+    // one's failure then surfaces instead of falling back.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ embeddings: [[1]] }));
+    await batcher.embedForWrite(['ok']);
+    release.mockClear();
+
+    fetchMock.mockRejectedValueOnce(new Error('socket hang up'));
+    const vecs = await batcher.embedForWrite(['a', 'b']);
+
+    expect(vecs).toHaveLength(2);
+    expect(vecs.every((v) => v.every((x) => x === 0))).toBe(true);
     expect(release).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +115,7 @@ describe('EmbeddingBatcher and the LLM semaphore', () => {
 
     expect(vecs.map((v) => v[0])).toEqual([1, 2, 3]);
     expect(maxInFlight).toBe(1);
-    expect(acquireLLMSlot).toHaveBeenCalledTimes(1);
+    expect(acquireEmbeddingSlot).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,74 +1,89 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { PrioritySemaphore } from '../llmSemaphore';
 
-/**
- * The semaphore is module-level state, so each test gets a fresh copy.
- * MAX_CONCURRENT is 8: fill it, then watch who the freed slots go to.
- */
-async function freshSemaphore() {
-  vi.resetModules();
-  return import('../llmSemaphore');
-}
-
-async function fill(acquire: (p: 'critical' | 'normal' | 'low') => Promise<() => void>) {
+async function fill(sem: PrioritySemaphore, n: number) {
   const releases: Array<() => void> = [];
-  for (let i = 0; i < 8; i++) releases.push(await acquire('normal'));
+  for (let i = 0; i < n; i++) releases.push(await sem.acquire('normal'));
   return releases;
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe('llmSemaphore priority', () => {
+describe('PrioritySemaphore', () => {
   it('serves a newer higher-priority waiter before an older low one', async () => {
-    const { acquireLLMSlot } = await freshSemaphore();
-    const held = await fill(acquireLLMSlot);
+    const sem = new PrioritySemaphore(2);
+    const held = await fill(sem, 2);
     const order: string[] = [];
 
-    void acquireLLMSlot('low').then(() => order.push('low'));
-    void acquireLLMSlot('normal').then(() => order.push('normal'));
+    void sem.acquire('low').then(() => order.push('low'));
+    void sem.acquire('normal').then(() => order.push('normal'));
 
     held[0]();
-    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(order).toEqual(['normal']);
   });
 
-  it('ages a starving low waiter past fresh normal traffic', async () => {
-    // B12: memory-write embeddings are `low`; under sustained load strict
-    // priority would hold them forever (and MemoryService's flush with them).
-    const { acquireLLMSlot, PRIORITY_AGING_MS } = await freshSemaphore();
-    const held = await fill(acquireLLMSlot);
-    const order: string[] = [];
+  it('keeps strict priority however long a low waiter has queued', async () => {
+    // A review asked for aging to be removed from the chat pool: it let goal
+    // review backlogs jump ahead of conversation turns during day-change spikes.
+    vi.useFakeTimers();
+    try {
+      const sem = new PrioritySemaphore(1);
+      const [held] = await fill(sem, 1);
+      const order: string[] = [];
 
-    void acquireLLMSlot('low').then(() => order.push('low'));
-    await vi.advanceTimersByTimeAsync(PRIORITY_AGING_MS + 1); // low is now effectively normal
-    void acquireLLMSlot('normal').then(() => order.push('fresh normal'));
+      void sem.acquire('low').then(() => order.push('low'));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      void sem.acquire('normal').then(() => order.push('normal'));
 
-    held[0]();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(order).toEqual(['low']); // tie on level, earlier arrival wins
+      held();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(['normal']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('eventually lets an aged low waiter beat fresh critical traffic', async () => {
-    const { acquireLLMSlot, PRIORITY_AGING_MS } = await freshSemaphore();
-    const held = await fill(acquireLLMSlot);
-    const order: string[] = [];
+  it('ignores a second release of the same slot', async () => {
+    const sem = new PrioritySemaphore(1);
+    const release = await sem.acquire();
+    release();
+    release();
+    expect(sem.stats().active).toBe(0);
+  });
+});
 
-    void acquireLLMSlot('low').then(() => order.push('low'));
-    await vi.advanceTimersByTimeAsync(2 * PRIORITY_AGING_MS + 1);
-    void acquireLLMSlot('critical').then(() => order.push('critical'));
+describe('chat and embedding pools', () => {
+  it('embedding slots never consume chat slots', async () => {
+    vi.resetModules();
+    const { acquireLLMSlot, acquireEmbeddingSlot, getLLMStats } = await import('../llmSemaphore');
 
-    held[0]();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(order).toEqual(['low']);
+    // Saturate the embedding pool and queue one more on it.
+    const embedHeld = [
+      await acquireEmbeddingSlot('low'),
+      await acquireEmbeddingSlot('low'),
+      await acquireEmbeddingSlot('low'),
+    ];
+    let queuedEmbed = false;
+    void acquireEmbeddingSlot('normal').then(() => { queuedEmbed = true; });
 
-    held[1]();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(order).toEqual(['low', 'critical']);
+    expect(getLLMStats().active).toBe(0);
+
+    // All 8 chat slots are still granted immediately.
+    const chat = await Promise.race([
+      Promise.all(Array.from({ length: 8 }, () => acquireLLMSlot('critical'))),
+      new Promise<'blocked'>((r) => setTimeout(() => r('blocked'), 50)),
+    ]);
+    expect(chat).not.toBe('blocked');
+    expect(getLLMStats()).toMatchObject({ active: 8, waiting: 0 });
+    expect(queuedEmbed).toBe(false);
+
+    // Freeing chat slots does not wake embedding waiters, and vice versa.
+    for (const r of chat as Array<() => void>) r();
+    await Promise.resolve();
+    expect(queuedEmbed).toBe(false);
+    embedHeld[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(queuedEmbed).toBe(true);
   });
 });
