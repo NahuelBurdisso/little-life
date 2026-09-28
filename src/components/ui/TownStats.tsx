@@ -46,7 +46,9 @@ function StatCard({ label, value, color, subtitle }: { label: string; value: str
 }
 
 export function TownStats({ isOpen, onClose }: TownStatsProps) {
-  const { data: economyStats } = trpc.economy.getTownStats.useQuery();
+  // Gated like the queries below: it is now invalidated every agents.all
+  // update, and this component stays mounted while closed.
+  const { data: economyStats } = trpc.economy.getTownStats.useQuery(undefined, { enabled: isOpen });
   const { agents } = useAgents();
   const { data: relationships } = trpc.relationships.getGraph.useQuery();
   const { data: secretNetwork } = trpc.knowledge.getSecretNetwork.useQuery(undefined, {
