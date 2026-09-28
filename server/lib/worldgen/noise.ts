@@ -94,9 +94,12 @@ export interface FbmOptions {
   octaves: number;
   /** Frequency multiplier between octaves (2 = each octave twice as fine). */
   lacunarity: number;
-  /** Amplitude multiplier between octaves (0.5 = each octave half as strong). */
+  /** Amplitude multiplier between octaves (0.5 = each octave half as strong).
+   *  Must be > 0: at 0 the later octaves vanish silently, and a negative gain
+   *  would let the weighted sum leave [0, 1). */
   gain: number;
-  /** Feature size in input units: the first octave varies over ~`scale` units. */
+  /** Feature size in input units: the first octave varies over ~`scale` units.
+   *  Must be > 0 (it is divided by). */
   scale: number;
 }
 
@@ -111,6 +114,10 @@ export interface FbmOptions {
  */
 export function fbm(noise: Noise2D, x: number, y: number, opts: FbmOptions): number {
   const { octaves, lacunarity, gain, scale } = opts;
+  // Thrown rather than clamped: a bad option is a caller bug, and fbm runs in a
+  // per-tile loop where NaN or a silently flat field would be hard to trace.
+  if (!(gain > 0)) throw new Error(`fbm: gain must be > 0 (got ${gain})`);
+  if (!(scale > 0)) throw new Error(`fbm: scale must be > 0 (got ${scale})`);
   let freq = 1 / scale;
   let amp = 1;
   let sum = 0;
@@ -165,10 +172,12 @@ export function poissonDisk(opts: PoissonDiskOptions): Array<{ x: number; y: num
   const maxTries = opts.maxTries ?? 30;
   if (width <= 0 || height <= 0 || !(radius > 0)) return [];
 
-  // Background grid with cell side = radius: any point closer than `radius`
+  // Background grid with cell side ≥ radius: any point closer than `radius`
   // to a candidate lies in the candidate's cell or one of its 8 neighbours.
-  // Cells can hold several points (integer rounding), hence lists.
-  const cell = radius;
+  // Cells can hold several points (integer rounding), hence lists. Floored at
+  // one tile: points live on the integer grid, so finer cells buy nothing, and
+  // a tiny radius would otherwise allocate (width/radius)² cell lists.
+  const cell = Math.max(radius, 1);
   const gw = Math.ceil(width / cell);
   const gh = Math.ceil(height / cell);
   const grid: number[][] = Array.from({ length: gw * gh }, () => []);

@@ -74,6 +74,14 @@ describe('fbm', () => {
     for (let i = 0; i < 50; i++) expect(fbm(n, i, i * 2, opts)).toBeCloseTo(n(i / 4, i / 2), 12);
   });
 
+  it('throws on a non-positive gain or scale', () => {
+    const n = makeValueNoise2D(makeRng(1));
+    expect(() => fbm(n, 1, 1, { ...FBM, gain: 0 })).toThrow('gain');
+    expect(() => fbm(n, 1, 1, { ...FBM, gain: -0.5 })).toThrow('gain');
+    expect(() => fbm(n, 1, 1, { ...FBM, scale: 0 })).toThrow('scale');
+    expect(() => fbm(n, 1, 1, { ...FBM, scale: Number.NaN })).toThrow('scale');
+  });
+
   it('has no lattice-aligned column bias in its extremes', () => {
     // Regression: with an axis-aligned lattice, value noise's variance peaks on
     // lattice columns, and the top few percent of a scale-5 field landed 3-4×
@@ -166,6 +174,15 @@ describe('poissonDisk', () => {
     const density = pts.length / free;
     expect(density * radius * radius).toBeGreaterThan(0.5);
     expect(density * radius * radius).toBeLessThan(1.1);
+  });
+
+  it('handles a tiny radius quickly: every tile becomes a point', () => {
+    // Regression: the background grid used cell side = radius, so r=0.001 on a
+    // 50×40 map asked for 2×10⁹ cell lists.
+    const t0 = Date.now();
+    const pts = poissonDisk({ width: 50, height: 40, radius: 0.001, rng: makeRng(2) });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(pts.length).toBe(50 * 40);
   });
 
   it('returns nothing for an empty or fully masked grid', () => {

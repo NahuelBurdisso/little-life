@@ -31,6 +31,7 @@ function ctxWith(width: number, height: number, seed = 'test'): WorldContext {
 }
 
 interface World {
+  seed: string;
   ctx: WorldContext;
   width: number;
   height: number;
@@ -60,7 +61,7 @@ function build(width: number, height: number, seed: string): World {
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) if (!occupied.has(`${x},${y}`)) eligible++;
   }
-  return { ctx, width, height, tiles, occupied, doors, eligible };
+  return { seed, ctx, width, height, tiles, occupied, doors, eligible };
 }
 
 // 20 seeds at each of the two tier sizes, built once and shared.
@@ -79,30 +80,38 @@ describe('terrain stage', () => {
     expect(result.terrainTiles.length).toBeGreaterThan(0);
   });
 
+  // Invariant checks collect every violation and assert once: an expect() per
+  // tile over 40 worlds × ~400 tiles made this file take ~4.5 s, and a single
+  // `toEqual([])` also prints every offender instead of stopping at the first.
+  const tag = (w: World) => `${w.seed}@${w.width}x${w.height}`;
+
   it('emits only the six current kinds, never the legacy tall_grass', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
-      for (const t of w.tiles) {
-        expect(EMITTED.has(t.kind), `unexpected kind ${t.kind}`).toBe(true);
-        expect(t.kind).not.toBe('tall_grass');
-      }
+      for (const t of w.tiles) if (!EMITTED.has(t.kind)) bad.push(`${tag(w)} ${key(t)} ${t.kind}`);
     }
+    // tall_grass is not in EMITTED, so this also covers the legacy kind.
+    expect(EMITTED.has('tall_grass')).toBe(false);
+    expect(bad).toEqual([]);
   });
 
   it('tiles stay within map bounds (excluding border)', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
       for (const t of w.tiles) {
-        expect(t.x).toBeGreaterThanOrEqual(1);
-        expect(t.x).toBeLessThan(w.width - 1);
-        expect(t.y).toBeGreaterThanOrEqual(1);
-        expect(t.y).toBeLessThan(w.height - 1);
+        if (t.x < 1 || t.y < 1 || t.x >= w.width - 1 || t.y >= w.height - 1) bad.push(`${tag(w)} ${key(t)}`);
       }
     }
+    expect(bad).toEqual([]);
   });
 
   it('gives each tile at most one kind', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
-      expect(new Set(w.tiles.map(key)).size).toBe(w.tiles.length);
+      const n = new Set(w.tiles.map(key)).size;
+      if (n !== w.tiles.length) bad.push(`${tag(w)}: ${w.tiles.length - n} duplicates`);
     }
+    expect(bad).toEqual([]);
   });
 
   it('is deterministic', () => {
@@ -114,33 +123,38 @@ describe('terrain stage', () => {
   it('decorates 10-22% of the tiles it is allowed to decorate, in every world', () => {
     // The denominator excludes roads, footprints and doors: those can never be
     // decorated, so counting them made the share look lower than it is.
+    const bad: string[] = [];
     for (const w of WORLDS) {
       const ratio = w.tiles.length / w.eligible;
-      expect(ratio, `${w.width}x${w.height}`).toBeGreaterThanOrEqual(0.10);
-      expect(ratio).toBeLessThanOrEqual(0.22);
+      if (ratio < 0.10 || ratio > 0.22) bad.push(`${tag(w)}: ${ratio.toFixed(3)}`);
     }
+    expect(bad).toEqual([]);
   });
 
   it('puts flowers, grass tufts, dirt, trees and bushes in every world', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
       const kinds = new Set(w.tiles.map((t) => t.kind));
-      for (const k of REQUIRED) expect(kinds.has(k), `${k} missing`).toBe(true);
+      for (const k of REQUIRED) if (!kinds.has(k)) bad.push(`${tag(w)}: no ${k}`);
     }
+    expect(bad).toEqual([]);
   });
 
   it('never decorates a road tile, a building footprint or a door', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
-      for (const t of w.tiles) {
-        expect(w.occupied.has(key(t)), `${key(t)} is a road, footprint or door`).toBe(false);
-      }
+      for (const t of w.tiles) if (w.occupied.has(key(t))) bad.push(`${tag(w)} ${key(t)} ${t.kind}`);
     }
+    expect(bad).toEqual([]);
   });
 
   it('never decorates a door tile (which sits one row below the footprint)', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
-      expect(w.doors.size).toBeGreaterThan(0);
-      for (const t of w.tiles) expect(w.doors.has(key(t))).toBe(false);
+      if (w.doors.size === 0) bad.push(`${tag(w)}: no doors to check`);
+      for (const t of w.tiles) if (w.doors.has(key(t))) bad.push(`${tag(w)} ${key(t)} ${t.kind}`);
     }
+    expect(bad).toEqual([]);
   });
 
   it('clusters flowers and dirt into patches rather than salt', () => {
@@ -163,28 +177,32 @@ describe('terrain stage', () => {
   });
 
   it('spaces trees at least the Poisson radius apart', () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
       const trees = w.tiles.filter((t) => t.kind === 'tree');
       for (let i = 0; i < trees.length; i++) {
         for (let j = i + 1; j < trees.length; j++) {
           const d = Math.hypot(trees[i].x - trees[j].x, trees[i].y - trees[j].y);
-          expect(d).toBeGreaterThanOrEqual(TREE_RADIUS);
+          if (d < TREE_RADIUS) bad.push(`${tag(w)} ${key(trees[i])}-${key(trees[j])} ${d.toFixed(2)}`);
         }
       }
     }
+    expect(bad).toEqual([]);
   });
 
-  it(`keeps trees at least ${TREE_CLEARANCE} tiles from roads, footprints and doors`, () => {
+  it(`leaves ${TREE_CLEARANCE} clear tiles between a tree and any road, footprint or door`, () => {
+    const bad: string[] = [];
     for (const w of WORLDS) {
       for (const t of w.tiles.filter((tt) => tt.kind === 'tree')) {
         for (let dy = -TREE_CLEARANCE; dy <= TREE_CLEARANCE; dy++) {
           for (let dx = -TREE_CLEARANCE; dx <= TREE_CLEARANCE; dx++) {
             const k = `${t.x + dx},${t.y + dy}`;
-            expect(w.occupied.has(k), `tree at ${key(t)} is next to ${k}`).toBe(false);
+            if (w.occupied.has(k)) bad.push(`${tag(w)} tree ${key(t)} near ${k}`);
           }
         }
       }
     }
+    expect(bad).toEqual([]);
   });
 
   it('throws when dimensions not populated', () => {

@@ -32,8 +32,12 @@ import { makeValueNoise2D, fbm, poissonDisk, type FbmOptions, type Noise2D } fro
  * than by a fixed noise threshold. Value noise's histogram bunches around 0.5
  * and its spread varies from seed to seed and with the map's size, so a fixed
  * threshold would swing the coverage per world; ranking makes the share exact
- * and guarantees every kind appears in every world, while the *shape* of what
- * is picked is still the noise's patches.
+ * and guarantees every rank-placed kind (dirt, flowers, grass tufts) appears in
+ * every world, while the *shape* of what is picked is still the noise's
+ * patches. Trees and bushes are ranked only into a *region* that a Poisson
+ * sampler then thins, and rocks are drawn from shuffled pools, so their counts
+ * follow from the region rather than being exact — non-empty in practice (the
+ * tests pin trees and bushes in every world), not by construction.
  */
 const SHARE = {
   /** Area handed to the tree sampler. Trees fill it at Poisson spacing (about
@@ -61,8 +65,9 @@ export const TREE_RADIUS = 2.7;
 /** Poisson radius for bushes: just over √2, so no two bushes touch even
  *  diagonally but a fringe can still be dense. */
 const BUSH_RADIUS = 1.5;
-/** Minimum Chebyshev distance from a tree to any road, footprint or door tile.
- *  Canopies are drawn larger than a tile and above the ground layer, so a tree
+/** Clear tiles between a tree and any road, footprint or door (Chebyshev):
+ *  every tile within this distance of a tree is free of them, so the nearest
+ *  one is at Chebyshev distance TREE_CLEARANCE + 1. Canopies are drawn larger than a tile and above the ground layer, so a tree
  *  on a verge would overhang the road and one beside a door would hide it. */
 export const TREE_CLEARANCE = 2;
 
@@ -72,8 +77,9 @@ export const TREE_CLEARANCE = 2;
 const BORDER_FALLOFF = 8;
 const BORDER_PULL = 0.25;
 
-/** Extra wear on tiles near a road, fading to zero at `ROAD_WEAR_RANGE` tiles.
- *  Small on purpose — enough that dirt favours verges and doorsteps, not so
+/** Extra wear on tiles near a road: full at distance 1, falling linearly by
+ *  ROAD_WEAR / ROAD_WEAR_RANGE per tile, and zero *beyond* `ROAD_WEAR_RANGE`
+ *  (the last tile inside the range still gets a third). Small on purpose — enough that dirt favours verges and doorsteps, not so
  *  much that every road gets a ruler-straight dirt stripe. */
 const ROAD_WEAR = 0.03;
 const ROAD_WEAR_RANGE = 3;
