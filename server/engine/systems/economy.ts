@@ -578,16 +578,14 @@ export function economyTick(): void {
         templateData: { message: `Hyperinflation! Currency devalued — everyone lost ${Math.round(rotRate * 100)}% purchasing power (ratio ${ratio.toFixed(2)})` } });
     }
 
+    // Diagnostics, not story: the player feed shows `system` rows, and a daily
+    // "Money supply check: inflation detected (ratio 1.84)" there means nothing
+    // to a spectator. The consequences the player should see (emergency tax,
+    // scams, hyperinflation) log their own entries above.
     if (ratio > CONFIG.ECONOMY.INFLATION_THRESHOLD) {
-      logActivity({
-        type: 'system',
-        templateData: { message: `Money supply check: inflation detected (ratio ${ratio.toFixed(2)}). Total: ${Math.round(totalMoney)}, target: ${Math.round(targetTotal)}` },
-      });
+      console.log(`[economy] money supply: inflation (ratio ${ratio.toFixed(2)}, total ${Math.round(totalMoney)}, target ${Math.round(targetTotal)})`);
     } else if (ratio < CONFIG.ECONOMY.DEFLATION_THRESHOLD) {
-      logActivity({
-        type: 'system',
-        templateData: { message: `Money supply check: deflation detected (ratio ${ratio.toFixed(2)}). Total: ${Math.round(totalMoney)}, target: ${Math.round(targetTotal)}` },
-      });
+      console.log(`[economy] money supply: deflation (ratio ${ratio.toFixed(2)}, total ${Math.round(totalMoney)}, target ${Math.round(targetTotal)})`);
     }
   }
 

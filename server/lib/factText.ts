@@ -7,7 +7,7 @@
  * every builder that splices a fact into a sentence has to normalise it first.
  * Splicing it raw is what produced "…and it ended badly.." in the feed.
  *
- * No DB or Node imports: keep this safe to call from anywhere, tests included.
+ * No DB or Node imports: the client's activityMessage.ts imports this too.
  */
 
 /** Sentence-final punctuation, optionally followed by closing quotes/brackets. */
@@ -49,6 +49,39 @@ export function endSentence(text: string): string {
  */
 export function thatSentence(lead: string, factContent: string): string {
   return endSentence(`${lead} that ${asClause(factContent)}`);
+}
+
+/**
+ * Cut `text` down to one feed-sized phrase: the first sentence when it fits,
+ * otherwise the longest prefix that ends on a word boundary, marked with "…".
+ * Never cuts mid-word — a truncated word reads as a typo, not as an ellipsis.
+ */
+export function shortenForFeed(text: string, max = 100): string {
+  const clean = text.trim().replace(/\s+/g, ' ');
+  const firstSentence = clean.match(/^.+?[.!?…](?=\s|$)/)?.[0] ?? clean;
+  if (firstSentence.length <= max) return firstSentence;
+  const cut = firstSentence.slice(0, max + 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  const head = (lastSpace > 0 ? cut.slice(0, lastSpace) : cut.slice(0, max)).replace(/[\s,;:—–-]+$/, '');
+  return `${head}…`;
+}
+
+/**
+ * Join list items ("open the bakery", "lunch with Carlos", …) until the next one
+ * would push past `max`, then close with "…". Whole items only, so a plan never
+ * shows half an activity. A single oversized item falls back to `shortenForFeed`.
+ */
+export function joinForFeed(items: string[], max = 100): string {
+  const parts = items.map((i) => asClause(i)).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts[0].length > max) return shortenForFeed(parts[0], max);
+  let out = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    const next = `${out}, ${parts[i]}`;
+    if (next.length > max) return `${out}, …`;
+    out = next;
+  }
+  return out;
 }
 
 /**

@@ -7,6 +7,22 @@ import { simEvents } from '../simEvents';
 // that ReplanEvaluator listens to.
 // ---------------------------------------------------------------------------
 
+/**
+ * "started feeling drunk", plus the cause only when it is prose.
+ *
+ * Most `state:triggered` causes are internal labels — `action:drinking`,
+ * `cascade:goal_failure_drinking`, `broke_3_days` — and this description is
+ * shown to the player ("Rosa Chen changed plans: started feeling drunk:
+ * cascade:goal_failure_drinking") and fed to the replan prompt and memory.
+ * A label is recognisable by its `:` or `_`; a few causes are real phrases
+ * ("exposed blackmail secret publicly") and those are kept.
+ */
+export function describeStateTrigger(state: string, cause?: string): string {
+  const feeling = `started feeling ${state.replace(/_/g, ' ')}`;
+  const isProse = cause != null && /\s/.test(cause.trim()) && !/[:_]/.test(cause);
+  return isProse ? `${feeling}: ${cause!.trim()}` : feeling;
+}
+
 export function initPlanEventAdapter(): void {
   const DRAMATIC_STATES = new Set([
     'heartbroken',
@@ -40,7 +56,7 @@ export function initPlanEventAdapter(): void {
     simEvents.emit('plan:evaluate-replan', {
       agentId: payload.agentId,
       type: 'state',
-      description: `started feeling ${payload.state}${payload.cause ? ': ' + payload.cause : ''}`,
+      description: describeStateTrigger(payload.state, payload.cause),
       sentiment: -0.5,
       isDramatic: DRAMATIC_STATES.has(payload.state),
     });

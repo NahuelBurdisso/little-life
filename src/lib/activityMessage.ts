@@ -2,6 +2,8 @@
  *  Lives outside ActivityFeed so DramaAlerts renders the same sentence for the
  *  same row instead of drifting into a second, subtly different phrasing. */
 
+import { endSentence, shortenForFeed } from '../../server/lib/factText';
+
 export interface ActivityEntry {
   id?: number;
   type: string;
@@ -72,7 +74,14 @@ export function renderMessage(entry: ActivityEntry): string {
 
   // Plans
   if (entry.type === 'plan_generated' && d.agentName) return `${d.agentName} planned their day.`;
-  if (entry.type === 'plan_changed' && d.agentName) return `${d.agentName} changed plans${d.reason ? ': ' + String(d.reason).substring(0, 80) + '.' : '.'}`;
+  // The server stores a feed-sized reason now; `shortenForFeed` still guards
+  // rows logged before that, and never cuts mid-word the way `substring` did.
+  // `endSentence` because the reason may already end in "." or "…".
+  if (entry.type === 'plan_changed' && d.agentName) {
+    return d.reason
+      ? endSentence(`${d.agentName} changed plans: ${shortenForFeed(String(d.reason), 80)}`)
+      : `${d.agentName} changed plans.`;
+  }
 
   // States
   if (d.agent && d.state) {

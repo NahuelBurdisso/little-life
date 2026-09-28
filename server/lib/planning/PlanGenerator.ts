@@ -19,6 +19,7 @@ import {
   type GameClock,
   type PlanLLMGate,
 } from './PlanLLMGate';
+import { joinForFeed, shortenForFeed } from '../factText';
 
 /** Run an optional context lookup; on failure log it and plan without it. */
 async function bestEffort<T>(what: string, fn: () => Promise<T[]>): Promise<T[]> {
@@ -299,9 +300,12 @@ export class PlanGenerator {
       `[PlanGenerator] Agent ${agentRow.name} planned day ${currentDay}: ${blocks.length} blocks`,
     );
 
+    // The memory keeps the whole plan; the feed gets a glance. Dumping the full
+    // "Day N plan: a, b, c, …" (often 250+ chars) into the player feed buried
+    // everything else, one wall of text per agent per morning.
     logActivity({
       type: 'plan_generated',
-      templateData: { agentName: agentRow.name, summary },
+      templateData: { agentName: agentRow.name, summary: joinForFeed(blocks.map((b) => b.broad_action)) },
       agents: [agentId],
     });
   }
@@ -679,12 +683,14 @@ export class PlanGenerator {
 
     console.log(`[PlanGenerator] Agent ${agentRow.name} replanned: ${event.description}`);
 
+    // Feed-sized: the reason can be a whole conversation topic and the block
+    // list is as long as the rest of the day. Both stay whole in the memory above.
     logActivity({
       type: 'plan_changed',
       templateData: {
         agentName: agentRow.name,
-        reason: event.description,
-        summary: newBlocksSummary,
+        reason: shortenForFeed(event.description, 80),
+        summary: joinForFeed(newBlocks.map((b) => b.broad_action)),
       },
       agents: [agentId],
     });
