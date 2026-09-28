@@ -183,6 +183,11 @@ export function gossipTick(currentTick: number): void {
         const knownBy = f.known_by as number[];
         if (!knownBy.includes(agent.id)) return false;
         if (knownBy.includes(target.id)) return false;
+        // Nobody gossips about themselves. The subject always knows their own
+        // secret, so without this Marco would "tell" the town that he is
+        // secretly in love with Carlos. Owning up is a separate, deliberate act
+        // (the confession path in conversations.ts), not idle gossip.
+        if (f.subject_id === agent.id) return false;
         // Loyalty gate: loyal agents don't share shared_knowledge about friends
         if (loyalty > 60) {
           const rel = db.select({ friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })

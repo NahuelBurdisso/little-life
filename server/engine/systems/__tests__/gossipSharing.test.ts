@@ -1,0 +1,122 @@
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { db } from '../../../db';
+import { agents, locations, shared_knowledge } from '../../../db/schema';
+import { eq } from 'drizzle-orm';
+import { gossipTick } from '../gossipEngine';
+import { getShareableFacts } from '../../../lib/gossip';
+import type { PersonalityProfile } from '../../../lib/personality';
+
+/**
+ * Playtest: Marco "told" four people that Marco was secretly in love with
+ * Carlos, and Diego told Lucia that Diego had a crush on Lucia. The subject of a
+ * secret always knows it, so every gossip filter has to skip it explicitly.
+ */
+
+const GOSSIP: PersonalityProfile = {
+  honesty: 5, aggression: 50, warmth: 50, impulsiveness: 50, vanity: 50,
+  curiosity: 90, loyalty: 5, morality: 5, sensuality: 50, neuroticism: 50,
+};
+// Below every curiosity gate, so this agent neither gossips nor snoops.
+const QUIET: PersonalityProfile = { ...GOSSIP, curiosity: 10, honesty: 90 };
+
+function insertLocation(name: string): number {
+  return db.insert(locations).values({
+    name,
+    type: 'tavern',
+    position: { x: 0, y: 0, width: 4, height: 4 },
+    entry_point: { x: 1, y: 4 },
+    owner: null,
+    capacity: 10,
+    current_occupants: [],
+    operating_hours: null,
+    services: [],
+    description: 'test',
+  }).returning({ id: locations.id }).get().id;
+}
+
+function insertAgent(name: string, at: number, personality: PersonalityProfile | null): number {
+  return db.insert(agents).values({
+    name,
+    bio: 'test',
+    traits: [],
+    personality,
+    age: 30,
+    gender: 'male',
+    sprite_sheet: 'x',
+    portrait_sprite: 'x',
+    position: { x: 0, y: 0 },
+    current_destination: null,
+    current_location: at,
+    current_action: { type: 'idle' },
+    action_started: 0,
+    action_duration: null,
+    action_queue: [],
+    current_path: null,
+    schedule: {
+      wakeTime: 7, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: [],
+    },
+    home: at,
+    workplace: null,
+    created_at: Date.now(),
+    is_active: true,
+  }).returning({ id: agents.id }).get().id;
+}
+
+function insertFact(subjectId: number, content: string, knownBy: number[]): number {
+  return db.insert(shared_knowledge).values({
+    type: 'crush',
+    subject_id: subjectId,
+    target_id: null,
+    content,
+    sensitivity: 3,
+    known_by: knownBy,
+    created_at: Date.now(),
+    is_active: true,
+    source: 'observed',
+  }).returning({ id: shared_knowledge.id }).get().id;
+}
+
+function knownBy(factId: number): number[] {
+  return db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get()!.known_by as number[];
+}
+
+describe('agents never gossip their own secrets', () => {
+  let marco: number;
+  let lucia: number;
+  let carlos: number;
+
+  beforeAll(() => {
+    const plaza = insertLocation('own-secret plaza');
+    const faraway = insertLocation('own-secret faraway');
+    marco = insertAgent('Own Marco', plaza, GOSSIP);
+    lucia = insertAgent('Own Lucia', plaza, QUIET);
+    carlos = insertAgent('Own Carlos', faraway, QUIET);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('active gossip shares what Marco knows about others, never his own secret', () => {
+    const own = insertFact(marco, 'Own Marco is deeply in love with Own Carlos.', [marco]);
+    const other = insertFact(carlos, 'Own Carlos owes money to the baker.', [carlos, marco]);
+    // Every roll succeeds: the gossip gate, the target pick and the fact pick
+    // all land on index 0, so only the filter decides what gets told.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    gossipTick(0);
+
+    expect(knownBy(own)).not.toContain(lucia);
+    expect(knownBy(other)).toContain(lucia);
+  });
+
+  it('getShareableFacts leaves out facts whose subject is the speaker', () => {
+    const own = insertFact(marco, 'Own Marco has a crush on Own Lucia.', [marco]);
+    const other = insertFact(carlos, 'Own Carlos hides a chronic illness.', [carlos, marco]);
+
+    const ids = getShareableFacts(marco, lucia, GOSSIP).map((f) => f.id);
+
+    expect(ids).not.toContain(own);
+    expect(ids).toContain(other);
+  });
+});

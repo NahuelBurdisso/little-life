@@ -269,6 +269,10 @@ export function getShareableFacts(
     if (!knownBy.includes(speakerId)) return false;
     // Listener must not already know it
     if (knownBy.includes(listenerId)) return false;
+    // A speaker's own secrets are not gossip. Offering them here fed them to the
+    // LLM as "things you could gossip about" and let spreadGossip leak them the
+    // moment the speaker said their own name. Confessing is a separate path.
+    if (fact.subject_id === speakerId) return false;
 
     // Personality gates
     if (fact.sensitivity >= 2 && personality.honesty > 60) return false;
