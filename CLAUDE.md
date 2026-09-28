@@ -31,7 +31,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 | DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
 | Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
 | LLM | Ollama (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Config in `.env` |
-| Tests | Vitest 2, 40 files / ~495 tests, all server-side |
+| Tests | Vitest 2, 43 files / ~504 tests, all server-side |
 
 ## Commands
 
@@ -45,6 +45,12 @@ node scripts/shot-gallery.mjs day  # Playwright screenshots of :5173 (needs dev 
 ```
 
 `start-game.bat` is the user's Windows launcher (starts Ollama + dev + browser).
+
+**Live verification without touching the user's world:** `.claude/launch.json` defines
+`little-life-verify`, which runs `npm run dev` against `data/verify.db`. Refresh the copy first
+(`cp data/little-life.db* ` → `data/verify.db*`), then `preview_start` it. tRPC is WebSocket-only,
+so to inspect requests patch `WebSocket.prototype.send` from the page and count `params.path`.
+Never run the dev server against `data/little-life.db` for testing — the tick loop mutates it.
 
 ## Architecture map
 
@@ -94,6 +100,8 @@ directly — keep those free of Node/DB imports.
 - **Hardcoded ports:** client WS URL `ws://localhost:3001` in `src/lib/trpc.ts`.
 - Windows + `core.autocrlf`: expect LF→CRLF warnings; don't commit whitespace-only diffs.
 - Test runs are noisy (`[worldgen] done ...` logs) — grep for `Test Files` / `FAIL`.
+- Vitest 2 quirk: a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
+  when the throw is caught. Use `mockClear()` + `mockImplementationOnce(() => { throw ... })`.
 
 ## Conventions
 

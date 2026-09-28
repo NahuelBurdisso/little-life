@@ -2,16 +2,15 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-28 — `tsc` 0 errors, vitest 40 files / 495 tests passing (17 s).
-Branch `feat/living-agents-phase1`. Working tree clean (except the whitespace-only
-`server/db/migrations/0001_memory_stream.sql` diff — revert it, never commit edits to an applied migration).
+**Last verified:** 2026-09-28 — `tsc` 0 errors, vitest 43 files / 504 tests passing.
+Branch `feat/living-agents-phase1`, working tree clean.
 
 ## Where the project is
 
 | Area | State |
 |---|---|
 | Simulation core (11 tick phases, needs/states/economy/relationships/decisions/movement) | Working |
-| LLM conversations (template / llm_standard / llm_deep tiers, fallbacks) | Working, some lifecycle bugs (B1–B3) |
+| LLM conversations (template / llm_standard / llm_deep tiers, fallbacks) | Working (B3 open) |
 | Memory stream, reflection, planning, self-descriptions | Working |
 | Goals & aspirations (GoalMapper/Reviewer/PivotEvaluator) | Done |
 | Drama setup wizard (presets, sliders, conflict web, preview) | Done |
@@ -37,18 +36,8 @@ Lesson: commit per theme, with its new files, and run `npm run check` before eac
 Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanup.
 
 ### Engine
-- **B1 [H]** Force-ended conversations keep generating: `addMessage`
-  (`server/helpers/conversationHelpers.ts:228`) never checks `status === 'ended'`, so
-  taskRunner keeps calling the LLM (critical priority) and appending turns after a
-  timeout force-end, holding a slot.
-- **B2 [H]** Rejected LLM text is saved: `server/ai/generateResponse.ts:137-195` — if the
-  nudge retry fails, `responseText` still holds the invalid text, so the fallback at
-  `:198` never runs.
 - **B3 [M]** `truncated` flag collected (`conversations.ts:~203`) but never passed on (`:~461`).
-- **B4 [H]** Post-phase work unguarded: `perceptionSystem.scan`, `tavernTick`,
-  `lonelinessCheck`, `confrontationCheck` (`server/engine/tick.ts:226-234`) have no
-  try/catch — one throw skips cache clear, tick finalize and emitter flush.
-- **B5 [M]** Autoplay ON by default (`server/lib/constants.ts:8,11`) while `tick.ts:237`
+- **B5 [M]** Autoplay ON by default (`server/lib/constants.ts:8,11`) while `tick.ts:~240`
   says it's off. Nudger writes DB outside tick transactions. Decide & align.
 - **B6 [M]** Plan retry storm when LLM down: `PlanGenerator.ts:235` throws uncaught →
   no plan cached → decisions re-queue every pass (`decisions.ts:~1137`); `PlanLLMQueue` doesn't dedupe.
@@ -65,9 +54,6 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 - **B13 [L]** Public-knowledge spread runs twice per tick (`states.ts:241` + `gossipEngine.ts:99-114`).
 
 ### Client
-- **C1 [H]** `relationships.getGraph` and `economy.getTownStats` never refresh: no channel
-  invalidates them and `refetchOnWindowFocus: false` (`src/main.tsx:10`). Tension lines,
-  Relationship Graph and TownStats show load-time data all session.
 - **C2 [M]** TopBar restart (`TopBar.tsx:~26`) doesn't `utils.invalidate()` → old-world
   locations/graph linger.
 - **C3 [M]** Agent panel spins forever for a removed agent: `useSelectedAgent.ts` turns
@@ -105,9 +91,12 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 - `playwright` is used by scripts but not in `package.json`.
 - No README. `.env` is tracked (no secrets) — consider `.env.example`.
 
+## Fixed
+
+- 2026-09-28: B1+B2 `3ccf5ad`, B4 `64032b6`, C1 `0345aed` (with regression tests; C1 verified live).
+
 ## Next steps (suggested order)
 
-1. Fix B1, B2, B4, C1 (small, high impact) with regression tests.
-2. Decide autoplay default (B5) and give it a small UI or turn it off.
-3. Delete dead code; unify `EVENT_DEFS`.
-4. Bound growth (B7) — prune/limit ended conversations.
+1. Decide autoplay default (B5) and give it a small UI or turn it off.
+2. Delete dead code; unify `EVENT_DEFS`.
+3. Bound growth (B7) — prune/limit ended conversations.
