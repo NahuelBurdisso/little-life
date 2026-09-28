@@ -17,9 +17,15 @@ interface TopBarProps {
   awakeAgents: number;
   onShowEvents: () => void;
   onShowStats: () => void;
+  /**
+   * Called after this tab replaced the world. Agent ids restart at 1, so App
+   * must drop its selection — its own clock-drop check misses a restart of a
+   * world that was still at totalTicks 0.
+   */
+  onWorldReplaced: () => void;
 }
 
-export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats }: TopBarProps) {
+export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -32,12 +38,12 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
   const utils = trpc.useUtils();
 
   const restartMutation = trpc.setup.restart.useMutation({
-    onSuccess: () => { setIsResetting(false); setConfirmAction(null); utils.invalidate(); },
+    onSuccess: () => { setIsResetting(false); setConfirmAction(null); utils.invalidate(); onWorldReplaced(); },
     onError: () => { setIsResetting(false); },
   });
 
   const resetToWizardMutation = trpc.setup.resetToWizard.useMutation({
-    onSuccess: () => { setIsResetting(false); setConfirmAction(null); utils.invalidate(); },
+    onSuccess: () => { setIsResetting(false); setConfirmAction(null); utils.invalidate(); onWorldReplaced(); },
     onError: () => { setIsResetting(false); },
   });
 

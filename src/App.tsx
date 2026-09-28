@@ -89,17 +89,26 @@ export default function App() {
   // town's buildings stayed on the map until a page reload, and every other
   // unwired query kept describing the old world. Agent ids restart at 1, so a
   // selected id silently re-points at a different townsperson — drop it.
+  //
+  // The clock check can't see a replace of a world still at totalTicks 0
+  // (restart while paused at the start), so TopBar also calls
+  // `handleWorldReplaced` directly for the replaces this tab asked for.
+  const handleWorldReplaced = useCallback(() => {
+    setSelectedAgentId(null);
+    setContextMenuAgent(null);
+    setContextMenuPos(null);
+  }, []);
   const totalTicks = world?.time?.totalTicks ?? null;
   const lastTotalTicksRef = useRef<number | null>(null);
   useEffect(() => {
     if (isWorldReplaced(lastTotalTicksRef.current, totalTicks)) {
       utils.invalidate();
-      setSelectedAgentId(null);
-      setContextMenuAgent(null);
-      setContextMenuPos(null);
+      handleWorldReplaced();
     }
-    lastTotalTicksRef.current = totalTicks;
-  }, [totalTicks, utils]);
+    // A momentary null (no world row mid-reset) must not erase the last known
+    // clock, or the drop that follows it would go unnoticed.
+    if (totalTicks != null) lastTotalTicksRef.current = totalTicks;
+  }, [totalTicks, utils, handleWorldReplaced]);
 
   // Close modals on Escape
   useEffect(() => {
@@ -208,6 +217,7 @@ export default function App() {
         }).length}
         onShowEvents={() => setShowEventMenu(true)}
         onShowStats={() => setShowTownStats(true)}
+        onWorldReplaced={handleWorldReplaced}
       />
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Conversations sidebar */}
