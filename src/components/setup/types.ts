@@ -60,14 +60,6 @@ export interface WorldConfig {
 // RulesConfig is now a dynamic Record — fields defined in configRegistry.ts
 export type RulesConfig = Record<string, boolean | number | string>;
 
-export interface SetupConfig {
-  agents: AgentConfig[];
-  relationships: RelationshipConfig[];
-  world: WorldConfig;
-  rules: RulesConfig;
-  worldgen: WorldGenConfig;
-}
-
 export const DEFAULT_WORLD: WorldConfig = {
   season: 'spring',
   weather: 'sunny',

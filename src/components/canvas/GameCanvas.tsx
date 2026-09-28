@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Container, Graphics } from "pixi.js";
 import { useGameCanvas } from "../../hooks/useGameCanvas";
-import { useAssetLoader } from "../../hooks/useAssetLoader";
 import { TilemapRenderer } from "./TilemapRenderer";
 import { BuildingRenderer } from "./BuildingRenderer";
 import { CameraController } from "./CameraController";
@@ -107,7 +106,6 @@ export const GameCanvas = React.memo(function GameCanvas({
   focusNonce,
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
-  const assetsLoaded = useAssetLoader();
 
   // Refs for subsystems
   const tilemapRef = useRef<TilemapRenderer | null>(null);
@@ -309,7 +307,7 @@ export const GameCanvas = React.memo(function GameCanvas({
 
   // Initialize subsystems when app is ready
   useEffect(() => {
-    if (!app || !assetsLoaded.loaded) return;
+    if (!app) return;
 
     // Create layer hierarchy
     const worldContainer = new Container();
@@ -328,7 +326,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     buildingRendererRef.current = buildingRenderer;
 
     // Locations are seeded by the `[locations]` effect below, which re-runs once
-    // `app`/`assetsLoaded` flip. Initializing here too built every building
+    // `app` is set. Initializing here too built every building
     // twice on mount.
 
     // Tension lines (always-on faint relationship indicators) — below sprites
@@ -452,7 +450,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       particleEngineRef.current = null;
       worldContainerRef.current = null;
     };
-  }, [app, assetsLoaded.loaded, stableOnSelect, stableOnHover, stableOnContext]);
+  }, [app, stableOnSelect, stableOnHover, stableOnContext]);
 
   // Drive tilemap + camera dimensions from world state
   const mapW = (world as any)?.map_width ?? 0;
@@ -466,16 +464,16 @@ export const GameCanvas = React.memo(function GameCanvas({
     // `app` and the asset flag are dependencies even though they're unused here:
     // the world arrives before pixi is ready, so on a plain `[mapW, mapH]` this
     // would only ever run while the refs are still null and never again.
-  }, [mapW, mapH, app, assetsLoaded.loaded]);
+  }, [mapW, mapH, app]);
 
   // Initialize BuildingRenderer with location data when locations are available
   useEffect(() => {
     if (!buildingRendererRef.current || !locations || locations.length === 0) return;
     buildingRendererRef.current.init(locations);
-    // `app`/`assetsLoaded.loaded` are deps because the renderer is created in the
-    // effect they gate; if locations arrive first this effect must re-run once it
+    // `app` is a dep because the renderer is created in the
+    // effect it gates; if locations arrive first this effect must re-run once it
     // exists, otherwise the map stays empty.
-  }, [locations, app, assetsLoaded.loaded]);
+  }, [locations, app]);
 
   // Update sprite targets when server data changes (sets targets, creates/removes sprites)
   useEffect(() => {
@@ -579,7 +577,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     // phase, weather and time. It only appeared to work because `agents` gets a
     // fresh identity on the same poll; changing the weather while paused
     // updates `world` alone, and the lighting never saw it.
-  }, [agents, selectedAgentId, locations, world, events, app, assetsLoaded.loaded, mapW, mapH]);
+  }, [agents, selectedAgentId, locations, world, events, app, mapW, mapH]);
 
   // Per-frame rendering loop — lerps sprites toward targets, no data dependency
   useEffect(() => {
@@ -709,9 +707,9 @@ export const GameCanvas = React.memo(function GameCanvas({
 
     app.ticker.add(lightTick);
     return () => { app.ticker?.remove(lightTick); };
-    // `assetsLoaded.loaded` rebuilds the subsystems, and this tick captures the
+    // A new `app` rebuilds the subsystems, and this tick captures the
     // instance — without the dep it would keep rendering a destroyed one.
-  }, [app, assetsLoaded.loaded]);
+  }, [app]);
 
   // Update weather effects
   useEffect(() => {
@@ -728,7 +726,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       app.ticker?.remove(weatherTick);
     };
     // Same as the lighting tick: the captured instance dies with a rebuild.
-  }, [world?.weather, app, assetsLoaded.loaded]);
+  }, [world?.weather, app]);
 
   // The lock belongs to one agent: changing selection must not silently transfer it.
   useEffect(() => {
@@ -791,7 +789,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     pg.moveTo(destX - 4, destY - 4).lineTo(destX + 4, destY + 4);
     pg.moveTo(destX + 4, destY - 4).lineTo(destX - 4, destY + 4);
     pg.stroke({ width: 2, color: 0xffffff, alpha: 0.5 });
-  }, [selectedAgentId, agents, app, assetsLoaded.loaded]);
+  }, [selectedAgentId, agents, app]);
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-hidden relative">

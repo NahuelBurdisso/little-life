@@ -1,6 +1,4 @@
 export const TILE_SIZE = 32;
-export const NATIVE_TILE = 16;
-export const SPRITE_SCALE = 2;
 export const AGENT_RADIUS = 8;
 
 export function getAgentColor(name: string): number {
