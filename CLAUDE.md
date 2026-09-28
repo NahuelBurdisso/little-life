@@ -1,7 +1,104 @@
-<!-- convex-ai-start -->
-This project uses [Convex](https://convex.dev) as its backend.
+# Little Life — guide for AI agents
 
-When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+Spectator "god game" of a small town: ~13 LLM-driven townsfolk with needs, secrets,
+romances and rivalries. The player sets up a scenario (presets + drama sliders on a
+seeded procedural town), watches emergent stories and pokes them (nudges, secrets,
+confrontations, events, weather). Mixes Stanford Generative Agents (memory stream,
+reflection, planning), Sims-style needs and RimWorld-style drama/art.
 
-Convex agent skills for common tasks can be installed by running `npx convex ai-files install`.
-<!-- convex-ai-end -->
+> **Not Convex.** The project started on Convex and dropped it on 2026-03-25
+> (commit `bb21164`). Ignore any Convex skill or guideline — there is no `convex/` dir.
+
+## Start of every session
+
+1. Read [`docs/STATUS.md`](docs/STATUS.md) — current state, open bugs, what's next.
+2. `git status --short | wc -l` — this repo has a history of large uncommitted piles.
+   If the tree is dirty with work you didn't do, ask before building on top of it.
+3. `npm run check` (typecheck + tests, ~20 s). Must be green before and after your change.
+
+## End of every session
+
+- Update `docs/STATUS.md`: move fixed bugs out, add new findings with `file:line`,
+  bump the "last verified" line with the test count.
+- Commit in small themed commits (Conventional Commits, English). Never let the tree
+  grow past one theme uncommitted.
+
+## Stack
+
+| Layer | Tech |
+|---|---|
+| Server | Node + `tsx`, Express 5, tRPC 11 over **WebSocket only** (`ws://localhost:3001`) |
+| DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
+| Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
+| LLM | Ollama (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Config in `.env` |
+| Tests | Vitest 2, 40 files / ~495 tests, all server-side |
+
+## Commands
+
+```bash
+npm run dev          # server (tsx watch, :3001) + vite (:5173)
+npm run check        # tsc --noEmit + vitest run  ← gate for every change
+npm test             # vitest only
+npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
+npx tsx server/seed-world.ts       # reseed the running server's world
+node scripts/shot-gallery.mjs day  # Playwright screenshots of :5173 (needs dev running)
+```
+
+`start-game.bat` is the user's Windows launcher (starts Ollama + dev + browser).
+
+## Architecture map
+
+```
+server/
+  index.ts            Express + WS tRPC server; side-effect imports giftEngine, secretSharing
+  router.ts           12 routers: world agents conversations relationships economy knowledge
+                      locations activity chronicle nudge setup autoplay
+  engine/tick.ts      1 tick = 1 game minute, setTimeout loop (1000 ms / tick_speed)
+  engine/systems/     11 phases in order: needs → states → economy → relationships →
+                      conversations → goals → decisions → movement → events → gossip → cascade
+                      (each sync phase in its own db.transaction; conversations is async)
+  engine/emitter.ts   "channel dirty" pub/sub → client invalidates React Query caches
+  lib/                *Engine.ts subsystems, cascade/ (Ripple/Tension/Snap), memory/,
+                      goals/, planning/, perception/, worldgen/ (procedural town pipeline)
+  lib/simEvents.ts    sync EventEmitter; listeners run INSIDE the emitting phase's transaction
+  ai/                 ollama.ts client, llmSemaphore (8 slots, priority), generateResponse
+  autoplay/           profiler + boredom auto-nudger (AUTOPLAY_CONFIG in lib/constants.ts)
+  data/               static data: agents, templates, interiors, building templates
+  db/                 schema.ts, index.ts (pragmas + additive ALTER migrations), seed.ts
+src/
+  App.tsx             layout + UI state (useState)
+  hooks/use*.ts       subscribe to a channel → invalidate queries
+  components/canvas/  Pixi layers: Tilemap → Building → Sprites → Particles → Bubbles,
+                      then Lighting (lightmap) + Weather on stage; Camera/InteractionLayer
+  components/ui/      panels & modals; components/setup/ = scenario wizard
+```
+
+The client imports pure-data modules from `server/data/` and `server/lib/worldgen/`
+directly — keep those free of Node/DB imports.
+
+## Gotchas (learned the hard way)
+
+- **DB schema has three mechanisms.** Drizzle migrations stop at `0001` (missing goals,
+  aspirations, interactions tables) → `npm run db:migrate` is stale. Runtime uses
+  `addColumnIfMissing` in `server/db/index.ts`; tests use `drizzle-kit push` from
+  `schema.ts`. **When you add a column: edit `schema.ts` AND add an `addColumnIfMissing`.**
+- **Tests must never touch the live DB.** `vite.config.ts` pins `DATABASE_PATH=./data/test.db`;
+  each worker copies it (`server/db/testWorker.ts`). Don't import `server/db` before setup.
+- **Lots of sim state is in-memory only** (hobby skills, favors, tension, mood momentum,
+  drift baselines, state trackers) — lost on restart. Per-world caches must be registered
+  in `server/engine/worldCaches.ts` or they survive a world replace.
+- **Tick-count vs game-time.** Some cadences use `totalTicks % N`; they drift when
+  `tick_speed > 1`. Prefer game-time.
+- **Client data freshness.** Only queries invalidated by a subscription hook refresh
+  (`refetchOnWindowFocus: false`). A new query that isn't wired to a channel will be stale forever.
+- **Hardcoded ports:** client WS URL `ws://localhost:3001` in `src/lib/trpc.ts`.
+- Windows + `core.autocrlf`: expect LF→CRLF warnings; don't commit whitespace-only diffs.
+- Test runs are noisy (`[worldgen] done ...` logs) — grep for `Test Files` / `FAIL`.
+
+## Conventions
+
+- TypeScript strict, `noUnusedLocals` — dead exports are fine for tsc but please delete them.
+- Comments explain *why* (the codebase uses long rationale comments; match that).
+- Keep `docs/` for durable docs; `docs/scratch/` is throwaway probes (screenshots ignored).
+- Design history: `docs/superpowers/specs|plans` (Apr 2026), `docs/living-agents/phase1-3`
+  (Jul 2026), `docs/scratch/final-plan.md` (visual polish rounds).

@@ -13,7 +13,9 @@
     "db:migrate": "tsx server/db/migrate.ts",
     "db:seed": "tsx server/db/seed.ts",
     "db:reset": "tsx server/db/seed.ts --reset",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit && vitest run"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.95.2",

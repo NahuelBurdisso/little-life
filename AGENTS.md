@@ -1,7 +1,6 @@
-<!-- convex-ai-start -->
-This project uses [Convex](https://convex.dev) as its backend.
+# Agent instructions
 
-When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+All agent guidance for this repo lives in [`CLAUDE.md`](CLAUDE.md) — read it first,
+then [`docs/STATUS.md`](docs/STATUS.md).
 
-Convex agent skills for common tasks can be installed by running `npx convex ai-files install`.
-<!-- convex-ai-end -->
+This project does **not** use Convex (dropped 2026-03-25). Ignore Convex skills.
