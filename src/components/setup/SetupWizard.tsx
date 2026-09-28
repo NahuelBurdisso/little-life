@@ -141,6 +141,8 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
               config={worldgen}
               onChange={setWorldgen}
               agents={agents}
+              relationships={relationships}
+              scenario={{ ...sliders, seed: scenarioSeed }}
               onErrorChange={setWorldgenError}
             />
           )}

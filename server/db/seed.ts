@@ -22,6 +22,7 @@ import {
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
+import { buildSocialEdges, type SocialRelationship } from '../lib/worldgen/social';
 import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -66,13 +67,47 @@ function isSeeded(): boolean {
   return existing.length > 0;
 }
 
+/**
+ * `AGENT_SEEDS[*].initialRelationships` flattened into the wizard's by-name
+ * relationship shape, for social home placement. Both sides of a pair usually
+ * list it; the first listing wins, exactly as in `getRelationshipSeeds`, so the
+ * placement is driven by the same values that end up in the table.
+ */
+function seedRelationshipsByName(): SocialRelationship[] {
+  const seen = new Set<string>();
+  const out: SocialRelationship[] = [];
+  for (const a of AGENT_SEEDS) {
+    for (const r of a.initialRelationships) {
+      const key = [a.name, r.otherName].sort().join('|');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        agentAName: a.name,
+        agentBName: r.otherName,
+        friendshipAB: r.friendshipAB,
+        friendshipBA: r.friendshipBA,
+        romanceAB: r.romanceAB,
+        romanceBA: r.romanceBA,
+        status: r.status,
+        tags: r.tags,
+      });
+    }
+  }
+  return out;
+}
+
 function seed() {
   const now = Date.now(); // wall-clock only — used for last_tick_completed, real_timestamp
 
   // 1. Generate world via procedural pipeline
   console.log('[seed] Generating world via worldgen pipeline...');
   const genResult = generateWorld({ sizeTier: 'auto', overrides: {} }, AGENT_SEEDS.length, {
-    agents: AGENT_SEEDS.map((a) => ({ homeName: a.homeName })),
+    agents: AGENT_SEEDS.map((a) => ({
+      name: a.name,
+      homeName: a.homeName,
+      workplaceName: a.workplaceName,
+    })),
+    social: { edges: buildSocialEdges(seedRelationshipsByName(), null, AGENT_SEEDS) },
   });
   const LOCATIONS = genResult.locations;
   console.log(`[seed] Generated ${LOCATIONS.length} locations (${genResult.dimensions.width}×${genResult.dimensions.height}).`);

@@ -44,6 +44,7 @@ import { perceptionSystem } from '../lib/perception/instance';
 import { emitter } from '../engine/emitter';
 import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
+import { buildSocialEdges } from '../lib/worldgen/social';
 import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
 import { resetCascade } from '../lib/cascade';
 import { invalidateCostMap, clearMovementState } from '../engine/systems/movement';
@@ -270,6 +271,20 @@ function buildScenario(
   );
 }
 
+/**
+ * The worldgen `social` option for a wizard config: the relationship graph —
+ * config rows plus the scenario's romance threads and rival pairs — as named
+ * edges for the homes stage. Shared by `replaceWorld` and `previewWorld` so the
+ * World Layout preview places households exactly as Start will.
+ */
+function buildWorldgenSocial(
+  agents: ReadonlyArray<{ name: string; homeName: string }>,
+  relationships: ReadonlyArray<z.infer<typeof RelationshipConfigSchema>>,
+  scenario: ReturnType<typeof buildScenario> | null,
+) {
+  return { edges: buildSocialEdges(relationships, scenario, agents) };
+}
+
 // ─── Helper: seed world from config ──────────────────────────────────────────
 
 /**
@@ -284,17 +299,22 @@ function buildScenario(
 function seedWorld(
   config: z.infer<typeof SetupConfigSchema>,
   genResult: ReturnType<typeof generateWorld>,
-): { agentCount: number; locationCount: number } {
-  const now = Date.now();
-
   /**
    * The scenario the sliders describe: secrets, romance threads, rivalries,
-   * starting money and starting mood. Seeded, so the wizard's Preview step, the
-   * Start that follows it and any later `restart` of the saved config all
-   * produce the same town. Indices below are positions in `config.agents`,
-   * which is exactly the array handed to the generator.
+   * starting money and starting mood — `buildScenario(config.scenario,
+   * config.agents)`, or null when no sliders were posted. Seeded, so the
+   * wizard's Preview step, the Start that follows it and any later `restart` of
+   * the saved config all produce the same town. Indices below are positions in
+   * `config.agents`, which is exactly the array handed to the generator.
+   *
+   * A parameter because `replaceWorld` needs it *before* generating the world
+   * (its romance threads and rivalries decide who lives next to whom), and
+   * building it twice would be two chances for the placement and the seeded
+   * relationships to disagree.
    */
-  const scenario = config.scenario ? buildScenario(config.scenario, config.agents) : null;
+  scenario: ReturnType<typeof buildScenario> | null,
+): { agentCount: number; locationCount: number } {
+  const now = Date.now();
 
   const dynamicLocations = genResult.locations;
   const dynamicCollisionGrid = genResult.collisionGrid;
@@ -883,8 +903,14 @@ async function replaceWorld(
     // skipped the `finally` entirely and left the simulation permanently frozen
     // against the old world with no client signal. Since `initialize` routes
     // through here, that bricked the app on a first-run worldgen failure.
+    //
+    // The scenario is built first because worldgen needs it: its romance
+    // threads and rival pairs are part of the relationship graph the homes
+    // stage places households by. The same object is then seeded below.
+    const scenario = config.scenario ? buildScenario(config.scenario, config.agents) : null;
     const genResult = generateWorld(config.worldgen, config.agents.length, {
       agents: config.agents,
+      social: buildWorldgenSocial(config.agents, config.relationships, scenario),
     });
     // Writeback the resolved seed so worldState.setup_config is deterministic for restart.
     config.worldgen = { ...config.worldgen, seed: genResult.seed };
@@ -903,7 +929,7 @@ async function replaceWorld(
     return sqlite.transaction(() => {
       sqlite.exec('PRAGMA defer_foreign_keys = ON;');
       deleteAllRows();
-      return seedWorld(config, genResult);
+      return seedWorld(config, genResult, scenario);
     })();
   } finally {
     // Everything before `startTickLoop()` is wrapped so that nothing in here can
@@ -1014,14 +1040,30 @@ export const setupRouter = router({
         previewAgentHomes: z
           .array(z.object({ homeName: z.string() }))
           .optional(),
+        /**
+         * The wizard's full cast, relationships and scenario sliders, so the
+         * preview places households by the same relationship graph Start will.
+         * `agents` supersedes `previewAgentHomes` when present (it carries the
+         * names and workplaces the social placement needs, and the fields
+         * `buildScenario` reads); the scenario only applies with `agents`,
+         * since its romance threads and rivalries are indices into that list.
+         */
+        agents: z.array(AgentConfigSchema).max(MAX_AGENTS).optional(),
+        relationships: z.array(RelationshipConfigSchema).optional(),
+        scenario: ScenarioSlidersSchema.optional(),
       }).refine(
         (cfg) => cfg.sizeTier !== 'custom' || !!cfg.customDimensions,
         { message: "sizeTier='custom' requires customDimensions" },
       ),
     )
     .mutation(({ input }) => {
-      const { agentCount, previewAgentHomes, ...cfg } = input;
-      return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
+      const { agentCount, previewAgentHomes, agents, relationships, scenario, ...cfg } = input;
+      if (!agents) return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
+      const built = scenario && agents.length > 0 ? buildScenario(scenario, agents) : null;
+      return generateWorld(cfg, agentCount, {
+        agents,
+        social: buildWorldgenSocial(agents, relationships ?? [], built),
+      });
     }),
 
   resetToWizard: publicProcedure.mutation(async () => {

@@ -4,6 +4,8 @@ import { WorldPreview } from './WorldPreview';
 import {
   type WorldGenConfig,
   type AgentConfig,
+  type RelationshipConfig,
+  type ScenarioConfig,
   WORLDGEN_MIN_WIDTH,
   WORLDGEN_MAX_WIDTH,
   WORLDGEN_MIN_HEIGHT,
@@ -17,6 +19,11 @@ interface WorldLayoutProps {
    *  `sizeTier`/`customDimensions` edit made while the preview was in flight. */
   onChange: Dispatch<SetStateAction<WorldGenConfig>>;
   agents: AgentConfig[];
+  /** With `agents`, the relationship graph worldgen places households by —
+   *  sent so the preview is the town Start will build, not a socially random
+   *  one that silently reshuffles on Start. */
+  relationships: RelationshipConfig[];
+  scenario: ScenarioConfig;
   /** Reports the current worldgen error (or `null`) to the wizard so it can
    *  gate "Start Simulation". This step is unmounted on other steps, so the
    *  state has to live in the parent to survive to the last step. */
@@ -37,7 +44,9 @@ function randomSeed(len = 8): string {
   return s;
 }
 
-export function WorldLayout({ config, onChange, agents, onErrorChange }: WorldLayoutProps) {
+export function WorldLayout({
+  config, onChange, agents, relationships, scenario, onErrorChange,
+}: WorldLayoutProps) {
   const previewMutation = trpc.setup.previewWorld.useMutation();
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [seedDraft, setSeedDraft] = useState<string>(config.seed ?? '');
@@ -59,7 +68,6 @@ export function WorldLayout({ config, onChange, agents, onErrorChange }: WorldLa
   const seedEcho = useRef<string | null>(null);
 
   const agentCount = agents.length;
-  const previewAgentHomes = agents.map((a) => ({ homeName: a.homeName }));
 
   // Auto-preview on mount + whenever scalar config changes. Deps are scalars
   // (customW, customH, homeNamesKey) NOT objects — object identity changes
@@ -67,7 +75,15 @@ export function WorldLayout({ config, onChange, agents, onErrorChange }: WorldLa
   const customW = config.customDimensions?.width ?? 0;
   const customH = config.customDimensions?.height ?? 0;
   const homeNamesKey = agents.map((a) => a.homeName).join('|');
-  const depKey = `${config.sizeTier}|${customW}|${customH}|${agentCount}|${homeNamesKey}`;
+  // Everything social placement reads: names, homes and workplaces, the
+  // relationship rows, and the scenario (whose romance threads and rivalries
+  // depend on the agents' ages and personalities too, so the whole agent list
+  // goes in). A string, so it is a stable scalar dep.
+  const socialKey = config.socialPlacement === false
+    ? 'off'
+    : JSON.stringify([agents, relationships, scenario]);
+  const depKey =
+    `${config.sizeTier}|${customW}|${customH}|${agentCount}|${homeNamesKey}|${socialKey}`;
 
   // Client-side bounds check on the Custom size. `min`/`max` on
   // `<input type="number">` only constrain the spinner — typed and pasted text
@@ -120,7 +136,11 @@ export function WorldLayout({ config, onChange, agents, onErrorChange }: WorldLa
       {
         ...config,
         agentCount,
-        previewAgentHomes,
+        // The full cast rather than `previewAgentHomes`: social placement needs
+        // names and workplaces, and the scenario needs the rest.
+        agents,
+        relationships,
+        scenario,
       },
       {
         onError: (err) => {
@@ -149,7 +169,7 @@ export function WorldLayout({ config, onChange, agents, onErrorChange }: WorldLa
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.seed, config.sizeTier, customW, customH, agentCount, homeNamesKey]);
+  }, [config.seed, config.sizeTier, customW, customH, agentCount, homeNamesKey, socialKey]);
 
   // Always a fresh seed. It used to be `seedDraft.trim() || randomSeed()`, but
   // the preview writes the resolved seed back into both `config.seed` and
@@ -258,6 +278,21 @@ export function WorldLayout({ config, onChange, agents, onErrorChange }: WorldLa
               <option value="custom">Custom</option>
             </select>
           </div>
+
+          {/* Social placement toggle. Plot selection is identical either way;
+              this only decides which household gets which house. */}
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={config.socialPlacement !== false}
+              onChange={(e) => {
+                const socialPlacement = e.target.checked;
+                onChange((prev) => ({ ...prev, socialPlacement }));
+              }}
+            />
+            Place homes by relationships
+            <span className="text-xs text-gray-500">(rivals next door, secret lovers across town)</span>
+          </label>
 
           {/* The tier labels promise a number, and the pipeline quietly grows the
               map when content does not fit — at 32 agents "Medium" returned 72×54

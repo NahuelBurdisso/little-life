@@ -159,6 +159,89 @@ describe('initialize DB determinism', () => {
 });
 
 /**
+ * `initialize` feeds the relationship graph into worldgen, so the seeded homes
+ * are the socially placed ones — the same world `previewWorld` shows.
+ */
+describe('social home placement through initialize', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
+  const RIVALS = [{
+    agentAName: 'Test Agent 1', agentBName: 'Test Agent 5',
+    friendshipAB: -40, friendshipBA: -30, romanceAB: 0, romanceBA: 0,
+    trustAB: -30, trustBA: -20, familiarity: 50, status: 'rivals', tags: ['grudge'],
+  }];
+  const homesOf = (locs: Array<{ name: string; type: string; position: unknown }>) =>
+    locs.filter((l) => l.type === 'home').map((l) => ({ name: l.name, position: l.position }));
+
+  it('seeds the rivals into the placed homes', async () => {
+    const { buildSocialEdges } = await import('../lib/worldgen/social');
+    const edges = buildSocialEdges(RIVALS, null, MINIMAL_AGENTS);
+    expect(edges).toEqual([{ a: 'Test Agent 1', b: 'Test Agent 5', kind: 'rival' }]);
+
+    // Pick a seed where placement actually relabels, so the assertion below
+    // could not pass with the social input dropped on the floor.
+    const cfg = (seed: string) => ({ sizeTier: 'auto' as const, overrides: {}, seed });
+    let seed: string | null = null;
+    let placed: ReturnType<typeof generateWorld> | null = null;
+    for (let i = 0; i < 20 && !seed; i++) {
+      const s = `social-db-${i}`;
+      const base = generateWorld(cfg(s), MINIMAL_AGENTS.length, { agents: MINIMAL_AGENTS });
+      const soc = generateWorld(cfg(s), MINIMAL_AGENTS.length, {
+        agents: MINIMAL_AGENTS, social: { edges },
+      });
+      if (JSON.stringify(homesOf(base.locations)) !== JSON.stringify(homesOf(soc.locations))) {
+        seed = s;
+        placed = soc;
+      }
+    }
+    expect(seed).not.toBeNull();
+
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: cfg(seed!),
+    } as any);
+
+    const rows = db.select({ name: locations.name, type: locations.type, position: locations.position })
+      .from(locations).all();
+    expect(homesOf(rows)).toEqual(homesOf(placed!.locations));
+
+    // The wizard preview, given the same cast and relationships, shows the
+    // same placement (both routes share `buildWorldgenSocial`).
+    const preview = await caller.previewWorld({
+      ...cfg(seed!),
+      agentCount: MINIMAL_AGENTS.length,
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+    });
+    expect(homesOf(preview.locations)).toEqual(homesOf(placed!.locations));
+
+    // And the rivals really are neighbours: at or below the median pair distance.
+    const door = (name: string) => {
+      const p = rows.find((r) => r.name === name)!.position as { x: number; y: number };
+      return { x: p.x / 32 + 1, y: p.y / 32 + 3 };
+    };
+    const dist = (a: string, b: string) => {
+      const p = door(a), q = door(b);
+      return Math.abs(p.x - q.x) + Math.abs(p.y - q.y);
+    };
+    const names = MINIMAL_AGENTS.map((a) => a.homeName);
+    const all: number[] = [];
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) all.push(dist(names[i], names[j]));
+    }
+    all.sort((a, b) => a - b);
+    expect(dist('Home 1', 'Home 5')).toBeLessThanOrEqual(all[Math.floor(all.length / 2)]);
+  });
+});
+
+/**
  * The drama sliders used to be decorative — the wizard previewed a scenario it
  * fabricated client-side and `initialize` seeded none of it. This covers the DB
  * half of the fix; the generator's determinism is pinned in
