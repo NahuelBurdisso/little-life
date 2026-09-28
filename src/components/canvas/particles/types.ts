@@ -12,7 +12,7 @@ export type ParticleTrigger =
   | { type: 'social'; event: string };
 
 /** Visual shape of a particle. Pre-rendered as textures at startup. */
-export type ParticleShape = 'circle' | 'heart' | 'star' | 'raindrop' | 'leaf' | 'spark' | 'note' | 'square';
+export type ParticleShape = 'circle' | 'heart' | 'star' | 'leaf' | 'spark' | 'note' | 'square';
 
 /** Complete definition of a particle effect. Pure data — no logic. */
 export interface ParticleProfile {

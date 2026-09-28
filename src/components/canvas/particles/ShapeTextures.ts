@@ -4,7 +4,8 @@ import type { ParticleShape } from './types';
 /**
  * Loads Kenney particle textures (CC0 license) and maps them to particle shapes.
  *
- * The Kenney pack provides 5 soft-glow circle variants (512x512, white on transparent).
+ * The Kenney pack provides 5 soft-glow circle variants (512x512, white on transparent);
+ * the first four are used.
  * These are the industry standard for particle effects — they look beautiful when
  * tinted, scaled, and layered. Different shapes reuse the same glow textures at
  * different scales and with programmatic overlays for variety.
@@ -17,7 +18,8 @@ const KENNEY_TEXTURES = [
   '/particles/circle_02.png', // harder edge glow
   '/particles/circle_03.png', // large soft glow
   '/particles/circle_04.png', // medium sharp glow
-  '/particles/circle_05.png', // small tight glow
+  // circle_05 (small tight glow) was only ever the 'raindrop' shape, which went
+  // with the duplicate rain profile — WeatherEffects draws all precipitation.
 ];
 
 // Fallback: programmatic textures if images fail to load
@@ -73,7 +75,6 @@ export async function createShapeTextures(
   // Primary shapes use Kenney glow textures (beautiful soft rendering)
   textures.set('circle', kenneyTextures[0] ?? own(createCircleFallback(renderer)));
   textures.set('spark', kenneyTextures[1] ?? own(createCircleFallback(renderer)));    // harder edge = spark feel
-  textures.set('raindrop', kenneyTextures[4] ?? own(createCircleFallback(renderer))); // tight = raindrop
   textures.set('leaf', kenneyTextures[3] ?? own(createCircleFallback(renderer)));     // medium = leaf
   textures.set('square', kenneyTextures[2] ?? own(createCircleFallback(renderer)));   // large soft = ambient
 
