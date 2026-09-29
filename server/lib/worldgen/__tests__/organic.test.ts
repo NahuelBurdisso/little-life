@@ -199,8 +199,10 @@ describe('organic layout: whole-world invariants', () => {
   it('does not grow the map where the grid does not (auto size)', () => {
     // Organic lanes cut the map arbitrarily; a town whose buildings no longer
     // fit makes the pipeline grow the map by 20%. The lot guard in
-    // organicRoads.ts exists for exactly this — measured 0 expansions over 800
-    // seeds at 5 and 13 agents. The grid never expands at these counts either.
+    // organicRoads.ts exists for exactly this — measured over 800 seeds: 0
+    // expansions at 1 and 13 agents, 1 at 5. The grid never expands at these
+    // counts. (These 90 seeds are all clean; a new miss here is a regression
+    // of the guard, not sampling noise, at a 0.1% base rate.)
     for (const n of [1, 5, 13]) {
       for (let i = 0; i < 30; i++) {
         const r = generateWorld(organic(`organic-size-${n}-${i}`), n);
@@ -235,8 +237,8 @@ describe('organic layout: town quality', () => {
   it('public buildings front onto the lanes', () => {
     // Same measure and seeds-per-window as layout.test.ts's grid version.
     // Measured over five disjoint 60-seed windows (these seeds are the first):
-    //   13 agents: near 0.511-0.544, far 0.139-0.165   (grid: ~0.53 / ~0.09)
-    //   30 agents: near 0.589-0.618, far 0.107-0.136   (grid: ~0.54 / ~0.08)
+    //   13 agents: near 0.483-0.528, far 0.150-0.167   (grid: ~0.53 / ~0.09)
+    //   30 agents: near 0.572-0.583, far 0.122-0.142   (grid: ~0.54 / ~0.08)
     // Near matches the grid; far is higher because a lane network leaves more
     // of the map away from any road than a full-span grid does — the farm
     // alone is ~40% of the far doors. Bars sit below the worst window.
@@ -259,8 +261,8 @@ describe('organic layout: town quality', () => {
   });
 
   it('derived plots generate for most seeds', () => {
-    // Measured over five 60-seed windows at 13 agents: market square 0.83-0.97,
-    // farmyard 0.93-0.98, alley 0.53-0.75 (grid: ~1.0 / ~0.9 / ~0.95). The alley
+    // Measured over five 60-seed windows at 13 agents: market square 0.85-0.98,
+    // farmyard 0.92-0.97, alley 0.50-0.77 (grid: ~1.0 / ~0.9 / ~0.95). The alley
     // is lower by design, not by accident: it needs two commercial buildings
     // aligned within ALLEY_MAX_SPAN, and the grid's straight blocks line them
     // up where organic zones do not.

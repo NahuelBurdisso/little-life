@@ -33,9 +33,9 @@
  * tiles {x, x+1} × {y, y+1}. Consecutive 4-connected cells overlap by two tiles,
  * so a lane is exactly 2 wide on straights and a bend is a clean 2-wide L — the
  * same top/left-anchored rule the grid uses (`mainStreetY` and `+ 1`). A lane
- * stops at the first cell whose block overlaps an existing road tile, so every
- * junction shares at least one tile with the network and the whole network is
- * one 4-connected component by construction.
+ * stops at the first cell whose block shares two or more tiles with the
+ * existing roads (see `junction`), so every junction is edge-on and the whole
+ * network is one 4-connected component by construction.
  *
  * Road cells are confined so that every painted tile keeps BORDER_BUFFER clear
  * of the map edge. The grid's roads run to the edge; these do not, because a
@@ -71,7 +71,7 @@ type Rect = { x: number; y: number; width: number; height: number };
  * pulls toward, so its length is a large share of the frontage budget: 0.5-0.7
  * put 51% of public doors near a road at 13 agents, 0.6-0.8 gave 55%. 0.55-0.7
  * keeps the street visibly shorter than the map (a village, not a highway) and
- * measures 54%.
+ * measures 53%.
  */
 const MAIN_STREET_MIN_FRAC = 0.55;
 const MAIN_STREET_FRAC_SPAN = 0.15;
@@ -87,7 +87,7 @@ const MAIN_STREET_EDGE_ROWS = 7;
  * the knob for how much of the map is street: 56×43 gets 10 seeds, of which ~9
  * become lanes (the rest end up beside an earlier lane). At 420 (6 seeds) road
  * cover was 229 tiles against the grid's 364 and 38% of homes' front doors sat
- * more than 6 tiles from any road; at 240 it is ~313 tiles and ~16%.
+ * more than 6 tiles from any road; at 240 it is ~315 tiles and ~17%.
  */
 const AREA_PER_SEED = 240;
 const MIN_SEEDS = 4;
@@ -397,7 +397,7 @@ export function generateOrganicRoads(
     if (stampDist(seed.x, seed.y) < SEED_MIN_ROAD_DIST) continue;
     const path = cheapestPath(seed, width, loX, hiX, loY, hiY, (x, y) => {
       const d = stampDist(x, y);
-      if (d === 0) return GOAL;
+      if (d === 0) return junction(net, x, y);
       return baseCost[y * width + x] + nearRoadCost(d);
     });
     if (!path) continue;
@@ -456,14 +456,17 @@ function nearRoadCost(d: number): number {
  * lanes are not. Without the guard 0.4% of 5-agent and 0.1% of 13-agent auto
  * worlds grew (800 seeds each; the farm had nowhere to go); guarding only the
  * three largest templates still left a 5×4 workshop homeless in 0.5% of fixed
- * 56×43 worlds. Guarding every template: 0 in 800 seeds at 1, 5 and 13 agents,
- * and 0 at 56×43 custom for 1-20 agents (200 seeds). It skips under one lane in
- * a hundred (0.7% at 13 agents).
+ * 56×43 worlds. Guarding every template: 0 grown in 800 seeds at 1 and 13
+ * agents and 1 in 800 at 5, and 0 failures at 56×43 custom for 1-20 agents
+ * (200 seeds). It skips under one lane in a hundred (0.4% at 13 agents).
  *
  * First-fit is optimistic (layout spreads buildings out for frontage and
- * centrality), which is what LOT_SLACK buys back. It is a cheap proxy, not a
- * proof: `layout.ts` can still FitError, and the pipeline's expand ladder is
- * still the backstop.
+ * centrality — the one remaining 5-agent miss is the farm boxed out by a
+ * centrally placed town square), which is what LOT_SLACK partly buys back. It
+ * is a cheap proxy, not a proof: `layout.ts` can still FitError, and the
+ * pipeline's expand ladder is still the backstop. A slack of 2 closes that last
+ * miss but skips one lane in seven and a third of the loops at 13 agents —
+ * far too high a price for a 0.1% map growth.
  */
 function lotsStillFit(
   net: Network,
@@ -527,6 +530,23 @@ function lotsStillFit(
 }
 
 // ─── Path search ──────────────────────────────────────────────────────────────
+
+/**
+ * How a path may end on a cell whose stamp touches the network: GOAL when the
+ * stamp shares at least two tiles with it — a proper junction, meeting a road
+ * edge-on — and BLOCKED when it shares only one.
+ *
+ * A single shared tile is a corner touch: typically a lane arriving alongside
+ * another lane's dead end one row off. Accepted as a goal, it chained lanes
+ * end to end with a one-row jog at each join, and three or four of those in a
+ * row read as a diagonal smear rather than streets. Blocking the corner makes
+ * the search either line up with the lane end or meet it side-on.
+ */
+function junction(net: Network, x: number, y: number): number {
+  let shared = 0;
+  for (const [dx, dy] of STAMP) shared += net.mask[(y + dy) * net.width + x + dx];
+  return shared >= 2 ? GOAL : BLOCKED;
+}
 
 /** Cost-function sentinels: the cell ends the search / cannot be entered. */
 const GOAL = -1;
@@ -633,7 +653,7 @@ function closeLoop(
       // Any contact with network that is neither the far target nor the dead
       // end's own last tiles would be a junction nobody asked for.
       if (touchesMid) return BLOCKED;
-      if (touchesFar) return touchesNear ? BLOCKED : GOAL;
+      if (touchesFar) return touchesNear ? BLOCKED : junction(net, x, y);
       const i = y * width + x;
       if (touchesNear) return baseCost[i];
       const d = Math.min(roadDist[i], roadDist[i + 1], roadDist[i + width], roadDist[i + width + 1]);
