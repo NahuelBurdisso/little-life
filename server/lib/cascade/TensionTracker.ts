@@ -7,6 +7,21 @@ const MAX_SOURCES = 5;
 /** Game minutes an agent must wait after snapping before they can snap again. */
 const SNAP_COOLDOWN_MINUTES = 200;
 
+/**
+ * The tension at which a personality snaps. Free-standing (the method below only
+ * delegates) because the "Brewing" readout (lib/brewing.ts) needs the same number
+ * to show how close each resident is, and must not need the live tracker instance
+ * just to do arithmetic on a personality.
+ */
+export function snapThreshold(personality: PersonalityProfile): number {
+  const base = 100;
+  const neuroReduction = personality.neuroticism / 4;       // 0-25 reduction
+  const impulseReduction = personality.impulsiveness / 5;   // 0-20 reduction
+  const moralityBoost = personality.morality / 6.67;        // 0-15 boost
+  const warmthBoost = personality.warmth / 10;              // 0-10 boost
+  return Math.max(55, Math.min(125, base - neuroReduction - impulseReduction + moralityBoost + warmthBoost));
+}
+
 export class TensionTracker {
   private states: Map<number, TensionState> = new Map();
 
@@ -43,12 +58,7 @@ export class TensionTracker {
   // ─── Threshold ────────────────────────────────────────────────────────────────
 
   getSnapThreshold(personality: PersonalityProfile): number {
-    const base = 100;
-    const neuroReduction = personality.neuroticism / 4;       // 0-25 reduction
-    const impulseReduction = personality.impulsiveness / 5;   // 0-20 reduction
-    const moralityBoost = personality.morality / 6.67;        // 0-15 boost
-    const warmthBoost = personality.warmth / 10;              // 0-10 boost
-    return Math.max(55, Math.min(125, base - neuroReduction - impulseReduction + moralityBoost + warmthBoost));
+    return snapThreshold(personality);
   }
 
   // ─── Tick update ─────────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ import { clearAllConversationCaches } from '../helpers/conversationHelpers';
 import { clearConfrontationCooldowns } from '../lib/confrontationEngine';
 import { clearHungerTracking } from '../lib/lifeEventsEngine';
 import { resetChronicleCache } from '../lib/chronicle';
+import { resetBrewingCache } from '../lib/brewing';
 import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
@@ -176,5 +177,6 @@ export function clearPerWorldCaches(): void {
   // Wall-clock memos over the whole town. Without a reset the first seconds of a
   // new world showed the previous world's story arcs and cliques.
   resetChronicleCache();
+  resetBrewingCache();
   resetCliqueCache();
 }

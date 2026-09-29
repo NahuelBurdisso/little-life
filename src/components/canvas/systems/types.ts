@@ -47,6 +47,12 @@ export interface DataContext {
    * timestamp (tick), real_timestamp (ms). Diff by `id` to find new rows.
    */
   activity: any[];
+  /**
+   * `chronicle.getBrewing` rows (server/lib/brewing.ts): kind, agentIds, text, heat.
+   * For `kind: "snap"` the heat is the resident's tension over their snap threshold.
+   * Optional so a system's test fixture need not carry it.
+   */
+  brewing?: Array<{ id: string; kind: string; agentIds: number[]; text: string; heat: number }>;
 }
 
 export interface FrameContext {

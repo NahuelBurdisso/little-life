@@ -47,6 +47,30 @@ export const tensionSnapshotStore: SnapshotStore = {
   },
 };
 
+/** One resident's standing tension, as read by the "Brewing" panel. */
+export interface TensionSnapshotEntry {
+  agentId: number;
+  value: number;
+  /** Newest last, at most 5 (the tracker's own cap). Copies, safe to keep. */
+  sources: Array<{ event: string; description: string; tick: number; agentInvolved?: string }>;
+}
+
+/**
+ * Every tracked resident's current tension and grievances, or [] before
+ * `initCascade`. Read-only copies: the tracker stays the only writer. Nothing on
+ * the client could see snap tension before this — the town's biggest release
+ * arrived with no warning — so this is the seam that lets a spectator watch it
+ * build (server/lib/brewing.ts).
+ */
+export function getTensionSnapshot(): TensionSnapshotEntry[] {
+  if (!tensionTracker) return [];
+  return tensionTracker.getAllAgentIds().map((agentId) => ({
+    agentId,
+    value: tensionTracker!.getTension(agentId),
+    sources: tensionTracker!.getSources(agentId).map((s) => ({ ...s })),
+  }));
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function getCurrentTick(): number {
