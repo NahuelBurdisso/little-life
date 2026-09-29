@@ -76,6 +76,8 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
       });
       onStart();
     } catch (err) {
+      // Logged and also shown in the footer via `initMutation.error`: this used
+      // to be console-only, so a rejected Start just re-enabled the button.
       console.error('Failed to start simulation:', err);
       setStarting(false);
     }
@@ -195,6 +197,11 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
             {worldgenError && (
               <span className="text-xs text-red-400 max-w-xs text-right">
                 Fix the World Layout step: {worldgenError}
+              </span>
+            )}
+            {initMutation.error && !starting && (
+              <span className="text-xs text-red-400 max-w-xs text-right break-words">
+                Could not start: {initMutation.error.message}
               </span>
             )}
             <button

@@ -117,7 +117,7 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
           <div className="grid grid-cols-3 gap-3 mb-4">
             <div>
               <label className="text-[10px] text-gray-400 uppercase block mb-1">Name</label>
-              <input value={editingAgent.name} onChange={e => updateAgent(editingAgent.id, { name: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white" />
+              <input value={editingAgent.name} maxLength={50} onChange={e => updateAgent(editingAgent.id, { name: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white" />
             </div>
             <div>
               <label className="text-[10px] text-gray-400 uppercase block mb-1">Age</label>
@@ -141,7 +141,7 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
 
           <div className="mb-4">
             <label className="text-[10px] text-gray-400 uppercase block mb-1">Bio</label>
-            <textarea value={editingAgent.bio} onChange={e => updateAgent(editingAgent.id, { bio: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white h-16 resize-none" placeholder="Write a short backstory..." />
+            <textarea value={editingAgent.bio} maxLength={500} onChange={e => updateAgent(editingAgent.id, { bio: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white h-16 resize-none" placeholder="Write a short backstory..." />
           </div>
 
           <div className="mb-4">
