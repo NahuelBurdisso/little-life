@@ -1,5 +1,7 @@
 import * as PIXI from "pixi.js";
 import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
+import { facingFromStep, pickAgentFrame, type SheetFacing } from "./agentFrames";
+import { loadAgentSheet } from "./agentSheet";
 
 const LERP_SPEED = 0.12;
 
@@ -33,6 +35,15 @@ const SIT_LEAN = 0.05;               // radians of slouch toward `facing`
 const WORK_RATE = 0.09;              // radians per frame (~1.2s per stroke at 60fps)
 const WORK_BOB_HEIGHT = 2.2;         // px the body dips at the bottom of a stroke
 const WORK_LEAN = 0.13;              // radians of forward lean at full stroke
+
+// Blinking (sheet sprites only): a closed-eye frame every few seconds, desynced per agent.
+const BLINK_MIN_GAP = 150;           // frames (~2.5s at 60fps) between blinks, minimum
+const BLINK_GAP_SPREAD = 240;        // extra random frames on top of the minimum
+const BLINK_LENGTH = 7;              // frames the eyes stay shut
+// The server moves agents one step per sim tick, so a walk is a string of short glides with
+// pauses between them. Turning to the camera on every pause made northbound walkers flip
+// between back and face each tile; only a real stop (this long) turns them around.
+const TURN_TO_CAMERA_AFTER = 90;     // idle frames (~1.5s at 60fps)
 
 /** Priority-ordered state ring colors. First match wins. */
 const STATE_RING_COLORS: Record<string, number> = {
@@ -68,6 +79,12 @@ export class AgentSprite {
   private selectionRing: PIXI.Graphics;
   private moodRing: PIXI.Graphics;
   private sprite: PIXI.Sprite | null = null;
+  /** Animation frames from `<key>_sheet.png`; null while loading or for static sprites. */
+  private frames: PIXI.Texture[] | null = null;
+  private sheetFacing: SheetFacing = 'down';
+  private walkDistance = 0;
+  private idleFrames = 0;
+  private blinkCountdown = BLINK_MIN_GAP + Math.random() * BLINK_GAP_SPREAD;
   private fallback: PIXI.Graphics | null = null;
   private nameLabel: PIXI.Text;
   private stateRing: PIXI.Graphics;
@@ -148,38 +165,50 @@ export class AgentSprite {
   }
 
   private loadSprite(spriteKey: string, name: string) {
-    const url = `/sprites/agents/${spriteKey}.png`;
     // PIXI v8: Sprite.from(url) only reads from cache; must Assets.load() first.
     // Build fallback immediately so there's something visible while texture loads.
     this.buildFallback(name);
-    PIXI.Assets.load(url)
-      .then((texture: PIXI.Texture) => {
-        // If destroy() already ran, bail.
+    // Prefer the animation sheet; agents without one (custom residents, or a key whose
+    // sheet was never generated) keep the single static frame.
+    loadAgentSheet(spriteKey)
+      .then(frames => {
         if (this.container.destroyed) return;
-        texture.source.scaleMode = 'nearest';
-        const sprite = new PIXI.Sprite(texture);
-        sprite.anchor.set(0.5, 0.9);
-        sprite.scale.set(1);
-        this.sprite = sprite;
-        // Remove fallback now that real sprite is ready.
-        if (this.fallback) {
-          this.container.removeChild(this.fallback);
-          this.fallback.destroy();
-          this.fallback = null;
-          // Also remove the fallback letter (it was added right after the circle).
-          // Find and remove PIXI.Text children that aren't the name label.
-          for (const child of [...this.container.children]) {
-            if (child instanceof PIXI.Text && child !== this.nameLabel) {
-              this.container.removeChild(child);
-              child.destroy();
-            }
-          }
-        }
-        // Insert sprite below state ring (which is last-added before name label).
-        const stateRingIdx = this.container.getChildIndex(this.stateRing);
-        this.container.addChildAt(sprite, stateRingIdx);
+        this.frames = frames;
+        this.attachSprite(frames[0]);
+      })
+      .catch(() => {
+        const url = `/sprites/agents/${spriteKey}.png`;
+        return PIXI.Assets.load(url).then((texture: PIXI.Texture) => {
+          if (this.container.destroyed) return;
+          texture.source.scaleMode = 'nearest';
+          this.attachSprite(texture);
+        });
       })
       .catch(() => this.onSpriteLoadFailed(name));
+  }
+
+  private attachSprite(texture: PIXI.Texture) {
+    const sprite = new PIXI.Sprite(texture);
+    sprite.anchor.set(0.5, 0.9);
+    sprite.scale.set(1);
+    this.sprite = sprite;
+    // Remove fallback now that real sprite is ready.
+    if (this.fallback) {
+      this.container.removeChild(this.fallback);
+      this.fallback.destroy();
+      this.fallback = null;
+      // Also remove the fallback letter (it was added right after the circle).
+      // Find and remove PIXI.Text children that aren't the name label.
+      for (const child of [...this.container.children]) {
+        if (child instanceof PIXI.Text && child !== this.nameLabel) {
+          this.container.removeChild(child);
+          child.destroy();
+        }
+      }
+    }
+    // Insert sprite below state ring (which is last-added before name label).
+    const stateRingIdx = this.container.getChildIndex(this.stateRing);
+    this.container.addChildAt(sprite, stateRingIdx);
   }
 
   private onSpriteLoadFailed(name: string) {
@@ -284,7 +313,10 @@ export class AgentSprite {
 
     if (this.poseBlend > 0.01) {
       // Lying down: rotate about the feet anchor so the head falls toward `facing`.
+      // A sleeper shows the front idle frame — eyes open or not, it reads as a body in bed.
       this.walkPhase = 0;
+      this.sheetFacing = 'down';
+      this.showFrame(false);
       this.idlePhase += SLEEP_BREATH_RATE * deltaTime;
       if (body) {
         body.rotation = this.facing * SLEEP_ROTATION * this.poseBlend;
@@ -309,14 +341,34 @@ export class AgentSprite {
     if (this.workBlend > 0.01) this.workPhase += WORK_RATE * deltaTime;
 
     if (walking) {
-      // Walking: hop + lean, cycle speed tied to actual ground covered.
+      this.sheetFacing = facingFromStep(stepX, stepY, this.sheetFacing);
+      this.walkDistance += dist;
+      this.idleFrames = 0;
+      this.showFrame(true);
+      // Walking: hop + lean, cycle speed tied to actual ground covered. Sheet sprites
+      // already bob and swap legs in their frames; the procedural hop on top of that
+      // made them bounce like they were on springs, so they only keep the facing flip.
       this.walkPhase += dist * WALK_BOB_RATE;
       if (body) {
-        body.y = -Math.abs(Math.sin(this.walkPhase)) * WALK_BOB_HEIGHT;
-        body.rotation = Math.sin(this.walkPhase) * WALK_SWAY;
+        const procedural = this.frames ? 0 : 1;
+        body.y = -Math.abs(Math.sin(this.walkPhase)) * WALK_BOB_HEIGHT * procedural;
+        body.rotation = Math.sin(this.walkPhase) * WALK_SWAY * procedural;
         body.scale.set(this.facing, 1);
       }
     } else {
+      // Stopped agents turn to face the camera unless they're busy with something in
+      // front of them — a worker at a bench or someone seated at a counter keeps their back.
+      // walkDistance is kept, so the leg cycle resumes where it was after a between-tick pause.
+      this.idleFrames += deltaTime;
+      if (this.idleFrames > TURN_TO_CAMERA_AFTER && this.workBlend < 0.01 && this.sitBlend < 0.01) {
+        this.sheetFacing = 'down';
+      }
+      this.blinkCountdown -= deltaTime;
+      const blinking = this.blinkCountdown < BLINK_LENGTH;
+      if (this.blinkCountdown <= 0) {
+        this.blinkCountdown = BLINK_MIN_GAP + Math.random() * BLINK_GAP_SPREAD;
+      }
+      this.showFrame(false, blinking);
       // Idle: breathe, plus whatever the current pose adds. Offsets are absolute
       // rather than decayed so sitting and working hold their shape instead of
       // being pulled back to rest every frame.
@@ -333,6 +385,18 @@ export class AgentSprite {
         );
       }
     }
+  }
+
+  private showFrame(walking: boolean, blinking = false) {
+    if (!this.frames || !this.sprite) return;
+    const i = pickAgentFrame({
+      facing: this.sheetFacing,
+      walking,
+      walkDistance: this.walkDistance,
+      blinking,
+    });
+    const tex = this.frames[i];
+    if (this.sprite.texture !== tex) this.sprite.texture = tex;
   }
 
   /**
