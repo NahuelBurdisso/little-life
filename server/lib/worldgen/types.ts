@@ -36,6 +36,9 @@ export interface Zone {
   id: string;
   bounds: { x1: number; y1: number; x2: number; y2: number };
   affinity: Record<string, number>;
+  /** Last-resort zone: `layout.ts` tries it only after every other zone, however
+   *  the scores fall. The organic layout emits one; the grid never does. */
+  fallback?: boolean;
 }
 
 export interface RoadsOutput {

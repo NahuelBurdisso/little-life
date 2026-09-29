@@ -808,15 +808,16 @@ function deriveOrganicZones(
   // perfectly good lot straddling two cells. Without this zone that surfaced as
   // a layout FitError, and a needlessly grown map, in ~5% of 13-agent worlds.
   //
-  // Scoring 0 on every affinity, it sorts after every cell with any affinity at
-  // all, so it only receives a template no better zone could hold. It is
-  // appended *last* so `homes.ts`'s `zones.find` — which takes the first zone
-  // containing a tile — always resolves to a real cell (they tile the same
-  // inner map) and never to this one.
+  // Flagged `fallback`, so `layout.ts` tries it only after every cell — its
+  // zero affinities alone would not guarantee that, since a full cell scores 0
+  // as well and the tie was broken by a shuffle. It is also appended *last* so
+  // `homes.ts`'s `zones.find` — which takes the first zone containing a tile —
+  // always resolves to a real cell (they tile the same inner map), never to it.
   zones.push({
     id: 'o_any',
     bounds: { x1, y1, x2, y2 },
     affinity: { mainStreet: 0, commercial: 0, civic: 0, residential: 0 },
+    fallback: true,
   });
   return zones;
 }

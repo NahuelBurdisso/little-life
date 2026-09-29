@@ -675,8 +675,9 @@ export const layoutStage: Stage<{
     // Track used area per zone for remaining-area scoring
     const usedAreaByZone = new Map<string, number>();
 
-    // Normaliser for the centrality term. See `scoreZone`.
-    const maxZoneDist = zones.reduce(
+    // Normaliser for the centrality term. See `scoreZone`. Fallback zones are
+    // not candidates for a centrality ranking, so they don't set the scale.
+    const maxZoneDist = zones.filter((z) => !z.fallback).reduce(
       (m, z) =>
         Math.max(
           m,
@@ -722,8 +723,17 @@ export const layoutStage: Stage<{
       // matters when `remainingFraction` drives several zones to exactly 0. It is
       // kept because removing it would change the RNG draw count and reshuffle
       // every existing seed, not because it breaks ties in practice.
-      const shuffled = rng.shuffle(scoredZones);
-      shuffled.sort((a, b) => b.score - a.score);
+      const sortedZones = rng.shuffle(scoredZones);
+      sortedZones.sort((a, b) => b.score - a.score);
+      // Fallback zones go strictly last. Sorting alone did not guarantee it: a
+      // real zone whose `remainingFraction` hit 0 scores exactly 0 too, and the
+      // shuffle could put the fallback ahead of it. Partitioning keeps the
+      // relative order within each group, and with no fallback zone (the grid)
+      // this is the identity — no RNG draw moves either way.
+      const shuffled = [
+        ...sortedZones.filter((z) => !z.zone.fallback),
+        ...sortedZones.filter((z) => z.zone.fallback),
+      ];
 
       let placed = false;
 
