@@ -83,8 +83,7 @@ export class PlanExecutor {
 
     // 3. Newly-found pending block → activate it
     if (block.status === 'pending') {
-      block.status = 'active';
-      this.cache.set(agentId, plan);
+      this._setStatus(agentId, plan, block, 'active');
 
       // Drop the previous block's execution state, but do NOT start this
       // block's clock yet. It used to be stamped here, at activation; the
@@ -103,7 +102,11 @@ export class PlanExecutor {
 
     // 4. Block is active but decomposition not done yet
     if (!block.decomposed_actions || block.decomposed_actions.length === 0) {
-      return this._awaitDecomposition(agentId, block, gameMinute);
+      const held = this._awaitDecomposition(agentId, block, gameMinute);
+      // Sleep, own-workplace shifts and home meals are decomposed on the spot,
+      // inside the request above (PlanDecomposer.decomposeWithoutLLM): run the
+      // block this pass instead of losing a pass to the utility layer.
+      if (!block.decomposed_actions || block.decomposed_actions.length === 0) return held;
     }
 
     // 5. Get or repair exec state. A state for another block (or none, right
@@ -132,8 +135,7 @@ export class PlanExecutor {
 
     if (idx >= actions.length) {
       // All actions consumed — mark block completed
-      block.status = 'completed';
-      this.cache.set(agentId, plan);
+      this._setStatus(agentId, plan, block, 'completed');
       this._prefetchNext(plan, block, agentId, gameMinute);
       return null;
     }
@@ -152,8 +154,7 @@ export class PlanExecutor {
       if (newIdx >= actions.length) {
         // Actions shorter than the block end it early; the next block's
         // actions are then needed now, not in its last hour.
-        block.status = 'completed';
-        this.cache.set(agentId, plan);
+        this._setStatus(agentId, plan, block, 'completed');
         this._prefetchNext(plan, block, agentId, gameMinute);
         return null;
       }
@@ -215,16 +216,32 @@ export class PlanExecutor {
     agentId: number,
     currentHour: number,
   ): PlanBlock | null {
-    // Check for an already-active block
+    // Settle the blocks whose hours are over. Both transitions are decided in
+    // memory first and saved with ONE write, and only when something changed:
+    // this runs on every decision pass, so an unconditional save would rewrite
+    // the whole plan JSON for every agent all day.
+    //  - a block still 'active' after its window ends is done ('completed');
+    //  - a block still 'pending' after its window ends was never run — the agent
+    //    was asleep, in a conversation, or the plan arrived late. It used to stay
+    //    'pending' in the saved plan forever, so a finished day read as a day
+    //    where nothing had happened (G8). 'skipped' says what actually happened.
+    // The block the clock is in is never settled here: it is picked below.
     const activeBlock = plan.blocks.find((b) => b.status === 'active');
-    if (activeBlock) {
-      if (currentHour >= activeBlock.start_hour && currentHour < activeBlock.end_hour) {
-        return activeBlock;
-      }
-      // Outside the block's time window — mark completed
+    let settled = false;
+    if (activeBlock && (currentHour < activeBlock.start_hour || currentHour >= activeBlock.end_hour)) {
       activeBlock.status = 'completed';
-      this.cache.set(agentId, plan);
+      settled = true;
     }
+    for (const b of plan.blocks) {
+      if (b.status === 'pending' && b.end_hour <= currentHour) {
+        b.status = 'skipped';
+        settled = true;
+      }
+    }
+    if (settled) this.cache.set(agentId, plan);
+
+    // An active block whose window is still open keeps running.
+    if (activeBlock && activeBlock.status === 'active') return activeBlock;
 
     // Find next pending block whose window covers current hour
     const pending = plan.blocks.find(
@@ -235,6 +252,18 @@ export class PlanExecutor {
     );
 
     return pending ?? null;
+  }
+
+  /**
+   * The one place a block's status changes and is saved. A no-op when the
+   * status is already `status`, so a caller that reaches this on every pass
+   * still writes only on a real transition (the save is the whole plan as JSON
+   * in `agents.daily_plan`, see PlanCache.set).
+   */
+  private _setStatus(agentId: number, plan: DailyPlan, block: PlanBlock, status: PlanBlock['status']): void {
+    if (block.status === status) return;
+    block.status = status;
+    this.cache.set(agentId, plan);
   }
 
   private _idleAction(block: PlanBlock): ScoredAction {

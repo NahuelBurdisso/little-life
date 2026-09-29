@@ -22,7 +22,12 @@ export interface PlanBlock {
   end_hour: number;
   broad_action: string;
   location_hint: string;
-  status: 'pending' | 'active' | 'completed' | 'interrupted' | 'replanned';
+  /**
+   * 'pending' → 'active' → 'completed' is a block that ran. 'skipped' is a
+   * block whose hours passed without it ever starting (asleep, in a talk, plan
+   * arrived late). All transitions are saved with the plan (PlanExecutor).
+   */
+  status: 'pending' | 'active' | 'completed' | 'interrupted' | 'replanned' | 'skipped';
   decomposed_actions?: DecomposedAction[];
 }
 

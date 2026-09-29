@@ -6,7 +6,7 @@ interface PlanBlock {
   end_hour: number;
   broad_action: string;
   location_hint?: string;
-  status: "completed" | "active" | "pending" | "interrupted" | "replanned";
+  status: "completed" | "active" | "pending" | "interrupted" | "replanned" | "skipped";
   decomposed_actions?: Array<{ action: string; duration_min: number }>;
 }
 
@@ -27,6 +27,7 @@ const STATUS_ICON: Record<PlanBlock["status"], string> = {
   pending: "○",
   interrupted: "✗",
   replanned: "↻",
+  skipped: "–",
 };
 
 function formatHour(h: number): string {
@@ -94,7 +95,7 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
           const isActive = block.status === "active";
           const isInterrupted = block.status === "interrupted";
           const isReplanned = block.status === "replanned";
-          const isCompleted = block.status === "completed";
+          const isCompleted = block.status === "completed" || block.status === "skipped";
 
           const rowClass = [
             "text-[11px] flex items-baseline gap-1.5 py-0.5 rounded px-1",
