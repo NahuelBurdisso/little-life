@@ -30,6 +30,7 @@ import { useKeyboardControls } from "./hooks/useKeyboardControls";
 import { useFavorites } from "./hooks/useFavorites";
 import { worldSeedOf, orderCast, cycleAgentId } from "./lib/favorites";
 import { CastBar } from "./components/ui/CastBar";
+import { HealthBanner } from "./components/ui/HealthBanner";
 import { Toasts } from "./components/ui/Toasts";
 import { LoadingScreen } from "./components/ui/LoadingScreen";
 import { FloatingToolbar } from "./components/ui/FloatingToolbar";
@@ -302,6 +303,8 @@ export default function App() {
         hasNewGazette={gazette.hasNew}
         onWorldReplaced={handleWorldReplaced}
       />
+      {/* Socket down / LLM offline or slow / ticks lagging (renders nothing when fine) */}
+      <HealthBanner />
       <CastBar
         agents={cast}
         locations={locations ?? []}

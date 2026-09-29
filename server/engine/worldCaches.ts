@@ -53,6 +53,7 @@ import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
+import { nightSkip } from './nightSkip';
 import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
 import { clearRulesCache } from '../lib/worldRules';
 import { loadAutoplayConfig } from '../lib/autoplaySettings';
@@ -184,6 +185,11 @@ export function clearPerWorldCaches(): void {
   // Turn-latency samples and the probe stamp are game-minute stamped; a new
   // world's clock can start earlier, and old samples belong to a different town.
   resetConversationPacing();
+
+  // A skip in progress belongs to the old town (its target is an absolute game
+  // minute of the old clock, its sleepers are old agent ids). The new world has
+  // its own tick_speed already.
+  nightSkip.reset();
 
   // Wall-clock memos over the whole town. Without a reset the first seconds of a
   // new world showed the previous world's story arcs and cliques.

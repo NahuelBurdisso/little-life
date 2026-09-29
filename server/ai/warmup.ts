@@ -9,6 +9,7 @@
  * into one clear line instead of a stream of failed turns.
  */
 import { CONFIG } from '../lib/constants';
+import { llmHealth } from './llmHealth';
 
 const LOAD_TIMEOUT_MS = 300_000;
 
@@ -27,14 +28,19 @@ async function post(path: string, body: unknown): Promise<Response> {
   }
 }
 
-async function report(what: string, model: string, started: number, res: Response): Promise<void> {
+async function report(what: 'chat' | 'embedding', model: string, started: number, res: Response): Promise<void> {
   if (res.ok) {
     console.log(`[llm] ${what} model ${model} ready (${((Date.now() - started) / 1000).toFixed(1)} s)`);
+    if (what === 'chat') llmHealth.noteChat(true, model);
+    else llmHealth.noteEmbedding(true, model);
     return;
   }
   const text = await res.text().catch(() => '');
   if (res.status === 404 || /not found/i.test(text)) {
     console.error(`[llm] ${what} model "${model}" is not installed in Ollama. Run: ollama pull ${model}`);
+    // Also to the in-game health banner: the console line alone is what the
+    // player never sees while the townsfolk silently fall back to templates.
+    llmHealth.noteModelMissing(what, model);
   } else {
     console.warn(`[llm] ${what} model ${model} failed to load (${res.status}): ${text.slice(0, 200)}`);
   }
@@ -54,7 +60,11 @@ export async function warmUpModels(): Promise<void> {
           messages: [],
           keep_alive: CONFIG.AI.KEEP_ALIVE,
           options: { num_ctx: CONFIG.AI.NUM_CTX },
-        }).then((res) => report('chat', model, started, res)),
+        }).then((res) => report('chat', model, started, res), (err) => {
+          // Unreachable Ollama: the failure is the evidence the banner needs.
+          llmHealth.noteChat(false, model, (err as Error)?.message ?? String(err));
+          throw err;
+        }),
       );
     }
   }
@@ -66,7 +76,10 @@ export async function warmUpModels(): Promise<void> {
       input: 'warm up',
       keep_alive: CONFIG.AI.KEEP_ALIVE,
       options: { num_ctx: CONFIG.AI.EMBED_NUM_CTX },
-    }).then((res) => report('embedding', CONFIG.AI.EMBEDDING_MODEL, started, res)),
+    }).then((res) => report('embedding', CONFIG.AI.EMBEDDING_MODEL, started, res), (err) => {
+      llmHealth.noteEmbedding(false, CONFIG.AI.EMBEDDING_MODEL, (err as Error)?.message ?? String(err));
+      throw err;
+    }),
   );
 
   const results = await Promise.allSettled(tasks);

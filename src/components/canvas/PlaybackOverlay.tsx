@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SPEED_FLASH_MS, playbackChange, speedArrows, speedText } from "./playbackLabel";
+import { useNightSkipStatus } from "../../hooks/useNightSkip";
 
 interface PlaybackOverlayProps {
   paused: boolean;
@@ -20,20 +21,29 @@ export function PlaybackOverlay({ paused, speed }: PlaybackOverlayProps) {
   const [flash, setFlash] = useState<Flash | null>(null);
   const prev = useRef({ paused, speed });
   const counter = useRef(0);
+  // "Skip to morning" running (engine/nightSkip.ts). Read-only: the skip button
+  // owns the subscription that keeps this query fresh.
+  const skipping = Boolean(useNightSkipStatus(false)?.active);
 
   useEffect(() => {
     const before = prev.current;
     prev.current = { paused, speed };
+    // The skip steps its speed down to 4x while the LLM is busy: not the player's change.
+    if (skipping) return;
     if (playbackChange(before, { paused, speed }) !== "flash") return;
     setFlash({ key: ++counter.current, arrows: speedArrows(speed), text: speedText(speed) });
     const timer = setTimeout(() => setFlash(null), SPEED_FLASH_MS);
     return () => clearTimeout(timer);
+  // `skipping` is deliberately not a dependency: it only gates the flash of a
+  // change that `speed` itself reports.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused, speed]);
 
   return (
-    <div className="pbo-root" aria-hidden={!paused && !flash}>
+    <div className="pbo-root" aria-hidden={!paused && !flash && !skipping}>
       <style>{CSS}</style>
       <div className="pbo-dim" data-on={paused} />
+      <div className="pbo-dim pbo-night" data-on={skipping && !paused} />
       {paused && (
         <div className="pbo-banner pbo-paused" role="status">
           <svg className="pbo-icon pbo-bars" width="12" height="14" viewBox="0 0 12 14" shapeRendering="crispEdges" aria-hidden="true">
@@ -43,7 +53,18 @@ export function PlaybackOverlay({ paused, speed }: PlaybackOverlayProps) {
           <span>Paused</span>
         </div>
       )}
-      {!paused && flash && (
+      {!paused && skipping && (
+        <div className="pbo-banner pbo-skip" role="status">
+          {/* A pixel crescent: a disc with a bite taken out of it */}
+          <svg className="pbo-icon" width="14" height="14" viewBox="0 0 14 14" shapeRendering="crispEdges" aria-hidden="true">
+            <rect x="4" y="0" width="5" height="2" /><rect x="2" y="2" width="3" height="2" /><rect x="9" y="2" width="2" height="2" />
+            <rect x="1" y="4" width="3" height="6" /><rect x="2" y="10" width="3" height="2" /><rect x="9" y="10" width="2" height="2" />
+            <rect x="4" y="12" width="5" height="2" />
+          </svg>
+          <span>Skipping night…</span>
+        </div>
+      )}
+      {!paused && !skipping && flash && (
         <div key={flash.key} className="pbo-banner pbo-speed" role="status">
           <svg className="pbo-icon" width={flash.arrows * 10 + 2} height="14" viewBox={`0 0 ${flash.arrows * 10 + 2} 14`} shapeRendering="crispEdges" aria-hidden="true">
             {Array.from({ length: flash.arrows }, (_, i) => (
@@ -65,6 +86,13 @@ const CSS = `
   box-shadow: inset 0 0 90px rgba(15, 14, 11, 0.55);
 }
 .pbo-dim[data-on="true"] { opacity: 1; }
+/* Night skip: a cool, deeper dim than PAUSED's, so the two never read as one state. */
+.pbo-night {
+  background: rgba(10, 14, 26, 0.34);
+  box-shadow: inset 0 0 110px rgba(8, 10, 22, 0.7);
+}
+.pbo-skip .pbo-icon { animation: pbo-blink 1.4s steps(1, end) infinite; }
+.pbo-skip { border-color: var(--ui-accent-blue, #5a8fb0); }
 .pbo-banner {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
@@ -88,7 +116,7 @@ const CSS = `
   100% { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pbo-paused .pbo-bars, .pbo-speed { animation: none; }
+  .pbo-paused .pbo-bars, .pbo-speed, .pbo-skip .pbo-icon { animation: none; }
   .pbo-dim { transition: none; }
 }
 `;

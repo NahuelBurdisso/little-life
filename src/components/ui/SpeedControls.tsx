@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNudge } from "../../hooks/useNudge";
+import { NightSkipButton } from "./NightSkipButton";
 
 interface SpeedControlsProps {
   isPaused: boolean;
@@ -56,6 +57,7 @@ export function SpeedControls({ isPaused, currentSpeed }: SpeedControlsProps) {
           {s}x
         </button>
       ))}
+      <NightSkipButton />
     </div>
   );
 }

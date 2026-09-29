@@ -15,6 +15,7 @@ import { CONFIG } from '../lib/constants';
 import { acquireLLMSlot, acquireEmbeddingSlot, type LLMPriority } from './llmSemaphore';
 import { LLMEmptyReplyError, LLMAbortedError } from './llmErrors';
 import { recordLLMCall, traceLLMCall, type LLMPurpose, type LLMCallSample } from './llmMetrics';
+import { llmHealth } from './llmHealth';
 
 export interface OllamaChatRequest {
   model: string;
@@ -96,6 +97,7 @@ export async function callOllamaChat(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
   const unlink = linkAbort(request.signal, controller);
+  let answeredEmpty = false;
 
   try {
     const result = await send(request, controller.signal, sample);
@@ -104,6 +106,7 @@ export async function callOllamaChat(
     return result;
   } catch (error: any) {
     sample.error = error?.message ?? String(error);
+    answeredEmpty = error instanceof LLMEmptyReplyError;
     if (error.name === "AbortError") {
       if (request.signal?.aborted) throw new LLMAbortedError();
       throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
@@ -117,6 +120,10 @@ export async function callOllamaChat(
     if (!request.signal?.aborted) {
       sample.totalMs = performance.now() - queuedAt;
       recordLLMCall(sample);
+      // An empty reply is still an answer: the model is up, this request just
+      // yielded nothing, and calling that "down" would flash the banner for a
+      // model that merely rambles (the planning breaker draws the same line).
+      llmHealth.noteChat(sample.ok || answeredEmpty, request.model, answeredEmpty ? undefined : sample.error);
       traceLLMCall({
         ...sample,
         ts: Date.now(),
@@ -300,12 +307,14 @@ export async function callOllamaEmbedding(
       throw new Error("Response missing embedding array");
     }
 
+    llmHealth.noteEmbedding(true, CONFIG.AI.EMBEDDING_MODEL);
     return data.embedding;
   } catch (error: any) {
-    if (error.name === "AbortError") {
-      throw new Error(`Embedding request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
-    }
-    throw error;
+    const failure = error.name === "AbortError"
+      ? new Error(`Embedding request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`)
+      : error;
+    llmHealth.noteEmbedding(false, CONFIG.AI.EMBEDDING_MODEL, failure?.message ?? String(failure));
+    throw failure;
   } finally {
     clearTimeout(timeout);
     release();

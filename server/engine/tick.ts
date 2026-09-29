@@ -29,6 +29,9 @@ import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { saveWorldCaches } from './worldCaches';
+import { tickHealth } from './tickHealth';
+import { refreshHealth } from '../lib/health';
+import { nightSkip } from './nightSkip';
 import crypto from 'crypto';
 import { autoPlayer } from '../autoplay';
 import { conversationQueue, conversationSchedulerState } from '../db/schema';
@@ -189,8 +192,14 @@ export async function gameTick(): Promise<void> {
 
   // 1. Read world state (better-sqlite3 is synchronous; use select for simplicity)
   const rows = db.select().from(worldState).limit(1).all();
-  const world = rows[0];
-  if (!world || world.is_paused) return;
+  const stored = rows[0];
+  if (!stored || stored.is_paused) return;
+
+  // 1b. A running "skip to morning" decides this tick's speed (or ends and hands
+  // the player's back). Everything below reads `world.tick_speed`, so overriding
+  // it here is all the phases need to see the skip.
+  const skipSpeed = nightSkip.beforeTick(stored);
+  const world = skipSpeed === stored.tick_speed ? stored : { ...stored, tick_speed: skipSpeed };
 
   // 2. Advance clock
   const oldTime = world.time;
@@ -345,7 +354,12 @@ export async function gameTick(): Promise<void> {
   const dayChanged = transitions.some(t => t.type === 'day_changed');
   // Memories and activity rows are stamped in ticks; their game-day retention is
   // converted at this speed (TickClock in gameClock.ts).
-  const tickClock = { nowTicks: newTime.totalTicks, nowMinutes, tickSpeed: world.tick_speed };
+  //
+  // At the speed the town was living at, not the skip's: those stamps were
+  // written under it, and a midnight day change inside a 30x night would read
+  // "7 days ago" as 336 ticks and prune weeks of memories and feed rows.
+  const ledgerSpeed = nightSkip.restoreSpeed() ?? world.tick_speed;
+  const tickClock = { nowTicks: newTime.totalTicks, nowMinutes, tickSpeed: ledgerSpeed };
   if (dayChanged) {
     runGuarded('memoryConsolidation', () => memoryConsolidator.consolidate(tickClock));
     // Regenerate self-descriptions for all agents (async, non-blocking)
@@ -373,7 +387,7 @@ export async function gameTick(): Promise<void> {
     // Check for birthdays and handle aging
     runGuarded('aging', () => agingTick(newTime.day));
     // Enforce the activity log's declared retention tiers
-    runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks, world.tick_speed));
+    runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks, ledgerSpeed));
     // Drop ordinary relationship events past their game-day retention (story
     // turning points are kept, capped per pair)
     runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents(gameMinutes(newTime)));
@@ -429,6 +443,12 @@ let lastSlowTickReport = 0;
 let slowTicksSinceReport = 0;
 
 function reportSlowTick(totalMs: number, phaseMs: Array<[string, number]>): void {
+  // Feed the in-game health banner too. refreshHealth only speaks when the
+  // "town is lagging" verdict flips (5+ overruns in a minute), so a slow tick
+  // costs one signature compare, not a client refetch.
+  if (tickHealth.noteTick(totalMs, CONFIG.TICK_INTERVAL_MS)) {
+    try { refreshHealth(); } catch { /* health reporting must never fail a tick */ }
+  }
   if (totalMs <= CONFIG.TICK_INTERVAL_MS) return;
   slowTicksSinceReport++;
   const now = Date.now();

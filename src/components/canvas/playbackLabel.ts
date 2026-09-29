@@ -5,6 +5,9 @@
 
 export interface Playback { paused: boolean; speed: number }
 
+/** The fastest speed button (SpeedControls). Anything above it is the night skip. */
+export const UI_MAX_SPEED = 4;
+
 /**
  * What the overlay should do when playback goes from `prev` to `next`.
  * - `flash`: show the speed banner for a moment (resumed, or the speed changed while running).
@@ -12,6 +15,10 @@ export interface Playback { paused: boolean; speed: number }
  *   change made during a pause is not flashed (the game is not running at it yet).
  */
 export function playbackChange(prev: Playback, next: Playback): "flash" | "none" {
+  // Above the UI's fastest button the sim is fast-forwarding through the night
+  // ("Skip to morning" runs at 30x and steps down to 4x when the LLM is busy):
+  // its own banner covers that, and a "30x" flash would be noise.
+  if (next.speed > UI_MAX_SPEED) return "none";
   if (next.paused) return "none";
   if (prev.paused) return "flash";
   return prev.speed !== next.speed ? "flash" : "none";
