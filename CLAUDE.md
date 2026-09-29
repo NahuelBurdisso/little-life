@@ -112,8 +112,8 @@ directly — keep those free of Node/DB imports.
   (chat) and `CONFIG.AI.EMBED_NUM_CTX` (embeddings). Prompts that imagine town life include
   `TOWN_SETTING` (`server/ai/setting.ts`, around 1900).
 - **New tables** go in `schema.ts` (tests) *and* a `CREATE TABLE IF NOT EXISTS` in
-  `server/db/index.ts` (runtime), plus `ALL_TABLES` in `routers/setup.ts` and `db/seed.ts` if the
-  rows belong to one world.
+  `server/db/index.ts` (runtime), plus `ALL_TABLES` in `db/worldTables.ts` (world replace *and*
+  save load) and `db/seed.ts` if the rows belong to one world.
 - Vitest 2 quirk: a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
   when the throw is caught. Use `mockClear()` + `mockImplementationOnce(() => { throw ... })`.
 
