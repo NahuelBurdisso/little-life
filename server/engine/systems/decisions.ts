@@ -14,7 +14,7 @@ import {
   worldState,
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
-import { findAvailableZone, zoneSlotOffset, fallbackInteriorTile } from '../../lib/interiorGrid';
+import { findAvailableZone, zoneSlotOffset, fallbackInteriorTile, getInteriorGrid } from '../../lib/interiorGrid';
 import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
@@ -1683,6 +1683,33 @@ export function tick(world: WorldRow): void {
         }
       : baseAction;
 
+    // Walk straight to the spot. The destination above is the entry_point, and
+    // the spot used to be reached in a second walk started on arrival
+    // (handleArrival in movement.ts: an interior hop inside buildings, a 5-tick
+    // lerp in open areas). Two costs came with it:
+    //  - a place the agent was already in was left and re-entered: a farmer
+    //    re-deciding `working` every hour (the action is 60 minutes) walked
+    //    from the crops out to the farm gate and back, a clerk from the counter
+    //    out onto the doorstep and back — ~5 such walks per agent a day in the
+    //    soaks, and at 4x each leg costs a whole 4-minute tick to arrive;
+    //  - every trip was two walks, so paid that arrival tick twice, and the open
+    //    area lerp padded the action by 5 ticks (20 game minutes at 4x).
+    // planRoute (movement.ts) routes into a building through its door on the
+    // building's own grid, so one walk covers door and spot. The queued action
+    // carries the interior-arrival markers handleArrival already understands,
+    // for the buildings whose arrival registered zone occupancy before.
+    let queuedAction: Record<string, any> = finalAction;
+    if (destination && zoneTarget) {
+      destination = { x: zoneTarget.x, y: zoneTarget.y, locationId: destination.locationId };
+      queuedAction = {
+        ...baseAction,
+        ...(matchedZoneId && matchedBuildingType && getInteriorGrid(matchedBuildingType)
+          ? { _interiorArrivalZone: matchedZoneId, _interiorArrivalBuilding: matchedBuildingType }
+          : {}),
+        ...(seatedZone ? { pose: 'sitting' } : {}),
+      };
+    }
+
     const needsToTravel =
       destination &&
       (Math.abs(agent.position.x - destination.x) > 4 ||
@@ -1695,7 +1722,7 @@ export function tick(world: WorldRow): void {
           current_destination: destination,
           action_started: nowMinutes,
           action_duration: null,
-          action_queue: [finalAction],
+          action_queue: [queuedAction],
           current_path: null,
         })
         .where(eq(agents.id, agent.id))

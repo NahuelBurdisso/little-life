@@ -316,6 +316,27 @@ function handleArrival(
   world: WorldRow,
   allLocations: LocationRow[],
 ): void {
+  // A walk over to talk to someone (conversations.ts staging) replaces whatever
+  // walk the agent was on but leaves its `action_queue` alone. Popping that
+  // queue here started the interrupted errand wherever the chat happened: a
+  // baker caught on her way in worked a whole hour in the street — no bread,
+  // the `working` action needs the workplace. Wait for the conversation instead;
+  // the next decision re-plans the errand from where the agent now is.
+  if ((agent.current_action as { reason?: string } | null)?.reason === 'approaching_conversation') {
+    db.update(agents)
+      .set({
+        current_destination: null,
+        current_path: null,
+        current_action: { type: 'idle' },
+        action_started: gameMinutes(world.time),
+        action_duration: getMinDuration('idle'),
+        action_queue: [],
+      })
+      .where(eq(agents.id, agent.id))
+      .run();
+    return;
+  }
+
   const queue = [...agent.action_queue];
   const nextAction = queue.shift() ?? null;
 
@@ -695,6 +716,18 @@ export function tick(world: WorldRow): void {
       .set(updates)
       .where(eq(agents.id, agent.id))
       .run();
+
+    // Arrive on the tick the walker gets there. Checking only at the top of the
+    // next tick left every walk standing on its destination for one extra tick
+    // before the queued action started — a whole tick_speed of game minutes per
+    // walk (4 at 4x), and every trip was two walks (door, then spot). Measured
+    // as ~1 h a day of "walking" per agent at 4x that was really standing still.
+    if (remainingPath.length === 0 && distance(position, destPoint) < CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX) {
+      completeArrival(
+        { ...agent, position, current_location: newLocationId, current_path: null },
+        destPoint, world, allLocations,
+      );
+    }
 
     dirty = true;
   }
