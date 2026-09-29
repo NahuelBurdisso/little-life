@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 219 files / 2470 tests passing (autonomous improvement session, waves 1–4 merged).
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 229 files / 2603 tests passing (autonomous improvement session, waves 1–5 merged).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -133,19 +133,15 @@ Evidence in the session scratchpad; line numbers approximate.
   shooting stars — alphas in `skyFx/SkyFxSystem.ts` are estimates), a real fight/gift/theft beat,
   the new-resident refusal path. `terrain_water.png` (a dash overlay) and `crops_summer` are now
   unused by the tilemap.
-- **C12 [L]** Agent sheets have front and back views only; sideways walks use the mirrored front.
-  Back views are derived heuristically — Priya's apron shows from behind.
 
 ### Worldgen v2 (open, all minor)
-- **W1 [M]** Organic towns sit farther from roads than the grid: public doors >6 tiles away 16%
-  vs 8%, homes 17% vs 11%, alley in 63% of towns vs 97%. Structural (less road, south-only doors);
-  closing it needs door orientation or a build-along-lane placer in `layout.ts`.
 - **W2 [L]** Custom 56×43 with 30+ agents can fail `[homes] not enough spots` (organic 3/200,
   grid 19/200). Auto sizing never fails.
 - **W3 [L]** Wizard: the drama Preview step still runs before Agents, so edits to the cast
   after it change the scenario Start builds without showing it again (World Layout was moved
   after Relationships for the same reason).
-- **W4 [L]** `organic.test.ts` is the slowest test file (~10 s of a ~35 s check).
+- **W4 [L]** `organic.test.ts` is the slowest test file (~4 s alone, ~150 organic worlds; the cost is
+  `cheapestPath` in `organicRoads.ts:642` — any speedup changes every organic town's roads).
 - Worldgen changes are pinned by golden hashes (grid + organic in `organic.test.ts`); recompute
   only for a deliberate change and say so in the commit — saved worlds rebuild from their seed.
 
@@ -156,8 +152,8 @@ Evidence in the session scratchpad; line numbers approximate.
 
 - God-functions: `states.ts` `processStateEffects`, `evaluateTriggers`; `decisions.ts` `tick()`;
   `conversations.ts` `finishCompletedConversation`.
-- `statesTick` does ~6N agentStates queries per tick.
-- RippleEngine `buildContext` runs twice per rule; sub-systems typed `any`.
+- Remaining per-agent queries in `states.ts` (heartbreak check ~679, conversation windows) and
+  `needs.ts:602` (13 Drizzle updates/tick). Profile with `npx tsx scripts/tick-profile.ts`.
 - DB migration chain stale (see CLAUDE.md gotchas); now also `clockMigration.ts` via user_version.
 - `playwright` is used by scripts but not in `package.json`. No README. `.env` tracked.
 
@@ -232,6 +228,27 @@ Player-facing:
   (`world_state.treasury_ramp_left`); **B19** templates catalog deleted (table kept, legacy); QA fixes:
   player nudges for pairs across town no longer dropped or frozen, late memory writes after a reset
   can't crash the server.
+- **Wave 5:** **tick perf** (`scripts/tick-profile.ts`; per-write-counter snapshots in
+  `server/lib/rowsByAgentSnapshot.ts` + `getTableWriteVersion`; lazy ripple context; SQL/tick 484 → 190,
+  tick mean 79 → 38 ms at 13 residents); **W1** organic towns build along their lanes
+  (`layout.ts`, `homes.ts`; public doors far 14.9% → 6.9%, alley 63% → 93%; `scripts/worldgen-metrics.ts`;
+  organic golden hashes recomputed on purpose, grid unchanged; saved worlds keep their layout until a
+  Restart); **responsive UI** (toolbar folds to an icon rail < 1400 px, TopBar ⋯ menu < 1024 px, alerts
+  inside the map box, NudgeMenu keyboard roles, 🌙 at night, Story tab shows player rows);
+  **robustness** (`server/lib/worldEpoch.ts`: every LLM result from an old world is dropped/aborted
+  after reset/load; seeded **new residents** with personality/gender/age/job/bio, `newResident.ts`;
+  symmetric pair cooldowns + flirt 240 / catch-up 180 game min; autosaves rotate per `world_id`;
+  **homes named after residents**, `homeNames.ts`, old "Home N" renamed once at boot); **C12** side
+  (profile) walk frames 11–15 for every sheet and the generator, back views without front-only
+  aprons, direction hysteresis (`facingFromStep`); **procedural soundscape** (`src/lib/audio/`, Web
+  Audio only: rain/wind/thunder synced to lightning, birds/crickets, forge, tavern lute, crowds, bells at
+  7/12/18, story sounds by `metadata.beat`, god-power sparkles, alert chimes; speaker control in
+  SpeedControls, starts after the first click).
+- Open from wave 5: long bells can starve other voices under stress (`synth.ts:27`); Priya's back-view
+  head reads as skin (`agent-sheets.lua:170`); cap bills don't point forward in profile; in-flight
+  embedding requests not aborted on world swap (`EmbeddingBatcher.ts:217`); home names start with a
+  lowercase "the"; client door paths can cross buildings (`TilemapRenderer.ts:386`); shop doors 18% far
+  in organic towns; `LocationPanel.tsx:66` fixed 270 px.
 - Open from wave 4: proposal gives up after 18 game h if the pair never meets
   (`PROPOSAL_PENDING_MINUTES`); SnapResolver flee/plot/breakdown and several economy/tavern drama rows
   untagged (no beat to draw); `NewAgentDialog.tsx:19` has its own job list; gossip memories still name
