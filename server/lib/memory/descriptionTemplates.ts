@@ -12,10 +12,6 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I went to ${ctx.location}.`,
     (ctx) => `I headed over to ${ctx.location}.`,
   ],
-  departure: [
-    (ctx) => `I left ${ctx.location}.`,
-    (ctx) => `I headed out from ${ctx.location}.`,
-  ],
   conversation_start: [
     (ctx) => `I started talking with ${ctx.other}.`,
     (ctx) => `${ctx.other} and I began a conversation.`,
@@ -152,18 +148,6 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
   perception_general_observation: [
     (ctx) => `I noticed something going on with ${ctx.target}.`,
     (ctx) => `I observed ${ctx.target} nearby — something seemed off.`,
-  ],
-  goal_created: [
-    (ctx) => `I set a new goal: ${ctx.goal}.`,
-    (ctx) => `I've decided to pursue ${ctx.goal}.`,
-  ],
-  goal_completed: [
-    (ctx) => `I accomplished my goal: ${ctx.goal}!`,
-    (ctx) => `I finally achieved ${ctx.goal}.`,
-  ],
-  goal_abandoned: [
-    (ctx) => `I gave up on my goal to ${ctx.goal}.`,
-    (ctx) => `I decided to let go of ${ctx.goal}.`,
   ],
   economy_gambling_won: [
     (ctx) => `I won $${ctx.amount} gambling against ${ctx.opponent}!`,
