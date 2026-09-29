@@ -26,6 +26,9 @@ const ROAD_EDGE_COLOR = 0x4e4029;
 const ROAD_DUST_COLOR = 0x85714c;
 const DIRT_COLOR = 0x5a4a2e;
 
+/** Terrain kinds only worldgen v2 emits — their presence marks a v2 world. */
+const V2_TERRAIN_KINDS: ReadonlySet<string> = new Set(['grass_tuft', 'tree', 'bush', 'rock']);
+
 /** Roads: square seams, 4px-stepped convex corners, a 4px chamfer on concave
  *  corners (the inside of a bend reads worn-in, and the lip can't notch), and a
  *  10px bridge across diagonal pinches so a staircasing lane stays one band. */
@@ -157,7 +160,7 @@ export class TilemapRenderer {
   /** Monotonic generation counter — async texture loads compare against this
    *  to detect "I'm stale because resize() was called again". */
   private bgGeneration = 0;
-  /** Same guard as `bgGeneration`, for the layers with async texture upgrades:
+  /** Same guard as `bgGeneration`, for the zone layer's async texture upgrade:
    *  a redraw while a texture fetch is in flight would otherwise let the stale
    *  callback add a duplicate tile group to the freshly cleared container. */
   private zoneGeneration = 0;
@@ -395,12 +398,12 @@ export class TilemapRenderer {
     const junctions: Array<{ x: number; y: number }> = [];
     const ruts: Array<{ x: number; y: number; axis: 'h' | 'v' }> = [];
     for (const t of tiles) {
-      const cls = classifyRoadTile(roadSet, t.x, t.y);
+      const cls = classifyRoadTile(roadSet, t.x, t.y, bounds);
       if (cls === 'junction') junctions.push(t);
       else if (cls === 'h' || cls === 'v') ruts.push({ x: t.x, y: t.y, axis: cls });
     }
     if (junctions.length > 0) {
-      fillCellBuckets(edges, rasterizeBlobs(junctions, WEAR_STYLE), insideBucket,
+      fillCellBuckets(edges, rasterizeBlobs(junctions, { ...WEAR_STYLE, bounds }), insideBucket,
         [{ color: ROAD_EDGE_COLOR, alpha: 0.18 }]);
     }
 
@@ -464,10 +467,11 @@ export class TilemapRenderer {
    * `bush` and `rock` are props placed explicitly by worldgen (trees Poisson-
    * spaced). `tall_grass` is legacy — no longer generated, but worlds saved
    * before worldgen v2 still carry it, and it keeps deriving its trees, bushes
-   * and blotches client-side exactly as before. Legacy worlds (no `rock` tile
+   * and blotches client-side exactly as before. Legacy worlds (no v2-only kind
    * anywhere) also still derive rocks from ~22% of dirt tiles; v2 worlds place
-   * their own rocks beside dirt, so they don't. Worldgen guarantees every terrain tile misses
-   * roads, footprints and doorways, so derived props inherit that safety.
+   * their own rocks beside dirt, so they don't. Worldgen guarantees every
+   * terrain tile misses roads, footprints and doorways, so derived props
+   * inherit that safety.
    *
    * Two passes: all flat ground first, then every prop sorted by row, so a
    * canopy leaning into the row above always covers that row's ground cover,
@@ -487,9 +491,11 @@ export class TilemapRenderer {
     type PropKind = 'tree' | 'bush' | 'rock';
     const props: Array<{ x: number; y: number; kind: PropKind; h: number }> = [];
     const dirt: Array<{ x: number; y: number }> = [];
-    // A tile list with no `rock` at all predates worldgen v2 (which emits rocks
-    // explicitly): only then keep growing boulders out of dirt patches.
-    const deriveDirtRocks = !tiles.some((t) => t.kind === 'rock');
+    // Only a tile list with none of the kinds worldgen v2 introduced predates
+    // it; only then keep growing boulders out of dirt patches. Keyed on every
+    // v2-only kind, not `rock` alone: a v2 world can roll zero rocks and would
+    // otherwise sprout derived ones.
+    const deriveDirtRocks = !tiles.some((t) => V2_TERRAIN_KINDS.has(t.kind));
 
     // ── Ground pass ──
     for (const tile of ordered) {

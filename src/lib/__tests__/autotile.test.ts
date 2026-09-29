@@ -449,6 +449,18 @@ describe('map bounds', () => {
     expect(isOffMap(bounds, 6, 3)).toBe(true);
   });
 
+  it('runs reaching the map edge count as long when bounds are given', () => {
+    // A 2-wide road only two tiles long, running into the west edge.
+    const set = buildTileSet(pic(['......', '##....', '##....', '......']));
+    expect(runLengths(set, 0, 1)).toEqual({ h: 2, v: 2 });
+    expect(classifyRoadTile(set, 0, 1)).toBe('stub');
+    expect(runLengths(set, 0, 1, bounds)).toEqual({ h: 2 + 3, v: 2 });
+    expect(classifyRoadTile(set, 0, 1, bounds)).toBe('h');
+    expect(classifyRoadTile(set, 1, 2, bounds)).toBe('h');
+    // Missing on-map neighbours still end the run.
+    expect(runLengths(buildTileSet([{ x: 2, y: 2 }]), 2, 2, bounds)).toEqual({ h: 1, v: 1 });
+  });
+
   it('a road running off the map edge gets no cap, lip or halo along the border', () => {
     const tiles = pic(['......', '###...', '###...', '......']);
     const capped = rasterizeBlobs(tiles, ROAD);

@@ -149,15 +149,23 @@ export function diagonalSteps(mask: number): Corners {
 
 // ── Straight runs (wheel ruts) ───────────────────────────────────────────────
 
-/** Length of the contiguous horizontal and vertical runs through (x, y), itself included. */
-export function runLengths(set: TileSet, x: number, y: number): { h: number; v: number } {
-  let h = 1;
-  for (let i = x - 1; set.has(tileKey(i, y)); i--) h++;
-  for (let i = x + 1; set.has(tileKey(i, y)); i++) h++;
-  let v = 1;
-  for (let j = y - 1; set.has(tileKey(x, j)); j--) v++;
-  for (let j = y + 1; set.has(tileKey(x, j)); j++) v++;
-  return { h, v };
+/**
+ * Length of the contiguous horizontal and vertical runs through (x, y), itself
+ * included. With `bounds`, off-map tiles count as road (as in `neighbourMask`):
+ * a run that reaches the map edge carries on past it, so it counts as long
+ * (+STRAIGHT_MIN_RUN) — a road exiting the map stays a straight road with ruts
+ * right up to the border instead of turning into a stub.
+ */
+export function runLengths(set: TileSet, x: number, y: number, bounds?: MapBounds): { h: number; v: number } {
+  const reach = (dx: number, dy: number) => {
+    let n = 0;
+    for (let i = x + dx, j = y + dy; ; i += dx, j += dy) {
+      if (set.has(tileKey(i, j))) { n++; continue; }
+      if (bounds && isOffMap(bounds, i, j)) n += STRAIGHT_MIN_RUN;
+      return n;
+    }
+  };
+  return { h: 1 + reach(-1, 0) + reach(1, 0), v: 1 + reach(0, -1) + reach(0, 1) };
 }
 
 export type RoadTileClass = 'h' | 'v' | 'junction' | 'stub';
@@ -176,9 +184,10 @@ const STRAIGHT_MIN_RUN = 3;
  * two roads share the tile — a crossing, T, bend corner block or diagonal
  * staircase — which gets a merged wear patch instead of ruts, so a staircase is
  * one worn band rather than rut fragments every tile. Short both ways: a stub.
+ * `bounds`: off-map counts as road, matching the rasterised surface.
  */
-export function classifyRoadTile(set: TileSet, x: number, y: number): RoadTileClass {
-  const { h, v } = runLengths(set, x, y);
+export function classifyRoadTile(set: TileSet, x: number, y: number, bounds?: MapBounds): RoadTileClass {
+  const { h, v } = runLengths(set, x, y, bounds);
   const longH = h >= STRAIGHT_MIN_RUN;
   const longV = v >= STRAIGHT_MIN_RUN;
   if (longH && longV) return 'junction';
