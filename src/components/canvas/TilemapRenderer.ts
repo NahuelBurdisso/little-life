@@ -100,7 +100,7 @@ const onChecker = (cx: number, cy: number) => ((cx + cy) & 1) === 0;
 const ZONE_TEXTURE: Record<string, string> = {
   // Farm crops are not here: their tile follows the season (see `setCropSeason`).
   // Park
-  riverside: 'water',
+  riverside: 'river',
   grove_west: 'grove',
   grove_east: 'grove',
   // Town square

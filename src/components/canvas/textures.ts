@@ -9,6 +9,8 @@ const TERRAIN_URLS: Record<string, string> = {
   grass: '/sprites/tiles/terrain_grass.png',
   dirt_path: '/sprites/tiles/terrain_dirt_path.png',
   water: '/sprites/tiles/terrain_water.png',
+  // Opaque river water (scripts/aseprite/river-tile.lua); `water` is only a dash overlay.
+  river: '/sprites/tiles/terrain_river.png',
   farm_soil: '/sprites/tiles/terrain_farm_soil.png',
   crops_summer: '/sprites/tiles/terrain_crops_summer.png',
   grove: '/sprites/tiles/terrain_grove.png',
