@@ -468,27 +468,45 @@ export class MemoryService {
       // would hand strangers' memories to the new townsfolk.
       if (generation !== this.generation) return;
 
+      // Late writers: an LLM task that outlived a world reset (a self-description,
+      // a conversation summary) records for agents the wipe deleted, after
+      // clear() already bumped the generation. The FK then failed the whole
+      // batch, and the rejection — nobody awaits a timer flush — crashed the
+      // server. Keep only rows whose agent still exists.
+      const live = this.store.existingAgentIds([...new Set(batch.map((e) => e.agentId))]);
+      const keep = batch.map((_, i) => i).filter((i) => live.has(batch[i].agentId));
+      if (keep.length < batch.length) {
+        console.warn(`[memory] dropped ${batch.length - keep.length} memories for agents that no longer exist`);
+      }
+
       // Build insert items
-      const insertItems = batch.map((entry, i) => ({
+      const insertItems = keep.map((i) => batch[i]).map((entry, n) => ({
         agentId: entry.agentId,
         type: entry.type,
         description: entry.description,
         importance: entry.importance,
         emotional_valence: entry.emotional_valence,
-        embedding: vectors[i] ? float32ArrayToBuffer(vectors[i]) : null,
+        embedding: vectors[keep[n]] ? float32ArrayToBuffer(vectors[keep[n]]) : null,
         metadata: entry.metadata,
         currentTick: entry.tick,
         depth: entry.depth,
         parentIds: entry.parentIds,
       }));
 
-      // Batch insert
-      const inserted = this.store.insertBatch(insertItems);
+      // Batch insert. A failure loses this batch but must not escape: every
+      // flush but flushPending's runs from a timer as `void this.flush()`.
+      let inserted: ReturnType<MemoryStore['insertBatch']>;
+      try {
+        inserted = this.store.insertBatch(insertItems);
+      } catch (err) {
+        console.error(`[memory] failed to write ${insertItems.length} memories:`, err);
+        return;
+      }
 
       // Update EmbeddingCache for each newly inserted memory
       for (let i = 0; i < inserted.length; i++) {
         const row = inserted[i];
-        const vec = vectors[i];
+        const vec = vectors[keep[i]];
         if (vec) {
           this.cache.add(row.agent_id, row.id, row.importance, row.last_accessed, vec);
         }

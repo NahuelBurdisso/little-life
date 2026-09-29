@@ -15,6 +15,7 @@ function setup() {
   const batches: Inserted[][] = [];
   let nextId = 1;
   const store = {
+    existingAgentIds: (ids: number[]) => new Set(ids),
     insertBatch: vi.fn((items: Array<{ agentId: number; type: string; description: string; importance: number }>) => {
       batches.push(items.map((i) => ({ description: i.description, importance: i.importance })));
       return items.map((i) => ({
@@ -90,6 +91,7 @@ describe('MemoryService write flush', () => {
     const inserted: string[] = [];
     let nextId = 1;
     const store = {
+    existingAgentIds: (ids: number[]) => new Set(ids),
       insertBatch: vi.fn((items: Array<{ agentId: number; type: string; description: string; importance: number }>) => {
         inserted.push(...items.map((i) => i.description));
         return items.map((i) => ({
@@ -204,6 +206,7 @@ describe('MemoryService created_at stamp', () => {
   it('stamps a memory with the tick it was recorded on, not the tick of its flush', async () => {
     const stamps: Array<{ description: string; currentTick: number }> = [];
     const store = {
+    existingAgentIds: (ids: number[]) => new Set(ids),
       insertBatch: vi.fn((items: Array<{ agentId: number; type: string; description: string; importance: number; currentTick: number }>) => {
         for (const i of items) stamps.push({ description: i.description, currentTick: i.currentTick });
         return items.map((i, n) => ({ id: n + 1, agent_id: i.agentId, importance: i.importance, last_accessed: 0, type: i.type }));
@@ -227,5 +230,44 @@ describe('MemoryService created_at stamp', () => {
       { description: 'saw Ana at the well', currentTick: 120 },
       { description: 'heard a rumor', currentTick: 135 },
     ]);
+  });
+});
+
+describe('MemoryService flush after the world changed under it', () => {
+  function build(liveIds: number[], insertImpl?: () => never) {
+    const inserted: Array<{ agentId: number; description: string }> = [];
+    const store = {
+      existingAgentIds: (ids: number[]) => new Set(ids.filter((id) => liveIds.includes(id))),
+      insertBatch: vi.fn((items: Array<{ agentId: number; type: string; description: string; importance: number }>) => {
+        if (insertImpl) insertImpl();
+        inserted.push(...items.map((i) => ({ agentId: i.agentId, description: i.description })));
+        return items.map((i, n) => ({ id: n + 1, agent_id: i.agentId, importance: i.importance, last_accessed: 0, type: i.type }));
+      }),
+    } as unknown as MemoryStore;
+    const batcher = {
+      embedForWrite: vi.fn(async (texts: string[]) => texts.map(() => new Float32Array(4))),
+      clear: vi.fn(),
+    } as unknown as EmbeddingBatcher;
+    return { service: new MemoryService(store, undefined, batcher), inserted, store };
+  }
+
+  it('drops memories of agents a reset deleted instead of failing the batch', async () => {
+    // Agent 7 was wiped with the old world; a late LLM task still recorded for them.
+    const { service, inserted } = build([1]);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    service.record(7, 'observation', 'ghost');
+    service.record(1, 'observation', 'kept');
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS);
+    expect(inserted).toEqual([{ agentId: 1, description: 'kept' }]);
+  });
+
+  it('a failed insert is logged, not thrown out of the timer flush', async () => {
+    const { service, store } = build([1], () => { throw new Error('FOREIGN KEY constraint failed'); });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    service.record(1, 'observation', 'x');
+    // An escaping rejection here used to crash the server process.
+    await expect(vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS)).resolves.not.toThrow();
+    expect(store.insertBatch).toHaveBeenCalledTimes(1);
+    expect(err).toHaveBeenCalled();
   });
 });
