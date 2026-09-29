@@ -55,6 +55,7 @@ import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
 import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
 import { clearRulesCache } from '../lib/worldRules';
+import { loadAutoplayConfig } from '../lib/autoplaySettings';
 import { statesTrackersSnapshotStore } from './systems/states';
 import { hobbySnapshotStore } from '../lib/hobbyEngine';
 import { favorSnapshotStore } from '../lib/favorEngine';
@@ -109,6 +110,10 @@ export function saveWorldCaches(): number {
  * Never throws.
  */
 export function restoreWorldCaches(): number {
+  // Not a snapshot store, but it has the same lifecycle: the autoplay config is
+  // per world, so it is reloaded from the world row at boot and after every
+  // swap (a new world falls back to the defaults).
+  loadAutoplayConfig();
   return loadSnapshots(PERSISTED_STORES);
 }
 

@@ -199,3 +199,33 @@ describe('MemoryService.flushPending', () => {
     expect(inserted()).toHaveLength(0);
   });
 });
+
+describe('MemoryService created_at stamp', () => {
+  it('stamps a memory with the tick it was recorded on, not the tick of its flush', async () => {
+    const stamps: Array<{ description: string; currentTick: number }> = [];
+    const store = {
+      insertBatch: vi.fn((items: Array<{ agentId: number; type: string; description: string; importance: number; currentTick: number }>) => {
+        for (const i of items) stamps.push({ description: i.description, currentTick: i.currentTick });
+        return items.map((i, n) => ({ id: n + 1, agent_id: i.agentId, importance: i.importance, last_accessed: 0, type: i.type }));
+      }),
+    } as unknown as MemoryStore;
+    const batcher = {
+      embedForWrite: vi.fn(async (texts: string[]) => texts.map(() => new Float32Array(4))),
+      clear: vi.fn(),
+    } as unknown as EmbeddingBatcher;
+    const service = new MemoryService(store, undefined, batcher);
+
+    // The tick loop calls setTick every tick; the clock moves on before the flush.
+    service.setTick(120);
+    service.record(1, 'observation', 'saw Ana at the well');
+    service.setTick(135);
+    service.record(1, 'observation', 'heard a rumor');
+    service.setTick(150);
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS);
+
+    expect(stamps).toEqual([
+      { description: 'saw Ana at the well', currentTick: 120 },
+      { description: 'heard a rumor', currentTick: 135 },
+    ]);
+  });
+});

@@ -3,24 +3,14 @@ import {
   agents,
   needs,
   economy,
-  economyTransactions,
   relationships,
-  relationshipEvents,
-  conversations,
-  conversationQueue,
   conversationSchedulerState,
   memories,
   locations,
   worldState,
-  worldEvents,
   templates,
-  templateUsage,
-  activityLog,
   shared_knowledge,
-  agentStates,
   aspirations,
-  gazetteIssues,
-  simSnapshots,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
@@ -36,30 +26,10 @@ import { queueMaxWait } from '../lib/conversationPacing';
 import { gameMinutes } from '../lib/gameClock';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
+import { ALL_TABLES } from './worldTables';
 
-const ALL_TABLES = [
-  simSnapshots,
-  gazetteIssues,
-  activityLog,
-  templateUsage,
-  templates,
-  worldEvents,
-  worldState,
-  memories,
-  conversationSchedulerState,
-  conversationQueue,
-  conversations,
-  relationshipEvents,
-  relationships,
-  economyTransactions,
-  economy,
-  shared_knowledge,
-  agentStates,
-  needs,
-  agents,
-  locations,
-] as const;
-
+// Shared with the world-replace and save-load paths so a table added there is
+// wiped here too (this copy used to miss goals, aspirations and interactions).
 function resetAll() {
   console.log('[seed] Resetting all tables...');
   // Use raw SQL for efficient truncation — delete in reverse-dependency order

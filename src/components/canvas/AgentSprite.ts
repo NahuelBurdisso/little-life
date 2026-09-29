@@ -110,8 +110,6 @@ const STATE_PRIORITY: string[] = [
  */
 const HAND_X = 7;
 const HAND_Y = -10;
-/** Top of the head above the feet anchor, standing. */
-export const HEAD_HEIGHT = 27;
 
 /** Two 0xRRGGBB tints multiplied channel by channel. */
 function mulTint(m: number, p: number): number {

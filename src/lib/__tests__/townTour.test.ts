@@ -4,6 +4,7 @@ import {
   buildResidentCards,
   relationLabel,
   secretsLine,
+  workLine,
   type TourAgent,
   type TourRelationship,
 } from '../townTour';
@@ -146,5 +147,25 @@ describe('buildResidentCards', () => {
     expect(cards[1].workplace).toBeNull();
     expect(cards[0].arcs.map((a) => a.id)).toEqual(['a1']);
     expect(cards[1].arcs.map((a) => a.id)).toEqual(['a1', 'a2']);
+  });
+});
+
+describe('work line', () => {
+  it('names the job and the place: "Baker at Rosa\'s"', () => {
+    const cards = buildResidentCards({
+      agents: [
+        agent(1, 'Ana', { workplace: 7, job_title: 'Baker' }),
+        agent(2, 'Ben', { workplace: null, job_title: 'Unemployed' }),
+        agent(3, 'Cy', { workplace: 7 }),
+        agent(4, 'Di', { job_title: 'Drifter' }),
+      ],
+      relationships: [],
+      secrets: [],
+      arcs: [],
+      places: [{ id: 7, name: "Rosa's" }],
+    });
+    expect(cards.map(workLine)).toEqual(["Baker at Rosa's", 'no regular job', "works at Rosa's", 'Drifter']);
+    // "Unemployed" is the absence of a job, not a title.
+    expect(cards[1].jobTitle).toBeNull();
   });
 });

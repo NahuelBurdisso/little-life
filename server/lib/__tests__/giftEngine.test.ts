@@ -235,13 +235,48 @@ describe('impulsive state gifts', () => {
     const first = insertState(giver, 'drunk', clock);
     expect(gift(giver, receiver, first)).not.toBeNull();
 
+    // A comfortable giver follows the chat-gift budget: one gift per game day,
+    // not the bare 4-hour spacing (which still applies as a lower bound).
     const second = insertState(giver, 'drunk', clock);
-    setClock(clock + IMPULSIVE_GIFT_COOLDOWN_MINUTES - 1);
+    setClock(clock + IMPULSIVE_GIFT_COOLDOWN_MINUTES);
+    expect(gift(giver, receiver, second)).toBeNull();
+    setClock(clock + GIFT_COOLDOWN_MINUTES - 1);
     expect(gift(giver, receiver, second)).toBeNull();
 
-    setClock(clock + IMPULSIVE_GIFT_COOLDOWN_MINUTES);
+    setClock(clock + GIFT_COOLDOWN_MINUTES);
     expect(gift(giver, receiver, second)).not.toBeNull();
     expect(giftsFrom(giver)).toHaveLength(2);
+  });
+
+  it('a tight giver waits two game days, a poor one gives nothing', () => {
+    // Default money target is $75: tight is $37.5-75.
+    const { giver, receiver } = pair(60);
+    expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).not.toBeNull();
+    setClock(clock + GIFT_COOLDOWN_MINUTES);
+    expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).toBeNull();
+    setClock(clock + GIFT_COOLDOWN_MINUTES * 2);
+    expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).not.toBeNull();
+
+    // $30 is below the $37.5 wealth floor: the old flat $20 floor let it give.
+    const poor = pair(30);
+    expect(gift(poor.giver, poor.receiver, insertState(poor.giver, 'drunk', clock))).toBeNull();
+    expect(money(poor.giver)).toBe(30);
+  });
+
+  it('shares the gift cooldown with conversation gifts', () => {
+    const { giver, receiver } = pair(200);
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    setEffectivePersonality(giver, {
+      honesty: 50, aggression: 20, warmth: 100, impulsiveness: 50, vanity: 50,
+      curiosity: 50, loyalty: 50, morality: 80, sensuality: 50, neuroticism: 50,
+    });
+    simEvents.emit('conversation:ended', { agentId: giver, perpetratorId: receiver, sentiment: 0.9, turns: 6 });
+    vi.restoreAllMocks();
+    // Generous in a chat a moment ago: the drunk handout waits for tomorrow.
+    setClock(clock + 30);
+    expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).toBeNull();
+    setClock(clock + GIFT_COOLDOWN_MINUTES);
+    expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).not.toBeNull();
   });
 
   it('caps the gift at a tenth of the giver\'s money', () => {
@@ -251,10 +286,11 @@ describe('impulsive state gifts', () => {
   });
 
   it('never takes the giver below the floor', () => {
-    const { giver, receiver } = pair(IMPULSIVE_GIFT_MONEY_FLOOR + 3);
-    // 10% would be 2.3, the floor leaves 3 → 2.
-    expect(gift(giver, receiver, insertState(giver, 'drunk', clock), 15)).toBe(2);
-    expect(money(giver)).toBeGreaterThanOrEqual(IMPULSIVE_GIFT_MONEY_FLOOR);
+    // The floor is half the money target ($37.5 here), above the flat $20 one.
+    const near = pair(40);
+    // 10% would be 4, the floor leaves 2.5 → 2.
+    expect(gift(near.giver, near.receiver, insertState(near.giver, 'drunk', clock), 15)).toBe(2);
+    expect(money(near.giver)).toBeGreaterThanOrEqual(37.5);
 
     const poor = pair(IMPULSIVE_GIFT_MONEY_FLOOR);
     expect(gift(poor.giver, poor.receiver, insertState(poor.giver, 'drunk', clock))).toBeNull();
@@ -428,6 +464,15 @@ describe('conversation gift wealth budget', () => {
     expect(pickGiftItem(inv('bread', GIFT_FOOD_RESERVE), 'tight')).toBeNull();
     expect(pickGiftItem(inv('bread', GIFT_FOOD_RESERVE + 1), 'poor')).toBe('bread');
     expect(pickGiftItem(inv('bread', 1), 'comfortable')).toBe('bread');
+  });
+
+  it('gift items are real registry ids (prepared food and drinks can be given)', () => {
+    expect(pickGiftItem(inv('food_prepared', 1), 'comfortable')).toBe('food_prepared');
+    expect(pickGiftItem(inv('drink', 1), 'comfortable')).toBe('drink');
+    // Drinks aren't food, so the pantry reserve doesn't apply to them.
+    expect(pickGiftItem(inv('drink', 1), 'poor')).toBe('drink');
+    // The old ids never existed as items.
+    expect(pickGiftItem([...inv('food_cooked', 5), ...inv('ale', 5), ...inv('flowers', 5)], 'comfortable')).toBeNull();
   });
 
   it('through the event: a poor giver with a little bread gives no bread', () => {

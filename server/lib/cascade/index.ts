@@ -1,5 +1,5 @@
 // server/lib/cascade/index.ts
-import { RippleEngine } from './RippleEngine';
+import { RippleEngine, otherPartyName } from './RippleEngine';
 import { WitnessAmplifier } from './WitnessAmplifier';
 import { TensionTracker } from './TensionTracker';
 import { SnapResolver } from './SnapResolver';
@@ -116,10 +116,14 @@ export function initCascade(): void {
 
     // If there are 2+ stressed states, or the source is cascade but the state already existed
     if (existingStates.length >= 2 || (payload?._cascade && existingStates.length >= 1)) {
+      // A cascade-created state carries its cast (RippleEngine forwards
+      // perpetratorId/victimId); direct triggers carry none, so no one is named.
+      const about = otherPartyName(payload ?? {}, agentId);
       tensionTracker.addTension(agentId, 5, {
         event: 'state:triggered',
         description: 'stressed while already stressed',
         tick: getCurrentTick(),
+        ...(about ? { agentInvolved: about } : {}),
       });
     }
   });

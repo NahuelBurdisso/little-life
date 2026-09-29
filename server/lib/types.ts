@@ -1,6 +1,5 @@
 export type Season = "spring" | "summer" | "autumn" | "winter";
 export type DayPhase = "dawn" | "morning" | "afternoon" | "evening" | "night";
-export type WeatherType = "sunny" | "cloudy" | "rainy" | "stormy" | "foggy" | "snowy" | "windy" | "hot";
 
 export type RelationshipStatus =
   | "strangers"

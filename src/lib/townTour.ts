@@ -13,6 +13,8 @@ export interface TourAgent {
   bio: string;
   portrait_sprite?: string;
   workplace?: number | null;
+  /** economy.job_title as sent by agents.getActive. */
+  job_title?: string | null;
 }
 
 export interface TourRelationship {
@@ -57,6 +59,8 @@ export interface ResidentCard {
   portraitSprite: string | undefined;
   /** Where they work, from their workplace location; null when they have none. */
   workplace: string | null;
+  /** Their job title; null when they have none or are unemployed. */
+  jobTitle: string | null;
   hook: string;
   tie: CardLink | null;
   rival: CardLink | null;
@@ -150,6 +154,20 @@ function strip({ id, name, label }: CardLink): CardLink {
   return { id, name, label };
 }
 
+/** A job title worth showing: "Unemployed" is the absence of one. */
+function realJobTitle(title: string | null | undefined): string | null {
+  const t = title?.trim();
+  return t && t.toLowerCase() !== 'unemployed' ? t : null;
+}
+
+/** The card's work line: "Baker at Rosa's", "Baker", "works at the Mill", or "no regular job". */
+export function workLine(card: Pick<ResidentCard, 'jobTitle' | 'workplace'>): string {
+  if (card.jobTitle && card.workplace) return `${card.jobTitle} at ${card.workplace}`;
+  if (card.jobTitle) return card.jobTitle;
+  if (card.workplace) return `works at ${card.workplace}`;
+  return 'no regular job';
+}
+
 export function buildResidentCards(input: {
   agents: ReadonlyArray<TourAgent>;
   relationships: ReadonlyArray<TourRelationship>;
@@ -172,6 +190,7 @@ export function buildResidentCards(input: {
       age: a.age,
       portraitSprite: a.portrait_sprite,
       workplace: a.workplace != null ? (placeOf.get(a.workplace) ?? null) : null,
+      jobTitle: realJobTitle(a.job_title),
       hook: bioHook(a.bio),
       tie,
       rival,

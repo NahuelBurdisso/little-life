@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { trpc } from "../../lib/trpc";
 import { useEscapeClose } from "../../hooks/useEscapeClose";
-import { buildResidentCards, secretsLine, type ResidentCard, type TourAgent } from "../../lib/townTour";
+import { buildResidentCards, secretsLine, workLine, type ResidentCard, type TourAgent } from "../../lib/townTour";
 import { MiniPortrait } from "./MiniPortrait";
 import { W } from "./warmClasses";
 
@@ -52,7 +52,7 @@ function Card({ card, onPick }: { card: ResidentCard; onPick: () => void }) {
         <div className="min-w-0">
           <div className="text-sm font-bold text-[var(--ui-accent-gold)] truncate">{card.name}</div>
           <div className={`text-[11px] ${W.muted} truncate`}>
-            {card.age} · {card.workplace ? `works at ${card.workplace}` : "no regular job"}
+            {card.age} · {workLine(card)}
           </div>
         </div>
       </div>

@@ -89,6 +89,26 @@ function sourcePhrase(event: string): string {
   return SOURCE_PHRASES[event] ?? event.replace(/[:_]+/g, ' ');
 }
 
+/**
+ * The person most of a resident's grievances are about, if any grievance names
+ * one (`agentInvolved`, set by the ripple engine where the cause is another
+ * resident). `share` is their fraction of ALL the sources, so a name on one
+ * of five reads "partly" and not "mostly". Ties go to the newest.
+ */
+function dominantPerson(sources: TensionSnapshotEntry['sources']): { name: string; share: number } | null {
+  const counts = new Map<string, number>();
+  for (const s of sources) {
+    if (s.agentInvolved) counts.set(s.agentInvolved, (counts.get(s.agentInvolved) ?? 0) + 1);
+  }
+  let best: { name: string; count: number } | null = null;
+  // Oldest first, `>=`: a later (newer) name wins a tie.
+  for (const s of sources) {
+    const count = s.agentInvolved ? counts.get(s.agentInvolved)! : 0;
+    if (s.agentInvolved && (!best || count >= best.count)) best = { name: s.agentInvolved, count };
+  }
+  return best ? { name: best.name, share: best.count / sources.length } : null;
+}
+
 /** "a, b and c" — a snap card lists up to three grievances. */
 function joinList(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
@@ -223,7 +243,11 @@ export function buildBrewing(input: BrewingInput): BrewingItem[] {
       if (sources.length >= MAX_SOURCES) break;
     }
     const name = nameOf.get(t.agentId)!;
-    const why = sources.length > 0 ? ` — ${joinList(sources)} weighing on them` : '';
+    const about = dominantPerson(t.sources);
+    const aboutClause = about ? `${about.share >= 0.5 ? 'mostly' : 'partly'} about ${about.name}` : '';
+    const why = sources.length > 0
+      ? ` — ${joinList(sources)} weighing on them${aboutClause ? `, ${aboutClause}` : ''}`
+      : aboutClause ? ` — ${aboutClause}` : '';
     items.push({
       id: `snap-${t.agentId}`,
       kind: 'snap',

@@ -2,6 +2,7 @@ import { router, publicProcedure } from '../trpc';
 import { z } from 'zod';
 import { autoPlayer } from '../autoplay';
 import { CONFIG } from '../lib/constants';
+import { persistAutoplayConfig } from '../lib/autoplaySettings';
 
 export const autoplayRouter = router({
   getReport: publicProcedure.query(() => {
@@ -30,7 +31,8 @@ export const autoplayRouter = router({
     enabled: z.boolean().optional(),
     autoNudge: z.boolean().optional(),
     boredThreshold: z.number().min(0).max(100).optional(),
-    windowSize: z.number().min(10).max(300).optional(),
+    // Game minutes per analysis window.
+    windowMinutes: z.number().min(10).max(300).optional(),
     maxNudgesPerDay: z.number().min(0).max(20).optional(),
   })).mutation(({ input }) => {
     if (input.enabled !== undefined) {
@@ -43,10 +45,10 @@ export const autoplayRouter = router({
     }
     if (input.autoNudge !== undefined) CONFIG.AUTOPLAY.AUTO_NUDGE = input.autoNudge;
     if (input.boredThreshold !== undefined) CONFIG.AUTOPLAY.BOREDOM_THRESHOLD = input.boredThreshold;
-    if (input.windowSize !== undefined && input.windowSize !== CONFIG.AUTOPLAY.WINDOW_SIZE) {
-      CONFIG.AUTOPLAY.WINDOW_SIZE = input.windowSize;
-      // tick.ts fires analyze() on `totalTicks % WINDOW_SIZE === 0`; changing the
-      // size re-aligns that boundary, so already-buffered samples belong to a
+    if (input.windowMinutes !== undefined && input.windowMinutes !== CONFIG.AUTOPLAY.WINDOW_MINUTES) {
+      CONFIG.AUTOPLAY.WINDOW_MINUTES = input.windowMinutes;
+      // tick.ts fires analyze() when the game clock crosses a WINDOW_MINUTES
+      // boundary; changing the size re-aligns that boundary, so already-buffered samples belong to a
       // window that will never be closed. Drop them.
       autoPlayer.perf.reset();
       // The wall-clock cursor has to move with them, or the first post-resize
@@ -59,6 +61,8 @@ export const autoplayRouter = router({
       autoPlayer.resetWindowClock();
     }
     if (input.maxNudgesPerDay !== undefined) CONFIG.AUTOPLAY.MAX_NUDGES_PER_DAY = input.maxNudgesPerDay;
+    // Per world, so a restart (or a save load) brings the same storyteller back.
+    persistAutoplayConfig();
     return CONFIG.AUTOPLAY;
   }),
 

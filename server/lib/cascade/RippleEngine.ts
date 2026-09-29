@@ -31,8 +31,25 @@ interface RippleEngineOptions {
  * to the acting agent when an event names no perpetrator, so a plain
  * `perpetratorId ?? victimId` would pick the agent themself.
  */
-function otherParty(metadata: CascadeMetadata, agentId: number): number | undefined {
-  return [metadata.perpetratorId, metadata.victimId].find((id) => id != null && id !== agentId);
+function otherParty(
+  metadata: { perpetratorId?: number | null; victimId?: number | null },
+  agentId: number,
+): number | undefined {
+  return [metadata.perpetratorId, metadata.victimId].find((id): id is number => id != null && id !== agentId);
+}
+
+/**
+ * The name of `otherParty`, for grievances that should say who they are about
+ * ("mostly about Jonas" in the Brewing panel). Undefined when the event names
+ * nobody but the agent themself (money trouble, a birthday) or the row is gone.
+ */
+export function otherPartyName(
+  cast: { perpetratorId?: number | null; victimId?: number | null },
+  agentId: number,
+): string | undefined {
+  const id = otherParty(cast, agentId);
+  if (id == null) return undefined;
+  return db.select({ name: agents.name }).from(agents).where(eq(agents.id, id)).get()?.name;
 }
 
 export class RippleEngine {
@@ -956,10 +973,14 @@ export class RippleEngine {
 
     // tensionDelta
     if (fx.tensionDelta && this.tensionTracker) {
+      // Who the grievance is about, when the event names someone else: the
+      // Brewing panel says "Mara ... mostly about Jonas" from this.
+      const about = otherPartyName(metadata, agentId);
       this.tensionTracker.addTension(agentId, fx.tensionDelta, {
         event: rule.source,
         description: `${rule.id} triggered`,
         tick: currentTick,
+        ...(about ? { agentInvolved: about } : {}),
       });
     }
   }

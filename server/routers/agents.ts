@@ -16,6 +16,12 @@ export const agentsRouter = router({
       .all();
 
     const allNeeds = db.select().from(needs).all();
+    // The job title lives on the economy row; the cards and panels that list
+    // residents want "Baker at Rosa's", not just the workplace.
+    const jobTitleOf = new Map(
+      db.select({ agent_id: economy.agent_id, job_title: economy.job_title }).from(economy).all()
+        .map((e) => [e.agent_id, e.job_title]),
+    );
     const allStates = db
       .select({
         agent_id: agentStates.agent_id,
@@ -40,6 +46,7 @@ export const agentsRouter = router({
       return {
         ...agent,
         needs: needsMap.get(agent.id) ?? null,
+        job_title: jobTitleOf.get(agent.id) ?? null,
         activeStates: statesMap.get(agent.id) ?? [],
         reputation: { score: rep, label: getReputationLabel(rep) },
         hobbies: getAgentHobbies(agent.id),
