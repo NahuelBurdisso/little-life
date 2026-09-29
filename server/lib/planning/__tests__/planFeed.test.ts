@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { describeStateTrigger } from '../PlanEventAdapter';
 import { joinForFeed, shortenForFeed } from '../../factText';
+import { ACTIVITY_REGISTRY } from '../../../data/activityRegistry';
 
 /**
  * Playtest feed noise: plan summaries of 250+ characters, and replan reasons
@@ -36,10 +37,22 @@ describe('feed-sized plan text', () => {
     'Early night',
   ];
 
-  it('lists whole plan items up to the limit and marks the rest with an ellipsis', () => {
-    const summary = joinForFeed(blocks);
-    expect(summary.length).toBeLessThanOrEqual(103);
-    expect(summary).toBe('Open the bakery and knead the morning dough, Deliver bread to the tavern, …');
+  it('lists whole plan items up to the limit and counts the rest', () => {
+    expect(joinForFeed(blocks)).toBe('Open the bakery and knead the morning dough, Deliver bread to the tavern, +4 more');
+  });
+
+  it('fills the registry template without "…." or ", …" artifacts', () => {
+    const fill = (template: string, data: Record<string, string>) =>
+      template.replace(/\{(\w+)\}/g, (_, k: string) => data[k] ?? '');
+    const reason = shortenForFeed(
+      'had a conversation with Marco Rivera about the harvest festival preparations and the missing flour sacks', 80,
+    ).replace(/\.$/, '');
+    const line = fill(ACTIVITY_REGISTRY.plan_changed.template, {
+      agentName: 'Rosa', reason, summary: joinForFeed(blocks),
+    });
+    expect(line).not.toMatch(/…\./);
+    expect(line).not.toMatch(/, …/);
+    expect(line).toMatch(/^Rosa changed plans \(had a conversation with .+…\)\. Now: Open the bakery/);
   });
 
   it('shows a short plan in full', () => {

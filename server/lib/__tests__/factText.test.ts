@@ -30,6 +30,20 @@ describe('fact text normalisation', () => {
     expect(asClause('Marco Rivera is broke.')).toBe('Marco Rivera is broke');
   });
 
+  it('lowercases contracted generic openers too', () => {
+    expect(thatSentence('Ray heard', "It's been a hard winter for Marco."))
+      .toBe("Ray heard that it's been a hard winter for Marco.");
+    expect(thatSentence('Ray heard', "There's talk of Marco leaving town"))
+      .toBe("Ray heard that there's talk of Marco leaving town.");
+  });
+
+  it('quotes a question instead of stating it as fact', () => {
+    expect(thatSentence('Ray overheard', 'Is Marco secretly broke?'))
+      .toBe('Ray overheard: "Is Marco secretly broke?"');
+    expect(thatSentence('Ana learned', '"Did Priya "borrow" the ledger?"'))
+      .toBe('Ana learned: "Did Priya \'borrow\' the ledger?"');
+  });
+
   it('collapses stray whitespace', () => {
     expect(asClause('  Marco\n  is   broke.  ')).toBe('Marco is broke');
   });

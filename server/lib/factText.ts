@@ -28,7 +28,8 @@ const GENERIC_OPENERS = new Set(['There', 'People', 'Everyone', 'Someone', 'Nobo
 export function asClause(text: string): string {
   let clause = text.trim().replace(/\s+/g, ' ');
   clause = clause.replace(/[\s.!?…]+$/, '');
-  const firstWord = clause.split(' ', 1)[0];
+  // "It's" and "There's" are the same openers with a contraction attached.
+  const firstWord = clause.split(' ', 1)[0].replace(/['’][a-z]+$/i, '');
   if (GENERIC_OPENERS.has(firstWord)) {
     clause = clause.charAt(0).toLowerCase() + clause.slice(1);
   }
@@ -48,7 +49,14 @@ export function endSentence(text: string): string {
  * every fact is a full clause.
  */
 export function thatSentence(lead: string, factContent: string): string {
-  return endSentence(`${lead} that ${asClause(factContent)}`);
+  const trimmed = factContent.trim();
+  // A question can't follow "that" ("…overheard that is Marco broke"), and
+  // swapping its "?" for "." would state a suspicion as fact. Quote it whole.
+  if (/\?["'”’»)\]]*$/.test(trimmed)) {
+    const question = trimmed.replace(/^["“]+|["”]+$/g, '').replace(/"/g, "'");
+    return `${lead}: "${question}"`;
+  }
+  return endSentence(`${lead} that ${asClause(trimmed)}`);
 }
 
 /**
@@ -68,8 +76,10 @@ export function shortenForFeed(text: string, max = 100): string {
 
 /**
  * Join list items ("open the bakery", "lunch with Carlos", …) until the next one
- * would push past `max`, then close with "…". Whole items only, so a plan never
- * shows half an activity. A single oversized item falls back to `shortenForFeed`.
+ * would push past `max`, then count the rest ("+3 more"). Whole items only, so
+ * a plan never shows half an activity; a count rather than a trailing ", …"
+ * so the text can sit inside a larger sentence without a stray ellipsis.
+ * A single oversized item falls back to `shortenForFeed`.
  */
 export function joinForFeed(items: string[], max = 100): string {
   const parts = items.map((i) => asClause(i)).filter(Boolean);
@@ -78,7 +88,7 @@ export function joinForFeed(items: string[], max = 100): string {
   let out = parts[0];
   for (let i = 1; i < parts.length; i++) {
     const next = `${out}, ${parts[i]}`;
-    if (next.length > max) return `${out}, …`;
+    if (next.length > max) return `${out}, +${parts.length - i} more`;
     out = next;
   }
   return out;

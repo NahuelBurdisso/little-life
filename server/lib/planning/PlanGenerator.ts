@@ -689,7 +689,9 @@ export class PlanGenerator {
       type: 'plan_changed',
       templateData: {
         agentName: agentRow.name,
-        reason: shortenForFeed(event.description, 80),
+        // No closing period: the registry template and the client both add
+        // their own punctuation after it.
+        reason: shortenForFeed(event.description, 80).replace(/\.$/, ''),
         summary: joinForFeed(newBlocks.map((b) => b.broad_action)),
       },
       agents: [agentId],
