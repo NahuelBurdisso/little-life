@@ -36,7 +36,21 @@ const ACTIVITY_EMOTES: Record<string, string> = {
   collect_eggs: 'sparkle', feed_animals: 'heart',
 };
 
+/** Shared read-only stand-in for a missing `activeStates`, so the per-frame loop never allocates one. */
+const EMPTY_STATES: readonly any[] = [];
+
+/** First conversation listing `agentId` as a participant — a plain loop, `update` runs per frame. */
+function findConversation<C extends { participants?: number[] }>(conversations: C[], agentId: number): C | undefined {
+  for (let i = 0; i < conversations.length; i++) {
+    const participants = conversations[i].participants;
+    if (participants && participants.includes(agentId)) return conversations[i];
+  }
+  return undefined;
+}
+
 interface BubbleEntry {
+  /** The key this entry lives under in `bubbles`, so a `values()` walk can delete without `[k, v]` pairs. */
+  key: string;
   container: PIXI.Container;
   agentId: string;
   type: "speech" | "thought" | "emote";
@@ -112,6 +126,17 @@ export class BubbleSystem {
   private lyingBlendMap = new Map<string, number>(); // agentId → 0 upright .. 1 lying down
   /** Finished atlas emotes, kept for reuse: an emote per state change would churn allocations. */
   private emotePool: PIXI.Container[] = [];
+
+  // Per-frame scratch for `update`, cleared and refilled in place: it runs at 60 fps and used to
+  // build a Map of fresh `{x, y}` objects, three collections, a `String(id)` and a states array
+  // per agent every frame.
+  /** agentId → position. Entries are reused; `stamp` says whether one belongs to this frame. */
+  private readonly posMap = new Map<string, { x: number; y: number; stamp: number }>();
+  private frameStamp = 0;
+  private readonly idStrings = new Map<number, string>();
+  private readonly convoAgents = new Set<string>();
+  private readonly latestMessages = new Map<string, string>();
+  private readonly latestIsAction = new Set<string>();
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
@@ -202,6 +227,7 @@ export class BubbleSystem {
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
+      key: agentId,
       container: bubbleContainer,
       agentId,
       type: "speech",
@@ -238,6 +264,7 @@ export class BubbleSystem {
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
+      key: agentId,
       container: bubbleContainer,
       agentId,
       type: "thought",
@@ -279,6 +306,7 @@ export class BubbleSystem {
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(agentId, {
+      key: agentId,
       container: bubbleContainer,
       agentId,
       type: 'thought',
@@ -326,6 +354,7 @@ export class BubbleSystem {
 
     this.container.addChild(bubbleContainer);
     this.bubbles.set(emoteKey, {
+      key: emoteKey,
       container: bubbleContainer,
       agentId,
       type: "emote",
@@ -340,6 +369,16 @@ export class BubbleSystem {
       emoteName: emoteSprite ? emoteType : undefined,
       emoteSprite,
     });
+  }
+
+  /** `String(id)` memoised: agent ids are stringified for every map key, every frame. */
+  private idStr(id: number): string {
+    let s = this.idStrings.get(id);
+    if (s === undefined) {
+      s = String(id);
+      this.idStrings.set(id, s);
+    }
+    return s;
   }
 
   removeBubble(agentId: string) {
@@ -366,45 +405,74 @@ export class BubbleSystem {
   ) {
     const now = Date.now();
 
-    // Build a position lookup — prefer interpolated sprite positions over raw DB positions
-    const posMap = new Map<string, { x: number; y: number }>();
-    for (const a of agents) {
-      const aid = String(a.id);
+    // Build a position lookup — prefer interpolated sprite positions over raw DB positions.
+    // Entries persist between frames and are restamped; `posOf` hides the ones this frame skipped.
+    const stamp = ++this.frameStamp;
+    const posMap = this.posMap;
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      const aid = this.idStr(a.id);
       const sprite = spritePool?.getSprite(aid);
+      let entry = posMap.get(aid);
+      if (!entry) {
+        entry = { x: 0, y: 0, stamp };
+        posMap.set(aid, entry);
+      }
+      entry.stamp = stamp;
       if (sprite) {
-        posMap.set(aid, { x: sprite.container.x, y: sprite.container.y });
+        entry.x = sprite.container.x;
+        entry.y = sprite.container.y;
         this.lyingBlendMap.set(aid, sprite.lyingBlend);
       } else {
-        posMap.set(aid, { x: a.position?.x ?? 0, y: a.position?.y ?? 0 });
+        entry.x = a.position?.x ?? 0;
+        entry.y = a.position?.y ?? 0;
         this.lyingBlendMap.delete(aid);
       }
     }
 
     // Drop per-agent history for anyone who left the roster (death, deactivation),
-    // otherwise these grow for the lifetime of the session.
-    for (const map of [this.prevMoodMap, this.prevStatesMap, this.prevActionMap, this.prevEmoteStampMap, this.lyingBlendMap]) {
-      for (const aid of map.keys()) {
-        if (!posMap.has(aid)) map.delete(aid);
+    // otherwise these grow for the lifetime of the session. Every history map is only
+    // written for agents that have a `posMap` entry, so a stale entry is the whole signal.
+    // (The size check makes the common no-departure frame skip the walk entirely.)
+    if (posMap.size > agents.length) {
+      for (const [aid, entry] of posMap) {
+        if (entry.stamp === stamp) continue;
+        posMap.delete(aid);
+        this.prevMoodMap.delete(aid);
+        this.prevStatesMap.delete(aid);
+        this.prevActionMap.delete(aid);
+        this.prevEmoteStampMap.delete(aid);
+        this.lyingBlendMap.delete(aid);
       }
     }
 
     // Determine which agents are currently in conversations
-    const convoAgents = new Set<string>();
-    const latestMessages = new Map<string, string>();
+    const convoAgents = this.convoAgents;
+    const latestMessages = this.latestMessages;
     // Agents whose newest message is a canned fallback action ("Omar smiled and
     // nodded.") — narration, not speech, so it gets no speech bubble.
-    const latestIsAction = new Set<string>();
+    const latestIsAction = this.latestIsAction;
+    convoAgents.clear();
+    latestMessages.clear();
+    latestIsAction.clear();
     if (conversations) {
-      for (const convo of conversations) {
-        for (const p of convo.participants ?? []) {
-          convoAgents.add(String(p));
+      for (let c = 0; c < conversations.length; c++) {
+        const convo = conversations[c];
+        const participants = convo.participants;
+        if (participants) {
+          for (let i = 0; i < participants.length; i++) convoAgents.add(this.idStr(participants[i]));
         }
         // Last message per agent
-        for (const msg of convo.messages ?? []) {
-          if (msg.speakerId != null && msg.text) {
-            latestMessages.set(String(msg.speakerId), msg.text);
-            if (msg.fallback) latestIsAction.add(String(msg.speakerId));
-            else latestIsAction.delete(String(msg.speakerId));
+        const messages = convo.messages;
+        if (messages) {
+          for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            if (msg.speakerId != null && msg.text) {
+              const sid = this.idStr(msg.speakerId);
+              latestMessages.set(sid, msg.text);
+              if (msg.fallback) latestIsAction.add(sid);
+              else latestIsAction.delete(sid);
+            }
           }
         }
       }
@@ -427,9 +495,8 @@ export class BubbleSystem {
 
       // Find the conversation this agent is in
       const numericAid = Number(aid);
-      const convo = conversations.find(c => (c.participants ?? []).includes(numericAid));
-      const messages = (convo?.messages ?? []) as any[];
-      const messageCount = messages.length;
+      const convo = findConversation(conversations, numericAid);
+      const messageCount = convo?.messages?.length ?? 0;
       const lastShown = this.shownMessageCounts.get(aid) ?? 0;
       const lastMsg = latestMessages.get(aid);
 
@@ -450,8 +517,8 @@ export class BubbleSystem {
     }
 
     // Remove bubbles for agents no longer in conversations (except emotes/timed)
-    for (const [key, entry] of this.bubbles) {
-      if (key.includes("__emote")) continue;
+    for (const entry of this.bubbles.values()) {
+      if (entry.key.includes("__emote")) continue;
       if (entry.type !== "speech" && entry.type !== "thought") continue;
       if (convoAgents.has(entry.agentId)) continue;
       // Timed bubbles own their lifetime — `update` expires them above. Killing
@@ -459,12 +526,13 @@ export class BubbleSystem {
       // since the agent whose action changed is usually not in a conversation.
       if (entry.duration > 0) continue;
       entry.container.destroy({ children: true });
-      this.bubbles.delete(key);
+      this.bubbles.delete(entry.key);
     }
 
     // Auto-emote triggers based on mood changes
-    for (const a of agents) {
-      const aid = String(a.id);
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      const aid = this.idStr(a.id);
       const pos = posMap.get(aid);
       if (!pos) continue;
       const curMood = (a as any).needs?.mood ?? 50;
@@ -475,15 +543,23 @@ export class BubbleSystem {
       this.prevMoodMap.set(aid, curMood);
 
       // State-triggered emotes — show when a new state appears
-      const curStates: string[] = ((a as any).activeStates ?? []).map((s: any) => s.type);
-      const prevStates = this.prevStatesMap.get(aid) ?? [];
-      for (const state of curStates) {
+      // Compared against last frame's list, then that list is overwritten in place — building a
+      // fresh `.map` array per agent per frame was pure garbage on a list that almost never changes.
+      const curStates: any[] = (a as any).activeStates ?? EMPTY_STATES;
+      let prevStates = this.prevStatesMap.get(aid);
+      if (!prevStates) {
+        prevStates = [];
+        this.prevStatesMap.set(aid, prevStates);
+      }
+      for (let s = 0; s < curStates.length; s++) {
+        const state: string = curStates[s].type;
         if (!prevStates.includes(state) && STATE_EMOTES[state]) {
           this.showEmote(aid, STATE_EMOTES[state], pos);
           break; // one emote per tick
         }
       }
-      this.prevStatesMap.set(aid, curStates);
+      prevStates.length = curStates.length;
+      for (let s = 0; s < curStates.length; s++) prevStates[s] = curStates[s].type;
 
       // Zone activity emotes
       const curAction = (a as any).current_action?.zoneActivity ?? '';
@@ -506,11 +582,11 @@ export class BubbleSystem {
     }
 
     // Update positions and lifetimes
-    for (const [key, entry] of this.bubbles) {
+    for (const entry of this.bubbles.values()) {
       // Expire timed bubbles
       if (entry.duration > 0 && now - entry.createdAt > entry.duration) {
         this.dispose(entry);
-        this.bubbles.delete(key);
+        this.bubbles.delete(entry.key);
         continue;
       }
 
@@ -548,6 +624,11 @@ export class BubbleSystem {
     this.emotePool.length = 0;
     this.prevMoodMap.clear();
     this.shownMessageCounts.clear();
+    this.posMap.clear();
+    this.idStrings.clear();
+    this.convoAgents.clear();
+    this.latestMessages.clear();
+    this.latestIsAction.clear();
     this.container.destroy({ children: true });
   }
 }
