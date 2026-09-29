@@ -64,6 +64,18 @@ export interface ReplanPromptParams {
   validLocations: string[];
 }
 
+/**
+ * Hunger is a fullness meter like every other need: 100 = fed, 0 = starving.
+ * Both plan prompts had it backwards (> 70 "very hungry", a starving agent
+ * "(satisfied)"), so the LLM planned lunch for the fed and skipped it for the
+ * hungry. Same bands as energy's.
+ */
+export function hungerLabel(hunger: number): string {
+  if (hunger < 30) return 'very hungry';
+  if (hunger < 60) return 'peckish';
+  return 'satisfied';
+}
+
 export function buildDailyPlanPrompt(params: DailyPlanPromptParams): { system: string; user: string } {
   const {
     name,
@@ -87,7 +99,7 @@ export function buildDailyPlanPrompt(params: DailyPlanPromptParams): { system: s
   const personalityDesc = buildPersonalityDescription(personality, traits);
 
   const needsDesc = [
-    `Hunger: ${needs.hunger}/100${needs.hunger > 70 ? ' (very hungry)' : needs.hunger > 40 ? ' (peckish)' : ' (satisfied)'}`,
+    `Hunger: ${needs.hunger}/100 (${hungerLabel(needs.hunger)})`,
     `Energy: ${needs.energy}/100${needs.energy < 30 ? ' (exhausted)' : needs.energy < 60 ? ' (tired)' : ' (rested)'}`,
     `Social: ${needs.social}/100${needs.social < 30 ? ' (lonely)' : needs.social < 60 ? ' (a bit isolated)' : ' (socially fulfilled)'}`,
     `Mood: ${needs.mood}/100${needs.mood < 30 ? ' (low)' : needs.mood < 60 ? ' (neutral)' : ' (good)'}`,
@@ -222,7 +234,7 @@ export function buildReplanPrompt(params: ReplanPromptParams): { system: string;
   const personalityDesc = buildPersonalityDescription(personality, traits);
 
   const needsDesc = [
-    `Hunger: ${needs.hunger}/100${needs.hunger > 70 ? ' (very hungry)' : needs.hunger > 40 ? ' (peckish)' : ' (satisfied)'}`,
+    `Hunger: ${needs.hunger}/100 (${hungerLabel(needs.hunger)})`,
     `Energy: ${needs.energy}/100${needs.energy < 30 ? ' (exhausted)' : needs.energy < 60 ? ' (tired)' : ' (rested)'}`,
     `Social: ${needs.social}/100${needs.social < 30 ? ' (lonely)' : needs.social < 60 ? ' (a bit isolated)' : ' (socially fulfilled)'}`,
   ].join('\n');
