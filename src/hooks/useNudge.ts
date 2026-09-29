@@ -94,6 +94,11 @@ export function useNudge() {
       run({ action: { type: 'change_speed', speed } }),
     togglePause: () =>
       run({ action: { type: 'toggle_pause' } }),
+    // Refusals come back as a warning toast from `run` ("Resume the game first", ...).
+    skipNight: () =>
+      run({ action: { type: 'skip_night' } }),
+    cancelNightSkip: () =>
+      run({ action: { type: 'cancel_night_skip' } }),
     introduceAgent: (name: string, bio: string, traits: string[], job: string) =>
       run({ action: { type: 'introduce_agent', name, bio, traits, job } }, {
         kind: 'introduce_agent', agentIds: [], icon: '🏠',

@@ -29,3 +29,13 @@ describe('speed label', () => {
     expect([0.5, 1, 2, 4, 8].map(speedArrows)).toEqual([1, 1, 2, 3, 3]);
   });
 });
+
+describe('night skip speeds', () => {
+  it('never flash a speed above the fastest button (the skip has its own banner)', () => {
+    expect(playbackChange({ paused: false, speed: 2 }, { paused: false, speed: 30 })).toBe('none');
+    expect(playbackChange({ paused: false, speed: 30 }, { paused: false, speed: 13 })).toBe('none');
+  });
+  it('flash the speed the skip hands back', () => {
+    expect(playbackChange({ paused: false, speed: 13 }, { paused: false, speed: 2 })).toBe('flash');
+  });
+});
