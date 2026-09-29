@@ -233,6 +233,12 @@ async function main(): Promise<void> {
 
     const errors = db.select().from(activityLog)
       .where(and(gt(activityLog.id, logMark), eq(activityLog.type, 'error'))).all();
+    // Deaths log as 'drama' ("X has died. <cause>. The town mourns.").
+    const deathCauses = db.select().from(activityLog)
+      .where(and(gt(activityLog.id, logMark), eq(activityLog.type, 'drama'))).all()
+      .map((r) => String((r.template_data as any)?.description ?? ''))
+      .filter((d) => d.includes(' has died. '))
+      .map((d) => d.replace(/ has died\. /, ': ').replace(/\. The town mourns\.$/, ''));
     logMark = maxId(activityLog);
     const convos = db.select({ n: sql<number>`count(*)` }).from(conversations)
       .where(and(gt(conversations.id, convoMark), inArray(conversations.status, ['ended', 'completed']))).get()?.n ?? 0;
@@ -249,7 +255,7 @@ async function main(): Promise<void> {
       String(starving.size).padStart(6),
       `${(100 * eatingSamples / Math.max(1, needSamples)).toFixed(1)}%`.padStart(7),
       `${mealCount('home')}/${mealCount('out')}/${mealCount('other')}`.padStart(15),
-      String(died.length).padStart(6) + (died.length ? ` (${died.map((id) => nameOf.get(id)).join(', ')})` : ''),
+      String(died.length).padStart(6) + (died.length ? ` (${deathCauses.join('; ') || died.map((id) => nameOf.get(id)).join(', ')})` : ''),
     ].join(' | ') + `  | made: ${[...produced].map(([k, v]) => `${k} ${v}`).join(', ') || '-'}`);
     produced.clear();
     out([
