@@ -19,6 +19,7 @@ import { seasonDayOf } from "./crops";
 import { chimneyCap } from "./systems/placeLife/placeAnchors";
 import { ChimneySmokePlan } from "./systems/placeLife/chimneySmoke";
 import { useCanvasActivity } from "../../hooks/useCanvasActivity";
+import { useBrewing } from "../../hooks/useBrewing";
 import { onCanvasEvent } from "../../lib/canvasBus";
 import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { ParticleContext } from "./particles/types";
@@ -103,6 +104,7 @@ export const GameCanvas = React.memo(function GameCanvas({
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
   const activity = useCanvasActivity();
+  const { brewing } = useBrewing();
 
   // Refs for subsystems
   const tilemapRef = useRef<TilemapRenderer | null>(null);
@@ -632,6 +634,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     data.conversations = conversations ?? [];
     data.relationships = relationships ?? [];
     data.activity = activity;
+    data.brewing = brewing;
     for (const sys of systemsRef.current) {
       try { sys.onData?.(data); } catch (err) { console.warn('[canvas systems] onData failed:', err); }
     }
@@ -639,7 +642,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     // phase, weather and time. It only appeared to work because `agents` gets a
     // fresh identity on the same poll; changing the weather while paused
     // updates `world` alone, and the lighting never saw it.
-  }, [agents, selectedAgentId, locations, world, events, conversations, relationships, activity, app, mapW, mapH]);
+  }, [agents, selectedAgentId, locations, world, events, conversations, relationships, activity, brewing, app, mapW, mapH]);
 
   // Per-frame rendering loop — lerps sprites toward targets, no data dependency
   useEffect(() => {

@@ -10,7 +10,13 @@ export function useCanvasActivity(): any[] {
   const utils = trpc.useUtils();
   const { data } = trpc.activity.getRecent.useQuery({ limit: 50 });
   trpc.activity.onUpdate.useSubscription(undefined, {
-    onData: () => { utils.activity.getRecent.invalidate(); },
+    // Brewing rides this subscription too (hooks/useBrewing.ts has none of its
+    // own): without it the canvas fuses would go stale whenever the feed panel,
+    // whose subscription normally refreshes it, is not mounted.
+    onData: () => {
+      utils.activity.getRecent.invalidate();
+      utils.chronicle.getBrewing.invalidate();
+    },
   });
   return data ?? [];
 }

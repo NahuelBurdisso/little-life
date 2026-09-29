@@ -7,6 +7,7 @@ import { createBeatSystem } from "./beats/BeatSystem";
 import { createPlayerFxSystem } from "./playerFx/PlayerFxSystem";
 import { createActivityFxSystem } from "./activityFx/ActivityFxSystem";
 import { createPlaceLifeSystem } from "./placeLife/PlaceLifeSystem";
+import { createFuseSystem } from "./fuse/FuseSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -21,6 +22,8 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   createHeldItemSystem,
   createActivityFxSystem,
   createBeatSystem,
+  // A warning, not a scene: the lit fuse over a resident about to snap.
+  createFuseSystem,
   // The player's own actions draw last: they should never be hidden under a story beat.
   createPlayerFxSystem,
 ];
