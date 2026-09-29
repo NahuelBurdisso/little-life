@@ -29,6 +29,19 @@ const BG = '#2d2a24';
 const HOME_COLOR = '#6b5b45';
 const HOME_LABEL = '#a09070';
 const DOOR_COLOR = '#c8a84b';
+/** Terrain kinds as flat swatches, echoing the game renderer's hues. Props that
+ *  read as solid objects in game (trees, rocks) get more alpha than ground cover;
+ *  grass tufts stay faint since in game they're barely-there texture.
+ *  `tall_grass` is legacy (pre-worldgen-v2 saves); unknown kinds fall back to dirt. */
+const PREVIEW_TERRAIN: Record<string, { color: string; alpha: number }> = {
+  flowers: { color: '#c75a8a', alpha: 0.3 },
+  grass_tuft: { color: '#4d6b35', alpha: 0.2 },
+  dirt_patch: { color: '#5a4a2e', alpha: 0.3 },
+  tall_grass: { color: '#3a5a2a', alpha: 0.3 },
+  tree: { color: '#24391b', alpha: 0.6 },
+  bush: { color: '#3d6029', alpha: 0.45 },
+  rock: { color: '#7a746a', alpha: 0.45 },
+};
 /** Locations drawn as a faint dashed outline instead of a solid block.
  *
  *  This is `DERIVED_LOCATION_TYPES` (mainstreet, alley, farmyard, market_square),
@@ -76,8 +89,9 @@ export function WorldPreview({ result, size = { width: 320, height: 240 } }: Wor
     // Terrain scatter
     if (result.terrainTiles) {
       for (const tile of result.terrainTiles) {
-        ctx.globalAlpha = 0.3;
-        ctx.fillStyle = tile.kind === 'flowers' ? '#c75a8a' : tile.kind === 'tall_grass' ? '#3a5a2a' : '#5a4a2e';
+        const style = PREVIEW_TERRAIN[tile.kind] ?? PREVIEW_TERRAIN.dirt_patch;
+        ctx.globalAlpha = style.alpha;
+        ctx.fillStyle = style.color;
         ctx.fillRect(toCanvasX(tile.x * 32), toCanvasY(tile.y * 32), 32 * scale, 32 * scale);
       }
       ctx.globalAlpha = 1.0;
