@@ -72,7 +72,7 @@ export interface UpkeepParams {
  * save from before the treasury loads with residents' money at ~1.5× the
  * target, so that town deflates over a few nights instead of in one.
  */
-export const MAX_LIFESTYLE_RATE = 0.6;
+const MAX_LIFESTYLE_RATE = 0.6;
 
 /**
  * One resident's upkeep for the day, never more than they hold. Someone with
