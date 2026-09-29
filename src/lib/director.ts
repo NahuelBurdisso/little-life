@@ -424,7 +424,8 @@ function moveTo(state: DirectorState, next: Shot, now: number): StepResult {
 function roamShot(world: WorldSnapshot, trail: readonly number[], now: number): Shot {
   const stop = pickRoamStop(world.locations, world.agents, trail);
   if (!stop) {
-    return { key: 'roam:idle', kind: 'roam', agentIds: [], locationId: null, label: 'A quiet moment in town', since: now, score: 0 };
+    // No label: a lower-third announcing "nothing is happening" is noise.
+    return { key: 'roam:idle', kind: 'roam', agentIds: [], locationId: null, label: '', since: now, score: 0 };
   }
   return {
     key: `roam:${stop.id}`,

@@ -96,8 +96,8 @@ function clip(text: string): string {
 
 /**
  * Which live conversation a shot is about: its own for a conversation shot,
- * otherwise the one involving the shot's lead resident (then any of its cast),
- * otherwise, for a place, the busiest talk held there.
+ * otherwise the one involving the shot's lead resident, otherwise, for a place,
+ * the busiest talk held there.
  */
 export function findShotConversation<C extends CaptionConversation>(
   shot: Pick<Shot, 'key' | 'agentIds' | 'locationId'>,
@@ -108,8 +108,11 @@ export function findShotConversation<C extends CaptionConversation>(
     const hit = conversations.find((c) => c.id === Number(own[1]));
     if (hit) return hit;
   }
-  for (const id of shot.agentIds) {
-    const hit = conversations.find((c) => c.participants.includes(id));
+  // Only the lead: that is who the camera follows, and a line from a scene the
+  // camera isn't in would be captioned over a different place.
+  const lead = shot.agentIds[0];
+  if (lead != null) {
+    const hit = conversations.find((c) => c.participants.includes(lead));
     if (hit) return hit;
   }
   if (shot.locationId != null) {

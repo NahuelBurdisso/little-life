@@ -42,9 +42,11 @@ describe('findShotConversation', () => {
     { id: 3, participants: [4], messages: [], location: 11 },
   ];
 
-  it('prefers the shot\'s own conversation, then its cast, then the busiest talk at the place', () => {
+  it('prefers the shot\'s own conversation, then its lead resident\'s, then the busiest talk at the place', () => {
     expect(findShotConversation({ key: 'convo:2', agentIds: [1], locationId: null }, convos)?.id).toBe(2);
     expect(findShotConversation({ key: 'alert:9', agentIds: [2], locationId: null }, convos)?.id).toBe(1);
+    // A second name in the cast is not who the camera is on: no caption from their talk.
+    expect(findShotConversation({ key: 'alert:9', agentIds: [7, 2], locationId: null }, convos)).toBeNull();
     expect(findShotConversation({ key: 'roam:11', agentIds: [], locationId: 11 }, convos)?.id).toBe(2);
     expect(findShotConversation({ key: 'roam:12', agentIds: [], locationId: 12 }, convos)).toBeNull();
   });
