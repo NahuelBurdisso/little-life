@@ -62,6 +62,7 @@ function evt(
     sentiment,
     processed: true,
     timestamp: NOW - minutesAgo * 60_000,
+    game_minute: null,
     ...over,
   };
 }

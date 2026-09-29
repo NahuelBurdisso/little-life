@@ -229,6 +229,14 @@ export const relationshipEvents = sqliteTable(
     sentiment: real('sentiment').notNull(),
     processed: integer('processed', { mode: 'boolean' }).notNull(),
     timestamp: integer('timestamp').notNull(),
+    // GAME MINUTE the event happened — the clock story arcs and retention read.
+    // `timestamp` is Date.now(), so on it a paused game kept ageing its stories
+    // and an overnight session aged them by the night. No insert site sets this:
+    // a TEMP trigger installed at DB open (server/db/index.ts) copies the world
+    // clock into every new row, so the dozen writers across the engine can't
+    // forget it. Nullable because it was added to existing worlds; startup
+    // backfills the old rows (clockMigration.ts).
+    game_minute: integer('game_minute'),
   },
   (table) => [index('idx_relationship_events_processed').on(table.processed)]
 );
