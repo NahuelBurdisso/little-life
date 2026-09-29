@@ -4,6 +4,7 @@ import { activityLog } from '../db/schema';
 import { and, desc, eq, gt, gte, lt, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
+import { alertTier, MIN_ALERT_IMPORTANCE, type AlertTier } from '../lib/alertTiers';
 
 export const activityRouter = router({
   getRecent: publicProcedure
@@ -66,21 +67,22 @@ export const activityRouter = router({
         .all();
     }),
 
-  /** Alert-worthy events since a given row id, oldest first.
-   *  The client passes back the highest id it has already shown, so each row
-   *  is turned into a toast exactly once. Without `sinceId` the query returns
-   *  nothing but the latest id, which is how a fresh client establishes its
-   *  watermark instead of replaying the whole backlog as alerts. */
+  /** Alert-worthy events since a given row id, oldest first, each with its
+   *  `tier` (lib/alertTiers.ts). The client passes back the highest id it has
+   *  already shown, so each row is turned into a toast exactly once. Without
+   *  `sinceId` the query returns nothing but the latest id, which is how a fresh
+   *  client establishes its watermark instead of replaying the whole backlog as
+   *  alerts. `favoriteIds` are the player's starred residents (kept in the
+   *  browser), whose rows alert at a lower bar. */
   getAlerts: publicProcedure
     .input(
       z.object({
         sinceId: z.number().optional(),
-        limit: z.number().optional().default(5),
+        limit: z.number().optional().default(8),
+        favoriteIds: z.array(z.number()).optional(),
       }).optional(),
     )
     .query(({ input }) => {
-      const alertCategories = ['drama', 'world_event', 'aspiration'];
-
       // The watermark tracks the newest row in the whole table, not the newest
       // alert, or a long run of ordinary rows would be re-scanned every poll.
       const latest = db
@@ -91,21 +93,29 @@ export const activityRouter = router({
         .get();
       const latestId = latest?.id ?? input?.sinceId ?? 0;
 
-      let alerts: (typeof activityLog.$inferSelect)[] = [];
+      let alerts: Array<typeof activityLog.$inferSelect & { tier: AlertTier }> = [];
       if (input?.sinceId != null) {
+        const favorites = new Set(input.favoriteIds ?? []);
         alerts = db
           .select()
           .from(activityLog)
           .where(and(
             gt(activityLog.id, input.sinceId),
-            inArray(activityLog.category, alertCategories),
-            gte(activityLog.importance, 0.8),
+            // Every tier rule sits at or above this; the rest is decided per row.
+            gte(activityLog.importance, MIN_ALERT_IMPORTANCE),
           ))
           // Newest-first so the limit keeps the most recent alerts rather than
           // the oldest, then flipped so they surface in the order they happened.
+          // Scan cap: the client polls on every activity update, so the gap
+          // between watermarks is a handful of rows, not hundreds.
           .orderBy(desc(activityLog.id))
-          .limit(input.limit ?? 5)
+          .limit(200)
           .all()
+          .flatMap((row) => {
+            const tier = alertTier(row, favorites);
+            return tier ? [{ ...row, tier }] : [];
+          })
+          .slice(0, input.limit ?? 8)
           .reverse();
       }
 
