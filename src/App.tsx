@@ -10,6 +10,8 @@ import { ResizeHandle } from "./components/ui/ResizeHandle";
 import { GameCanvas } from "./components/canvas/GameCanvas";
 import { AgentTooltip } from "./components/overlays/AgentTooltip";
 import { DramaAlerts } from "./components/overlays/DramaAlerts";
+import { Inbox } from "./components/ui/Inbox";
+import { useDramaAlerts } from "./hooks/useDramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
 import { EventMenu } from "./components/ui/EventMenu";
 import { TownStats } from "./components/ui/TownStats";
@@ -58,6 +60,7 @@ export default function App() {
   const [showTownStats, setShowTownStats] = useState(false);
   const [showGazette, setShowGazette] = useState(false);
   const gazette = useGazette(showGazette);
+  const [showInbox, setShowInbox] = useState(false);
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
@@ -79,6 +82,7 @@ export default function App() {
       setShowEventMenu(false);
       setShowTownStats(false);
       setShowGazette(false);
+      setShowInbox(false);
       setShowNewAgent(false);
       setShowRelGraph(false);
       setShowConvoHistory(false);
@@ -119,12 +123,24 @@ export default function App() {
   // The clock check can't see a replace of a world still at totalTicks 0
   // (restart while paused at the start), so TopBar also calls
   // `handleWorldReplaced` directly for the replaces this tab asked for.
+  // Cast bar: favourites are per world (keyed by seed) and sort first, both in the
+  // bar and in Tab order, so the two never disagree about who is "next".
+  const worldSeed = worldSeedOf(world?.setup_config);
+  const { favorites, toggleFavorite } = useFavorites(worldSeed);
+  // Alert toasts + the inbox. Here rather than inside the toast overlay: the
+  // TopBar badge and the Inbox panel read the same state. Favourites' rows
+  // alert at a lower bar (server/lib/alertTiers.ts).
+  const drama = useDramaAlerts(worldSeed, favorites);
+  const resetAlerts = drama.reset;
+
   const handleWorldReplaced = useCallback(() => {
     setSelectedAgentId(null);
     setSelectedLocationId(null);
     setContextMenuAgent(null);
     setContextMenuPos(null);
-  }, []);
+    // Old alerts name the old world's residents by ids that now belong to others.
+    resetAlerts();
+  }, [resetAlerts]);
   const totalTicks = world?.time?.totalTicks ?? null;
   const lastTotalTicksRef = useRef<number | null>(null);
   useEffect(() => {
@@ -172,9 +188,6 @@ export default function App() {
     return () => document.removeEventListener("keydown", handler);
   }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showAutoplay, selectedLocationId, selectedAgentId]);
 
-  // Cast bar: favourites are per world (keyed by seed) and sort first, both in the
-  // bar and in Tab order, so the two never disagree about who is "next".
-  const { favorites, toggleFavorite } = useFavorites(worldSeedOf(world?.setup_config));
   const cast = useMemo(() => orderCast(agents, favorites), [agents, favorites]);
 
   // Select an agent AND re-center on them, even if they were already selected.
@@ -211,7 +224,7 @@ export default function App() {
       if (selectedAgentId) setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
     },
     agentKeysEnabled: !(
-      contextMenuAgent || showEventMenu || showGazette || showTownStats || showNewAgent ||
+      contextMenuAgent || showEventMenu || showGazette || showInbox || showTownStats || showNewAgent ||
       showRelGraph || showConvoHistory || showAutoplay || guide.tourOpen || guide.helpOpen
     ),
     onToggleHelp: guide.toggleHelp,
@@ -283,6 +296,8 @@ export default function App() {
         onShowStats={() => setShowTownStats(true)}
         onShowGazette={() => setShowGazette(true)}
         hasNewGazette={gazette.hasNew}
+        onShowInbox={() => setShowInbox(v => !v)}
+        unreadAlerts={drama.unread}
         onWorldReplaced={handleWorldReplaced}
       />
       <CastBar
@@ -370,7 +385,19 @@ export default function App() {
       <Toasts />
 
       {/* Drama alerts + optional camera auto-cut */}
-      <DramaAlerts autoFollow={autoCut} onFocusAgent={focusAgent} />
+      <DramaAlerts alerts={drama.alerts} dismiss={drama.dismiss} autoFollow={autoCut} onFocusAgent={focusAgent} />
+      <Inbox
+        isOpen={showInbox}
+        onClose={() => setShowInbox(false)}
+        entries={drama.inbox}
+        onMarkAllRead={drama.markAllRead}
+        onClear={drama.clearInbox}
+        agents={agents}
+        onFocusAgent={focusAgent}
+        nowTicks={world.time.totalTicks}
+        tickSpeed={world.tick_speed}
+        isPaused={world.is_paused}
+      />
 
       {/* Tooltip overlay */}
       <AgentTooltip agent={hoveredAgent} position={hoverPos} />

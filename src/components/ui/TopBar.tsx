@@ -20,6 +20,9 @@ interface TopBarProps {
   onShowGazette: () => void;
   /** An edition of The Town Crier the player hasn't opened yet. */
   hasNewGazette: boolean;
+  onShowInbox: () => void;
+  /** Alerts that arrived since the inbox was last opened (useDramaAlerts). */
+  unreadAlerts: number;
   /**
    * Called after this tab replaced the world. Agent ids restart at 1, so App
    * must drop its selection — its own clock-drop check misses a restart of a
@@ -32,7 +35,7 @@ interface TopBarProps {
 const BAR_BTN =
   "px-3 py-1 text-sm bg-ui-raised hover:bg-ui-hover border border-ui-line hover:border-ui-line-accent rounded-sm transition-colors disabled:opacity-50";
 
-export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onWorldReplaced }: TopBarProps) {
+export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onShowInbox, unreadAlerts, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -136,6 +139,20 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             className={BAR_BTN}
           >
             📊 Stats
+          </button>
+          <button
+            onClick={onShowInbox}
+            disabled={isResetting}
+            title="Inbox — every alert, including what your nudges came to"
+            aria-label={unreadAlerts > 0 ? `Inbox, ${unreadAlerts} unread` : "Inbox"}
+            className={`${BAR_BTN} relative !px-2`}
+          >
+            🔔
+            {unreadAlerts > 0 && (
+              <span className="absolute -top-1 -right-1 bg-ui-alert-player text-ui-deep font-bold text-[10px] rounded-full min-w-4 px-1 h-4 flex items-center justify-center">
+                {unreadAlerts > 9 ? "9+" : unreadAlerts}
+              </span>
+            )}
           </button>
           <button
             onClick={onShowGazette}
