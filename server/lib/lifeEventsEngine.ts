@@ -8,14 +8,14 @@
  */
 
 import { db } from '../db';
-import { agents, economy, locations, relationships, worldState, agentStates, conversations, conversationQueue } from '../db/schema';
+import { agents, economy, relationships, worldState, agentStates } from '../db/schema';
 import { logActivity } from './activityLogger';
 import { startWorldEvent } from '../engine/systems/events';
 import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
-import { zoneOccupancy } from './interiorGrid';
+import { retireResident } from './residents';
 import { chancePerTick } from './gameClock';
 import { numberMapToRecord, restoreIdNumberMap, type SnapshotStore } from '../engine/snapshotCodec';
 
@@ -197,63 +197,15 @@ export function accidentChancePerMinute(
 
 // --- Death Effects Pipeline ---
 
+/**
+ * The shared way out of town (lib/residents.ts): inactive, out of every
+ * building and zone slot, conversations and queue entries dropped, plan
+ * cancelled, owned places handed to the closest friend. A death, a player
+ * removal and a resident moving away all go through it, so none of them can
+ * leave a ghost holding a bed or a conversation slot.
+ */
 function deactivateAgent(ctx: DeathEffectContext): void {
-  db.update(agents).set({
-    is_active: false,
-    current_action: { type: 'dead' },
-    current_destination: null,
-    current_path: null,
-    action_queue: [],
-  }).where(eq(agents.id, ctx.agentId)).run();
-
-  // Remove from any location occupants
-  const allLocs = db.select().from(locations).all();
-  for (const loc of allLocs) {
-    const occupants = loc.current_occupants as number[];
-    if (occupants.includes(ctx.agentId)) {
-      db.update(locations).set({
-        current_occupants: occupants.filter(id => id !== ctx.agentId),
-      }).where(eq(locations.id, loc.id)).run();
-    }
-  }
-
-  // Release the interior zone slot. `zoneOccupancy.leave` is only ever called by
-  // movement.ts on a location *change*, and the deceased never moves again — so
-  // the corpse held its bed, kitchen seat or tavern stool against that zone's
-  // `maxOccupants` for the rest of the run, and the living were routed around a
-  // slot nobody was using.
-  zoneOccupancy.leave(ctx.agentId);
-
-  // Clear all active states
-  db.delete(agentStates).where(eq(agentStates.agent_id, ctx.agentId)).run();
-
-  // End any active conversations the deceased was participating in
-  const activeConvos = db.select().from(conversations)
-    .where(eq(conversations.status, 'active')).all();
-  for (const convo of activeConvos) {
-    const participants = convo.participants as number[];
-    if (!participants.includes(ctx.agentId)) continue;
-    db.update(conversations).set({ status: 'ended', ended_at: Date.now() })
-      .where(eq(conversations.id, convo.id)).run();
-    // Reset any surviving participants who were set to 'talking'
-    for (const pid of participants) {
-      if (pid === ctx.agentId) continue;
-      const other = db.select({ current_action: agents.current_action, is_active: agents.is_active })
-        .from(agents).where(eq(agents.id, pid)).get();
-      if (other?.is_active && (other.current_action as any)?.type === 'talking') {
-        db.update(agents).set({ current_action: { type: 'idle' }, action_duration: null })
-          .where(eq(agents.id, pid)).run();
-      }
-    }
-  }
-
-  // Remove the deceased from any pending conversation queue entries
-  const queueEntries = db.select().from(conversationQueue).all();
-  for (const entry of queueEntries) {
-    if ((entry.participants as number[]).includes(ctx.agentId)) {
-      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-    }
-  }
+  retireResident(ctx.agentId, 'death');
 }
 
 function createDeathFact(ctx: DeathEffectContext): void {
@@ -359,33 +311,6 @@ function processInheritance(ctx: DeathEffectContext): void {
   db.update(economy).set({ money: 0, inventory: [] }).where(eq(economy.agent_id, ctx.agentId)).run();
 }
 
-function handleJobVacancy(ctx: DeathEffectContext): void {
-  const ownedLocations = db.select().from(locations).all()
-    .filter(l => l.owner === ctx.agentId);
-
-  for (const loc of ownedLocations) {
-    // Find inheritor (same as inheritance logic — closest friend)
-    const rels = db.select().from(relationships).where(
-      or(eq(relationships.agent_a, ctx.agentId), eq(relationships.agent_b, ctx.agentId))
-    ).all();
-
-    let bestFriend: number | null = null;
-    let bestFriendship = 0;
-    for (const rel of rels) {
-      const otherId = rel.agent_a === ctx.agentId ? rel.agent_b : rel.agent_a;
-      const isA = rel.agent_a === otherId;
-      const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
-      const other = db.select({ is_active: agents.is_active }).from(agents).where(eq(agents.id, otherId)).get();
-      if (other?.is_active && friendship > bestFriendship) {
-        bestFriend = otherId;
-        bestFriendship = friendship;
-      }
-    }
-
-    db.update(locations).set({ owner: bestFriend }).where(eq(locations.id, loc.id)).run();
-  }
-}
-
 function createFuneralEvent(ctx: DeathEffectContext): void {
   // Catalog duration is in game hours; this used to insert `duration: 240`
   // commented "4 hours", which the expiry math read as 240 hours.
@@ -450,7 +375,6 @@ const DEATH_EFFECTS: DeathEffect[] = [
   { name: 'create_death_fact', execute: createDeathFact },
   { name: 'trigger_grieving',  execute: triggerGrieving },
   { name: 'inheritance',       execute: processInheritance },
-  { name: 'job_vacancy',       execute: handleJobVacancy },
   { name: 'funeral_event',     execute: createFuneralEvent },
   { name: 'memorial_memories', execute: createMemorialMemories },
   { name: 'activity_log',      execute: logDeath },
@@ -513,4 +437,10 @@ export function processAgentDeath(agentId: number, agentName: string, cause: str
       console.error(`Death effect '${effect.name}' failed for agent ${agentName}:`, err);
     }
   }
+
+  // After the whole pipeline, so a listener (director, sound, outcomes) sees
+  // the funeral, the fact and the inheritance already in place. The per-person
+  // `state:triggered` grieving events above are about the survivors; this one
+  // is about the death itself.
+  simEvents.emit('life:death', { agentId, name: agentName, cause, causeDescription });
 }

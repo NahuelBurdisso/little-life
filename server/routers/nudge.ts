@@ -1,8 +1,7 @@
 import { router, publicProcedure } from '../trpc';
-import { db, sqlite } from '../db';
+import { db } from '../db';
 import {
   agents,
-  needs,
   economy,
   locations,
   conversations,
@@ -16,7 +15,6 @@ import { emitter } from '../engine/emitter';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
 import { queueMaxWait } from '../lib/conversationPacing';
-import { zoneOccupancy } from '../lib/interiorGrid';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
 import { gameMinutes } from '../lib/gameClock';
@@ -30,11 +28,8 @@ import {
 } from '../lib/godPowers';
 import { rumorReachedSubject } from '../lib/gossip';
 import { nightSkip } from '../engine/nightSkip';
-import { workplaceForJob } from '../lib/jobWorkplace';
-import { jobSalary } from '../data/jobs';
-import { generateNewResident } from '../lib/newResident';
 import { perceptionSystem } from '../lib/perception/instance';
-import { nameHomes } from '../lib/homeNames';
+import { createResident, retireResident } from '../lib/residents';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -128,12 +123,9 @@ export const nudgeRouter = router({
       const world = db.select().from(worldState).get();
       if (!world) throw new Error('World not initialized');
 
-      // CLOCK: `now` is the TICK clock (`world.time.totalTicks`) — the right unit for
-      // `activityLog.timestamp`.
-      const now = (world.time as any).totalTicks as number;
-      // CLOCK: GAME MINUTES (day*1440 + hour*60 + minute) — the unit `needs.last_updated`
-      // and `agents.action_started` are written and read in. Not interchangeable with `now`: the two only agree at
-      // tick_speed 1 with startDay 0.
+      // CLOCK: GAME MINUTES (day*1440 + hour*60 + minute) — the unit
+      // `agents.action_started` is written and read in. Not the TICK clock
+      // (`world.time.totalTicks`): the two only agree at tick_speed 1 with startDay 0.
       const nowGameMinutes = gameMinutes(world.time);
 
       switch (action.type) {
@@ -421,149 +413,19 @@ export const nudgeRouter = router({
         case 'introduce_agent': {
           const { name, bio, traits, job } = action;
 
-          const activeAgents = db
-            .select()
-            .from(agents)
-            .where(eq(agents.is_active, true))
-            .all();
-
-          if (activeAgents.length >= CONFIG.MAX_AGENTS) {
-            return {
-              success: false,
-              reason: `Maximum agents reached (${CONFIG.MAX_AGENTS})`,
-            };
-          }
-
-          // Find available home.
-          //
-          // Capacity is a residency question, so it is counted from `agents.home`
-          // rather than `locations.current_occupants` — the latter is transient
-          // physical presence, rewritten by movement.ts as agents walk in and out.
-          // Reading it here meant housing looked full at 3am and completely empty
-          // at noon, when the same vacant-looking house was handed to every new
-          // arrival in a row.
-          const homes = db
-            .select()
-            .from(locations)
-            .where(eq(locations.type, 'home'))
-            .all();
-
-          const residentCounts = new Map<number, number>();
-          for (const a of activeAgents) {
-            if (a.home != null) residentCounts.set(a.home, (residentCounts.get(a.home) ?? 0) + 1);
-          }
-
-          const availableHome = homes.find(
-            (h) => (residentCounts.get(h.id) ?? 0) < h.capacity
-          );
-          if (!availableHome) {
-            return { success: false, reason: 'No available housing' };
-          }
-
-          // Find workplace by the job's building type (null when jobless).
-          const allLocations = db.select().from(locations).all();
-          const workplace = workplaceForJob(job, allLocations);
-
-          const homeEntry = availableHome.entry_point as { x: number; y: number };
-
-          // Personality, gender, age, the job's real hours, free-time places
-          // that exist, a bio if the player left it blank, starting needs —
-          // seeded by the world and the name (lib/newResident.ts has why).
-          const worldSeed = (world.setup_config as { worldgen?: { seed?: unknown } } | null)?.worldgen?.seed;
-          const profile = generateNewResident({
-            name,
-            bio,
-            traits,
-            job,
-            worldSeed: typeof worldSeed === 'string' || typeof worldSeed === 'number' ? worldSeed : 'world',
-            availableLocationTypes: [...new Set(allLocations.map((l) => l.type))],
-          });
-
-          // Create agent
-          const result = db
-            .insert(agents)
-            .values({
-              name,
-              bio: profile.bio,
-              traits: profile.traits,
-              personality: profile.personality,
-              age: profile.age,
-              gender: profile.gender,
-              sprite_sheet: 'default',
-              portrait_sprite: 'default',
-              position: { x: homeEntry.x, y: homeEntry.y },
-              current_destination: null,
-              current_location: availableHome.id,
-              current_action: { type: 'idle' },
-              action_started: nowGameMinutes,
-              action_duration: null,
-              action_queue: [],
-              current_path: null,
-              schedule: profile.schedule,
-              home: availableHome.id,
-              workplace: workplace ? workplace.id : null,
-              created_at: now,
-              is_active: true,
-            })
-            .run();
-
-          const agentId = Number(result.lastInsertRowid);
-
-          // The house is named after who lives there: a cottage of one becomes
-          // a family's house, and an empty `Home N` gets a name at last.
-          nameHomes(sqlite, { homeIds: [availableHome.id] });
-
-          // Add agent to home occupants
-          const occupants = availableHome.current_occupants as number[];
-          db.update(locations)
-            .set({
-              current_occupants: [...occupants, agentId],
-            })
-            .where(eq(locations.id, availableHome.id))
-            .run();
-
-          // Create needs record
-          db.insert(needs)
-            .values({
-              agent_id: agentId,
-              ...profile.needs,
-              decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
-              thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
-              mood_modifiers: [],
-              // CLOCK: `needs.last_updated` is GAME MINUTES
-              // (day*1440 + hour*60 + minute) — that is what `needs.ts` writes and
-              // what mood-modifier `expiresAt` is derived from in
-              // `engine/systems/conversations.ts`. `now` above is the TICK clock and
-              // is `startDay*1440` too small, which made any mood modifier granted to
-              // a brand-new agent expire the moment it was created.
-              last_updated: nowGameMinutes,
-            })
-            .run();
-
-          // Create economy record
-          db.insert(economy)
-            .values({
-              agent_id: agentId,
-              job,
-              job_title: profile.jobTitle,
-              // One wage table for everyone (data/jobs.ts), newcomers included.
-              salary: jobSalary(job),
-              work_performance: 0.7,
-              money: CONFIG.ECONOMY.STARTING_MONEY,
-              daily_expenses: CONFIG.ECONOMY.DAILY_EXPENSES.min,
-              inventory: [],
-              // CLOCK: economy.last_payday is GAME MINUTES (economy.ts payday). Stamping
-              // "now" means a newcomer isn't paid on arrival, only at their next shift end.
-              last_payday: nowGameMinutes,
-              production_remainder: 0,
-            })
-            .run();
+          // One factory for every newcomer (lib/residents.ts): the cap, a home
+          // (or a room at the tavern when every house is full), personality,
+          // hours, needs, wage, aspiration, ties to housemates/coworkers/
+          // neighbours, a backstory memory and the house named after them.
+          const created = createResident({ name, bio, traits, job, arriveAt: 'home', source: 'player' });
+          if (!created.ok) return { success: false, reason: created.reason };
+          const { agentId } = created;
 
           // Trigger new_arrival world event
           startWorldEvent('new_arrival', {
             triggeredBy: 'player',
             description: `${name} has moved to town!`,
-            locationId: availableHome.id,
+            locationId: created.homeId,
             enforceLimits: false,
             announce: false, // player_introduce below is the feed entry
           });
@@ -571,7 +433,11 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_introduce',
             initiator: agentId,
-            templateData: { description: `Player introduced ${name} to the town` },
+            templateData: {
+              description: created.lodging
+                ? `Player introduced ${name} to the town — every house is full, so they are lodging at ${created.homeName}`
+                : `Player introduced ${name} to the town`,
+            },
           });
 
           emitter.markDirty('agents.all');
@@ -592,64 +458,11 @@ export const nudgeRouter = router({
             return { success: false, reason: 'Agent is already inactive' };
           }
 
-          // Deactivate agent.
-          //
-          // The movement fields are cleared alongside `is_active` to match the
-          // death path in lifeEventsEngine: leaving a destination and a path on
-          // the row meant the removed agent still showed as en route in every
-          // read model that does not filter on `is_active`.
-          db.update(agents)
-            .set({
-              is_active: false,
-              current_action: { type: 'idle' },
-              current_destination: null,
-              current_path: null,
-              action_queue: [],
-            })
-            .where(eq(agents.id, agentId))
-            .run();
-
-          // Release the interior zone slot — `zoneOccupancy.leave` only runs on a
-          // location change, and a removed agent never moves again, so the slot
-          // counted against that zone's `maxOccupants` forever.
-          zoneOccupancy.leave(agentId);
-
-          // End any active conversations involving this agent
-          const activeConvos = db
-            .select()
-            .from(conversations)
-            .where(eq(conversations.status, 'active'))
-            .all();
-
-          for (const convo of activeConvos) {
-            const parts = convo.participants as number[];
-            if (parts.includes(agentId)) {
-              db.update(conversations)
-                // conversations.ended_at is wall-clock ms everywhere else
-                // (pair cooldowns and gossip staleness compare it to Date.now()).
-                .set({ status: 'ended', ended_at: Date.now() })
-                .where(eq(conversations.id, convo.id))
-                .run();
-            }
-          }
-
-          // Remove from location currentOccupants
-          if (agent.current_location) {
-            const location = db
-              .select()
-              .from(locations)
-              .where(eq(locations.id, agent.current_location))
-              .get();
-            if (location) {
-              const occupants = (location.current_occupants as number[]).filter(
-                (id) => id !== agentId
-              );
-              db.update(locations)
-                .set({ current_occupants: occupants })
-                .where(eq(locations.id, location.id))
-                .run();
-            }
-          }
+          // The same way out as a death or a resident moving away
+          // (lib/residents.ts): out of every building and zone slot, their
+          // conversations ended and queue entries dropped, plan cancelled,
+          // anything they owned handed on.
+          retireResident(agentId, 'removed');
 
           logActivity({
             type: 'player_remove',
