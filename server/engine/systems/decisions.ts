@@ -19,7 +19,7 @@ import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
-import { gameMinutes } from '../../lib/gameClock';
+import { gameMinutes, isOpenAt } from '../../lib/gameClock';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
@@ -202,13 +202,6 @@ function isEvening(hour: number): boolean {
 // now "eat at home" with an empty pantry feeds nobody, and the decision has to
 // send the agent somewhere a meal exists.
 
-/** Open at `hour`? Handles a closing hour past midnight (the Dive: 18 → 2). */
-function isOpenAt(loc: LocationRow, hour: number): boolean {
-  const h = loc.operating_hours as { open: number; close: number } | null;
-  if (!h) return true;
-  return h.open <= h.close ? hour >= h.open && hour < h.close : hour >= h.open || hour < h.close;
-}
-
 /**
  * Where this agent can actually eat right now, given where they meant to.
  * 1. the requested place, if it is a vendor that will serve them (open, food in
@@ -233,7 +226,7 @@ export function chooseMealTarget(
 ): number | null {
   const money = econ?.money ?? 0;
   const canServe = (loc: LocationRow): boolean => {
-    if (loc.owner == null || !isOpenAt(loc, time.hour)) return false;
+    if (loc.owner == null || !isOpenAt(loc.operating_hours, time.hour)) return false;
     const ownerEcon = econMap.get(loc.owner);
     if (!ownerEcon) return false;
     const quote = quoteMeal(loc, ownerEcon, time.season, agent.id);
@@ -294,7 +287,7 @@ function nearestGrocer(
   let bestDist = Infinity;
   for (const loc of allLocations) {
     const rule = TRADE_RULES[loc.type];
-    if (!rule || loc.owner == null || loc.owner === agent.id || !isOpenAt(loc, hour)) continue;
+    if (!rule || loc.owner == null || loc.owner === agent.id || !isOpenAt(loc.operating_hours, hour)) continue;
     const shelf = econMap.get(loc.owner)?.inventory ?? [];
     const affordable = shelf.some((i) => i.quantity > 0 && rule.sells.includes(i.itemId) && isFood(i.itemId)
       && ITEM_REGISTRY[i.itemId].basePrice * 2 <= money);
@@ -1484,9 +1477,8 @@ export function tick(world: WorldRow): void {
           decision = { action: 'sleeping', score: decision!.score, targetLocationId: agent.home };
         }
         // Check operating hours for commercial locations
-        if (['eating', 'shopping'].includes(decision!.action) && targetLoc.operating_hours) {
-          const hours = targetLoc.operating_hours as { open: number; close: number };
-          if (world.time.hour < hours.open || world.time.hour >= hours.close) {
+        if (['eating', 'shopping'].includes(decision!.action)) {
+          if (!isOpenAt(targetLoc.operating_hours, world.time.hour)) {
             decision = { action: 'idle', score: 0, targetLocationId: agent.home };
           }
         }

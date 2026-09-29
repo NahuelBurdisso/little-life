@@ -3,6 +3,7 @@ import type {
   AnalysisWindow, Diagnosis, DayPhase,
 } from './types';
 import { CONFIG } from '../lib/constants';
+import { isOpenAt } from '../lib/gameClock';
 
 // Phase-aware expectations: what's normal at each time of day
 const PHASE_WEIGHTS: Record<DayPhase, { convoWeight: number; dramaWeight: number; sleepNormal: number }> = {
@@ -203,7 +204,7 @@ export function diagnose(
     const deadDuringHours: string[] = [];
     for (const loc of engagement.emptyLocations) {
       const hours = loc.operatingHours;
-      if (!hours || (window.gameHour >= hours.open && window.gameHour < hours.close)) {
+      if (isOpenAt(hours, window.gameHour)) {
         deadDuringHours.push(loc.name);
       }
     }

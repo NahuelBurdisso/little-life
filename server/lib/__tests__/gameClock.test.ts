@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { advanceClock, computeDayPhase, detectTransitions } from '../../engine/tick';
-import { crossedBoundary, dayChanged, gameMinutes, hourChanged } from '../gameClock';
+import { crossedBoundary, dayChanged, gameMinutes, hourChanged, isOpenAt } from '../gameClock';
 
 type Time = Parameters<typeof advanceClock>[0];
 
@@ -84,5 +84,31 @@ describe('hourly and daily gates', () => {
     // `currentTick % 1440 < 2` fired twice per 1440 TICKS — every 4 game days at 4x.
     const fired = run(at(1, 7, 15), 4, (3 * 1440) / 4);
     expect(fired.day).toBe(3);
+  });
+});
+
+/** `hour >= open && hour < close` read the Dive (18 → 2) as closed all evening. */
+describe('isOpenAt', () => {
+  it('handles same-day hours', () => {
+    const shop = { open: 8, close: 18 };
+    expect(isOpenAt(shop, 7)).toBe(false);
+    expect(isOpenAt(shop, 8)).toBe(true);
+    expect(isOpenAt(shop, 17)).toBe(true);
+    expect(isOpenAt(shop, 18)).toBe(false);
+  });
+
+  it('handles closing past midnight', () => {
+    const dive = { open: 18, close: 2 };
+    expect(isOpenAt(dive, 17)).toBe(false);
+    expect(isOpenAt(dive, 18)).toBe(true);
+    expect(isOpenAt(dive, 23)).toBe(true);
+    expect(isOpenAt(dive, 0)).toBe(true);
+    expect(isOpenAt(dive, 1)).toBe(true);
+    expect(isOpenAt(dive, 2)).toBe(false);
+    expect(isOpenAt(dive, 12)).toBe(false);
+  });
+
+  it('no hours means always open', () => {
+    expect(isOpenAt(null, 3)).toBe(true);
   });
 });

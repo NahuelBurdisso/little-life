@@ -23,6 +23,26 @@ export interface ClockTime {
 }
 
 export const MINUTES_PER_HOUR = 60;
+
+/** A location's opening hours as stored (`locations.operating_hours`). */
+export interface OperatingHours {
+  open: number;
+  close: number;
+}
+
+/**
+ * Is a place with these hours open at `hour`? No hours = always open.
+ *
+ * Every check used to be `hour >= open && hour < close` (or its negation),
+ * which is never true for a place that closes past midnight: the Dive
+ * (18 → 2) read as closed all evening and open to nobody.
+ */
+export function isOpenAt(hours: OperatingHours | null | undefined, hour: number): boolean {
+  if (!hours) return true;
+  return hours.open <= hours.close
+    ? hour >= hours.open && hour < hours.close
+    : hour >= hours.open || hour < hours.close;
+}
 export const MINUTES_PER_DAY = 1440;
 
 /**
