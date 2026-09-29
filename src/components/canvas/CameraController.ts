@@ -176,6 +176,16 @@ export class CameraController {
     return this.scale;
   }
 
+  /** The part of the map on screen, in world pixels (read by lib/cameraView.ts). */
+  viewRect(): { x: number; y: number; width: number; height: number } {
+    return {
+      x: -this.worldContainer.x / this.scale,
+      y: -this.worldContainer.y / this.scale,
+      width: this.screen.width / this.scale,
+      height: this.screen.height / this.scale,
+    };
+  }
+
   private beginPress(x: number, y: number) {
     this.isDragging = true;
     this.lastMouse = { x, y };
