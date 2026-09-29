@@ -9,7 +9,7 @@ import {
   markConversationEnded,
 } from '../helpers/conversationHelpers';
 import { CONFIG } from '../lib/constants';
-import { gameMinutes } from '../lib/gameClock';
+import { gameMinutesNow } from '../lib/worldClock';
 import { recordTurnLatency } from '../lib/conversationPacing';
 import { LLMAbortedError } from './llmErrors';
 import { autoPlayer } from '../autoplay';
@@ -27,6 +27,9 @@ export async function generateResponse(
   signal?: AbortSignal,
 ): Promise<GenerateResponseResult | null> {
   const turnStart = performance.now();
+  // Cancelled before it began (closed between turns): skip the context build,
+  // which can itself wait on memory-retrieval embeddings.
+  if (signal?.aborted) return null;
   // 1. Read all context
   const context = await getConversationContext(conversationId, speakerId);
 
@@ -245,7 +248,9 @@ export async function generateResponse(
   // to be timed by the task runner only when the line was accepted, so a turn so
   // slow that its conversation had already been closed never counted: the
   // slowest turns were exactly the ones the latency estimate never saw.
-  if (world?.time) recordTurnLatency(performance.now() - turnStart, gameMinutes(world.time));
+  // Stamped with the game minute NOW, not the start of the turn: a 60 s turn at
+  // 4x spans four game hours, and sample expiry is measured in game minutes.
+  recordTurnLatency(performance.now() - turnStart, gameMinutesNow());
 
   // 4. Fallback if LLM failed
   let isFallback = false;

@@ -77,6 +77,8 @@ async function callOllamaBackend(
   const baseUrl = request.baseUrl ?? CONFIG.AI.CHAT_BASE_URL;
   const url = `${baseUrl}/api/chat`;
 
+  // Already cancelled: don't even queue for a slot.
+  if (request.signal?.aborted) throw new LLMAbortedError();
   const release = await acquireLLMSlot(request.priority ?? 'normal');
   // Cancelled while queued for the slot: hand it straight back.
   if (request.signal?.aborted) {
@@ -153,6 +155,8 @@ async function callOpenAIChat(
   const baseUrl = request.baseUrl ?? CONFIG.AI.CHAT_BASE_URL;
   const url = `${baseUrl}/v1/chat/completions`;
 
+  // Already cancelled: don't even queue for a slot.
+  if (request.signal?.aborted) throw new LLMAbortedError();
   const release = await acquireLLMSlot(request.priority ?? 'normal');
   // Cancelled while queued for the slot: hand it straight back.
   if (request.signal?.aborted) {

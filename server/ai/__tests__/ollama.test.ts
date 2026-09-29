@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { callOllamaChat } from '../ollama';
-import { LLMEmptyReplyError } from '../llmErrors';
+import { LLMEmptyReplyError, LLMAbortedError } from '../llmErrors';
+import { getLLMStats } from '../llmSemaphore';
 import { CONFIG } from '../../lib/constants';
 
 // Pins how each backend reports a reply the token cap cut off — dialogue trims
@@ -64,5 +65,45 @@ describe('callOllamaChat — truncation flag', () => {
     ai.BACKEND = 'openai';
     mockFetch({ choices: [{ message: { content: 'Cut off mid' }, finish_reason: 'length' }] });
     await expect(callOllamaChat(request)).resolves.toEqual({ text: 'Cut off mid', truncated: true });
+  });
+});
+
+describe('callOllamaChat — caller cancellation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    ai.BACKEND = originalBackend;
+  });
+
+  it.each(['ollama', 'openai'] as const)(
+    '%s: an already-aborted request never queues for a slot nor reaches the server',
+    async (backend) => {
+      ai.BACKEND = backend;
+      const fetchSpy = mockFetch({ message: { content: 'x' } });
+      const acquiredBefore = getLLMStats().totalAcquired;
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(callOllamaChat({ ...request, signal: controller.signal })).rejects.toBeInstanceOf(LLMAbortedError);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(getLLMStats().totalAcquired).toBe(acquiredBefore);
+    },
+  );
+
+  it('reports a mid-request cancel as an abort, not a timeout', async () => {
+    ai.BACKEND = 'ollama';
+    const controller = new AbortController();
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((r) => { fetchStarted = r; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      fetchStarted();
+      (init?.signal as AbortSignal).addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+    }));
+    const pending = callOllamaChat({ ...request, signal: controller.signal });
+    await started;
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(LLMAbortedError);
+    expect(getLLMStats().active).toBe(0);
   });
 });

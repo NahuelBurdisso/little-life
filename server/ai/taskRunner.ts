@@ -6,8 +6,17 @@ class TaskRunner {
   private conversationSlots = 0;
   private readonly maxConcurrentConversations = 4;
   private pendingTasks = new Set<Promise<void>>();
-  /** One per running turn chain, so closing a conversation can cancel its turn. */
+  /** One per live turn chain, so closing a conversation can cancel its turn. */
   private readonly aborts = new Map<number, AbortController>();
+  /** Wall-clock start of the turn each live chain is generating right now. */
+  private readonly turnStartedAt = new Map<number, number>();
+  /**
+   * Bumped by resetSlots(). A chain started before a reset must not touch the
+   * counters when it finally unwinds — its slot was already written off, and
+   * decrementing again drove `conversationSlots` negative (more chains than the
+   * limit could then start).
+   */
+  private epoch = 0;
 
   private track(task: Promise<void>) {
     this.pendingTasks.add(task);
@@ -19,7 +28,7 @@ class TaskRunner {
     this.conversationSlots++;
     const controller = new AbortController();
     this.aborts.set(conversationId, controller);
-    const task = this.runConversation(conversationId, firstSpeakerId, controller.signal);
+    const task = this.runConversation(conversationId, firstSpeakerId, controller, this.epoch);
     this.track(task);
     return true;
   }
@@ -34,12 +43,34 @@ class TaskRunner {
     this.aborts.get(conversationId)?.abort();
   }
 
+  /** Is a turn chain alive for this conversation in THIS process? */
+  isRunning(conversationId: number): boolean {
+    return this.aborts.has(conversationId);
+  }
+
+  /**
+   * How long the turn this conversation's live chain is generating has been
+   * running, or null when no chain is alive (finished, died on a throw, or
+   * never started in this process — e.g. a scheduler entry left by a restart).
+   */
+  inFlightTurnMs(conversationId: number, now: number = Date.now()): number | null {
+    const startedAt = this.turnStartedAt.get(conversationId);
+    return startedAt == null ? null : Math.max(0, now - startedAt);
+  }
+
   /** Chains turns until the conversation is full, closed, or a turn fails. */
-  private async runConversation(conversationId: number, firstSpeakerId: number, signal: AbortSignal): Promise<void> {
+  private async runConversation(
+    conversationId: number,
+    firstSpeakerId: number,
+    controller: AbortController,
+    epoch: number,
+  ): Promise<void> {
+    const { signal } = controller;
     let speakerId: number | undefined = firstSpeakerId;
     try {
       while (speakerId != null && !signal.aborted) {
         let result;
+        this.turnStartedAt.set(conversationId, Date.now());
         try {
           result = await generateResponse(conversationId, speakerId, signal);
         } catch (err) {
@@ -52,6 +83,8 @@ class TaskRunner {
             err,
           );
           return;
+        } finally {
+          if (this.aborts.get(conversationId) === controller) this.turnStartedAt.delete(conversationId);
         }
         emitter.markDirty('conversations');
         // null: context gone, conversation closed or the turn was aborted.
@@ -61,8 +94,13 @@ class TaskRunner {
         if (speakerId != null) await new Promise((resolve) => setTimeout(resolve, 200));
       }
     } finally {
-      this.conversationSlots--;
-      if (this.aborts.get(conversationId)?.signal === signal) this.aborts.delete(conversationId);
+      if (epoch === this.epoch) {
+        this.conversationSlots = Math.max(0, this.conversationSlots - 1);
+        if (this.aborts.get(conversationId) === controller) {
+          this.aborts.delete(conversationId);
+          this.turnStartedAt.delete(conversationId);
+        }
+      }
       emitter.markDirty('conversations');
     }
   }
@@ -77,17 +115,26 @@ class TaskRunner {
   get activeConversations() { return this.conversationSlots; }
 
   /** Turn chains that can still be started right now (see startConversation). */
-  get freeConversationSlots() { return Math.max(0, this.maxConcurrentConversations - this.conversationSlots); }
+  get freeConversationSlots() {
+    return Math.min(this.maxConcurrentConversations, Math.max(0, this.maxConcurrentConversations - this.conversationSlots));
+  }
 
   async drain() {
     await Promise.allSettled([...this.pendingTasks]);
   }
 
-  /** Force-clear slot counters after drain/timeout. */
+  /**
+   * Force-clear slot counters after drain/timeout (world replace). Chains that
+   * outlived the drain are cancelled first — otherwise their model calls kept
+   * running against the replaced world — and, via the epoch, no longer count.
+   */
   resetSlots() {
+    for (const controller of this.aborts.values()) controller.abort();
+    this.epoch++;
     this.conversationSlots = 0;
     this.pendingTasks.clear();
     this.aborts.clear();
+    this.turnStartedAt.clear();
   }
 }
 
