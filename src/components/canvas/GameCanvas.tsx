@@ -14,6 +14,7 @@ import { SYSTEM_FACTORIES } from "./systems";
 import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
 import type { ViewRect } from "./systems/view";
 import { useCanvasActivity } from "../../hooks/useCanvasActivity";
+import { onCanvasEvent } from "../../lib/canvasBus";
 import type { ParticleContext } from "./particles/types";
 
 // Day phases during which each building type's chimney smokes.
@@ -820,6 +821,22 @@ export const GameCanvas = React.memo(function GameCanvas({
       setFollow(false);
     }
   }, [following, selectedAgentId, agents, setFollow]);
+
+  // Camera requests from the UI (canvas bus): a world point, or a location's centre.
+  // Panning releases the follow lock, the same as a user drag would.
+  useEffect(() => onCanvasEvent((e) => {
+    const cam = cameraRef.current;
+    if (!cam) return;
+    if (e.type === 'focus') {
+      setFollow(false);
+      cam.focusOn(e.x, e.y);
+    } else if (e.type === 'focusLocation') {
+      const loc = (locationsRef.current ?? []).find((l: any) => l.id === e.locationId) as any;
+      if (!loc?.position) return;
+      setFollow(false);
+      cam.focusOn(loc.position.x + loc.position.width / 2, loc.position.y + loc.position.height / 2);
+    }
+  }), [setFollow]);
 
   // Focus camera on selected agent
   useEffect(() => {

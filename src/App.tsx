@@ -24,6 +24,7 @@ import { useAgents } from "./hooks/useAgents";
 import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
 import { useKeyboardControls } from "./hooks/useKeyboardControls";
+import { Toasts } from "./components/ui/Toasts";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -303,6 +304,9 @@ export default function App() {
           📜 History
         </button>
       </div>
+
+      {/* Acknowledgements for player actions (lib/toast.ts) */}
+      <Toasts />
 
       {/* Drama alerts + optional camera auto-cut */}
       <DramaAlerts autoFollow={autoCut} onFocusAgent={focusAgent} />

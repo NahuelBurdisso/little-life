@@ -523,7 +523,7 @@ export const nudgeRouter = router({
           emitter.markDirty('agents.all');
           emitter.markDirty('world.state');
           emitter.flush();
-          return { success: true };
+          return { success: true, agentId };
         }
 
         // ─── remove_agent ──────────────────────────────────────────────────

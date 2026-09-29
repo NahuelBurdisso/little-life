@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 131 files / 1506 tests passing.
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 133 files / 1537 tests passing.
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -107,30 +107,28 @@ write tick stamps into minute columns — don't switch back to pre-2026-09-29 br
 Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanup.
 
 ### Economy balance (found by `npm run soak`)
-- **E1 [M]** Structural inflation: salaries ≈ $275/day vs living costs; the money-supply ratio still
-  climbs ~0.1/day (1.6 → 2.1–2.3 in 5 days) and turns on robbery/scam/hyperinflation events.
-  `tax_pool` now fills (sales tax to the cent + venue fees) but nothing spends it.
-- **E5 [M]** Low-salary agents go broke (Diego $14/day, Carlos) and live on the daily pantry meal.
-- **E6 [M]** Walking dominates the day (4–9 h/agent); farmers work 2–3 h of an 8–9 h shift → food
-  supply is labour-bound (likely P1 pathfinding / map scale). Farm rates were raised to compensate.
-- **E7 [L]** Early days are rough: social 32–43 and stressed/lonely up to 8–9 on days 1–2 (baseline
-  ~50–60 / ≤5), converging by day 4. Same farmhand dies in a workplace accident across soaks.
+- **E11 [L]** Hunger averages sit at ~65–75 (target was 50–65) with no one at 0: driven by the meal
+  schedule, not supply (farm output cut 3.0/2.4 → 2.0/1.6 barely moved it). Winter food_raw (27–38/day)
+  is as high as spring — fishing/foraging carry it; check the season modifier isn't bypassed.
+- **E8 [L]** Gifts roughly doubled at 1x after the starting ties (friendlier chats → more post-chat
+  gifts, `giftEngine.ts:~186`); poor agents give 3–6 gifts/day.
+- **E9 [L]** Old saves: the first nights of the treasury loop pull savings hard (up to 60% of cash
+  above the allowance); the treasury may dip negative before the first midnight. Salaries are defined
+  in three places (`server/data/agents.ts`, wizard `defaults.ts`, `JOB_OPTIONS`).
+- **E10 [L]** Template chats give +3 social vs 8–15 for LLM chats (`conversations.ts:~2238` vs
+  `:~1425`); at 4x most chats are templates, so 4x towns stay short on social (days 1–2 lonely ~6).
 
 ### Engine
 - **B9 [M]** In-memory sim state lost on restart (hobby skills, favors, tension, momentum, gate
   backoffs); drift cap re-baselines from drifted value (`personalityDrift.ts`).
 - **B13b [L]** Memory/activity-log retention converts game days to ticks at the *current* speed
   (approximate if the speed changed); `memories.created_at` stays on ticks.
-- **B16 [M]** Housemates/coworkers start as strangers: wizard `getDefaultRelationships()`
-  (`src/components/setup/defaults.ts`) seeds 6 pairs; conversations concentrate there. Overlaps the
-  worldgen "social placement" track — coordinate before changing.
-- **B17 [L]** `server/routers/setup.ts:~741` always adds a fact's subject to `known_by`, so the person
-  seen in a witness secret "knows" they were seen (generator side already fixed). Worldgen session's file.
+- **B20 [L]** The wizard's "Death Enabled" rule is never read by the server.
+- **B21 [L]** `agent:arrived`/`agent:departed` never fire (`movement.ts:~490-507` passes the new
+  location as both old and new), so MemoryObserver never records arrivals. Pre-existing.
 - **B18 [L]** Storm hits outdoor mood twice (event `mood_outdoor` + stormy-weather penalty in needs).
 - **B19 [L]** `templates` DB table is write-only (`seed.ts`, `setup.ts`): selection reads the static
   catalog in `server/data/templates.ts`.
-- **P1 [M]** Pathfinding falls back to straight lines through buildings ("unroutable destination",
-  ~20/game day in soak, 72 in the first playtest) — worldgen session's area.
 
 ### Found by playtest #2 (2026-09-29, real LLM, 15 game h at 1x + 61 game h at 4x)
 Evidence in the session scratchpad; line numbers approximate.
@@ -150,9 +148,6 @@ Evidence in the session scratchpad; line numbers approximate.
   (`descriptionTemplates.ts:~108`); goal memories "I've decided to Assess …..", raw ids in feed
   ("gave food_raw"); `memories.created_at` only advances when a conversation turn runs
   (`MemoryService.setTick` called from one place) → stale tick stamps.
-- **G10 [L]** Thomas re-issued a walk all night and never slept (likely P1 pathfinding).
-- P1 pathfinding confirmed worse: 278 straight-line fallbacks in 76 game h, mostly "destination tile
-  unroutable" at work spots (store counter, clinic reception).
 
 ### Client
 - **C8 [L]** Per-frame allocations: `BubbleSystem.update`, `ParticleEngine.update`,
@@ -237,14 +232,37 @@ before merging.
   needs/bedtime interrupts with a farewell, abortable LLM turns, runner-slot gating + re-queue,
   orphaned conversations ended at boot, queue waits and template cooldowns in game minutes
   (`server/lib/conversationPacing.ts`, `conversation_queue.deadline_game_min`,
-  `template_usage.used_game_min`). TODO: `decisions.ts` `checkSchedule` should call
-  `effectiveSleepWindow()` instead of its inline copy.
+  `template_usage.used_game_min`).
 - **G2 + E2/E3/E4** needs only from matching activities; meals via `serveMeal` (vendor → own food →
   once-a-day pantry for broke/starving; prisoners fed), breakfast/lunch/dinner/supper rules, eat food
   in hand where you stand, grocery runs from needs, per-visit fees for priced venues (Dive, pawnshop,
   clinic), processors at recipe rate in game time, sales tax to the cent, `isOpenAt` handles
   past-midnight hours, bread counts as food. Soak: hunger avg 54–63 (was pinned ~80–100 for free),
   no starvation; `npm run soak -- --season winter` etc.
+- **E1/E5 treasury loop:** `tax_pool` is the town account (`server/lib/townTreasury.ts`): it pays
+  wages (staff of an owner's shop/clinic from the owner's till), collects a nightly upkeep
+  ($4 + a share of cash above 0.8 × the per-world target, scaled by the money-supply ratio), tops
+  anyone under $18 up with a stipend, retires surplus above $50/resident. Per-world
+  `world_state.money_target_per_capita` from starting cash (old saves $75); balancer and crisis
+  events count living residents only; tavern rounds/shoplifting move real money
+  (`economyTransfers.ts`); wage floor $20 with a one-shot `user_version` 3 migration for old worlds
+  (`wageFloorMigration.ts`). Soak 7 days, 2 seeds, 1x/4x: ratio flat 1.05–1.10, nobody broke, no
+  crisis events.
+- **E7/B16/B17 early days:** structural starting ties (`server/lib/startingTies.ts`: housemates 36,
+  coworkers 22, nearest neighbours 14, capped ≤ 40 so no new LLM-tier chats), also folded into
+  `db:seed`; social/fun start 50–80 (`startingNeeds.ts`); workplace accidents 0.0006%/min ×5
+  exhausted ×3 drunk (~1 death per 100 game days); witness secrets keep the generator's `known_by`.
+  Soak now builds worlds through `setup.initialize` (`--seed`, `--preset`).
+- **P1/E6/G10 routing:** routes split into building-interior → world → building-interior legs
+  (`planRoute`), blocked destinations snap to the nearest open tile, useless per-tick recompute
+  removed; arrival on the same tick; work spots routed directly; commute lead before the shift;
+  one sleep window for decisions and conversations (`server/lib/sleepSchedule.ts`); social-crisis
+  walks skip sleeping friends. Straight-line fallbacks ~100/day → 0–1. Soak: `--trace "Name"`.
+- **E6 walking time:** 48 px/game-min (1.5 tiles/s at 1x; screen speed can't be decoupled from game
+  time), client sprites walk at constant speed between server steps (`AgentSprite.setTarget/lerp`,
+  measured 44–52 px/s at 1x, ~180 px/s at 4x). Soak 1x/4x/winter: walking 1.5–2.4 h/day (was ~5.5),
+  at work 5.3–6.8 h of 8.7, farm rates 3.0/2.4 → 2.0/1.6, no one at hunger 0, no deaths.
+
 - **Client:** C2 restart invalidation, C3 missing-agent panel, C4 weather ambient, C6 lanterns,
   C7 single rain/snow renderer, single lightning owner, frame-rate independent fades.
 
@@ -273,6 +291,6 @@ before merging.
 
 1. Playtest #3 with the real LLM at 1x and 4x — validates G1/G2 live and the LLM rework (Gemma 4
    26B, structured output) — and compare with playtest #2.
-2. E1 inflation / E5 low salaries (give `tax_pool` a use); E6 walking time with P1 pathfinding.
-3. G5–G7 dialogue/template/gossip quality; B16 initial relationships with the worldgen track.
-4. P1 pathfinding (unroutable work spots) — worldgen session's area.
+2. E11 hunger level / winter food check.
+3. E10 template-chat social payoff, E8 gift frequency.
+4. G5–G7 dialogue/template/gossip quality.

@@ -262,7 +262,12 @@ export const CONFIG = {
 
   // Movement
   MOVEMENT: {
-    PIXELS_PER_GAME_MINUTE: 16,
+    // 48 px = 1.5 tiles per game minute. On-screen speed is px/game-minute × tick_speed (one
+    // tick per real second), so walking game time and on-screen speed cannot be decoupled. At
+    // the old 16 px (0.5 tiles/s at 1x) walkers looked sluggish and an average commute took
+    // ~67 game minutes: soaks showed ~5.5 h/agent/day on foot and workers at their post only
+    // ~4.5 h of an 8.7 h shift (E6). 48 px brings walking to ~2 h/day.
+    PIXELS_PER_GAME_MINUTE: 48,
     ARRIVAL_THRESHOLD_PX: 8,
     TILE_SIZE: 32,
   },

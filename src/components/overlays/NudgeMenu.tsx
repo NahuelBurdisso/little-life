@@ -225,7 +225,7 @@ export function NudgeMenu({
               key={String(loc.id)}
               className={menuItemClass}
               onClick={() => {
-                suggestGoTo(agentId, String(loc.id));
+                suggestGoTo(agentId, String(loc.id), loc.name);
                 onClose();
               }}
             >

@@ -22,3 +22,11 @@ body {
   color: var(--ui-text-primary);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
+
+/* Toast entrance (src/components/ui/Toasts.tsx). */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast-in { animation: toast-in 160ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .toast-in { animation: none; } }

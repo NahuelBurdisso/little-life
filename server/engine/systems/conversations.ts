@@ -197,7 +197,7 @@ function findNeedsInterrupt(
     // Same personality source as decisions.ts' checkSchedule.
     const personality = getEffectivePersonality(agentId) ?? (agent.personality as PersonalityProfile | null);
     const pastBedtime = agent.schedule
-      ? isPastBedtime(agent.schedule, personality, world.time.hour)
+      ? isPastBedtime(agent.schedule, personality, world.time.hour, agent.workplace != null)
       : false;
     const reason = needsWrapUpReason({ hunger: n.hunger, energy: n.energy, critical }, pastBedtime);
     if (reason) return { agentId, reason };

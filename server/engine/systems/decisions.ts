@@ -15,11 +15,13 @@ import {
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { findAvailableZone, zoneSlotOffset, fallbackInteriorTile } from '../../lib/interiorGrid';
+import { startQueuedAction } from './movement';
 import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { gameMinutes, isOpenAt } from '../../lib/gameClock';
+import { effectiveSleepWindow, inSleepWindow, sleepDurationMinutes } from '../../lib/sleepSchedule';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
@@ -340,6 +342,7 @@ export function checkEmergency(
   otherAgents: AgentRow[],
   activeEventTypes?: Set<string>,
   mealTarget?: () => MealPlan | null,
+  hour?: number,
 ): ScoredAction | null {
   const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
 
@@ -364,7 +367,18 @@ export function checkEmergency(
     if (hungerMeal != null) crises.push({ need: 'hunger', value: agentNeeds.hunger });
   }
   if (agentNeeds.energy < critical) crises.push({ need: 'energy', value: agentNeeds.energy });
-  if (agentNeeds.social < critical) crises.push({ need: 'social', value: agentNeeds.social });
+  // Same rule for company: only a crisis if there is someone to see. The target
+  // used to be the nearest friend whatever they were doing, so a lonely agent
+  // who woke at 2 a.m. walked across town to a sleeping friend's house and sat
+  // "socializing" in it until morning, re-issuing the walk every 16 minutes (a
+  // G10 night walker; 3 h of walking in one soak trace). Friends who are asleep
+  // don't count; with nobody awake to see, a crisis inside the agent's own
+  // sleeping hours is left to the schedule (bed), not sent to an empty square.
+  let socialTarget: ScoredAction | null = null;
+  if (agentNeeds.social < critical) {
+    socialTarget = socialCrisisTarget(agent, allLocations, allRelationships, otherAgents, hour);
+    if (socialTarget) crises.push({ need: 'social', value: agentNeeds.social });
+  }
 
   // Mood is a weighted average of the other needs, so a critical mood almost always
   // means a critical hunger/energy too. Checking it FIRST sent starving agents home
@@ -394,32 +408,95 @@ export function checkEmergency(
       return { action: 'sleeping', score: 9999, targetLocationId: agent.home };
     }
     case 'social': {
-      let bestTarget: { agentId: number; locationId: number | null; dist: number } | null = null;
-      for (const other of otherAgents) {
-        if (other.id === agent.id || !other.is_active) continue;
-        const rel = getRelationshipValues(allRelationships, agent.id, other.id);
-        if (rel && rel.friendship > 20) {
-          const d = distance(agent.position, other.position);
-          if (!bestTarget || d < bestTarget.dist) {
-            bestTarget = { agentId: other.id, locationId: other.current_location, dist: d };
-          }
-        }
-      }
-      if (bestTarget) {
-        const targetLoc = bestTarget.locationId
-          ? bestTarget.locationId
-          : nearestLocation(agent.position, allLocations, 'town_square')?.id ?? undefined;
-        return { action: 'socializing', score: 9999, targetLocationId: targetLoc, targetAgentId: bestTarget.agentId };
-      }
-      const social = nearestLocation(agent.position, allLocations, ['tavern', 'town_square']);
-      if (social) {
-        return { action: 'socializing', score: 9999, targetLocationId: social.id };
-      }
-      return null;
+      return socialTarget;
     }
     default:
       return null;
   }
+}
+
+/** Where a lonely agent in a social crisis goes, or null if nobody is to be had. */
+function socialCrisisTarget(
+  agent: AgentRow,
+  allLocations: LocationRow[],
+  allRelationships: RelRow[],
+  otherAgents: AgentRow[],
+  hour: number | undefined,
+): ScoredAction | null {
+  let bestTarget: { agentId: number; locationId: number | null; dist: number } | null = null;
+  for (const other of otherAgents) {
+    if (other.id === agent.id || !other.is_active) continue;
+    const otherAction = (other.current_action as { type?: string } | null)?.type;
+    if (otherAction === 'sleeping' || otherAction === 'dead') continue;
+    const rel = getRelationshipValues(allRelationships, agent.id, other.id);
+    if (rel && rel.friendship > 20) {
+      const d = distance(agent.position, other.position);
+      if (!bestTarget || d < bestTarget.dist) {
+        bestTarget = { agentId: other.id, locationId: other.current_location, dist: d };
+      }
+    }
+  }
+  if (bestTarget) {
+    const targetLoc = bestTarget.locationId
+      ? bestTarget.locationId
+      : nearestLocation(agent.position, allLocations, 'town_square')?.id ?? undefined;
+    return { action: 'socializing', score: 9999, targetLocationId: targetLoc, targetAgentId: bestTarget.agentId };
+  }
+  if (hour !== undefined) {
+    const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
+    if (inSleepWindow(effectiveSleepWindow(agent.schedule, personality, agent.workplace != null), hour)) return null;
+  }
+  const venues = allLocations.filter((l) =>
+    l.type === 'town_square' || (l.type === 'tavern' && (hour === undefined || isOpenAt(l.operating_hours, hour))));
+  const social = nearestLocation(agent.position, venues, ['tavern', 'town_square']);
+  return social ? { action: 'socializing', score: 9999, targetLocationId: social.id } : null;
+}
+
+/**
+ * The hours an agent sleeps (sleepSchedule.ts, shared with conversationPacing),
+ * in the `{ sleep, wake }` shape this file uses.
+ */
+export function sleepWindow(
+  agent: Pick<AgentRow, 'schedule' | 'workplace'>,
+  personality: PersonalityProfile | null,
+): { sleep: number; wake: number } {
+  const w = effectiveSleepWindow(agent.schedule, personality, agent.workplace != null);
+  return { sleep: w.sleepHour, wake: w.wakeHour };
+}
+
+/**
+ * Game minutes to allow for the walk from home to work: straight-line door to
+ * door at walking speed, plus 30% for streets that do not run straight and ten
+ * minutes for the legs inside the two buildings. Capped at two hours so a
+ * broken location can't send someone off in the middle of the night.
+ */
+export function commuteLeadMinutes(
+  agent: Pick<AgentRow, 'home' | 'workplace'>,
+  allLocations: Pick<LocationRow, 'id' | 'entry_point'>[],
+): number {
+  const home = allLocations.find((l) => l.id === agent.home);
+  const work = allLocations.find((l) => l.id === agent.workplace);
+  if (!home || !work) return 0;
+  const walk = distance(home.entry_point, work.entry_point) / CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE;
+  return Math.min(120, Math.round(walk * 1.3 + 10));
+}
+
+/**
+ * Is it time to set off for the shift? True in the `commuteLeadMinutes` before
+ * `workStart`, measured on the clock face so a shift at 00:00 or 01:00 is left
+ * for before midnight (`workStart * 60 - lead` went negative and never matched).
+ * Only for a job away from home.
+ */
+export function isCommuteDue(
+  agent: Pick<AgentRow, 'home' | 'workplace' | 'schedule'>,
+  allLocations: Pick<LocationRow, 'id' | 'entry_point'>[],
+  hour: number,
+  minute: number,
+): boolean {
+  if (!agent.workplace || agent.workplace === agent.home) return false;
+  const lead = commuteLeadMinutes(agent, allLocations);
+  const untilStart = (agent.schedule.workStart * 60 - (hour * 60 + minute) + 1440) % 1440;
+  return untilStart > 0 && untilStart <= lead;
 }
 
 // --- Schedule Check ---
@@ -475,25 +552,7 @@ function checkSchedule(
     }
   }
 
-  // Sleep time: personality-adjusted chronotype
-  // Night owls (high impulsiveness, high sensuality) stay up later and wake later
-  // Early birds (high morality, low impulsiveness) sleep earlier and wake earlier
-  let sleepShift = 0; // hours to shift sleep schedule (positive = later, negative = earlier)
-  if (personality) {
-    // Impulsive/sensual agents are night owls: up to +2 hours later
-    sleepShift += (personality.impulsiveness - 50) * 0.02;
-    sleepShift += (personality.sensuality - 50) * 0.01;
-    // Conscientious/moral agents are early birds: up to -1.5 hours earlier
-    sleepShift -= (personality.morality - 50) * 0.015;
-    // Neurotic agents need more regular sleep: dampen the shift
-    if (personality.neuroticism > 60) sleepShift *= 0.5;
-    // Clamp to reasonable range
-    sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
-  }
-
-  const baseSleepTime = sched.sleepTime === 0 ? 24 : sched.sleepTime;
-  const effectiveSleepTime = Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24;
-  const effectiveWakeTime = Math.max(4, Math.min(12, sched.wakeTime + sleepShift));
+  const { sleep: effectiveSleepTime, wake: effectiveWakeTime } = sleepWindow(agent, personality);
 
   if (effectiveSleepTime > effectiveWakeTime) {
     // Normal case: sleep 22 → wake 7 → sleeping when hour >= 22 OR hour < 7
@@ -507,15 +566,29 @@ function checkSchedule(
     }
   }
 
+  const morning = hour >= effectiveWakeTime && !!agent.workplace && hour < sched.workStart;
+
+  // Breakfast first when the night left them hungry: a worker's next meal is
+  // lunch, and the jog/coffee/contemplate branches below used to take the wake
+  // hour, so most of the town started its shift on an empty stomach. Above the
+  // commute: a hungry worker eats and is late rather than working a morning
+  // shift on nothing.
+  if (morning && hunger !== undefined && hunger < LUNCH_BELOW_HUNGER) {
+    return { action: 'eating', score: 3500, targetLocationId: agent.home };
+  }
+
+  // Set off for work in time to be there when the shift starts. The work branch
+  // below only fires from `workStart`, so the whole commute — 67 minutes on
+  // average door to door in the soak town — came out of the shift every day
+  // (the soak's biggest "away from work" item, ~1.4 h per worker). Above the
+  // rest of the morning routine, which would otherwise hold the window with a
+  // jog or a coffee; below the sleep check, so nobody is got out of bed for it.
+  if (isCommuteDue(agent, allLocations, hour, minute)) {
+    return { action: 'working', score: 4000, targetLocationId: agent.workplace! };
+  }
+
   // Morning routine: personality-driven activities between wake and work
-  if (hour >= effectiveWakeTime && agent.workplace && hour < sched.workStart) {
-    // Morning window: agent is awake but work hasn't started yet.
-    // Breakfast first when the night left them hungry: a worker's next meal is
-    // lunch, and the jog/coffee/contemplate branches below used to take the
-    // wake hour, so most of the town started its shift on an empty stomach.
-    if (hunger !== undefined && hunger < LUNCH_BELOW_HUNGER) {
-      return { action: 'eating', score: 3500, targetLocationId: agent.home };
-    }
+  if (morning) {
     if (personality) {
       // Athletic / impulsive agents: morning jog
       if (personality.impulsiveness > 55 && hour === effectiveWakeTime) {
@@ -1408,6 +1481,7 @@ export function tick(world: WorldRow): void {
         activeAgents,
         activeEventTypes,
         () => mealPlan(agent.home ?? undefined),
+        world.time.hour,
       );
     }
 
@@ -1437,8 +1511,12 @@ export function tick(world: WorldRow): void {
       }
     }
 
-    // Phase 1b: Plan layer (score 6000 — above free-time, below emergency)
-    if (!decision) {
+    // Phase 1b: Plan layer (score 6000 — above free-time, below emergency).
+    // Not while the commute is due: plan blocks are whole hours and an LLM plan
+    // (like the fallback one) puts "work" at `workStart`, so the block before it
+    // would hold the agent at home and the commute would come out of the shift
+    // again. The schedule sends them off (checkSchedule, isCommuteDue).
+    if (!decision && !isCommuteDue(agent, allLocations, world.time.hour, world.time.minute)) {
       const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day, world.time.minute);
       // A planned meal with no meal to be had falls through to the schedule.
       if (planned) {
@@ -1658,30 +1736,59 @@ export function tick(world: WorldRow): void {
       decision.action === 'idle' &&
       agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD
         ? 120
-        : minDuration;
+        : decision.action === 'sleeping'
+          ? sleepDurationMinutes(
+              world.time.hour, world.time.minute,
+              sleepWindow(agent, getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null).wake,
+              minDuration,
+              agentNeeds.energy < critical,
+            )
+          : minDuration;
 
-    // If a zone target exists, embed its coordinates into the queued action so that
-    // movement.ts can teleport the agent to the exact zone position on arrival.
     const baseAction = buildAction(
       decision,
       decision.action === 'shopping'
         ? groceryList(agentEcon, allLocations.find((l) => l.id === decision!.targetLocationId))
         : [],
     );
-    // `pose` is a cosmetic hint for the renderer. It rides on the action rather
-    // than being derived client-side because the zone id is stripped from
-    // `current_action` by the time movement.ts finishes the interior hop, and it
-    // survives every one of those rewrites (they all spread the queued action).
-    const finalAction = zoneTarget
-      ? {
-          ...baseAction,
-          zoneX: zoneTarget.x,
-          zoneY: zoneTarget.y,
-          targetZone: matchedZoneId,
-          targetBuildingType: matchedBuildingType,
-          ...(seatedZone ? { pose: 'sitting' } : {}),
-        }
-      : baseAction;
+
+    // Walk straight to the spot. The destination above is the entry_point, and
+    // the spot used to be reached in a second walk started on arrival
+    // (handleArrival in movement.ts: an interior hop inside buildings, a 5-tick
+    // lerp in open areas). Two costs came with it:
+    //  - a place the agent was already in was left and re-entered: a farmer
+    //    re-deciding `working` every hour (the action is 60 minutes) walked
+    //    from the crops out to the farm gate and back, a clerk from the counter
+    //    out onto the doorstep and back — ~5 such walks per agent a day in the
+    //    soaks, and at 4x each leg costs a whole 4-minute tick to arrive;
+    //  - every trip was two walks, so paid that arrival tick twice, and the open
+    //    area lerp padded the action by 5 ticks (20 game minutes at 4x).
+    // planRoute (movement.ts) routes into a building through its door on the
+    // building's own grid, so one walk covers door and spot.
+    //
+    // The queued action carries what starting it needs (startQueuedAction):
+    //  - `_arrivalZone`/`_arrivalBuilding` for any matched zone, indoor or open
+    //    area: the zone's effects (fish → food, garden, jog...) run on arrival,
+    //    and indoor zones register occupancy;
+    //  - `_duration`: the length decided here. Arrival used to reset it to the
+    //    action type's minimum, so a sleep shortened to end at the wake time
+    //    (or a 120-minute mope) was six hours / ten minutes again once walked to.
+    // `pose` is a cosmetic hint for the renderer and rides on the action itself.
+    const queuedAction: Record<string, any> = {
+      ...((baseAction as { type?: string }).type === 'walking' ? { type: 'idle' } : baseAction),
+      ...(matchedZoneId && matchedBuildingType
+        ? { _arrivalZone: matchedZoneId, _arrivalBuilding: matchedBuildingType }
+        : {}),
+      ...(seatedZone ? { pose: 'sitting' } : {}),
+      // A 'walking' decision can't be started in place (no destination: movement
+      // skips it and decisions never re-assigns it); it becomes a short idle.
+      _duration: (baseAction as { type?: string }).type === 'walking'
+        ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
+        : actionDuration,
+    };
+    if (destination && zoneTarget) {
+      destination = { x: zoneTarget.x, y: zoneTarget.y, locationId: destination.locationId };
+    }
 
     const needsToTravel =
       destination &&
@@ -1695,42 +1802,19 @@ export function tick(world: WorldRow): void {
           current_destination: destination,
           action_started: nowMinutes,
           action_duration: null,
-          action_queue: [finalAction],
+          action_queue: [queuedAction],
           current_path: null,
         })
         .where(eq(agents.id, agent.id))
         .run();
     } else {
-      // Guard: never write a walking action without a destination — that creates an
-      // unresolvable deadlock (movement skips it, decisions never re-assigns it).
-      // If for any reason a 'walking' action reaches this branch, downgrade to idle.
-      const safeAction =
-        (finalAction as any).type === 'walking'
-          ? { type: 'idle' }
-          : finalAction;
-      const safeDuration =
-        (finalAction as any).type === 'walking'
-          ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
-          : actionDuration;
-
-      // If action has zone coordinates and agent is already at the building,
-      // move them to the interior zone position directly
-      const zonePos = (safeAction as any).zoneX !== undefined && (safeAction as any).zoneY !== undefined
-        ? { x: (safeAction as any).zoneX, y: (safeAction as any).zoneY }
-        : undefined;
-
-      db.update(agents)
-        .set({
-          current_action: safeAction,
-          current_destination: null,
-          action_started: nowMinutes,
-          action_duration: safeDuration,
-          current_path: null,
-          action_queue: [],
-          ...(zonePos ? { position: zonePos } : {}),
-        })
-        .where(eq(agents.id, agent.id))
-        .run();
+      // Already on the spot (or staying where they stand): start it here, the
+      // same way an arrival would — so an angler who re-decides `fish` on the
+      // riverbank still lands a fish.
+      if (destination) {
+        db.update(agents).set({ position: { x: destination.x, y: destination.y } }).where(eq(agents.id, agent.id)).run();
+      }
+      startQueuedAction(agent.id, agent.current_location, queuedAction, [], world.time);
     }
 
     // Log zone-driven activities to activity feed

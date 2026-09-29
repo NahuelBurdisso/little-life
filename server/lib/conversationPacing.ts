@@ -15,7 +15,9 @@
  */
 
 import { CONFIG } from './constants';
-import type { PersonalityProfile } from './personality';
+import { effectiveSleepWindow, inSleepWindow, type Chronotype, type SleepScheduleInput } from './sleepSchedule';
+
+export { effectiveSleepWindow } from './sleepSchedule';
 
 // ---------------------------------------------------------------------------
 // Budget
@@ -173,48 +175,19 @@ export function resetConversationPacing(): void {
 
 export type NeedsWrapUpReason = 'energy' | 'sleep' | 'hunger';
 
-interface SleepSchedule {
-  wakeTime: number;
-  sleepTime: number;
-}
-
-type Chronotype = Pick<PersonalityProfile, 'impulsiveness' | 'sensuality' | 'morality' | 'neuroticism'>;
-
 /**
- * The agent's personality-shifted sleep window, in whole hours: asleep from
- * `sleepHour` until `wakeHour` (wrapping midnight when sleepHour > wakeHour).
- *
- * MIRRORS `checkSchedule` in engine/systems/decisions.ts (the "Sleep time:
- * personality-adjusted chronotype" block) — same shift, clamps and window, so a
- * conversation ends exactly when decisions would otherwise send the agent to
- * bed. decisions.ts exports nothing to compare against and is being reworked
- * elsewhere, so the block is copied here for now.
- * TODO(decisions): have checkSchedule call this instead of its inline copy.
+ * Is `hour` inside the agent's sleep window? The window itself lives in
+ * sleepSchedule.ts, shared with decisions.ts, so a conversation ends exactly
+ * when decisions would otherwise send the agent to bed — including the
+ * worker's wake-before-the-shift clamp, which needs `hasWorkplace`.
  */
-export function effectiveSleepWindow(
-  schedule: SleepSchedule,
+export function isPastBedtime(
+  schedule: SleepScheduleInput,
   personality: Chronotype | null,
-): { sleepHour: number; wakeHour: number } {
-  let sleepShift = 0;
-  if (personality) {
-    sleepShift += (personality.impulsiveness - 50) * 0.02;
-    sleepShift += (personality.sensuality - 50) * 0.01;
-    sleepShift -= (personality.morality - 50) * 0.015;
-    if (personality.neuroticism > 60) sleepShift *= 0.5;
-    sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
-  }
-  const baseSleepTime = schedule.sleepTime === 0 ? 24 : schedule.sleepTime;
-  return {
-    sleepHour: Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24,
-    wakeHour: Math.max(4, Math.min(12, schedule.wakeTime + sleepShift)),
-  };
-}
-
-/** Is `hour` inside the agent's sleep window (see `effectiveSleepWindow`)? */
-export function isPastBedtime(schedule: SleepSchedule, personality: Chronotype | null, hour: number): boolean {
-  const { sleepHour, wakeHour } = effectiveSleepWindow(schedule, personality);
-  if (sleepHour > wakeHour) return hour >= sleepHour || hour < wakeHour;
-  return hour >= sleepHour && hour < wakeHour;
+  hour: number,
+  hasWorkplace = false,
+): boolean {
+  return inSleepWindow(effectiveSleepWindow(schedule, personality, hasWorkplace), hour);
 }
 
 /**

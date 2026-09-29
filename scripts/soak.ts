@@ -8,6 +8,7 @@
  *   npm run soak -- --tick-speed 5 --keep --verbose
  *   npm run soak -- --season winter       # start in another season (fresh world or --db copy)
  *   npm run soak -- --preset soap         # drama preset for a fresh world (default: the wizard's)
+ *   npm run soak -- --trace "Elena Voss"  # print one agent's every action change
  *
  * A fresh world is built exactly as the setup wizard's Start button builds it
  * with nothing edited: the wizard's default cast and relationships, its default
@@ -53,6 +54,8 @@ if (SEASON && !['spring', 'summer', 'autumn', 'winter'].includes(SEASON)) {
 }
 const KEEP = flag('keep');
 const VERBOSE = flag('verbose');
+// --trace "Name": print every action change of one agent (time, action, place).
+const TRACE = arg('trace');
 
 // ─── Throwaway database ───────────────────────────────────────────────────────
 
@@ -178,6 +181,71 @@ async function main(): Promise<void> {
   const tickSpeed = TICK_SPEED ?? world0.tick_speed;
   const ticksPerDay = Math.ceil(1440 / tickSpeed);
 
+  // ── Movement / work instrumentation (E6, P1) ──────────────────────────────
+  // Every straight-line fallback, labelled by the place its destination tile is
+  // in. World-grid tiles map to the smallest location rectangle containing them;
+  // interior-grid tiles (building-relative) to the building type + zone.
+  const { setPathFallbackObserver, computeAStarPath } = await import('../server/lib/pathfinding');
+  const { INTERIOR_ZONES } = await import('../server/data/interiors');
+  const TILE = CONFIG.MOVEMENT.TILE_SIZE;
+  const allLocs = db.select().from(locations).all();
+  const worldRow = () => db.select().from(worldState).get()!;
+  const placeOfTile = (tx: number, ty: number): string => {
+    const px = tx * TILE + TILE / 2, py = ty * TILE + TILE / 2;
+    const hits = allLocs.filter((l) => px >= l.position.x && px < l.position.x + l.position.width
+      && py >= l.position.y && py < l.position.y + l.position.height)
+      .sort((a, b) => a.position.width * a.position.height - b.position.width * b.position.height);
+    return hits[0] ? `${hits[0].type}` : 'open ground';
+  };
+  const fallbackDay = new Map<string, number>();   // reason -> count, reset daily
+  const fallbackWhere = new Map<string, number>(); // "reason @ place" -> count, whole run
+  setPathFallbackObserver((f) => {
+    fallbackDay.set(f.kind, (fallbackDay.get(f.kind) ?? 0) + 1);
+    let where: string;
+    if (f.context === 'world') {
+      where = `world ${placeOfTile(f.end[0], f.end[1])}`
+        + (f.kind === 'no-route' ? ` (from ${placeOfTile(f.start[0], f.start[1])})` : '');
+    } else {
+      const zone = (INTERIOR_ZONES[f.context] ?? []).find((z) => z.center[0] === f.end[0] && z.center[1] === f.end[1]);
+      where = `interior ${f.context} (${f.end[0]},${f.end[1]})${zone ? ` ${zone.id}` : ''}`;
+    }
+    const k = `${f.kind} @ ${where}`;
+    fallbackWhere.set(k, (fallbackWhere.get(k) ?? 0) + 1);
+  });
+
+  // Commute: A* length (tiles walked) and minutes at base walking speed, door to door.
+  {
+    const w = worldRow();
+    const locById = new Map(allLocs.map((l) => [l.id, l]));
+    const lens: number[] = [];
+    const rows: string[] = [];
+    for (const a of db.select().from(agents).where(eq(agents.is_active, true)).all()) {
+      const home = locById.get(a.home), work = a.workplace != null ? locById.get(a.workplace) : undefined;
+      if (!home || !work || home.id === work.id) continue;
+      const p = computeAStarPath(home.entry_point, work.entry_point, w.collision_grid, w.map_width, w.map_height, TILE);
+      let len = 0, prev = home.entry_point as { x: number; y: number };
+      for (const [x, y] of p) { len += Math.hypot(x - prev.x, y - prev.y); prev = { x, y }; }
+      lens.push(len / TILE);
+      rows.push(`${a.name} ${(len / TILE).toFixed(0)}`);
+    }
+    fallbackDay.clear(); fallbackWhere.clear();
+    const avgLen = lens.reduce((x, y) => x + y, 0) / Math.max(1, lens.length);
+    const tilesPerMin = CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE / TILE;
+    out(`map ${w.map_width}x${w.map_height} tiles · walk ${tilesPerMin} tiles/game min · commute (tiles, door to door): `
+      + `avg ${avgLen.toFixed(0)} = ${(avgLen / tilesPerMin).toFixed(0)} min, max ${Math.max(0, ...lens).toFixed(0)}`);
+    out(`  ${rows.join(' · ')}`);
+    out('');
+  }
+  // Per-agent walk bookkeeping carried across ticks.
+  const walkKey = new Map<number, string>(); // agent -> action_started of the current walk
+  type WalkCat = 'trip' | 'same-place' | 'hop' | 'approach';
+  const walkCat = new Map<number, WalkCat>();
+  const lastPos = new Map<number, { x: number; y: number }>();
+  const nameById = new Map(db.select({ id: agents.id, name: agents.name }).from(agents).all().map((a) => [a.id, a.name]));
+  const locName = new Map(allLocs.map((l) => [l.id, `${l.type}#${l.id}`]));
+  let traceLast = '';
+  const jobOf = new Map(db.select({ id: economy.agent_id, job: economy.job }).from(economy).all().map((e) => [e.id, e.job]));
+
   const maxId = (table: any) => Number(db.select({ m: sql<number>`coalesce(max(id), 0)` }).from(table).get()?.m ?? 0);
   let txMark = maxId(economyTransactions);
   let logMark = maxId(activityLog);
@@ -199,6 +267,9 @@ async function main(): Promise<void> {
   // strangers even when the conversation count looks healthy.
   const socialRows: string[] = [];
   const RISKY_JOBS = new Set(['farmer', 'farmhand', 'handyperson']);
+  // Third and fourth tables: movement and time at work (E6/P1).
+  const moveRows: string[] = [];
+  const workRows: string[] = [];
   // Minutes each agent has currently spent at hunger 0 without a break — the
   // starvation death clock (lifeEventsEngine: 4320). Carried across days.
   const hungerZeroRun = new Map<number, number>();
@@ -230,14 +301,78 @@ async function main(): Promise<void> {
     const riskyWork = new Map<number, number>();
     // One eating action = one meal, keyed like economy.ts keys a meal.
     const meals = new Map<string, 'home' | 'out' | 'other'>();
+    // Movement/work, in game minutes per agent.
+    const walkMin = new Map<number, number>();
+    const walkByCat: Record<WalkCat, number> = { trip: 0, 'same-place': 0, hop: 0, approach: 0 };
+    const trips: Record<WalkCat, number> = { trip: 0, 'same-place': 0, hop: 0, approach: 0 };
+    const nightWalkMin = new Map<number, number>();
+    let tilesWalked = 0;
+    const shift = new Map<number, { job: string; shift: number; atWork: number; working: number }>();
+    const awayWhy = new Map<string, number>(); // shift minutes away from work, by action
+    fallbackDay.clear();
     for (let i = 0; i < ticksPerDay; i++) {
       await gameTick();
       ticks++;
       const rows = db.select({
         id: agents.id, home: agents.home, loc: agents.current_location,
         action: agents.current_action, started: agents.action_started,
+        dest: agents.current_destination, pos: agents.position, schedule: agents.schedule,
+        workplace: agents.workplace, queue: agents.action_queue,
       }).from(agents).where(eq(agents.is_active, true)).all();
       const needByAgent = new Map(db.select().from(needs).all().map((n) => [n.agent_id, n]));
+      const clock = worldRow().time;
+      const hourF = clock.hour + clock.minute / 60;
+      const inWindow = (from: number, to: number) => from <= to ? hourF >= from && hourF < to : hourF >= from || hourF < to;
+      for (const r of rows) {
+        const type = (r.action as any)?.type;
+        const prev = lastPos.get(r.id);
+        lastPos.set(r.id, r.pos);
+        if (r.workplace != null && r.workplace !== r.home && r.schedule) {
+          const s = shift.get(r.id) ?? { job: jobOf.get(r.id) ?? '?', shift: 0, atWork: 0, working: 0 };
+          if (inWindow(r.schedule.workStart, r.schedule.workEnd)) {
+            s.shift += tickSpeed;
+            if (r.loc === r.workplace && type !== 'walking') s.atWork += tickSpeed;
+            if (type === 'working') s.working += tickSpeed;
+            // Where shift time goes when it is not spent at work: the action, or
+            // for a walk the action it is walking to.
+            if (r.loc !== r.workplace || type === 'walking') {
+              const k = type === 'walking' ? `walk>${(r.queue as any[])?.[0]?.type ?? '?'}` : String(type);
+              awayWhy.set(k, (awayWhy.get(k) ?? 0) + tickSpeed);
+            }
+          }
+          shift.set(r.id, s);
+        }
+        if (TRACE && nameById.get(r.id) === TRACE) {
+          const a = r.action as any;
+          const q = (r.queue as any[])?.[0];
+          const desc = type === 'walking'
+            ? `walking${a?.reason ? `(${a.reason})` : ''} -> ${q?.type ?? '?'}${q?.source ? `/${q.source}` : ''} @ ${locName.get((r.dest as any)?.locationId) ?? 'point'}`
+            : `${type}${a?.source ? `/${a.source}` : ''}${a?.zoneActivity ? `/${a.zoneActivity}` : ''}`;
+          const line = `${desc} [at ${locName.get(r.loc as number) ?? 'outside'}]`;
+          if (line !== traceLast) {
+            const n = needByAgent.get(r.id);
+            out(`  trace d${clock.day} ${String(clock.hour).padStart(2, '0')}:${String(Math.floor(clock.minute)).padStart(2, '0')} ${line}`
+              + (n ? `  h${n.hunger.toFixed(0)} e${n.energy.toFixed(0)} s${n.social.toFixed(0)}` : ''));
+            traceLast = line;
+          }
+        }
+        if (type !== 'walking') { walkKey.delete(r.id); continue; }
+        walkMin.set(r.id, (walkMin.get(r.id) ?? 0) + tickSpeed);
+        if (r.schedule && inWindow(r.schedule.sleepTime, r.schedule.wakeTime)) {
+          nightWalkMin.set(r.id, (nightWalkMin.get(r.id) ?? 0) + tickSpeed);
+        }
+        if (prev) tilesWalked += Math.hypot(r.pos.x - prev.x, r.pos.y - prev.y) / TILE;
+        const key = String(r.started);
+        if (walkKey.get(r.id) !== key) {
+          walkKey.set(r.id, key);
+          const locId = (r.dest as any)?.locationId as number | undefined;
+          const cat: WalkCat = (r.action as any)?.reason === 'approaching_conversation' ? 'approach'
+            : locId == null ? 'hop' : locId === r.loc ? 'same-place' : 'trip';
+          walkCat.set(r.id, cat);
+          trips[cat]++;
+        }
+        walkByCat[walkCat.get(r.id) ?? 'hop'] += tickSpeed;
+      }
       for (const st of db.select({ agent: agentStates.agent_id, type: agentStates.type }).from(agentStates)
         .where(inArray(agentStates.type, ['stressed', 'lonely'])).all()) {
         stateHolders[st.type as 'stressed' | 'lonely'].add(st.agent);
@@ -359,6 +494,37 @@ async function main(): Promise<void> {
       String(died.length).padStart(6) + (died.length ? ` (${deathCauses.join('; ') || died.map((id) => nameOf.get(id)).join(', ')})` : ''),
     ].join(' | ') + `  | made: ${[...produced].map(([k, v]) => `${k} ${v}`).join(', ') || '-'}  | meals: ${mealMix || '-'}`);
     produced.clear();
+    {
+      const n = Math.max(1, active.length);
+      const wm = [...walkMin.entries()].sort((a, b) => b[1] - a[1]);
+      const totalWalk = wm.reduce((x, [, v]) => x + v, 0);
+      const h = (m: number) => (m / 60).toFixed(1);
+      const nights = [...nightWalkMin.values()];
+      const byJob = new Map<string, { n: number; shift: number; atWork: number; working: number }>();
+      for (const s of shift.values()) {
+        const j = byJob.get(s.job) ?? { n: 0, shift: 0, atWork: 0, working: 0 };
+        j.n++; j.shift += s.shift; j.atWork += s.atWork; j.working += s.working;
+        byJob.set(s.job, j);
+      }
+      const all = [...shift.values()];
+      const sumK = (k: 'shift' | 'atWork' | 'working') => all.reduce((x, s) => x + s[k], 0);
+      moveRows.push([
+        String(dayStart.day).padStart(3),
+        h(totalWalk / n).padStart(6),
+        `${h(wm[0]?.[1] ?? 0)} ${nameOf.get(wm[0]?.[0] ?? -1) ?? ''}`.padEnd(14),
+        `${(trips.trip / n).toFixed(1)}/${(trips['same-place'] / n).toFixed(1)}/${(trips.hop / n).toFixed(1)}/${(trips.approach / n).toFixed(1)}`.padStart(18),
+        `${h(walkByCat.trip / n)}/${h(walkByCat['same-place'] / n)}/${h(walkByCat.hop / n)}/${h(walkByCat.approach / n)}`.padStart(18),
+        (tilesWalked / n).toFixed(0).padStart(5),
+        `${h(Math.max(0, ...nights))}`.padStart(7),
+        `${h(sumK('atWork') / Math.max(1, all.length))}/${h(sumK('shift') / Math.max(1, all.length))}`.padStart(8),
+        `${fallbackDay.get('unroutable-destination') ?? 0}/${fallbackDay.get('no-route') ?? 0}`.padStart(7)
+          + ` (${(fallbackDay.get('snapped-destination') ?? 0) + (fallbackDay.get('snapped-start') ?? 0)})`,
+      ].join(' | '));
+      workRows.push(`${String(dayStart.day).padStart(3)} | ` + [...byJob.entries()].sort()
+        .map(([job, j]) => `${job}x${j.n} ${h(j.atWork / j.n)}/${h(j.shift / j.n)} (w ${h(j.working / j.n)})`).join(' · '));
+      workRows.push('    | away from work, h per worker: ' + [...awayWhy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([k, v]) => `${k} ${h(v / Math.max(1, all.length))}`).join(' · '));
+    }
     out([
       String(dayStart.day).padStart(3),
       String(active.length).padStart(6),
@@ -450,6 +616,23 @@ async function main(): Promise<void> {
     ].join(' | '));
   }
   out('');
+  out('Movement, per agent per day. trips = walks started, t/s/h/a: trip to another place / same-place (a walk to');
+  out('the door of the place the agent is already in) / hop (interior walk to a zone) / approach (walking over to');
+  out('talk). walk h split the same way. tiles = distance walked. night h = max h one agent walked in its sleep');
+  out('window. at work = h at the workplace during the shift / shift h. fallback = straight lines: unroutable');
+  out('destination / no route (in brackets: routes snapped to the nearest open tile, not straight lines).');
+  out('day | walk h | max walk h     |   trips t/s/h/a    |  walk h t/s/h/a    | tiles | night h | at work  | fallback u/n (s)');
+  out('----+--------+----------------+--------------------+--------------------+-------+---------+----------+-------------');
+  for (const r of moveRows) out(r);
+  out('');
+  out('Time at workplace during shift by job: at/shift h (w = h on a working action)');
+  for (const r of workRows) out(r);
+  out('');
+  if (fallbackWhere.size) {
+    out('Path fallbacks and snaps by reason and destination (whole run):');
+    for (const [k, v] of [...fallbackWhere.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) out(`  x${v}  ${k}`);
+    out('');
+  }
   out(`${ticks} ticks in ${(ms / 1000).toFixed(1)} s (${(ms / ticks).toFixed(1)} ms/tick)`);
   out('');
   out(anomalies.length ? `ANOMALIES (${anomalies.length}):` : 'No anomalies flagged.');
