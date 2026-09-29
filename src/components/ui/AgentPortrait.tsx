@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { getAgentColor } from "../../lib/spriteConfig";
 import { formatMood } from "../../lib/formatters";
+import { isPlaceholderSpriteKey } from "../../lib/residentArt/look";
+import { generatedPortraitSrc } from "./generatedPortrait";
 import { portraitMood, portraitSrc } from "./portraitMood";
 
 interface AgentPortraitProps {
   agent: {
     name: string;
     age: number;
+    /** Steers a generated portrait's odds, like the map sprite's. */
+    gender?: string | null;
     portraitSprite?: string;
     portrait_sprite?: string;
   };
@@ -38,9 +42,14 @@ export function AgentPortrait({ agent, economy, mood, states, size = 48, decease
   const letter = agent.name.charAt(0).toUpperCase();
 
   const spriteKey = agent.portrait_sprite ?? agent.portraitSprite;
-  const neutralSrc = spriteKey ? portraitSrc(spriteKey, "neutral") : null;
-  const moodSrc = spriteKey ? portraitSrc(spriteKey, portraitMood(mood, states)) : null;
-  const spriteSrc = moodSrc && !failed.has(moodSrc) ? moodSrc : neutralSrc;
+  const face = portraitMood(mood, states);
+  const handDrawn = !isPlaceholderSpriteKey(spriteKey);
+  const neutralSrc = handDrawn ? portraitSrc(spriteKey!, "neutral") : null;
+  const moodSrc = handDrawn ? portraitSrc(spriteKey!, face) : null;
+  let spriteSrc = moodSrc && !failed.has(moodSrc) ? moodSrc : neutralSrc;
+  // Residents nobody drew (nudged, wizard custom names) get the generated face — with every
+  // expression, so the crossfade below works for them too.
+  if (spriteSrc === null || failed.has(spriteSrc)) spriteSrc = generatedPortraitSrc(agent, face);
   const showSprite = spriteSrc !== null && !failed.has(spriteSrc);
 
   const markFailed = (src: string) => setFailed((prev) => new Set(prev).add(src));

@@ -83,7 +83,10 @@ export class SpritePool {
 
       let sprite = this.sprites.get(id);
       if (!sprite) {
-        sprite = new AgentSprite(agent.name ?? "Agent", agent.sprite_sheet);
+        sprite = new AgentSprite(agent.name ?? "Agent", agent.sprite_sheet, {
+          gender: agent.gender,
+          age: agent.age,
+        });
         this.names.set(id, agent.name ?? "Agent");
         sprite.setPositionImmediate(px, py);
         this.sprites.set(id, sprite);
