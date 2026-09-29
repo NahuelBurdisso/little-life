@@ -330,6 +330,25 @@ export function getNegativeFactCount(agentId: number): number {
   return activeFacts.filter((f) => NEGATIVE_FACT_TYPES.includes(f.type)).length;
 }
 
+/**
+ * Negative-fact count for every subject at once, from a list of facts the
+ * caller already loaded. The decisions phase prices one count per co-located
+ * agent per agent (`getNegativeFactCount` above is one query each) and already
+ * holds the whole active `shared_knowledge` table for the arrest check, so it
+ * counts from that instead. Same rule as `getNegativeFactCount`: active facts
+ * whose type is in `NEGATIVE_FACT_TYPES`.
+ */
+export function countNegativeFactsBySubject(
+  facts: ReadonlyArray<{ subject_id: number; type: string; is_active?: boolean | null }>,
+): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const f of facts) {
+    if (f.is_active === false || !NEGATIVE_FACT_TYPES.includes(f.type)) continue;
+    counts.set(f.subject_id, (counts.get(f.subject_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export function getHiddenSinCount(agentId: number): number {
   const hiddenFacts = db
     .select({ type: shared_knowledge.type, known_by: shared_knowledge.known_by })

@@ -34,7 +34,7 @@ import {
 } from '../../lib/personality';
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
-import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
+import { createFact, getShareableFacts, getAgentName, getNegativeFactCount, countNegativeFactsBySubject } from '../../lib/gossip';
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
 import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
@@ -750,6 +750,8 @@ function scoreFreeTimeActions(
   econMap?: Map<number, EconRow>,
   activeEventTypes?: Set<string>,
   weather?: string,
+  /** This tick's negative-fact counts per agent (see `countNegativeFactsBySubject`); queried per target when absent. */
+  negativeFactCounts?: Map<number, number>,
 ): ScoredAction[] {
   const scores: ScoredAction[] = [];
   const evening = isEvening(world.time.hour);
@@ -898,7 +900,7 @@ function scoreFreeTimeActions(
     socScore *= getReputationSocialModifier(other.id);
 
     // Escalation: reduce social score toward agents with many negative facts
-    const targetNegFacts = getNegativeFactCount(other.id);
+    const targetNegFacts = negativeFactCounts ? (negativeFactCounts.get(other.id) ?? 0) : getNegativeFactCount(other.id);
     if (targetNegFacts >= 10) {
       socScore *= 0.1; // Pariah
     } else if (targetNegFacts >= 3) {
@@ -1487,6 +1489,10 @@ export function tick(world: WorldRow): void {
   const allActiveKnowledge = db.select().from(shared_knowledge)
     .where(eq(shared_knowledge.is_active, true))
     .all();
+  // Negative facts per subject, counted once from that snapshot: scoring
+  // socializing priced one shared_knowledge query per (agent, co-located other)
+  // per tick, and the constable check one more per pair.
+  const negativeFactCounts = countNegativeFactsBySubject(allActiveKnowledge);
 
   // Cache active world events — agents react to storms, festivals, etc.
   const activeWorldEvents = db.select().from(worldEvents)
@@ -1714,6 +1720,7 @@ export function tick(world: WorldRow): void {
         econMap,
         activeEventTypes,
         currentWeather,
+        negativeFactCounts,
       );
       if (scored.length > 0) {
         // Goal alignment bonus — boost social actions toward goal targets
@@ -2349,7 +2356,7 @@ export function tick(world: WorldRow): void {
 
       if (getAgentStates(other.id).includes('arrested')) continue;
 
-      const negFacts = getNegativeFactCount(other.id);
+      const negFacts = negativeFactCounts.get(other.id) ?? 0;
 
       // Check if constable has direct knowledge of crimes by this target (from cached data)
       const allKnowledgeFacts = allActiveKnowledge
