@@ -49,7 +49,10 @@ interface AgentInfo {
 function addKnowers(fact: { id: number; known_by: unknown }, newKnowers: number[]): void {
   const knownBy = fact.known_by as number[];
   const updated = [...new Set([...knownBy, ...newKnowers])];
-  if (updated.length === knownBy.length) return;
+  // Compare with the distinct knowers, not the raw list: a known_by that
+  // repeats someone ([X, X], from a self-targeted ripple fact) made one new
+  // knower look like no change, so the fact never spread (playtest #3).
+  if (updated.length === new Set(knownBy).size) return;
   db.update(shared_knowledge)
     .set({ known_by: updated })
     .where(eq(shared_knowledge.id, fact.id))

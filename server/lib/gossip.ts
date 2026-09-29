@@ -240,6 +240,9 @@ export function createFact(
   // A fact about someone and themselves reads "Priya got drunk and said
   // terrible things to Priya" (the drunk_incident ripple rule targets 'self').
   if (targetId === subjectId) targetId = null;
+  // The same rule builds known_by as [actor, target], i.e. [X, X] for a
+  // self-targeted fact; every knower once.
+  knownBy = [...new Set(knownBy)];
   // Every affair secret goes through here (the states phase's sighting, ripple
   // rules, witnesses), so this is the one place that knows whether it betrays
   // a marriage — and it is judged when the secret is born, which is when it
