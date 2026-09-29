@@ -211,11 +211,15 @@ export class EngagementCollector {
     let txCount = 0;
     let moneyMoved = 0;
     try {
+      // The nightly treasury settlement (economy.ts settleTreasury) writes an
+      // upkeep row per resident and a row per stipend: bookkeeping, not
+      // residents trading, and a full town's worth every game day.
       const txns = db.select({
         amount: economyTransactions.amount,
+        reason: economyTransactions.reason,
       }).from(economyTransactions).where(
         gte(economyTransactions.timestamp, startMs)
-      ).all();
+      ).all().filter((t) => t.reason !== 'upkeep' && !t.reason.startsWith('town:'));
       txCount = txns.length;
       moneyMoved = txns.reduce((s, t) => s + Math.abs(t.amount), 0);
     } catch { /* */ }
