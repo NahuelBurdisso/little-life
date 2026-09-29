@@ -36,4 +36,16 @@ describe('addMessage', () => {
     const row = db.select().from(conversations).where(eq(conversations.id, id)).get();
     expect(row?.messages).toEqual([]);
   });
+
+  it('refuses a line past max_turns (a wrapped-up transcript is closed)', () => {
+    // conversationsTick pins max_turns to the transcript length when it closes a
+    // wrapped-up conversation with a farewell; a late LLM reply must not follow it.
+    const id = insertConversation('active');
+    db.update(conversations).set({ max_turns: 1 }).where(eq(conversations.id, id)).run();
+    expect(addMessage(id, 1, 'Goodbye!', 0.2, [], Date.now())).toEqual({ messageCount: 1, maxTurns: 1 });
+
+    expect(addMessage(id, 2, 'Wait, one more thing', 0, [], Date.now())).toBeNull();
+    const row = db.select().from(conversations).where(eq(conversations.id, id)).get();
+    expect(row?.messages).toHaveLength(1);
+  });
 });

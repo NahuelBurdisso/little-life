@@ -30,6 +30,7 @@ import { evaluateConversation } from '../../../lib/conversationEvaluator';
 import { conversationsTick } from '../conversations';
 import { nudgeRouter } from '../../../routers/nudge';
 import { CONFIG } from '../../../lib/constants';
+import { gameMinutesToMs } from '../../../lib/worldClock';
 
 /**
  * Playtest regression: one agent in two conversations at once. The queue held
@@ -167,8 +168,18 @@ describe('conversationsTick — one conversation per agent', () => {
   let a = 0, b = 0, c = 0, d = 0;
   let ids: number[] = [];
 
+  let savedWorld: { time: any; tick_speed: number } | null = null;
+
   beforeAll(() => {
     ensureWorld();
+    // Mid-morning at 1x: the shared worker DB may hold any clock, and at night
+    // every live conversation would be wound up for bedtime (Step A's needs
+    // interrupt), which is not what these tests are about.
+    const w = db.select().from(worldState).get()!;
+    savedWorld = { time: w.time, tick_speed: w.tick_speed };
+    db.update(worldState)
+      .set({ time: { ...w.time, hour: 9, minute: 0 }, tick_speed: 1 })
+      .where(eq(worldState.id, w.id)).run();
     locId = db.insert(locations).values({
       name: 'Claim Square',
       type: 'town_square',
@@ -197,6 +208,7 @@ describe('conversationsTick — one conversation per agent', () => {
   });
 
   afterAll(() => {
+    if (savedWorld) db.update(worldState).set(savedWorld).run();
     resetScheduler();
     const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
     db.run(sql`DELETE FROM activity_log
@@ -403,8 +415,17 @@ describe('conversationsTick — one conversation per agent', () => {
 
       const entry = db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get();
       expect(entry).toBeDefined();
-      // Bounded: until the blocker must be over (6 turns × 15 s) plus the margin.
-      expect(entry!.queued_at + entry!.max_wait).toBe(startedAt + 6 * 15_000 + 30_000);
+      // Bounded: until the blocker must be over — its game-minute budget (4 turns
+      // × allowance) plus the wrap-up grace, in wall ms at this speed — plus the
+      // margin. Anchored on the tick's own clock, so allow for the tick's runtime.
+      const speed = db.select().from(worldState).get()!.tick_speed;
+      const blockerMs = gameMinutesToMs(
+        4 * CONFIG.CONVERSATIONS.GAME_MINUTES_PER_TURN + CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES,
+        speed,
+      );
+      const deadline = entry!.queued_at + entry!.max_wait;
+      expect(deadline).toBeGreaterThanOrEqual(startedAt + blockerMs + 30_000);
+      expect(deadline).toBeLessThanOrEqual(Date.now() + blockerMs + 30_000);
       expect(startedConversations().map((x) => x.participants)).toEqual([[a, d]]);
     });
 

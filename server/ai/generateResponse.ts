@@ -31,6 +31,9 @@ export async function generateResponse(
   // Force-ended between turns: don't spend a critical LLM slot on a reply
   // addMessage would refuse anyway.
   if (context.conversation.status === 'ended') return null;
+  // Wrapped up between turns: the scheduler lowers `max_turns` to stop the chain
+  // (conversationsTick Step A), and addMessage would refuse the line anyway.
+  if (context.conversation.messages.length >= context.conversation.max_turns) return null;
 
   const {
     conversation,

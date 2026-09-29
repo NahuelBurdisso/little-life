@@ -90,6 +90,25 @@ export const CONFIG = {
     // Ended conversations kept for history/UI; older ones are pruned on day change.
     // Nothing references conversation ids, and every engine reader looks back hours, not weeks.
     MAX_ENDED_RETAINED: 2000,
+    // CLOCK: GAME MINUTES. An LLM conversation's budget is its tier's max turns ×
+    // this allowance (standard 6 → 54 game min, deep 10 → 90). The budget used to
+    // be wall-clock (15 s × deep turns = 150 s), which at 4x is ten game hours —
+    // pairs talked through the night and never slept. Nine game minutes is a
+    // generous beat for one spoken line and a reply to settle.
+    GAME_MINUTES_PER_TURN: 9,
+    // CLOCK: GAME MINUTES. Once a conversation has to wrap up (budget spent, or a
+    // participant needs sleep/food), the in-flight LLM turn gets this long to land
+    // before a canned farewell closes the conversation without it.
+    WRAP_UP_GRACE_GAME_MINUTES: 15,
+    // Fewest turns an LLM conversation is worth running: each side speaks once.
+    // When the observed LLM latency at the current speed can't fit that inside the
+    // budget, a non-protected conversation runs on the template tier instead.
+    MIN_LLM_TURNS: 2,
+    // Recent LLM turns averaged to estimate how many game minutes a turn costs.
+    TURN_LATENCY_WINDOW: 8,
+    // CLOCK: WALL-CLOCK MS (it measures the model). Older samples are dropped, so
+    // a town pushed onto templates by a slow spell probes the LLM again.
+    TURN_LATENCY_MAX_AGE_MS: 5 * 60_000,
   },
 
   // AI / LLM

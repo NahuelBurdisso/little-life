@@ -250,6 +250,12 @@ export function addMessage(
   // kept the ended transcript growing and, because the caller saw a normal
   // result, chained yet another critical-priority LLM turn onto a dead conversation.
   if (!conversation || conversation.status === 'ended') return null;
+  // Same for a conversation the scheduler has closed but not yet ended: when a
+  // wrap-up gives up on the in-flight turn it appends the farewell and lowers
+  // `max_turns` to the transcript length, and a reply landing after that would
+  // follow the goodbye. The runner never starts a turn past `max_turns`, so
+  // this only ever refuses such a late line.
+  if ((conversation.messages as unknown[]).length >= conversation.max_turns) return null;
 
   const messages = [
     ...(conversation.messages as Array<Record<string, unknown>>),

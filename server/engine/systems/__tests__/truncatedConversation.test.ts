@@ -16,13 +16,16 @@ import { simEvents } from '../../../lib/simEvents';
 import { initMemoryObserver } from '../../../lib/memory/MemoryObserver';
 import type { MemoryService } from '../../../lib/memory/MemoryService';
 import { conversationsTick } from '../conversations';
+import { gameMinutes } from '../../../lib/gameClock';
 
 /**
  * B3 regression: Step A of `conversationsTick` computed a `truncated` flag for
- * conversations force-ended by the wall-clock turn budget, then dropped it on
- * the floor when handing them to `processCompletedConversation`. A cut-short
- * exchange was therefore indistinguishable from a natural one — including in the
- * agents' own memories ("we wrapped up our conversation").
+ * conversations force-ended by the turn budget, then dropped it on the floor
+ * when handing them to `processCompletedConversation`. A cut-short exchange was
+ * therefore indistinguishable from a natural one — including in the agents' own
+ * memories ("we wrapped up our conversation"). The budget is game minutes now
+ * (G1; see conversationBudget.test.ts), so "far past any budget" is a start
+ * stamp a game day back.
  */
 
 const record = vi.fn();
@@ -48,7 +51,18 @@ function ensureWorld(): void {
   }).run();
 }
 
-function setActive(entries: Array<{ conversationId: number; startedAt: number }>): void {
+type Entry = { conversationId: number; startedAt: number; startedGameMin?: number };
+
+function nowGameMin(): number {
+  return gameMinutes(db.select().from(worldState).get()!.time);
+}
+
+/** A scheduler entry whose game-minute budget ran out a game day ago. */
+function longOverdue(conversationId: number): Entry {
+  return { conversationId, startedAt: Date.now() - 10_000_000, startedGameMin: nowGameMin() - 1440 };
+}
+
+function setActive(entries: Entry[]): void {
   const existing = db.select().from(conversationSchedulerState).get();
   if (existing) {
     db.update(conversationSchedulerState)
@@ -128,9 +142,15 @@ describe('conversationsTick — truncated conversations (B3)', () => {
   let homeId = 0;
   const ended: Array<{ agentId: number; truncated?: boolean }> = [];
   const onEnded = (p: { agentId: number; truncated?: boolean }) => ended.push(p);
+  let savedWorld: { time: any; tick_speed: number } | null = null;
 
   beforeAll(() => {
     ensureWorld();
+    // Mid-morning at 1x, so no one is wound up for bedtime (the shared worker
+    // DB may hold any clock).
+    const w = db.select().from(worldState).get()!;
+    savedWorld = { time: w.time, tick_speed: w.tick_speed };
+    db.update(worldState).set({ time: { ...w.time, hour: 9, minute: 0 }, tick_speed: 1 }).run();
     homeId = insertHome();
     agentIds.push(insertAgent('Ada', homeId), insertAgent('Bram', homeId));
     for (const agent_id of agentIds) {
@@ -147,6 +167,7 @@ describe('conversationsTick — truncated conversations (B3)', () => {
   });
 
   afterAll(() => {
+    if (savedWorld) db.update(worldState).set(savedWorld).run();
     simEvents.off('conversation:ended', onEnded);
     setActive([]);
     // Workers reuse the DB across files, so leave nothing of these two behind.
@@ -174,8 +195,7 @@ describe('conversationsTick — truncated conversations (B3)', () => {
 
   it('flags a conversation the turn budget cut off, end to end', async () => {
     const id = insertConversation(agentIds, 1, 6);
-    // Far past any budget: max_turns_deep × 15 s.
-    setActive([{ conversationId: id, startedAt: Date.now() - 10_000_000 }]);
+    setActive([longOverdue(id)]);
 
     await conversationsTick();
 
@@ -185,6 +205,12 @@ describe('conversationsTick — truncated conversations (B3)', () => {
     const row = db.select().from(conversations).where(eq(conversations.id, id)).get()!;
     expect(row.status).toBe('ended');
     expect(row.quality_breakdown?.truncated).toBe(1);
+    // Closed with a farewell from the one whose turn it was, and pinned so the
+    // abandoned in-flight reply can't land after it.
+    const msgs = row.messages as Array<{ speakerId: number; fallback?: boolean }>;
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1]).toMatchObject({ speakerId: agentIds[1], fallback: false });
+    expect(row.max_turns).toBe(2);
 
     const convoMemories = record.mock.calls.filter((c) => c[1] === 'conversation');
     expect(convoMemories).toHaveLength(2);
@@ -214,7 +240,7 @@ describe('conversationsTick — truncated conversations (B3)', () => {
     // Over budget, but the in-flight final turn filled the transcript: nothing
     // was actually cut, so it must read as a finished conversation.
     const id = insertConversation(agentIds, 6, 6);
-    setActive([{ conversationId: id, startedAt: Date.now() - 10_000_000 }]);
+    setActive([longOverdue(id)]);
 
     await conversationsTick();
 
@@ -235,12 +261,14 @@ describe('conversationsTick — truncated conversations (B3)', () => {
       .map((n) => n.social);
     const relEventsBefore = db.select().from(relationshipEvents)
       .where(inArray(relationshipEvents.agent_a, agentIds)).all().length;
-    setActive([{ conversationId: id, startedAt: Date.now() - 10_000_000 }]);
+    setActive([longOverdue(id)]);
 
     await conversationsTick();
 
     const row = db.select().from(conversations).where(eq(conversations.id, id)).get()!;
     expect(row.status).toBe('ended');
+    // No goodbye out of nowhere either.
+    expect(row.messages).toEqual([]);
     // No memory, no cascade trigger, no relationship change, no social boost.
     expect(ended).toHaveLength(0);
     expect(record).not.toHaveBeenCalled();

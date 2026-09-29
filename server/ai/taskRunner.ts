@@ -1,6 +1,7 @@
 import { generateResponse } from './generateResponse';
 import { generateEmbeddingForMemory } from './generateEmbedding';
 import { emitter } from '../engine/emitter';
+import { recordTurnLatency } from '../lib/conversationPacing';
 
 class TaskRunner {
   private conversationSlots = 0;
@@ -22,7 +23,12 @@ class TaskRunner {
 
   private async runConversationTurn(conversationId: number, speakerId: number): Promise<void> {
     try {
+      const turnStart = performance.now();
       const result = await generateResponse(conversationId, speakerId);
+      // Only turns that produced a line: they are what the scheduler sizes the
+      // next conversations by (see conversationPacing.affordableTurns). Queue
+      // wait on the LLM semaphore is included on purpose — it is real latency.
+      if (result) recordTurnLatency(performance.now() - turnStart);
       if (!result) {
         this.conversationSlots--;
         emitter.markDirty('conversations');

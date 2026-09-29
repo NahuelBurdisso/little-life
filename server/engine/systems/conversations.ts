@@ -33,14 +33,23 @@ import { clearConversationCache, fallbackDetector } from '../../helpers/conversa
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate, greetingCategory } from '../../ai/templates';
-import { TEMPLATE_REPLY_FALLBACKS, ROLE_PLACEHOLDERS } from '../../data/templates';
+import { TEMPLATE_REPLY_FALLBACKS, ROLE_PLACEHOLDERS, WRAP_UP_FAREWELLS } from '../../data/templates';
+import { gameMinutesToMs } from '../../lib/worldClock';
+import {
+  affordableTurns,
+  averageTurnLatencyMs,
+  conversationBudgetGameMinutes,
+  isPastBedtime,
+  needsWrapUpReason,
+  type NeedsWrapUpReason,
+} from '../../lib/conversationPacing';
 import { OUTDOOR_TYPES } from '../../lib/worldgen/buildingTemplates';
 import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
-import { getAgentStates } from '../../lib/states';
+import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
 import { extractConfidedQuote } from '../../lib/factText';
 import { evaluateConversation } from '../../lib/conversationEvaluator';
@@ -58,9 +67,31 @@ interface ConversationMessage {
   fallback?: boolean;
 }
 
+type WrapUpReason = 'budget' | NeedsWrapUpReason;
+
+/**
+ * A live LLM conversation as the scheduler tracks it (persisted as JSON in
+ * `conversation_scheduler_state.active_llm_conversations`, so new fields are
+ * optional: entries written before them are stamped on first sight).
+ */
 interface ActiveLLMEntry {
   conversationId: number;
+  /** WALL-CLOCK ms at dispatch. Only the orphan sweep and wait estimates use it. */
   startedAt: number;
+  /** GAME MINUTES at dispatch — what the budget is measured from. */
+  startedGameMin?: number;
+  /** GAME MINUTES this conversation may run (tier max turns × allowance). */
+  budgetGameMin?: number;
+  /** Turns it was dispatched with, before any wrap-up lowered `max_turns`. */
+  plannedTurns?: number;
+  /**
+   * Set once the conversation has to end early. `max_turns` is lowered so the
+   * task runner stops after the in-flight turn; it is closed with a farewell
+   * when that turn lands or `sinceGameMin` + grace passes. `leaverId` is the
+   * participant whose needs called time; a budget wrap-up has none — whoever's
+   * turn it is when it closes says goodbye.
+   */
+  wrapUp?: { reason: WrapUpReason; sinceGameMin: number; leaverId?: number };
 }
 
 type AgentRow = typeof agents.$inferSelect;
@@ -73,14 +104,16 @@ type WorldRow = typeof worldState.$inferSelect;
 // ---------------------------------------------------------------------------
 
 /**
- * Wall-clock budget granted per LLM turn before a conversation is force-ended.
+ * Age past which an `active` conversation row the scheduler no longer tracks is
+ * swept as an orphan, per deep turn.
  *
- * CLOCK: WALL-CLOCK MS. `ActiveLLMEntry.startedAt` is a `Date.now()` stamp taken
- * at dispatch, so this budget is compared ms-to-ms and must NOT be scaled by
- * `world.tick_speed`. A turn is one Ollama call (plus up to `AI.RETRY_ATTEMPTS`
- * retries) and the 200ms inter-turn delay in `taskRunner.runConversationTurn`.
+ * CLOCK: WALL-CLOCK MS against `conversations.started_at` (a `Date.now()`
+ * stamp). This used to be the conversation budget itself — which made the
+ * budget ten game hours at 4x (G1). Conversations now run on a game-minute
+ * budget (Step A); this only has to outlast the moment between a row's insert
+ * and its scheduler entry, so the old generous figure is kept as is.
  */
-const MS_PER_LLM_TURN = 15000;
+const ORPHAN_MS_PER_DEEP_TURN = 15000;
 
 /**
  * How close two agents must be before an LLM conversation opens. Beyond this the
@@ -140,6 +173,79 @@ function releaseTalkingParticipants(conversation: ConversationRow): boolean {
 }
 
 /**
+ * The first participant whose body overrules the conversation — critical
+ * energy, bedtime, critical hunger (see `needsWrapUpReason`). While an agent is
+ * `talking`, decisions.ts skips them entirely, so without this a conversation
+ * could hold someone awake and starving for as long as the LLM kept replying.
+ */
+function findNeedsInterrupt(
+  participantIds: number[],
+  world: WorldRow,
+): { agentId: number; reason: NeedsWrapUpReason } | null {
+  for (const agentId of participantIds) {
+    const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
+    const n = db.select().from(needs).where(eq(needs.agent_id, agentId)).get();
+    if (!agent || !n) continue;
+    const critical = n.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
+    // Same personality source as decisions.ts' checkSchedule.
+    const personality = getEffectivePersonality(agentId) ?? (agent.personality as PersonalityProfile | null);
+    const pastBedtime = agent.schedule
+      ? isPastBedtime(agent.schedule, personality, world.time.hour)
+      : false;
+    const reason = needsWrapUpReason({ hunger: n.hunger, energy: n.energy, critical }, pastBedtime);
+    if (reason) return { agentId, reason };
+  }
+  return null;
+}
+
+/** Whoever didn't say the last line — the one whose turn it is. */
+function nextSpeaker(conversation: ConversationRow): number {
+  const participantIds = conversation.participants as number[];
+  const messages = conversation.messages as ConversationMessage[];
+  const last = messages[messages.length - 1]?.speakerId;
+  return participantIds.find((p) => p !== last) ?? participantIds[0];
+}
+
+/**
+ * Close a wrapped-up conversation's transcript: a canned farewell from the
+ * leaver when it stopped short of its planned turns (a conversation that got
+ * every turn already ended on the model's own closing line), then `max_turns`
+ * pinned to the final length so an LLM reply still in flight is refused by
+ * addMessage instead of landing after the goodbye. Nothing said → no farewell:
+ * a goodbye out of nowhere is not a conversation (finishCompletedConversation
+ * ends those quietly).
+ */
+function closeWrappedTranscript(
+  conversation: ConversationRow,
+  leaverId: number,
+  reason: WrapUpReason,
+  plannedTurns: number,
+): void {
+  const messages = [...(conversation.messages as ConversationMessage[])];
+  if (messages.length > 0 && messages.length < plannedTurns) {
+    const otherId = (conversation.participants as number[]).find((p) => p !== leaverId);
+    const otherName = otherId != null
+      ? db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name
+      : undefined;
+    const lines = WRAP_UP_FAREWELLS[reason];
+    const line = lines[Math.floor(Math.random() * lines.length)];
+    messages.push({
+      speakerId: leaverId,
+      text: interpolateTemplate(line.text, { 'other.name': otherName ?? 'friend' }),
+      sentiment: line.sentiment,
+      topics: [],
+      timestamp: Date.now(),
+      // Real speech, not a canned narration action (see sanitizeDialogue.ts).
+      fallback: false,
+    });
+  }
+  db.update(conversations)
+    .set({ messages, max_turns: messages.length })
+    .where(eq(conversations.id, conversation.id))
+    .run();
+}
+
+/**
  * Keep only the newest MAX_ENDED_RETAINED ended conversations. The table was
  * append-only, and each row carries its full message transcript. Run on day
  * change. Returns the number of rows deleted.
@@ -164,9 +270,9 @@ export async function conversationsTick(): Promise<void> {
     participantNames: string[];
   }> = [];
   // Completed LLM conversations to process asynchronously — OUTSIDE the transaction.
-  // `truncated` marks conversations force-ended by the turn budget rather than by
-  // reaching max_turns, so downstream consumers can tell a cut-short exchange from
-  // a natural one.
+  // `truncated` marks conversations the game-minute budget cut before their
+  // planned turns, so downstream consumers can tell a cut-short exchange from a
+  // natural one (or from someone leaving to sleep or eat).
   const completedConversations: Array<{ conversation: ConversationRow; world: WorldRow; truncated: boolean }> = [];
   // Timed-out queue entries needing template fallback — OUTSIDE the transaction
   const timedOutQueue: Array<{ entry: QueueRow; world: WorldRow }> = [];
@@ -194,11 +300,15 @@ export async function conversationsTick(): Promise<void> {
 
     // --- Step A: Check active LLM conversations ---
     const toRemove = new Set<number>();
-    // Scale the force-end budget with the deep-conversation turn count instead of
-    // a flat 60s: a 10-turn conversation cannot finish inside 60s, so the flat
-    // ceiling was amputating roughly one deep conversation in six.
-    const llmConversationTimeoutMs = schedulerState.max_turns_deep * MS_PER_LLM_TURN;
+    const orphanAgeMs = schedulerState.max_turns_deep * ORPHAN_MS_PER_DEEP_TURN;
     const now = Date.now();
+    // Conversation budgets are GAME minutes (see conversationPacing.ts); only
+    // the wait estimates handed to other systems are converted back to wall ms.
+    const nowGameMin = gameMinutes(world.time);
+    const graceGameMin = CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES;
+    /** Wall-clock ms by which something `gameMin` game minutes away happens. */
+    const wallAt = (gameMin: number): number =>
+      now + gameMinutesToMs(Math.max(0, gameMin - nowGameMin), world.tick_speed);
 
     // Who is tied up in a conversation this tick — see "Participant claims" below.
     // Built from the scheduler's OWN entries, not from every `active` row: a row
@@ -248,24 +358,77 @@ export async function conversationsTick(): Promise<void> {
       }
 
       const messages = conversation.messages as ConversationMessage[];
-      // WALL-CLOCK MS on both sides — `entry.startedAt` is a `Date.now()` stamp,
-      // so no tick_speed conversion applies here.
-      const timedOut = now - entry.startedAt > llmConversationTimeoutMs;
-      const completing = timedOut || messages.length >= conversation.max_turns;
+
+      // Entries dispatched before game-time budgets existed carry only the
+      // wall-clock stamp: start their budget now rather than guess.
+      entry.startedGameMin ??= nowGameMin;
+      entry.plannedTurns ??= conversation.max_turns;
+      entry.budgetGameMin ??= conversationBudgetGameMinutes(entry.plannedTurns);
+      const deadlineGameMin = entry.startedGameMin + entry.budgetGameMin;
+
+      // `truncated` = the CLOCK stopped it before its planned turns. Not set for
+      // a needs wrap-up (someone chose to leave) nor when the last planned turn
+      // landed in time (nothing was actually cut).
+      let completion: { truncated: boolean } | null = null;
+
+      if (!entry.wrapUp && messages.length >= conversation.max_turns) {
+        completion = { truncated: false };
+      } else {
+        if (!entry.wrapUp) {
+          // Budget first: it is measured from the deadline itself, so the grace
+          // below runs from when the budget ran out, not from whichever tick
+          // noticed — the hard stop is always start + budget + grace.
+          if (nowGameMin >= deadlineGameMin) {
+            entry.wrapUp = { reason: 'budget', sinceGameMin: deadlineGameMin };
+          } else {
+            const needy = findNeedsInterrupt(conversation.participants as number[], world);
+            if (needy) entry.wrapUp = { reason: needy.reason, sinceGameMin: nowGameMin, leaverId: needy.agentId };
+          }
+          if (entry.wrapUp) {
+            // Stop the task runner at the next turn boundary: the turn in flight
+            // may still land (at least one line from each side), none after it.
+            const target = Math.min(
+              conversation.max_turns,
+              Math.max(messages.length + 1, CONFIG.CONVERSATIONS.MIN_LLM_TURNS),
+            );
+            if (target !== conversation.max_turns) {
+              db.update(conversations).set({ max_turns: target }).where(eq(conversations.id, conversation.id)).run();
+              conversation.max_turns = target;
+            }
+            changed = true;
+          }
+        }
+        if (entry.wrapUp) {
+          const landed = messages.length >= conversation.max_turns;
+          if (landed || nowGameMin >= entry.wrapUp.sinceGameMin + graceGameMin) {
+            closeWrappedTranscript(
+              conversation,
+              entry.wrapUp.leaverId ?? nextSpeaker(conversation),
+              entry.wrapUp.reason,
+              entry.plannedTurns,
+            );
+            completion = {
+              truncated: entry.wrapUp.reason === 'budget' && messages.length < entry.plannedTurns,
+            };
+          }
+        }
+      }
 
       registerLive(
         conversation.participants as number[],
         conversation.topic,
-        completing ? now : entry.startedAt + llmConversationTimeoutMs,
+        completion
+          ? now
+          : wallAt(entry.wrapUp ? entry.wrapUp.sinceGameMin + graceGameMin : deadlineGameMin + graceGameMin),
       );
 
-      if (completing) {
+      if (completion) {
         // Force-ends go through the SAME completion pipeline as natural ends.
         // The previous inline hand-rolled ending skipped quality scoring,
         // relationship events, memories and cache eviction, and emitted
         // `conversation:ended` exactly once — for participants[0], with an empty
         // otherName — so every listener silently dropped participant #2.
-        completedConversations.push({ conversation, world, truncated: timedOut });
+        completedConversations.push({ conversation, world, truncated: completion.truncated });
         toRemove.add(entry.conversationId);
         llmTotal++;
         changed = true;
@@ -288,7 +451,7 @@ export async function conversationsTick(): Promise<void> {
     for (const orphan of db
       .select()
       .from(conversations)
-      .where(and(eq(conversations.status, 'active'), lt(conversations.started_at, now - llmConversationTimeoutMs)))
+      .where(and(eq(conversations.status, 'active'), lt(conversations.started_at, now - orphanAgeMs)))
       .all()) {
       if (trackedIds.has(orphan.id)) continue;
       db.update(conversations)
@@ -452,6 +615,35 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
+      // Size the conversation to the game time it may take. A turn costs the
+      // model's real latency × tick_speed game minutes, so at 4x a 20 s turn is
+      // 80 game minutes: the tier's full length would eat the evening. Capped by
+      // what the recent turn latency says fits in the budget; unchanged while
+      // turns are fast enough (or before any turn has been timed).
+      const tierMaxTurns =
+        entry.tier === 'llm_deep'
+          ? schedulerState.max_turns_deep
+          : schedulerState.max_turns_standard;
+      const budgetGameMin = conversationBudgetGameMinutes(tierMaxTurns);
+      const affordable = affordableTurns(budgetGameMin, averageTurnLatencyMs(), world.tick_speed);
+      if (affordable < CONFIG.CONVERSATIONS.MIN_LLM_TURNS && !isProtectedEntry(entry)) {
+        // Not even one exchange fits: have it as a template chat now instead of
+        // an LLM one the budget would cut before anyone finished a sentence.
+        // Player nudges and comfort visits still get the model — the player asked
+        // for that conversation; the budget and wrap-up bound them all the same.
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        changed = true;
+        if (!loadTemplatePair(entry.participants as number[])) continue;
+        claimParticipants(entry);
+        timedOutQueue.push({ entry, world });
+        templateTotal++;
+        continue;
+      }
+      const maxTurns = Math.min(
+        tierMaxTurns,
+        Math.max(CONFIG.CONVERSATIONS.MIN_LLM_TURNS, affordable),
+      );
+
       // Verify both participants exist and are co-located
       const firstParticipant = db
         .select()
@@ -536,12 +728,8 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
-      const maxTurns =
-        entry.tier === 'llm_deep'
-          ? schedulerState.max_turns_deep
-          : schedulerState.max_turns_standard;
-
-      claimParticipants(entry, { freeAt: now + llmConversationTimeoutMs });
+      // Over by its budget plus the wrap-up grace at the latest.
+      claimParticipants(entry, { freeAt: wallAt(nowGameMin + budgetGameMin + graceGameMin) });
 
       // Create conversation record
       const result = db
@@ -595,6 +783,9 @@ export async function conversationsTick(): Promise<void> {
       fillEntries.push({
         conversationId,
         startedAt: now,
+        startedGameMin: nowGameMin,
+        budgetGameMin,
+        plannedTurns: maxTurns,
       });
       currentActive++;
       changed = true;
@@ -610,7 +801,9 @@ export async function conversationsTick(): Promise<void> {
         stats: {
           llmConversationsTotal: llmTotal,
           templateConversationsTotal: templateTotal,
-          averageResponseTimeMs: schedulerState.stats.averageResponseTimeMs,
+          // Was never written (always 0); now the rolling turn latency the
+          // scheduler sizes conversations by, so diagnostics can see it.
+          averageResponseTimeMs: Math.round(averageTurnLatencyMs() ?? schedulerState.stats.averageResponseTimeMs),
           queueTimeoutsTotal: queueTimeouts,
         },
       })
@@ -715,12 +908,12 @@ async function finishCompletedConversation(
   const messages = fresh.messages as ConversationMessage[];
   const now = Date.now();
 
-  // Re-derive the cut-short verdict against the FRESH transcript. Step A judged
-  // it from the row it read inside the tick transaction, but the task runner
-  // keeps appending turns between that read and this one: a conversation that
-  // hit the wall-clock budget while its final turn was in flight arrives here
-  // with every turn it was allowed, and calling it "cut off" would be a lie.
-  const cutShort = truncated && messages.length < fresh.max_turns;
+  // Step A's verdict is final. It used to be re-derived here against the fresh
+  // transcript because the task runner could still append the final turn after
+  // Step A's read; now Step A closes a wrapped-up transcript by pinning
+  // `max_turns` to its length (addMessage refuses anything later), and it only
+  // flags a clock cut when fewer than the planned turns were spoken.
+  const cutShort = truncated;
 
   // Nothing was said: the LLM hung for the whole turn budget before the first
   // reply landed. Running the full completion path here invented a conversation
