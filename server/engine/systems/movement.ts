@@ -27,7 +27,7 @@ type WorldRow = {
 };
 
 // Stuck detection: track positions for walking agents
-const stuckTracker = new Map<number, { x: number; y: number; ticks: number }>();
+const stuckTracker = new Map<number, { x: number; y: number; minutes: number }>();
 const lastRecalcTick = new Map<number, number>();
 
 // Cached terrain cost map — rebuilt when season changes
@@ -388,12 +388,15 @@ export function tick(world: WorldRow): void {
     if (agent.current_destination === null) continue;
     if ((agent.current_action as any)?.type !== 'walking') continue;
 
-    // Stuck detection: if agent hasn't moved for 30 ticks, force idle
+    // Stuck detection: if agent hasn't made 4px of progress in 30 game minutes,
+    // force idle. Game minutes, not ticks: a walker covers `tick_speed` minutes of
+    // ground per tick, so a 30-tick watchdog left a stuck agent frozen on screen
+    // for two game hours at 4x.
     const prevPos = stuckTracker.get(agent.id);
     if (prevPos) {
       if (Math.abs(agent.position.x - prevPos.x) < 4 && Math.abs(agent.position.y - prevPos.y) < 4) {
-        prevPos.ticks++;
-        if (prevPos.ticks >= 30) {
+        prevPos.minutes += world.tick_speed;
+        if (prevPos.minutes >= 30) {
           db.update(agents).set({
             current_action: { type: 'idle' },
             current_destination: null,
@@ -412,10 +415,10 @@ export function tick(world: WorldRow): void {
           continue;
         }
       } else {
-        stuckTracker.set(agent.id, { x: agent.position.x, y: agent.position.y, ticks: 0 });
+        stuckTracker.set(agent.id, { x: agent.position.x, y: agent.position.y, minutes: 0 });
       }
     } else {
-      stuckTracker.set(agent.id, { x: agent.position.x, y: agent.position.y, ticks: 0 });
+      stuckTracker.set(agent.id, { x: agent.position.x, y: agent.position.y, minutes: 0 });
     }
 
     const dest = agent.current_destination;
@@ -620,6 +623,8 @@ export function tick(world: WorldRow): void {
         if (tileX >= 0 && tileX < world.map_width && tileY >= 0 && tileY < world.map_height &&
             world.collision_grid[tileIdx] === '1') {
           const lastRecalc = lastRecalcTick.get(agent.id) ?? 0;
+          // TICKS on purpose: this throttles A* work per loop iteration, a CPU
+          // budget, not something that happens in the town's time.
           if (world.time.totalTicks - lastRecalc > 10) {
             const costMap = getWorldCostMap(world, allLocations);
             path = computeAStarPath(

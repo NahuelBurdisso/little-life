@@ -24,7 +24,8 @@ export interface AgentDeathContext {
   /** CLOCK: GAME MINUTES, like `agentStates.started_at` (states.ts). */
   nowMinutes: number;
   season: string;
-  hungerZeroTicks: number;
+  /** Game minutes hunger has sat at 0 without a break. */
+  hungerZeroMinutes: number;
   activeStates: Array<{ type: string; started_at: number; severity: number; metadata: any }>;
   currentAction: string;
   job: string;
@@ -57,25 +58,27 @@ interface DeathEffect {
 
 // --- Hunger tracking (exported for needs.ts to update) ---
 
-export const hungerZeroTicks = new Map<number, number>();
+// Game minutes, accumulated `tick_speed` per needsTick. It counted ticks, so at
+// 4x "3 days at zero" took twelve.
+export const hungerZeroMinutes = new Map<number, number>();
 
-export function updateHungerTracking(agentId: number, hunger: number): void {
+export function updateHungerTracking(agentId: number, hunger: number, elapsedMinutes: number): void {
   if (hunger <= 0) {
-    hungerZeroTicks.set(agentId, (hungerZeroTicks.get(agentId) ?? 0) + 1);
+    hungerZeroMinutes.set(agentId, (hungerZeroMinutes.get(agentId) ?? 0) + elapsedMinutes);
   } else {
-    hungerZeroTicks.delete(agentId);
+    hungerZeroMinutes.delete(agentId);
   }
 }
 
 /**
  * Drop per-agent hunger counters for a world replace (SQLite reuses agent ids).
- * These hold a COUNT, not a tick stamp, so they cannot go negative, and the first
+ * These hold a DURATION, not a clock stamp, so they cannot go negative, and the first
  * `needsTick` deletes them anyway (a new agent starts at hunger 80). Cleared for
  * consistency, and to close the window where a death check for a reused id runs
  * before that first `needsTick`.
  */
 export function clearHungerTracking(): void {
-  hungerZeroTicks.clear();
+  hungerZeroMinutes.clear();
 }
 
 // --- Death Triggers Registry ---
@@ -85,7 +88,7 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     type: 'starvation',
     description: 'Starved — hunger at 0 for 3+ days',
     priority: 1,
-    check: (ctx) => ctx.hungerZeroTicks >= 4320,
+    check: (ctx) => ctx.hungerZeroMinutes >= 4320,
   },
   {
     type: 'untreated_sickness',
@@ -406,7 +409,7 @@ export function checkDeathTriggers(
     agent,
     nowMinutes,
     season,
-    hungerZeroTicks: hungerZeroTicks.get(agent.id) ?? 0,
+    hungerZeroMinutes: hungerZeroMinutes.get(agent.id) ?? 0,
     activeStates: statesArr,
     currentAction,
     job,

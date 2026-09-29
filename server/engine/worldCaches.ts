@@ -23,7 +23,7 @@
  */
 
 import { clearStatesTrackers } from './systems/states';
-import { clearCriticalNeedFired, clearConsecutiveWorkTicks } from './systems/needs';
+import { clearCriticalNeedFired, clearConsecutiveWorkMinutes } from './systems/needs';
 import { clearMilestoneTracking, clearPurchaseTracking } from './systems/economy';
 import { clearWorkSkipCounts } from './systems/decisions';
 import { clearLonelinessTracking } from '../lib/lonelinessEngine';
@@ -80,7 +80,7 @@ export function clearPerWorldCaches(): void {
   clearSharedSecrets();
   clearMoodTrackers();
   clearCriticalNeedFired();
-  clearConsecutiveWorkTicks();
+  clearConsecutiveWorkMinutes();
   clearHungerTracking();
   clearMilestoneTracking();
   clearWorkSkipCounts();

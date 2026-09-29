@@ -19,29 +19,30 @@ export function clearCriticalNeedFired(): void {
   criticalNeedFired.clear();
 }
 
-// Consecutive `needsTick` calls during which an agent's action type was `working`.
-// CLOCK: TICKS — one increment per game tick, not game minutes and not
-// `agents.action_started` (see the overwork block below for why that column is
-// unusable here).
-const consecutiveWorkTicks = new Map<number, number>();
+// Game minutes an agent has spent working without a break, accumulated one
+// tick's worth (`tick_speed` minutes) per `needsTick`. Not `agents.action_started`
+// (see the overwork block below for why that column is unusable here). It used
+// to count ticks, so at 4x the 6-hour overwork gate took 24 game hours.
+const consecutiveWorkMinutes = new Map<number, number>();
 
 /** Drop per-agent overwork counters for a world replace (agent ids are reused). */
-export function clearConsecutiveWorkTicks(): void {
-  consecutiveWorkTicks.clear();
+export function clearConsecutiveWorkMinutes(): void {
+  consecutiveWorkMinutes.clear();
 }
 
 /**
- * Advance (or reset) an agent's consecutive-working-tick counter and return it.
- * Mirrors `updateHungerTracking` in lifeEventsEngine: the entry is deleted the
- * moment the condition stops holding, so work → sleep → work starts over at 1.
+ * Advance (or reset) an agent's consecutive-working counter by `elapsedMinutes`
+ * and return it. Mirrors `updateHungerTracking` in lifeEventsEngine: the entry is
+ * deleted the moment the condition stops holding, so work → sleep → work starts
+ * over.
  */
-function updateWorkTracking(agentId: number, isWorking: boolean): number {
+export function updateWorkTracking(agentId: number, isWorking: boolean, elapsedMinutes: number): number {
   if (!isWorking) {
-    consecutiveWorkTicks.delete(agentId);
+    consecutiveWorkMinutes.delete(agentId);
     return 0;
   }
-  const next = (consecutiveWorkTicks.get(agentId) ?? 0) + 1;
-  consecutiveWorkTicks.set(agentId, next);
+  const next = (consecutiveWorkMinutes.get(agentId) ?? 0) + elapsedMinutes;
+  consecutiveWorkMinutes.set(agentId, next);
   return next;
 }
 
@@ -407,10 +408,9 @@ export function needsTick(): void {
 
     // Overwork: working adds stress proportional to consecutive time spent working.
     //
-    // CLOCK: `consecutiveWorkTicks` is the TICK clock — one increment per game tick,
-    // never the GAME-MINUTE clock (`currentTime` = day*1440 + hour*60 + minute),
-    // which carries the start-day offset and would put every agent past the gate on
-    // the world's first tick.
+    // CLOCK: `consecutiveWorkMinutes` is a duration accumulated per tick, not a
+    // stamp on the absolute clock (`currentTime` carries the start-day offset and
+    // would put every agent past the gate on the world's first tick).
     //
     // WHY NOT `agents.action_started` (a game-minute stamp): the decision engine
     // rewrites `action_started` every time it re-issues an action, and it has no
@@ -420,9 +420,9 @@ export function needsTick(): void {
     // to now. Its age therefore tops out around 65 minutes (60 plus the
     // interior-transition padding in movement.ts) and can never reach 6 hours. A counter that survives action re-issue is the only
     // way to measure a genuinely long shift.
-    const workTicks = updateWorkTracking(agent.id, actionType === 'working');
-    if (workTicks > 360) { // 360 ticks = 6 game hours at tick_speed 1
-      stress = clamp(stress + (workTicks - 360) * 0.02, 0, 100);
+    const workMinutes = updateWorkTracking(agent.id, actionType === 'working', world.tick_speed);
+    if (workMinutes > 360) { // 6 game hours
+      stress = clamp(stress + (workMinutes - 360) * 0.02, 0, 100);
     }
 
     // State-driven stress modifiers
@@ -453,7 +453,7 @@ export function needsTick(): void {
     criticalNeedFired.set(agent.id, agentCritical);
 
     // Step 12.5: Track hunger-at-zero for death mechanic
-    updateHungerTracking(agent.id, updatedNeeds.hunger);
+    updateHungerTracking(agent.id, updatedNeeds.hunger, world.tick_speed);
 
     // Step 12.6: Sample mood for momentum tracking (once per game hour).
     // `minute === 0` never matched at 2x/4x once the clock started on an odd

@@ -1358,8 +1358,9 @@ function processStateEffects(
   states: Array<typeof agentStates.$inferSelect>,
   allAgents: Array<typeof agents.$inferSelect>,
   nowMinutes: number,
-  /** TICK clock and speed, for the tick-stamped memory stream only. */
+  /** TICK clock, for the tick-stamped memory stream only. */
   currentTick: number,
+  /** Game minutes per tick, for durations accumulated per call. */
   tickSpeed: number,
 ) {
   const personality = agent.personality as PersonalityProfile | null;
@@ -1406,11 +1407,13 @@ function processStateEffects(
           if (nowMinutes - otherRecovery <= 2880) continue;
 
           const coLocKey = `coloc_${other.id}`;
-          meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + 1;
-          const coLocTicks = meta[coLocKey] as number;
+          // Game minutes spent together (a tick's worth per call); counting calls
+          // made the incubation 2 game hours at 4x.
+          meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + tickSpeed;
+          const coLocMinutes = meta[coLocKey] as number;
 
-          // Contagion: 1% chance after 30 co-location ticks — low enough to prevent epidemics
-          if (coLocTicks > 30 && Math.random() < 0.01) {
+          // Contagion: 1% chance per tick after 30 minutes together — low enough to prevent epidemics
+          if (coLocMinutes > 30 && Math.random() < 0.01) {
             // Spread sick only if other doesn't already have it
             const alreadySick = db
               .select()
