@@ -197,6 +197,11 @@ export const relationships = sqliteTable(
     // existing worlds; startup backfills NULLs to the current game minute
     // (clockMigration.ts) and the decay pass stamps any it still meets.
     last_interaction_minute: integer('last_interaction_minute'),
+    // GAME MINUTE at which `status` last changed. Life milestones read it: a
+    // couple proposes after being `partners` for a few game days. Nullable
+    // because it was added to existing worlds; a NULL means "unknown", and the
+    // milestones engine stamps it the first time it meets the pair.
+    status_since_minute: integer('status_since_minute'),
     average_interaction_sentiment: real('average_interaction_sentiment').notNull(),
     tags: text('tags', { mode: 'json' }).notNull().$type<string[]>(),
     status: text('status').notNull(),

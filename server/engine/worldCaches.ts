@@ -65,6 +65,7 @@ import { moodMomentumSnapshotStore } from '../lib/moodMomentum';
 import { personalityBaselineSnapshotStore } from '../lib/personalityDrift';
 import { hungerSnapshotStore } from '../lib/lifeEventsEngine';
 import { tensionSnapshotStore } from '../lib/cascade';
+import { clearMilestones, milestonesSnapshotStore } from '../lib/milestonesEngine';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
 import type { SnapshotStore } from './snapshotCodec';
 
@@ -75,7 +76,9 @@ import type { SnapshotStore } from './snapshotCodec';
  * weeks of practice), the favor ledger, tension toward a snap, mood momentum
  * streaks, personality drift baselines (without them the ±15 drift cap
  * re-anchors on every restart), the states-phase trackers (multi-day addiction
- * and debt histories) and the starvation counters.
+ * and debt histories), the starvation counters, and the life-milestone timers
+ * (an engaged couple's wedding day, a refused suitor's wait, a pending
+ * proposal — the `engaged`/`married` tags themselves are in the DB).
  *
  * Out, deliberately:
  *   - LLM backoffs (`planLLMGate`, goal reviewer/pivot stamps): they describe
@@ -99,6 +102,7 @@ const PERSISTED_STORES: readonly SnapshotStore[] = [
   personalityBaselineSnapshotStore,
   statesTrackersSnapshotStore,
   hungerSnapshotStore,
+  milestonesSnapshotStore,
 ];
 
 /** Checkpoint every persisted store for the current world. Never throws. */
@@ -174,6 +178,8 @@ export function clearPerWorldCaches(): void {
   clearConsecutiveWorkMinutes();
   clearHungerTracking();
   clearMilestoneTracking();
+  // Proposal/engagement timers keyed on agent-id pairs (lib/milestonesEngine.ts).
+  clearMilestones();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();

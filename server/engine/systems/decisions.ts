@@ -46,6 +46,7 @@ import { quoteMeal, pantryWouldServe } from './economy';
 import { foodCount, isFood } from '../../lib/economyEngine';
 import { shopliftFrom } from '../../lib/economyTransfers';
 import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
+import { parseWeddingTrigger } from '../../lib/marriage';
 
 // --- Types ---
 
@@ -1555,6 +1556,25 @@ export function tick(world: WorldRow): void {
       }
     }
 
+    // Phase 1a': their own wedding (score 6500 — above the day plan, below a
+    // comfort visit's promise and emergencies). The ceremony is on the square
+    // (lib/milestonesEngine.ts) and runs for the event's six hours; a bride
+    // who stays at the counter because her plan said "work" left the town
+    // celebrating two empty chairs. Guests are pulled in by Phase 2b below.
+    if (!decision) {
+      const ownWedding = activeWorldEvents.find((e) => {
+        if (e.type !== 'wedding') return false;
+        const couple = parseWeddingTrigger(e.triggered_by);
+        return couple !== null && couple.includes(agent.id);
+      });
+      const venue = ownWedding
+        ? (ownWedding.location_id ?? nearestLocation(agent.position, allLocations, 'town_square')?.id)
+        : undefined;
+      if (venue != null) {
+        decision = { action: 'socializing', score: 6500, targetLocationId: venue };
+      }
+    }
+
     // Phase 1b: Plan layer (score 6000 — above free-time, below emergency).
     // Not while the commute is due: plan blocks are whole hours and an LLM plan
     // (like the fallback one) puts "work" at `workStart`, so the block before it
@@ -1576,11 +1596,16 @@ export function tick(world: WorldRow): void {
 
     // Phase 2b: Event crowd behavior — idle agents gravitate toward active events
     if (!decision && activeEventTypes.size > 0) {
-      // Festival/wedding/competition: head to town square to join the fun
+      // Festival/wedding/competition: head to town square to join the fun.
+      // A couple's wedding names its venue; go there rather than to whichever
+      // square is nearest (a town can have more than one open area).
       if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')) {
-        const square = nearestLocation(agent.position, allLocations, 'town_square');
-        if (square && agent.current_location !== square.id && Math.random() < 0.4) {
-          decision = { action: 'socializing', score: 3800, targetLocationId: square.id };
+        const weddingVenue = activeWorldEvents.find((e) => e.type === 'wedding' && e.location_id != null)?.location_id;
+        const venue = weddingVenue != null
+          ? allLocations.find((l) => l.id === weddingVenue)
+          : nearestLocation(agent.position, allLocations, 'town_square');
+        if (venue && agent.current_location !== venue.id && Math.random() < 0.4) {
+          decision = { action: 'socializing', score: 3800, targetLocationId: venue.id };
         }
       }
       // Storm: rush home if outdoors

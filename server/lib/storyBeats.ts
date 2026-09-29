@@ -21,8 +21,13 @@ export const HOSTILE_EVENTS: ReadonlySet<string> = new Set([
   'arrested',
 ]);
 
-/** Advances. Counted toward a romance when they carry a positive romance delta. */
-export const ROMANTIC_EVENTS: ReadonlySet<string> = new Set(['confession', 'seduction', 'gift']);
+/**
+ * Advances. Counted toward a romance when they carry a positive romance delta.
+ * A proposal (lib/milestonesEngine.ts) is one only when accepted — a refusal
+ * carries a negative delta — but it is a turning point either way, so the
+ * retention keeps both. A wedding is the biggest beat a couple has.
+ */
+export const ROMANTIC_EVENTS: ReadonlySet<string> = new Set(['confession', 'seduction', 'gift', 'proposal', 'wedding']);
 
 /** The mend that turns a rivalry into a reconciliation arc. */
 export const MEND_EVENT = 'reconciliation';

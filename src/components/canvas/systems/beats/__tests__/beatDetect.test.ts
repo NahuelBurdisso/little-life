@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  classifyActivity, createDetectorState, detectBeats,
+  classifyActivity, createDetectorState, detectBeats, WEDDING_HEARTS_EVERY_MS,
   type ActivityRow, type BeatSnapshot,
 } from '../beatDetect';
 
@@ -320,5 +320,30 @@ describe('detectBeats — death', () => {
     detectBeats(s, snap({ agents: [agent(1)], activity: [diedRow(1)] }), NOW + 1000);
     expect(detectBeats(s, snap({ agents: [agent(1)] }), NOW + 120_000)).toEqual([]);
     expect(detectBeats(s, snap({ agents: [], removed: [{ id: '1', x: 1, y: 2 }] }), NOW + 121_000)).toEqual([]);
+  });
+});
+
+describe('life milestones (server/lib/milestonesEngine.ts)', () => {
+  it('classifies the typed milestone rows without reading their wording', () => {
+    expect(classifyActivity(row({ type: 'engagement', description: 'Ann asked Bo to marry them — and Bo said yes! They are engaged.' })))
+      .toEqual({ kind: 'romance', agentIds: [1, 2] });
+    expect(classifyActivity(row({ type: 'rejection', description: 'Ann asked Bo to marry them — and Bo said no.' })))
+      .toEqual({ kind: 'heartbreak', agentIds: [1, 2] });
+    expect(classifyActivity(row({ type: 'wedding', initiator_id: null, target_id: null, agent_ids: [3, 4] })))
+      .toEqual({ kind: 'romance', agentIds: [3, 4] });
+  });
+
+  it('puts hearts over the newlyweds while their wedding runs, every so often', () => {
+    const s = createDetectorState();
+    const wedding = { id: 9, type: 'wedding', triggered_by: 'wedding:3-4' };
+    // Already running when the page opens: a scene, not history — hearts right away.
+    expect(detectBeats(s, snap({ events: [wedding] }), NOW)).toEqual([{ kind: 'romance', agentIds: [3, 4] }]);
+    expect(detectBeats(s, snap({ events: [wedding] }), NOW + 5_000)).toEqual([]);
+    expect(detectBeats(s, snap({ events: [wedding] }), NOW + WEDDING_HEARTS_EVERY_MS + 1)).toEqual([{ kind: 'romance', agentIds: [3, 4] }]);
+  });
+
+  it('a wedding without a couple (an old random roll) points at nobody', () => {
+    const s = createDetectorState();
+    expect(detectBeats(s, snap({ events: [{ id: 1, type: 'wedding', triggered_by: 'random' }] }), NOW)).toEqual([]);
   });
 });

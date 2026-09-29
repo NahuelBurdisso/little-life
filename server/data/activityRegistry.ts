@@ -76,4 +76,15 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   tavern_tipsy:    { category: 'social', base_importance: 0.3, retention: 'short', template: '{description}' },
   tavern_drunk:    { category: 'drama', base_importance: 0.5, retention: 'medium', template: '{description}' },
   hobby_levelup:   { category: 'social', base_importance: 0.4, retention: 'medium', template: '{agent} improved at {hobby} (level {level})' },
+
+  // ─── Life milestones (lib/milestonesEngine.ts) ──────────────────────────────
+  // Their own types rather than `drama` rows: the client's story beats key on
+  // the type (hearts for an engagement or a wedding, a broken heart for a
+  // refusal) instead of on the wording, and all sit well above the Town
+  // Crier's 0.45 news cut — a wedding is exactly what a small-town paper runs.
+  proposal:   { category: 'relationship', base_importance: 0.6, retention: 'long', template: '{description}' },
+  engagement: { category: 'relationship', base_importance: 0.9, retention: 'permanent', template: '{description}' },
+  rejection:  { category: 'drama', base_importance: 0.85, retention: 'long', template: '{description}' },
+  wedding:    { category: 'relationship', base_importance: 1.0, retention: 'permanent', template: '{description}' },
+  engagement_ended: { category: 'drama', base_importance: 0.7, retention: 'long', template: '{description}' },
 };

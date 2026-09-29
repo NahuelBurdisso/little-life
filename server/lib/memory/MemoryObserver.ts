@@ -395,6 +395,17 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       { subtype: 'social', related_agents: [payload.receiverId] }, 0.4, 5);
   });
 
+  // Life milestones (lib/milestonesEngine.ts): an engagement, a refused
+  // proposal, a wedding. The engine writes the first-person line itself — it
+  // knows who asked whom and how it went.
+  simEvents.on('life:milestone', ({ agentId, description, valence, importance, relatedAgentId }: {
+    agentId: number; description: string; valence: number; importance: number; relatedAgentId?: number;
+  }) => {
+    memoryService.record(agentId, 'observation', description,
+      { subtype: 'life_event', ...(relatedAgentId != null ? { related_agents: [relatedAgentId] } : {}) },
+      valence, importance);
+  });
+
   // Agent birthday — self-memory
   simEvents.on('agent:birthday', ({ agentId, age }: { agentId: number; age: number }) => {
     memoryService.record(agentId, 'observation',

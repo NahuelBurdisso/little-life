@@ -16,6 +16,8 @@
  * template shows up as a failing test rather than a silently missing animation.
  */
 
+import { weddingCouple } from '../townEvents/eventDecor';
+
 export type BeatKind =
   | 'fight' | 'gift' | 'romance' | 'heartbreak' | 'arrest'
   | 'secret' | 'levelup' | 'birthday' | 'death';
@@ -68,6 +70,11 @@ export const DEDUPE_MS = 20_000;
 export const MAX_ROW_AGE_MS = 60_000;
 /** How long one half of a death (row / sprite removal) waits for the other. */
 export const DEATH_WAIT_MS = 60_000;
+/**
+ * While a couple's wedding runs, hearts rise over the newlyweds this often. Longer than
+ * DEDUPE_MS so every round actually plays.
+ */
+export const WEDDING_HEARTS_EVERY_MS = 25_000;
 
 export interface DetectorState {
   /** Newest activity id already handled; null until the first non-empty poll. */
@@ -80,6 +87,8 @@ export interface DetectorState {
   removedRecently: Map<number, { x: number; y: number; at: number }>;
   deadIds: Set<number>;
   lastFired: Map<string, number>;
+  /** Wedding event id → when its couple last got hearts. */
+  weddingHeartsAt: Map<number, number>;
 }
 
 export function createDetectorState(): DetectorState {
@@ -93,6 +102,7 @@ export function createDetectorState(): DetectorState {
     removedRecently: new Map(),
     deadIds: new Set(),
     lastFired: new Map(),
+    weddingHeartsAt: new Map(),
   };
 }
 
@@ -125,6 +135,13 @@ function pairOf(row: ActivityRow): number[] {
 
 /** What story beat, if any, one activity row tells. Exported for the fixture tests. */
 export function classifyActivity(row: ActivityRow): { kind: BeatKind; agentIds: number[] } | null {
+  // Life milestones (server/lib/milestonesEngine.ts) log typed rows, so no wording to match:
+  // a yes and a wedding are hearts, a refused proposal a broken heart.
+  if (row.type === 'engagement' || row.type === 'wedding' || row.type === 'rejection') {
+    const ids = pairOf(row);
+    if (ids.length === 0) return null;
+    return { kind: row.type === 'rejection' ? 'heartbreak' : 'romance', agentIds: ids };
+  }
   if (row.type === 'gift') {
     const ids = pairOf(row);
     return ids.length > 0 ? { kind: 'gift', agentIds: ids } : null;
@@ -204,6 +221,22 @@ export function detectBeats(state: DetectorState, snap: BeatSnapshot, nowMs: num
       if (!Number.isNaN(id) && !state.deadIds.has(id) && !state.pendingDeaths.has(id)) state.pendingDeaths.set(id, nowMs);
     }
   }
+
+  // ── Weddings: hearts over the couple while their ceremony runs ──
+  // The couple comes from `triggered_by` (`wedding:<a>-<b>`, see townEvents/eventDecor.ts);
+  // a wedding without one (an old random roll) has nobody to point at. Not baselined like the
+  // funerals: a wedding in progress when the page opens is a scene, not history.
+  const liveWeddings = new Set<number>();
+  for (const e of snap.events) {
+    const couple = e.type === 'wedding' ? weddingCouple(e) : null;
+    if (!couple) continue;
+    liveWeddings.add(e.id);
+    const last = state.weddingHeartsAt.get(e.id);
+    if (last !== undefined && nowMs - last < WEDDING_HEARTS_EVERY_MS) continue;
+    state.weddingHeartsAt.set(e.id, nowMs);
+    fire(state, out, { kind: 'romance', agentIds: couple }, nowMs);
+  }
+  for (const id of state.weddingHeartsAt.keys()) if (!liveWeddings.has(id)) state.weddingHeartsAt.delete(id);
 
   // ── Activity rows ──
   if (state.watermark === null) {

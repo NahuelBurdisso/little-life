@@ -109,6 +109,50 @@ export interface EventDecorPlan {
   eventId: number;
   type: string;
   placements: DecorPlacement[];
+  /**
+   * Decorations that travel with a resident instead of standing on the map: `x`/`y` are an
+   * offset from that agent's sprite (its feet), resolved by the renderer every frame. A
+   * wedding's newlyweds walk under their own shower of petals.
+   */
+  followers?: Array<{ agentId: number; placement: DecorPlacement }>;
+}
+
+/**
+ * The couple of a wedding: `world_events.triggered_by` is `wedding:<a>-<b>` for a real
+ * couple's ceremony (server/lib/marriage.ts `weddingTriggeredBy`, mirrored here because the
+ * client can't import a DB module). Null for any other event, including a wedding from an old
+ * save that was a random roll with nobody at the altar.
+ */
+export function weddingCouple(event: any): [number, number] | null {
+  if (!event || event.type !== 'wedding' || typeof event.triggered_by !== 'string') return null;
+  const m = /^wedding:(\d+)-(\d+)$/.exec(event.triggered_by);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+
+/**
+ * Petals drifting down over each newlywed's head and a slow twinkle beside them, for as long
+ * as their wedding runs. Offsets are from the sprite's feet (the head is ~40 px up).
+ */
+export function weddingFollowers(event: any): NonNullable<EventDecorPlan['followers']> {
+  const couple = weddingCouple(event);
+  if (!couple) return [];
+  const id = Number.isFinite(event.id) ? (event.id as number) : 0;
+  return couple.flatMap((agentId, i) => [
+    {
+      agentId,
+      placement: {
+        frame: DECOR_FRAMES.petalFall, x: 0, y: -44, layer: 'over' as const, frames: 1, fps: 0,
+        phase: unit(id, 70 + i), motion: { kind: 'fall' as const, dx: 6, dy: 30, period: 3.5 },
+      },
+    },
+    {
+      agentId,
+      placement: {
+        frame: DECOR_FRAMES.sparkle, x: i === 0 ? -12 : 12, y: -52, layer: 'over' as const, frames: 3, fps: 4,
+        phase: unit(id, 80 + i),
+      },
+    },
+  ]);
 }
 
 export interface MapPx { w: number; h: number }
@@ -728,7 +772,8 @@ export function planEventDecor(events: any[], locations: any[], map: MapPx | nul
     const placements = planEvent(e, locations, map, roads);
     if (placements.length === 0) continue;
     seen.add(e.type);
-    plans.push({ eventId: e.id, type: e.type, placements });
+    const followers = weddingFollowers(e);
+    plans.push(followers.length > 0 ? { eventId: e.id, type: e.type, placements, followers } : { eventId: e.id, type: e.type, placements });
   }
   return plans;
 }

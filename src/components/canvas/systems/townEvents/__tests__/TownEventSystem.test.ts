@@ -181,3 +181,28 @@ describe('TownEventSystem', () => {
     }
   });
 });
+
+describe('wedding followers', () => {
+  it('keeps the petals over each newlywed as they move, and hides them when the sprite is gone', async () => {
+    const layers = { ground: new PIXI.Container(), overAgents: new PIXI.Container() };
+    const positions = new Map<string, { x: number; y: number }>([['3', { x: 100, y: 200 }], ['4', { x: 1500, y: 900 }]]);
+    const services = { sprites: { getSprite: (id: string) => positions.get(id) }, bubbles: {} } as any;
+    const sys = new TownEventSystem(layers, services);
+    await flush();
+    sys.onData(data([{ ...ev(1, 'wedding'), triggered_by: 'wedding:3-4', location_id: 1 }]));
+    sys.update(frame({ seconds: 2 }));
+    const over = layers.overAgents.children[0] as PIXI.Container;
+    // Followers are the sprites near an agent; the square's own decor is around (640-1024, 320-576).
+    const near = (p: { x: number; y: number }) => (over.children as PIXI.Sprite[])
+      .filter(s => s.visible && Math.abs(s.x - p.x) < 40 && s.y < p.y && s.y > p.y - 90);
+    expect(near({ x: 100, y: 200 }).length).toBeGreaterThanOrEqual(1);
+    expect(near({ x: 1500, y: 900 }).length).toBeGreaterThanOrEqual(1);
+
+    positions.set('3', { x: 300, y: 250 });
+    positions.delete('4');
+    sys.update(frame({ seconds: 0.016 }));
+    expect(near({ x: 300, y: 250 }).length).toBeGreaterThanOrEqual(1);
+    expect(near({ x: 1500, y: 900 })).toHaveLength(0);
+    sys.destroy();
+  });
+});

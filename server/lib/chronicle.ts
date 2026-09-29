@@ -17,6 +17,7 @@ import { db } from '../db';
 import { agents, relationships, relationshipEvents, shared_knowledge, worldState } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { gameMinutes, MINUTES_PER_DAY } from './gameClock';
+import { ENGAGED_TAG, MARRIED_TAG } from './marriage';
 import {
   HOSTILE_EVENTS,
   MEND_EVENT,
@@ -315,12 +316,17 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
         toBeats(pairEvents, now),
       );
     } else if (ROMANTIC_STATUSES.has(rel.status) || romanticCount >= 2) {
-      const shape =
-        rel.status === 'partners'
-          ? 'Together.'
-          : rel.status === 'complicated'
-            ? 'It is complicated.'
-            : 'Something is starting.';
+      // Engagement and marriage are tags on a `partners` row (lib/marriage.ts);
+      // they outrank the plain "Together." once the couple has taken the step.
+      const shape = rel.tags.includes(MARRIED_TAG)
+        ? 'Married.'
+        : rel.tags.includes(ENGAGED_TAG)
+          ? 'Engaged.'
+          : rel.status === 'partners'
+            ? 'Together.'
+            : rel.status === 'complicated'
+              ? 'It is complicated.'
+              : 'Something is starting.';
       arc = makeArc('romance', [a, b], `${nameA} & ${nameB}`, shape, toBeats(pairEvents, now));
     } else if (HOSTILE_STATUSES.has(rel.status) || hostileCount >= 2) {
       arc = makeArc(
