@@ -134,13 +134,53 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     description: 'Died in a workplace accident',
     priority: 5,
     check: (ctx) => {
-      if (ctx.currentAction !== 'working') return false;
-      const riskyJobs = ['farmer', 'farmhand', 'handyperson'];
-      if (!riskyJobs.includes(ctx.job)) return false;
-      return Math.random() < chancePerTick(0.00005, ctx.tickSpeed); // per game minute at work
+      const perMinute = accidentChancePerMinute(ctx);
+      return perMinute > 0 && Math.random() < chancePerTick(perMinute, ctx.tickSpeed);
     },
   },
 ];
+
+/**
+ * Workplace-accident hazard (E7).
+ *
+ * It was a flat 0.005% per game minute at work for three jobs. Per shift that
+ * is small, but it is the *only* death the default town can hit in its first
+ * weeks, it only ever hits the farm and the workshop, and it compounds: three
+ * risky workers on 8-9 h shifts is ~7% a day, a coin flip within the first ten
+ * days, one funeral every ~2 weeks thereafter. James O'Brien, the farmhand with
+ * the most farm minutes, kept being the one. A death should be a dramatic turn
+ * the story can point at, not background attrition of one trade.
+ *
+ * So the base rate is ~8x lower (~1 accident death per ~100 game days for the
+ * default cast's three risky workers even at full 9 h shifts) and the
+ * hazard now has causes the player can see coming: working exhausted or
+ * impaired multiplies it. An overworked, hungover farmhand is at real risk; a
+ * rested one almost never is.
+ */
+export const ACCIDENT_HAZARD = {
+  RISKY_JOBS: ['farmer', 'farmhand', 'handyperson'] as readonly string[],
+  /** Per game minute of 'working', rested and sober. */
+  BASE_PER_MINUTE: 0.000006,
+  /** Energy below this at work counts as exhausted. */
+  EXHAUSTED_ENERGY: 25,
+  EXHAUSTED_MULTIPLIER: 5,
+  IMPAIRED_STATES: ['drunk', 'hungover'] as readonly string[],
+  IMPAIRED_MULTIPLIER: 3,
+} as const;
+
+/** Accident chance per game minute for this agent right now (0 if not exposed). */
+export function accidentChancePerMinute(
+  ctx: Pick<AgentDeathContext, 'currentAction' | 'job' | 'energy' | 'activeStates'>,
+): number {
+  if (ctx.currentAction !== 'working') return 0;
+  if (!ACCIDENT_HAZARD.RISKY_JOBS.includes(ctx.job)) return 0;
+  let p = ACCIDENT_HAZARD.BASE_PER_MINUTE;
+  if (ctx.energy < ACCIDENT_HAZARD.EXHAUSTED_ENERGY) p *= ACCIDENT_HAZARD.EXHAUSTED_MULTIPLIER;
+  if (ctx.activeStates.some((s) => ACCIDENT_HAZARD.IMPAIRED_STATES.includes(s.type))) {
+    p *= ACCIDENT_HAZARD.IMPAIRED_MULTIPLIER;
+  }
+  return p;
+}
 
 // --- Death Effects Pipeline ---
 

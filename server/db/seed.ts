@@ -24,6 +24,8 @@ import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges, type SocialRelationship } from '../lib/worldgen/social';
 import { getRelationshipSeeds } from '../data/relationships';
+import { buildStartingTies, foldStartingTies } from '../lib/startingTies';
+import { startingNeeds } from '../lib/startingNeeds';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
@@ -246,11 +248,8 @@ function seed() {
 
     db.insert(needs).values({
       agent_id: agentId,
-      hunger: 50 + Math.floor(Math.random() * 40),
-      energy: isHighEnergy ? 85 + Math.floor(Math.random() * 10) : 55 + Math.floor(Math.random() * 30),
-      social: 30 + Math.floor(Math.random() * 40),
-      comfort: 50 + Math.floor(Math.random() * 30),
-      fun: 30 + Math.floor(Math.random() * 40),
+      ...startingNeeds(),
+      ...(isHighEnergy ? { energy: 85 + Math.floor(Math.random() * 10) } : {}),
       mood: isLowMood ? 30 + Math.floor(Math.random() * 20) : 55 + Math.floor(Math.random() * 25),
       stress: isLowMood ? 40 + Math.floor(Math.random() * 20) : 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
@@ -342,10 +341,36 @@ function seed() {
   // The seed world starts at day 1, 09:00 (worldState below): the relationships'
   // decay clock starts with it.
   const seedStartMinute = gameMinutes({ day: 1, hour: 9, minute: 0 });
+  // Housemates / coworkers / next-door neighbours, as `setup.initialize` seeds
+  // them (lib/startingTies.ts). `getRelationshipSeeds` already emits a filler
+  // "strangers" row for every unordered pair, so the ties are folded into those
+  // rows rather than inserted beside them (idx_relationships_pair is unique);
+  // the pairs AGENT_SEEDS actually authors keep their values and gain the tags.
+  const authored = new Set<string>();
+  for (const s of AGENT_SEEDS) {
+    for (const r of s.initialRelationships) {
+      const x = agentMap.get(s.name);
+      const y = agentMap.get(r.otherName);
+      if (x !== undefined && y !== undefined) authored.add(`${Math.min(x, y)}:${Math.max(x, y)}`);
+    }
+  }
+  const homeDoors = new Map(LOCATIONS.filter((l) => l.type === 'home').map((l) => [l.name, l.entry_point]));
+  const structural = foldStartingTies(
+    relSeeds,
+    buildStartingTies(AGENT_SEEDS, homeDoors),
+    (name) => agentMap.get(name),
+    authored,
+    (lo, hi) => ({
+      agent_a: lo, agent_b: hi,
+      friendship_ab: 0, friendship_ba: 0, romance_ab: 0, romance_ba: 0, trust_ab: 0, trust_ba: 0,
+      familiarity: 0, interaction_count: 0, last_interaction: now, average_interaction_sentiment: 0,
+      tags: [], status: 'strangers', created_at: now, last_updated: now,
+    }),
+  );
   for (const rel of relSeeds) {
     db.insert(relationships).values({ ...rel, last_interaction_minute: seedStartMinute }).run();
   }
-  console.log(`[seed] Inserted ${relSeeds.length} relationships.`);
+  console.log(`[seed] Inserted ${relSeeds.length} relationships (${structural} from housemate/coworker/neighbour ties).`);
 
   // 6. Insert memories
   console.log('[seed] Inserting memories...');

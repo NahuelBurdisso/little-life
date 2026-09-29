@@ -2,11 +2,19 @@
  * Headless economy soak: run N game days as fast as the CPU allows against a
  * THROWAWAY database and print a daily economy summary with anomaly flags.
  *
- *   npm run soak                          # fresh 12-agent world, 5 days
+ *   npm run soak                          # fresh wizard-default world, 5 days
  *   npm run soak -- --days 10 --seed abc  # deterministic worldgen seed
  *   npm run soak -- --db data/verify.db   # soak a COPY of an existing save
  *   npm run soak -- --tick-speed 5 --keep --verbose
  *   npm run soak -- --season winter       # start in another season (fresh world or --db copy)
+ *   npm run soak -- --preset soap         # drama preset for a fresh world (default: the wizard's)
+ *
+ * A fresh world is built exactly as the setup wizard's Start button builds it
+ * with nothing edited: the wizard's default cast and relationships, its default
+ * world/rules/worldgen, and its default drama preset — `--seed` seeds both the
+ * worldgen and the scenario. It used to post `AGENT_SEEDS` with its own rules
+ * and no scenario, which is a town no player ever starts, so the early-days
+ * numbers it printed described nothing real.
  *
  * Safety: the database is always a temp file under the OS temp dir. `--db` is
  * copied, never opened; `data/little-life.db` (the live world) is refused
@@ -38,6 +46,7 @@ const SEED = arg('seed') ?? 'soak';
 const TICK_SPEED = arg('tick-speed') ? Number(arg('tick-speed')) : undefined;
 const SOURCE_DB = arg('db');
 const SEASON = arg('season');
+const PRESET = arg('preset');
 if (SEASON && !['spring', 'summer', 'autumn', 'winter'].includes(SEASON)) {
   console.error(`--season must be spring, summer, autumn or winter (got "${SEASON}")`);
   process.exit(1);
@@ -122,32 +131,20 @@ async function main(): Promise<void> {
   const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, needs, agentStates } = schema;
 
   if (!SOURCE_DB) {
-    const { AGENT_SEEDS } = await import('../server/data/agents');
+    // The wizard's own defaults, imported rather than restated so the soak
+    // follows them when they change.
+    const { getDefaultAgents, getDefaultRelationships } = await import('../src/components/setup/defaults');
+    const { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET, PRESETS } = await import('../src/components/setup/types');
     const { setupRouter } = await import('../server/routers/setup');
-    const seen = new Set<string>();
-    const relationships: any[] = [];
-    for (const s of AGENT_SEEDS) {
-      for (const rel of s.initialRelationships) {
-        const key = [s.name, rel.otherName].sort().join('|');
-        if (seen.has(key)) continue;
-        seen.add(key);
-        relationships.push({ agentAName: s.name, agentBName: rel.otherName, ...rel, otherName: undefined });
-      }
-    }
+    const preset = PRESET ? PRESETS.find((p) => p.id === PRESET) : DEFAULT_PRESET;
+    if (!preset) throw new Error(`--preset must be one of ${PRESETS.map((p) => p.id).join(', ')} (got "${PRESET}")`);
     await setupRouter.createCaller({} as any).initialize({
-      agents: AGENT_SEEDS.map((s, i) => ({
-        id: `agent-${i + 1}`, name: s.name, age: s.age, gender: s.gender, bio: s.bio,
-        traits: s.traits, job: s.job, jobTitle: s.jobTitle, salary: s.salary,
-        homeName: s.homeName, workplaceName: s.workplaceName, schedule: s.schedule,
-        personality: s.personality, backstoryMemories: s.backstoryMemories,
-      })),
-      relationships,
-      world: { season: SEASON ?? 'spring', weather: 'sunny', startHour: 8, startDay: 1 },
-      rules: {
-        deathEnabled: true, sicknessRate: 'low', contagionRate: 'low',
-        dramaIntensity: 'high', tickSpeed: 1, startingMoney: 50,
-      },
-      worldgen: { sizeTier: 'auto', overrides: {}, seed: SEED },
+      agents: getDefaultAgents(),
+      relationships: getDefaultRelationships(),
+      world: { ...DEFAULT_WORLD, ...(SEASON ? { season: SEASON } : {}) },
+      rules: DEFAULT_RULES,
+      scenario: { ...preset.values, seed: SEED },
+      worldgen: { ...DEFAULT_WORLDGEN, seed: SEED },
     } as any);
     // initialize restarts the real tick loop; this script drives ticks itself.
     await stopTickLoopAndWait();
@@ -179,6 +176,12 @@ async function main(): Promise<void> {
   // averaged over every agent-tick (time-weighted, not a daily snapshot), so a
   // town pinned at 100 and one that dips at lunch read differently.
   const needsRows: string[] = [];
+  // Third table: who talks to whom, and who is exposed to the workplace-accident
+  // roll (lifeEventsEngine: farmer / farmhand / handyperson while 'working').
+  // A town whose chats all run through two or three pairs reads as a town of
+  // strangers even when the conversation count looks healthy.
+  const socialRows: string[] = [];
+  const RISKY_JOBS = new Set(['farmer', 'farmhand', 'handyperson']);
   // Minutes each agent has currently spent at hunger 0 without a break — the
   // starvation death clock (lifeEventsEngine: 4320). Carried across days.
   const hungerZeroRun = new Map<number, number>();
@@ -200,6 +203,9 @@ async function main(): Promise<void> {
     // ones that a hungrier town could push up (stressed: 3 needs < 35).
     const stateHolders = { stressed: new Set<number>(), lonely: new Set<number>() };
     let maxZeroRun = 0;
+    const jobOf = new Map(db.select({ id: economy.agent_id, job: economy.job }).from(economy).all().map((e) => [e.id, e.job]));
+    // Game minutes each risky-job agent spent in the 'working' action today.
+    const riskyWork = new Map<number, number>();
     // One eating action = one meal, keyed like economy.ts keys a meal.
     const meals = new Map<string, 'home' | 'out' | 'other'>();
     for (let i = 0; i < ticksPerDay; i++) {
@@ -224,6 +230,9 @@ async function main(): Promise<void> {
         const run = n.hunger <= 0 ? (hungerZeroRun.get(r.id) ?? 0) + tickSpeed : 0;
         hungerZeroRun.set(r.id, run);
         maxZeroRun = Math.max(maxZeroRun, run);
+        if ((r.action as any)?.type === 'working' && RISKY_JOBS.has(jobOf.get(r.id) ?? '')) {
+          riskyWork.set(r.id, (riskyWork.get(r.id) ?? 0) + tickSpeed);
+        }
         if ((r.action as any)?.type === 'eating' && r.loc != null) {
           eatingSamples++;
           const where = r.loc === r.home ? 'home' : TRADE_RULES[locTypeById.get(r.loc) ?? ''] ? 'out' : 'other';
@@ -238,6 +247,7 @@ async function main(): Promise<void> {
     const world = db.select().from(worldState).get()!;
     const active = db.select().from(agents).where(eq(agents.is_active, true)).all();
     const nameOf = new Map(db.select({ id: agents.id, name: agents.name }).from(agents).all().map((a) => [a.id, a.name]));
+    const short = (id: number) => (nameOf.get(id) ?? String(id)).replace(/^Dr\.? +/, '').split(' ')[0];
     const allEcon = db.select().from(economy).all();
     const activeIds = new Set(active.map((a) => a.id));
     const activeEcon = allEcon.filter((e) => activeIds.has(e.agent_id));
@@ -265,9 +275,29 @@ async function main(): Promise<void> {
       .filter((d) => d.includes(' has died. '))
       .map((d) => d.replace(/ has died\. /, ': ').replace(/\. The town mourns\.$/, ''));
     logMark = maxId(activityLog);
-    const convos = db.select({ n: sql<number>`count(*)` }).from(conversations)
-      .where(and(gt(conversations.id, convoMark), inArray(conversations.status, ['ended', 'completed']))).get()?.n ?? 0;
+    const endedConvos = db.select({ participants: conversations.participants }).from(conversations)
+      .where(and(gt(conversations.id, convoMark), inArray(conversations.status, ['ended', 'completed']))).all();
+    const convos = endedConvos.length;
     convoMark = maxId(conversations);
+    const pairCounts = new Map<string, number>();
+    const talked = new Set<number>();
+    for (const c of endedConvos) {
+      const ids = [...new Set(c.participants)].sort((a, b) => a - b);
+      ids.forEach((id) => talked.add(id));
+      const key = ids.map(short).join('+');
+      pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+    }
+    const topPairs = [...pairCounts].sort((a, b) => b[1] - a[1]);
+    const top3 = topPairs.slice(0, 3).reduce((s, [, n]) => s + n, 0);
+    socialRows.push([
+      String(dayStart.day).padStart(3),
+      String(convos).padStart(6),
+      String(pairCounts.size).padStart(5),
+      `${(100 * top3 / Math.max(1, convos)).toFixed(0)}%`.padStart(9),
+      String([...activeAtStart].filter((id) => !talked.has(id)).length).padStart(9),
+      ` ${topPairs.slice(0, 3).map(([k, n]) => `${k} ${n}`).join(', ') || '-'}`,
+      ` | risky work min: ${[...riskyWork].map(([id, m]) => `${short(id)} ${m}`).join(', ') || '-'}`,
+    ].join(' |'));
 
     const f = (n: number) => n.toFixed(0);
     const avg = (k: keyof typeof needSum) => f(needSum[k] / Math.max(1, needSamples));
@@ -348,6 +378,10 @@ async function main(): Promise<void> {
   out('day | hunger | energy | social | fun | min h | h<15 | h=0 run | stressed | lonely | eating | meals h/out/oth | deaths');
   out('----+--------+--------+--------+-----+-------+------+---------+----------+--------+---------+-----------------+-------');
   for (const r of needsRows) out(r);
+  out('');
+  out('day | convos | pairs | top3 share | no convo | top pairs | risky work');
+  out('----+--------+-------+-----------+----------+-----------+-----------');
+  for (const r of socialRows) out(r);
   out('');
   out(`${ticks} ticks in ${(ms / 1000).toFixed(1)} s (${(ms / ticks).toFixed(1)} ms/tick)`);
   out('');
