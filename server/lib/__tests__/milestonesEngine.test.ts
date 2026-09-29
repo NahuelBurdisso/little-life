@@ -441,6 +441,18 @@ describe('milestones against the DB', () => {
       expect(queued(a, b)).toHaveLength(0);
     });
 
+    it('a template chat as conversations.ts really emits it (with a conversation id) also decides it', () => {
+      const { a, b, relId } = pending();
+      // The template tier stores its exchange as a conversation row, so the event
+      // carries an id; `template: true` is what says it is not an LLM conversation.
+      simEvents.emit('conversation:ended', {
+        agentId: a, perpetratorId: b, conversationId: 998_000 + a, template: true,
+        summary: 'the weather', turns: 3, sentiment: 0.2,
+      });
+      expect(rel(relId).tags).toContain('engaged');
+      expect(queued(a, b)).toHaveLength(0);
+    });
+
     it('only the proposer’s own event counts', () => {
       const { a, b, relId } = pending();
       llmEnded(b, a, ['Will you?', 'Yes!']);
