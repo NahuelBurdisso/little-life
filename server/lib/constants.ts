@@ -131,7 +131,11 @@ export const CONFIG = {
     TURN_LATENCY_WINDOW: 8,
     // WALL-CLOCK MS. Assumed turn latency before any has been measured — only
     // used above 1x, where guessing low is what let conversations eat the night.
-    TURN_LATENCY_PRIOR_MS: 20_000,
+    // 20 s matched gemma-4 e4b on a serial Ollama; Gemma 4 26B with 4 parallel
+    // slots measures ~1.3-1.8 s p50 per turn, and at 4x the 20 s guess turned
+    // every conversation after a quiet spell into a template until a probe ran.
+    // 6 s is still ~3x the measured turn; the window takes over after one turn.
+    TURN_LATENCY_PRIOR_MS: 6_000,
     // CLOCK: GAME MINUTES. Samples older than this are dropped, and with none left
     // one ordinary conversation per this period runs as a MIN_LLM_TURNS probe even
     // if the prior says it won't fit, so a town pushed onto templates by a slow

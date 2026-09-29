@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { CONFIG } from '../constants';
 import {
   conversationBudgetGameMinutes,
@@ -39,6 +39,18 @@ describe('conversation budgets', () => {
 });
 
 describe('planConversation', () => {
+  // These cases describe a slow model (a 20 s prior); the shipped prior is
+  // checked on its own below.
+  const shippedPrior = C.TURN_LATENCY_PRIOR_MS;
+  const pacing = C as { TURN_LATENCY_PRIOR_MS: number };
+  beforeEach(() => { pacing.TURN_LATENCY_PRIOR_MS = 20_000; });
+  afterEach(() => { pacing.TURN_LATENCY_PRIOR_MS = shippedPrior; });
+
+  it('with the shipped prior, an unmeasured 4x conversation still runs on the LLM', () => {
+    pacing.TURN_LATENCY_PRIOR_MS = shippedPrior;
+    expect(plan({ tickSpeed: 4 }).tier).toBe('llm');
+  });
+
   it('leaves 1x alone without measurements (no guessing at the tuned speed)', () => {
     expect(plan()).toEqual({ tier: 'llm', maxTurns: STANDARD, budgetGameMin: 90, graceGameMin: 15, probe: false });
     expect(plan({ tierMaxTurns: DEEP })).toMatchObject({ maxTurns: DEEP, budgetGameMin: 150 });
