@@ -3,6 +3,7 @@
  *  same row instead of drifting into a second, subtly different phrasing. */
 
 import { endSentence, shortenForFeed } from './factText';
+import { goalClause } from './goalText';
 
 export interface ActivityEntry {
   id?: number;
@@ -28,20 +29,6 @@ const ZONE_ACTION_PHRASES: Record<string, string> = {
   jog: 'went for a jog',
 };
 
-/** `goal_description` is the raw GOAL_REGISTRY key, so it needs prose here. */
-const GOAL_PHRASES: Record<string, string> = {
-  revenge: 'getting revenge',
-  seduce: 'winning someone over',
-  steal_from: 'stealing from someone',
-  protect: 'looking after someone',
-  investigate: 'digging up the truth',
-  undermine: 'undermining a rival',
-  pay_debt: 'paying off a debt',
-  get_sober: 'getting sober',
-  befriend: 'making a friend',
-  comfort_grieving: 'comforting someone grieving',
-};
-
 /** Relationship status keys whose plain humanized form reads wrong. */
 const STATUS_PHRASES: Record<string, string> = {
   romantic_interest: 'sweet on each other',
@@ -52,10 +39,11 @@ function humanize(token: unknown): string {
   return String(token).replace(/_/g, ' ');
 }
 
+/** `goal_description` is the raw GOAL_REGISTRY key; `goal` may be LLM prose. */
 function goalPhrase(d: Record<string, any>): string {
   const raw = d.goal_description ?? d.goal;
   if (raw == null) return 'a goal';
-  return GOAL_PHRASES[String(raw)] ?? humanize(raw);
+  return goalClause(raw);
 }
 
 export function renderMessage(entry: ActivityEntry): string {

@@ -10,6 +10,8 @@ import { CONFIG } from '../constants';
 import { summarizeConversation, MIN_SUMMARY_LINES, type SummaryLine } from './conversationSummary';
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { getImportance } from './ImportanceScorer';
+import { goalClause } from '../goalText';
+import { endSentence } from '../factText';
 
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
@@ -314,25 +316,29 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', describeEvent(templateKey, { target: targetName }), { subtype: 'perception', targetName });
   });
 
-  // Goals
+  // Goals. The goal text is either a registry key or an LLM imperative with
+  // its own punctuation (goalText.ts), so it goes after a colon, normalised:
+  // "I've decided to ${desc}." stored "I've decided to Assess the situation
+  // with Marco....." (G9).
   simEvents.on('goal:created', ({ agentId, goalType, description }: { agentId: number; goalType: string; description?: string }) => {
-    const desc = description ?? goalType;
-    memoryService.record(agentId, 'observation', `I've decided to ${desc}.`, { subtype: 'goal' }, 0, 5);
+    const goal = goalClause(description ?? goalType);
+    memoryService.record(agentId, 'observation', endSentence(`I set myself a new goal: ${goal}`), { subtype: 'goal' }, 0, 5);
   });
 
   simEvents.on('goal:completed', ({ agentId, goalType, description }: { agentId: number; goalType: string; description?: string }) => {
-    const desc = description ?? goalType;
-    memoryService.record(agentId, 'observation', `I accomplished my goal: ${desc}.`, { subtype: 'goal' }, 0.5, 7);
+    const goal = goalClause(description ?? goalType);
+    memoryService.record(agentId, 'observation', endSentence(`I accomplished my goal: ${goal}`), { subtype: 'goal' }, 0.5, 7);
   });
 
   simEvents.on('goal:abandoned', ({ agentId, goalType, description, reason }: { agentId: number; goalType: string; description?: string; reason?: string }) => {
-    const desc = description ?? goalType;
-    const reasonText = reason ? ` ${reason}.` : '';
-    memoryService.record(agentId, 'observation', `I gave up on ${desc}.${reasonText}`, { subtype: 'goal' }, -0.2, 4);
+    const goal = goalClause(description ?? goalType);
+    const reasonText = reason?.trim() ? ` ${endSentence(reason)}` : '';
+    memoryService.record(agentId, 'observation', `${endSentence(`I gave up on my goal: ${goal}`)}${reasonText}`, { subtype: 'goal' }, -0.2, 4);
   });
 
   simEvents.on('goal:pivoted', ({ agentId, description, newStrategy }: { agentId: number; description: string; newStrategy: string }) => {
-    memoryService.record(agentId, 'observation', `My approach to ${description} wasn't working. I'm going to try: ${newStrategy}.`, { subtype: 'goal' }, 0, 5);
+    const goal = goalClause(description);
+    memoryService.record(agentId, 'observation', `My approach to my goal (${goal}) wasn't working. ${endSentence(`I'm going to try: ${newStrategy.trim()}`)}`, { subtype: 'goal' }, 0, 5);
   });
 
   simEvents.on('goal:ambition_shifted', ({ agentId, from, to, reason }: { agentId: number; from: string; to: string; reason: string }) => {
