@@ -4,7 +4,7 @@
 --   Aseprite.exe -b --script-param dir=public/sprites/furniture --script scripts/aseprite/furniture.lua
 --   (add --script-param only=bed to rebuild one piece)
 --
--- Supersedes scripts/gen-furniture.mjs (flat front-on rectangles). Same file names, same 32x32
+-- Replaced the old pngjs generator (gen-furniture.mjs, flat front-on rectangles). Same file names, same 32x32
 -- cell, same 24-swatch master palette (docs/scratch/proposal-visual.md §1), but every piece now
 -- has a lit top face, a shaded front face, a generated 1px outline and a soft drop shadow, so it
 -- reads as an object standing on the floor rather than a sticker on it.

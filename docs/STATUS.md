@@ -31,7 +31,6 @@ worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
   `agent-sheets.lua` (derives 11-frame sheets from `public/sprites/agents/<name>.png`),
   `roof-tiles.lua`, `nature-props.lua`, `furniture.lua`. Frame tables live in
   `src/components/canvas/agentFrames.ts` / `propFrames.ts` — keep in sync with the scripts.
-  `scripts/gen-furniture.mjs` is superseded by `furniture.lua` (running it reverts to the flat sprites).
 
 - `npm run check` — gate (tsc + vitest).
 - `npm run deadcode` — orphan files / unused exports.
