@@ -223,8 +223,9 @@ describe('the commute', () => {
     });
     const locs = db.select().from(locations).where(inArray(locations.id, [farmId, homeId])).all();
     const lead = commuteLeadMinutes(row(id), locs);
-    // Door to door is 16.5 tiles = 33 min at 16 px/min; +30% and 10 min.
-    expect(lead).toBe(Math.round((Math.hypot(16.5 * T, 2 * T) / 16) * 1.3 + 10));
+    // Door to door is 16.5 tiles at PIXELS_PER_GAME_MINUTE; +30% and 10 min.
+    const perMin = CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE;
+    expect(lead).toBe(Math.round((Math.hypot(16.5 * T, 2 * T) / perMin) * 1.3 + 10));
     const leave = 8 * 60 - lead;
     decisionsTick(world(Math.floor(leave / 60), leave % 60));
     expect(row(id).current_destination).toMatchObject({ locationId: farmId });
