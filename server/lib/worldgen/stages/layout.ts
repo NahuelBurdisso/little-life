@@ -7,7 +7,7 @@ import { FitError, type Stage, type Zone } from '../types';
 import type { LocationSeed } from '../types';
 // RNG type used implicitly via stage interface
 import { TILE, BUILDING_GAP, ROAD_BUFFER, BORDER_BUFFER } from '../config';
-import { buildRoadDistance } from './roads';
+import { buildRoadDistance } from './roadDistance';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

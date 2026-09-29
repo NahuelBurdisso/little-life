@@ -53,7 +53,7 @@ import type { RNG } from '../rng';
 import type { RoadsOutput, Zone } from '../types';
 import { BORDER_BUFFER, BUILDING_GAP, ROAD_BUFFER } from '../config';
 import { fbm, makeValueNoise2D } from '../noise';
-import { buildRoadDistance } from './roads';
+import { buildRoadDistance } from './roadDistance';
 
 type Tile = { x: number; y: number };
 type Rect = { x: number; y: number; width: number; height: number };
