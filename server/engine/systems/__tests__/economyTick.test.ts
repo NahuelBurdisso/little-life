@@ -166,6 +166,18 @@ describe('shop purchases', () => {
     expect(purchasesBy(buyer)).toHaveLength(2);
   });
 
+  it('one eating action is one meal even if the agent ends up somewhere else', () => {
+    const { buyer, shop } = scene(stock({ food_raw: 50 }));
+    const other = scene(stock({ food_raw: 50 }));
+    setAction(buyer, { type: 'eating', locationId: shop }, 100, shop);
+    ticks(5);
+    // Same action (same action_started), different shop.
+    setAction(buyer, { type: 'eating', locationId: shop }, 100, other.shop);
+    ticks(5);
+
+    expect(purchasesBy(buyer)).toHaveLength(1);
+  });
+
   it('pays once the shop restocks mid-meal, and only once', () => {
     const { buyer, shop, owner } = scene([]);
     setAction(buyer, { type: 'eating', locationId: shop }, 100, shop);

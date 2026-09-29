@@ -42,9 +42,11 @@ function checkMilestone(agentId: number, money: number): void {
 
 /**
  * agentId → what the agent already bought during its current action. The key
- * is `type:action_started:place`: decisions/movement stamp `action_started` each
- * time they (re)issue an action, so a new meal or a new trip — even at the same
- * shop — starts with a clean slate, while the ticks of one action share it.
+ * is `type:action_started` (plus the shop for a shopping trip): decisions and
+ * movement stamp `action_started` each time they (re)issue an action, so a new
+ * meal or a new trip — even at the same shop — starts with a clean slate, while
+ * the ticks of one action share it. A meal is NOT keyed on the location: one
+ * eating action is one meal, even if the agent is nudged elsewhere mid-meal.
  * In memory only: after a server restart an agent mid-meal may pay once more.
  */
 const purchasesThisAction = new Map<number, { actionKey: string; handled: Set<string> }>();
@@ -389,7 +391,7 @@ export function economyTick(): void {
 
     // Auto-purchase food when eating at a shop or tavern
     if (action.type === 'eating' && agent.current_location != null) {
-      const handled = purchasesFor(agent.id, `eating:${agent.action_started}:${agent.current_location}`);
+      const handled = purchasesFor(agent.id, `eating:${agent.action_started}`);
       if (handled.has(MEAL)) continue;
 
       let eatLocation = locationCache.get(agent.current_location);
