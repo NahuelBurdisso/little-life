@@ -7,6 +7,7 @@ import { eq, sql } from 'drizzle-orm';
 import { db } from '../../../db';
 import { agents, locations } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
+import { LLMEmptyReplyError } from '../../../ai/llmErrors';
 import { logActivity } from '../../activityLogger';
 import {
   PlanLLMGate,
@@ -231,6 +232,25 @@ describe('plan execution when block decomposition fails', () => {
     const b = gate.tryAcquire(agentId + 1001, m);
     expect(a).not.toBeNull();
     expect(b).not.toBeNull();
+  });
+
+  it('an empty (thinking-only) reply backs off like an unusable answer, not an outage', async () => {
+    const { gate, queue, act } = setup();
+    gate.recordFailure(otherIds[0], 'down');
+    gate.recordFailure(otherIds[1], 'down');
+    vi.mocked(callOllamaChat).mockImplementationOnce(() => {
+      throw new LLMEmptyReplyError('Ollama response had only thinking, no message content');
+    });
+    act();
+    await settled(queue);
+    expect(backingOff(gate, agentId)).toBe(true);
+
+    // Counted as a transport failure it would have been the third in a row and
+    // opened the breaker; instead the streak was reset.
+    gate.recordFailure(otherIds[0], 'down');
+    const m = gameMinuteOf({ day: 1, hour, minute });
+    expect(gate.tryAcquire(agentId + 1000, m)).not.toBeNull();
+    expect(gate.tryAcquire(agentId + 1001, m)).not.toBeNull();
   });
 });
 

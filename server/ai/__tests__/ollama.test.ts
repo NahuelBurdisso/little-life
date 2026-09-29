@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { callOllamaChat } from '../ollama';
+import { LLMEmptyReplyError } from '../llmErrors';
 import { CONFIG } from '../../lib/constants';
 
 // Pins how each backend reports a reply the token cap cut off — dialogue trims
@@ -41,6 +42,22 @@ describe('callOllamaChat — truncation flag', () => {
       done_reason: 'length',
     });
     await expect(callOllamaChat(request)).rejects.toThrow(/only thinking/);
+    mockFetch({ message: { content: '', thinking: 'hmm' } });
+    await expect(callOllamaChat(request)).rejects.toBeInstanceOf(LLMEmptyReplyError);
+  });
+
+  it('rejects an empty or reasoning-only OpenAI-compatible reply with the typed error', async () => {
+    ai.BACKEND = 'openai';
+    mockFetch({ choices: [{ message: { content: '   ', reasoning_content: 'Let me think.' }, finish_reason: 'length' }] });
+    await expect(callOllamaChat(request)).rejects.toThrow(/only reasoning_content/);
+    mockFetch({ choices: [{ message: { content: '' } }] });
+    await expect(callOllamaChat(request)).rejects.toBeInstanceOf(LLMEmptyReplyError);
+  });
+
+  it('trims OpenAI-compatible content', async () => {
+    ai.BACKEND = 'openai';
+    mockFetch({ choices: [{ message: { content: '  Hello there.\n' }, finish_reason: 'stop' }] });
+    await expect(callOllamaChat(request)).resolves.toEqual({ text: 'Hello there.', truncated: false });
   });
 
   it('flags an OpenAI-compatible reply with finish_reason "length"', async () => {

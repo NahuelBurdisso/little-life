@@ -2,6 +2,7 @@ import { db } from '../../db';
 import { agents, needs, locations, economy } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
+import { LLMEmptyReplyError } from '../../ai/llmErrors';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
 import { buildDecompositionPrompt } from './planPrompts';
@@ -138,7 +139,14 @@ export class PlanDecomposer {
     } catch (err) {
       if (epoch !== this.gate.epoch) return;
       const reason = err instanceof Error ? err.message : String(err);
-      this.gate.recordFailure(agentId, reason);
+      if (err instanceof LLMEmptyReplyError) {
+        // An empty / reasoning-only answer: the LLM is up, so back off like
+        // for unusable output and reset the outage streak.
+        this.gate.backOff(agentId);
+        this.gate.noteAnswered();
+      } else {
+        this.gate.recordFailure(agentId, reason);
+      }
       console.warn(`[PlanDecomposer] ${agentName} block ${blockId} failed: ${reason}`);
       return;
     }

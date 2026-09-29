@@ -2,6 +2,7 @@ import { db } from '../../db';
 import { agents, needs, locations, economy, goals } from '../../db/schema';
 import { eq, ne, and } from 'drizzle-orm';
 import { callOllamaChat } from '../../ai/ollama';
+import { LLMEmptyReplyError } from '../../ai/llmErrors';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
 import { buildDailyPlanPrompt, buildReplanPrompt } from './planPrompts';
@@ -223,6 +224,14 @@ export class PlanGenerator {
     } catch (err) {
       if (epoch !== this.gate.epoch) return;
       const reason = err instanceof Error ? err.message : String(err);
+      // An empty / reasoning-only answer means the LLM is up: treat it like an
+      // unparseable plan (back off, reset the outage streak), not an outage.
+      if (err instanceof LLMEmptyReplyError) {
+        const step = this.gate.backOff(agentId);
+        this.gate.noteAnswered();
+        this.fallBack(agentId, currentDay, ctx, reason, step);
+        return;
+      }
       this.fallBack(agentId, currentDay, ctx, reason, this.gate.recordFailure(agentId, reason));
       return;
     }
@@ -619,7 +628,13 @@ export class PlanGenerator {
     } catch (err) {
       if (epoch !== this.gate.epoch) return;
       const reason = err instanceof Error ? err.message : String(err);
-      this.gate.recordFailure(agentId, reason);
+      if (err instanceof LLMEmptyReplyError) {
+        // The LLM answered, just with nothing usable: not an outage.
+        this.gate.backOff(agentId);
+        this.gate.noteAnswered();
+      } else {
+        this.gate.recordFailure(agentId, reason);
+      }
       console.warn(`[PlanGenerator] replan failed for agent ${agentRow.name} (${reason}), keeping existing plan`);
       return;
     }

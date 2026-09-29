@@ -13,6 +13,7 @@
 
 import { CONFIG } from '../lib/constants';
 import { acquireLLMSlot, acquireEmbeddingSlot, type LLMPriority } from './llmSemaphore';
+import { LLMEmptyReplyError } from './llmErrors';
 
 export interface OllamaChatRequest {
   model: string;
@@ -97,10 +98,10 @@ async function callOllamaBackend(
       // entirely on reasoning). This used to return the first line of the
       // reasoning as the answer, so a townsperson could say aloud "The user
       // wants me to respond as Omar…" and a plan or reflection could be built
-      // from it. An empty answer is an error: every caller already has a
-      // retry/fallback path for that.
+      // from it. An empty answer is an error — typed, so callers can tell it
+      // from the LLM being unreachable (see LLMEmptyReplyError).
       const thinkingOnly = Boolean(data.message?.thinking);
-      throw new Error(
+      throw new LLMEmptyReplyError(
         thinkingOnly
           ? "Ollama response had only thinking, no message content"
           : "Ollama response missing message content",
@@ -166,9 +167,15 @@ async function callOpenAIChat(
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content ?? '';
+    // Trimmed like the Ollama path: a whitespace-only answer is an empty one.
+    const message = data.choices?.[0]?.message;
+    const content = (message?.content ?? '').trim();
     if (!content) {
-      throw new Error("OpenAI response missing message content");
+      throw new LLMEmptyReplyError(
+        message?.reasoning_content
+          ? "OpenAI response had only reasoning_content, no message content"
+          : "OpenAI response missing message content",
+      );
     }
 
     return { text: content, truncated: data.choices?.[0]?.finish_reason === 'length' };

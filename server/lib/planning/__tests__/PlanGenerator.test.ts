@@ -8,6 +8,7 @@ vi.mock('../../activityLogger', () => ({ logActivity: vi.fn(), pruneActivityLog:
 import { db } from '../../../db';
 import { agents, locations } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
+import { LLMEmptyReplyError } from '../../../ai/llmErrors';
 import { logActivity } from '../../activityLogger';
 import {
   PlanLLMGate,
@@ -465,6 +466,21 @@ describe('PlanGenerator failure classification', () => {
       expect(cache.get(id)?.source).toBe('fallback');
       expect(retryAt(id)).not.toBeNull();
     }
+    expect(breakerClosed(ids[3], ids[3] + 1000)).toBe(true);
+    expect(feedErrors()).toHaveLength(0);
+  });
+
+  it('empty (thinking-only) replies back the agent off but never trip the breaker', async () => {
+    const { cache, queue, gen } = setup();
+    for (const id of ids.slice(0, PLAN_OUTAGE_THRESHOLD)) {
+      vi.mocked(callOllamaChat).mockImplementationOnce(() => {
+        throw new LLMEmptyReplyError('Ollama response had only thinking, no message content');
+      });
+      await runFor(gen, queue, id);
+      expect(cache.get(id)?.source).toBe('fallback');
+      expect(retryAt(id)).not.toBeNull();
+    }
+    // As many transport failures in a row would have opened it.
     expect(breakerClosed(ids[3], ids[3] + 1000)).toBe(true);
     expect(feedErrors()).toHaveLength(0);
   });
