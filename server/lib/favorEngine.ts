@@ -1,5 +1,6 @@
 import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
+import { asId, asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
 
 // ─── Favor Tracking ──────────────────────────────────────────────────────────
 // Tracks favors (gifts, comfort, lending) between agents.
@@ -18,6 +19,43 @@ const favorLedger = new Map<number, Map<number, FavorBalance>>();
 export function clearFavorLedger(): void {
   favorLedger.clear();
 }
+
+/**
+ * Checkpoint of the ledger (server/engine/simSnapshots.ts). A debt of gratitude
+ * is exactly the kind of thing that should outlive a server restart; without
+ * this, every restart wiped the town's obligations. Shape:
+ * { [agentId]: { [otherId]: { given, received } } }.
+ */
+export const favorSnapshotStore: SnapshotStore = {
+  key: 'favors',
+  version: 1,
+  serialize() {
+    const out: Record<string, Record<string, FavorBalance>> = {};
+    for (const [agentId, others] of favorLedger) {
+      const entry: Record<string, FavorBalance> = {};
+      for (const [otherId, b] of others) entry[otherId] = { given: b.given, received: b.received };
+      out[agentId] = entry;
+    }
+    return out;
+  },
+  restore(data) {
+    favorLedger.clear();
+    for (const [key, raw] of Object.entries(asRecord(data) ?? {})) {
+      const agentId = asId(key);
+      if (agentId === null) continue;
+      const others = new Map<number, FavorBalance>();
+      for (const [otherKey, rawBalance] of Object.entries(asRecord(raw) ?? {})) {
+        const otherId = asId(otherKey);
+        const b = asRecord(rawBalance);
+        const given = asNumber(b?.given);
+        const received = asNumber(b?.received);
+        if (otherId === null || given === null || received === null) continue;
+        others.set(otherId, { given, received });
+      }
+      if (others.size > 0) favorLedger.set(agentId, others);
+    }
+  },
+};
 
 function getBalance(agentId: number, otherId: number): FavorBalance {
   let agentMap = favorLedger.get(agentId);

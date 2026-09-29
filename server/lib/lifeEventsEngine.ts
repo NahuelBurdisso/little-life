@@ -17,6 +17,7 @@ import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
 import { zoneOccupancy } from './interiorGrid';
 import { chancePerTick } from './gameClock';
+import { numberMapToRecord, restoreIdNumberMap, type SnapshotStore } from '../engine/snapshotCodec';
 
 // --- Types ---
 
@@ -83,6 +84,18 @@ export function updateHungerTracking(agentId: number, hunger: number, elapsedMin
 export function clearHungerTracking(): void {
   hungerZeroMinutes.clear();
 }
+
+/**
+ * Checkpoint of the starvation counters (server/engine/simSnapshots.ts). The
+ * death trigger needs three game days at zero hunger; without this a restart
+ * handed every starving agent a fresh three days. Shape: { [agentId]: minutes }.
+ */
+export const hungerSnapshotStore: SnapshotStore = {
+  key: 'hungerZero',
+  version: 1,
+  serialize: () => numberMapToRecord(hungerZeroMinutes),
+  restore: (data) => restoreIdNumberMap(hungerZeroMinutes, data),
+};
 
 // --- Death Triggers Registry ---
 

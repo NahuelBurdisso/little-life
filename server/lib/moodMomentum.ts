@@ -2,6 +2,7 @@ import { db } from '../db';
 import { agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
+import { asId, asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
 
 // ─── Mood Momentum System ─────────────────────────────────────────────────────
 // Tracks running mood average per agent. At day change, converts average mood
@@ -23,6 +24,40 @@ const moodTrackers = new Map<number, MoodTracker>();
 export function clearMoodTrackers(): void {
   moodTrackers.clear();
 }
+
+/**
+ * Checkpoint of every tracker (server/engine/simSnapshots.ts). The streak is
+ * built one game day at a time, so a restart used to snap every agent out of a
+ * week-long spiral (or glow) at once. Today's samples go along too, or the day
+ * in progress would be judged on its post-restart hours only. Shape:
+ * { [agentId]: { moodSamples, momentum, streak } }.
+ */
+export const moodMomentumSnapshotStore: SnapshotStore = {
+  key: 'moodMomentum',
+  version: 1,
+  serialize() {
+    const out: Record<string, MoodTracker> = {};
+    for (const [agentId, t] of moodTrackers) {
+      out[agentId] = { moodSamples: [...t.moodSamples], momentum: t.momentum, streak: t.streak };
+    }
+    return out;
+  },
+  restore(data) {
+    moodTrackers.clear();
+    for (const [key, raw] of Object.entries(asRecord(data) ?? {})) {
+      const agentId = asId(key);
+      const t = asRecord(raw);
+      const momentum = asNumber(t?.momentum);
+      const streak = asNumber(t?.streak);
+      if (agentId === null || momentum === null || streak === null) continue;
+      const rawSamples = t?.moodSamples;
+      const moodSamples = Array.isArray(rawSamples)
+        ? rawSamples.map(asNumber).filter((n): n is number => n !== null)
+        : [];
+      moodTrackers.set(agentId, { moodSamples, momentum, streak });
+    }
+  },
+};
 
 function getTracker(agentId: number): MoodTracker {
   let tracker = moodTrackers.get(agentId);

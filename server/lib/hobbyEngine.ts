@@ -3,6 +3,7 @@ import { logActivity } from './activityLogger';
 import { db } from '../db';
 import { agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { asId, asNumber, asRecord, decodeStamp, encodeStamp, type SnapshotStore } from '../engine/snapshotCodec';
 
 // ─── Hobby System ─────────────────────────────────────────────────────────────
 // Agents develop skills through repeated zone activities.
@@ -40,6 +41,45 @@ const agentHobbies = new Map<number, Map<HobbyId, HobbySkill>>();
 export function clearHobbySkills(): void {
   agentHobbies.clear();
 }
+
+/**
+ * Checkpoint of every skill (server/engine/simSnapshots.ts). Levels take game
+ * weeks to earn — losing them on a restart erased the whole mentorship and
+ * shared-hobby layer. Shape: { [agentId]: { [hobby]: { level, experience,
+ * lastPracticed } } }, with a never-practised stamp written as null.
+ */
+export const hobbySnapshotStore: SnapshotStore = {
+  key: 'hobbies',
+  version: 1,
+  serialize() {
+    const out: Record<string, Record<string, { level: number; experience: number; lastPracticed: number | null }>> = {};
+    for (const [agentId, skills] of agentHobbies) {
+      const entry: (typeof out)[string] = {};
+      for (const [hobby, s] of skills) {
+        entry[hobby] = { level: s.level, experience: s.experience, lastPracticed: encodeStamp(s.lastPracticed) };
+      }
+      out[agentId] = entry;
+    }
+    return out;
+  },
+  restore(data) {
+    agentHobbies.clear();
+    const known = new Set<string>(Object.values(ACTIVITY_TO_HOBBY));
+    for (const [key, raw] of Object.entries(asRecord(data) ?? {})) {
+      const agentId = asId(key);
+      if (agentId === null) continue;
+      const skills = new Map<HobbyId, HobbySkill>();
+      for (const [hobby, rawSkill] of Object.entries(asRecord(raw) ?? {})) {
+        const s = asRecord(rawSkill);
+        const level = asNumber(s?.level);
+        const experience = asNumber(s?.experience);
+        if (!known.has(hobby) || level === null || experience === null) continue;
+        skills.set(hobby as HobbyId, { level, experience, lastPracticed: decodeStamp(s?.lastPracticed) });
+      }
+      if (skills.size > 0) agentHobbies.set(agentId, skills);
+    }
+  },
+};
 
 function getSkills(agentId: number): Map<HobbyId, HobbySkill> {
   let skills = agentHobbies.get(agentId);
