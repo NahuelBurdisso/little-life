@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { heldItemFor, heldPose, type HeldContext, type HeldPose } from '../heldItem';
+import { BAG_CARRY_MS, bagDeadline, heldItemFor, heldPose, type HeldContext, type HeldPose } from '../heldItem';
 import { HELD_ITEMS, HELD_FRAME_COUNT, type HeldItemId } from '../heldFrames';
 
 const ctx = (over: Partial<HeldContext>): HeldContext => ({
@@ -41,6 +41,10 @@ describe('heldItemFor — working at the workplace', () => {
 
 describe('heldItemFor — actions', () => {
   it('eating -> plate', () => expect(heldItemFor(ctx({ actionType: 'eating' }))).toBe('plate'));
+  it('eating behind bars -> a bowl, not china', () => {
+    expect(heldItemFor(ctx({ actionType: 'eating', locationType: 'prison' }))).toBe('bowl');
+    expect(heldItemFor(ctx({ actionType: 'eating', locationType: 'tavern' }))).toBe('plate');
+  });
   it('shopping -> basket', () => expect(heldItemFor(ctx({ actionType: 'shopping' }))).toBe('basket'));
   it('socializing at a tavern -> mug', () => {
     expect(heldItemFor(ctx({ actionType: 'socializing', locationType: 'tavern' }))).toBe('mug');
@@ -70,13 +74,30 @@ describe('heldItemFor — zone activities', () => {
     ['browse', null],
     ['shoplifting', null],
     ['pickpocket', null],
-    ['comfort', null],
+    ['comfort', 'cup'],
+    ['cook', 'pan'],
+    ['speech', 'megaphone'],
+    ['announce', 'megaphone'],
+    ['protest', 'sign'],
+    ['plant', 'hoe'],
+    ['harvest', 'basket'],
+    ['pick_flowers', 'basket'],
+    ['collect_eggs', 'basket'],
+    ['feed_animals', 'basket'],
+    ['watch', null],
+    ['people_watch', null],
+    ['scheme', null],
+    ['secret_meeting', null],
+    ['confide', null],
   ];
   for (const [z, item] of zone) {
     it(`idle + ${z} -> ${item}`, () => {
       expect(heldItemFor(ctx({ actionType: 'idle', zoneActivity: z }))).toBe(item);
     });
   }
+  it('a comfort visit is a cup of tea even without a zone tag', () => {
+    expect(heldItemFor(ctx({ actionType: 'comfort' }))).toBe('cup');
+  });
   it('comfort actions can carry a zone activity too', () => {
     expect(heldItemFor(ctx({ actionType: 'comfort', zoneActivity: 'rest' }))).toBe('book');
   });
@@ -86,6 +107,35 @@ describe('heldItemFor — zone activities', () => {
   it('a zone activity never overrides sleeping or walking', () => {
     expect(heldItemFor(ctx({ actionType: 'sleeping', zoneActivity: 'fish' }))).toBeNull();
     expect(heldItemFor(ctx({ actionType: 'walking', zoneActivity: 'fish' }))).toBeNull();
+  });
+});
+
+describe('heldItemFor — the shopping bag', () => {
+  it('is carried while walking or idling after a trip', () => {
+    expect(heldItemFor(ctx({ actionType: 'walking', bag: true }))).toBe('bag');
+    expect(heldItemFor(ctx({ actionType: 'idle', bag: true }))).toBe('bag');
+  });
+  it('gives way to a real tool, and never comes to bed or work', () => {
+    expect(heldItemFor(ctx({ actionType: 'idle', zoneActivity: 'fish', bag: true }))).toBe('rod');
+    expect(heldItemFor(ctx({ actionType: 'sleeping', bag: true }))).toBeNull();
+    expect(heldItemFor(ctx({ actionType: 'working', atWorkplace: true, workplaceType: 'bakery', bag: true }))).toBe('rolling_pin');
+  });
+  it('is absent unless asked for', () => {
+    expect(heldItemFor(ctx({ actionType: 'walking' }))).toBeNull();
+  });
+});
+
+describe('bagDeadline', () => {
+  it('starts the clock when a trip ends and stops it when a new one begins', () => {
+    expect(bagDeadline(true, false, 1000, 0)).toBe(1000 + BAG_CARRY_MS);
+    expect(bagDeadline(true, true, 1000, 0)).toBe(0);
+    expect(bagDeadline(false, true, 1000, 5000)).toBe(0);
+  });
+  it('keeps the deadline until it passes', () => {
+    expect(bagDeadline(false, false, 2000, 9000)).toBe(9000);
+    expect(bagDeadline(false, false, 9000, 9000)).toBe(0);
+    expect(bagDeadline(false, false, 10_000, 9000)).toBe(0);
+    expect(bagDeadline(false, false, 1000, 0)).toBe(0);
   });
 });
 
@@ -147,6 +197,14 @@ describe('heldPose', () => {
   it('writes into the given object and returns it', () => {
     const o = out();
     expect(heldPose(HELD_ITEMS.hoe, 0, 0.5, 0, o)).toBe(o);
+  });
+  it('the cup and the megaphone are lifted now and then, then rest', () => {
+    for (const id of ['cup', 'megaphone'] as const) {
+      const def = HELD_ITEMS[id];
+      const rots = new Set<number>();
+      for (let t = 0; t < def.rate; t += 0.1) rots.add(Math.round(heldPose(def, t, 0, 0, out()).rot * 100));
+      expect(rots.size, id).toBeGreaterThan(2);
+    }
   });
   it('static items do not move', () => {
     const a = heldPose(HELD_ITEMS.ledger, 0, 0, 0, out());

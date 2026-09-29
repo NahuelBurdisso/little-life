@@ -12,6 +12,7 @@ import { InteractionLayer } from "./InteractionLayer";
 import { locationAt, type LocationLike } from "../../lib/locationInfo";
 import { ParticleEngine } from "./particles/ParticleEngine";
 import { SYSTEM_FACTORIES } from "./systems";
+import { taskThought } from "./systems/activityFx/workText";
 import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
 import type { ViewRect } from "./systems/view";
 import { useCanvasActivity } from "../../hooks/useCanvasActivity";
@@ -551,7 +552,8 @@ export const GameCanvas = React.memo(function GameCanvas({
     // Show thought bubble when an agent's action changes
     for (const agent of agents) {
       const agentId = String(agent.id);
-      const actionDesc = (agent.current_action as any)?.taskDescription;
+      // The server writes "daily work" for every shift; say what this workplace does instead.
+      const actionDesc = taskThought((agent.current_action as any)?.taskDescription, agent, locations);
       const prevAction = prevActionsRef.current.get(agentId);
 
       if (actionDesc && actionDesc !== prevAction && bubbleSystemRef.current) {

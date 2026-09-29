@@ -17,13 +17,23 @@ const EMOTE_FLOAT_SPEED = 18;
 
 /** Module scope: `update` runs per frame, so these must not be rebuilt per agent. */
 const STATE_EMOTES: Record<string, string> = {
-  drunk: 'drink', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
+  drunk: 'dizzy', hungover: 'dizzy', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
   confident: 'star', jealous: 'fire', sick: 'sick', stressed: 'sweat',
-  infatuated: 'heart', lonely: 'think', depressed: 'cry',
+  infatuated: 'heart', lonely: 'think', depressed: 'cry', in_debt: 'money',
 };
+// Emote when a zone verb (`current_action.zoneActivity`) begins. Plan-driven verbs (speech, scheme,
+// cook...) arrive here since decisions.ts keeps them; ActivityFxSystem adds the repeats and the
+// particles. Every value must be an atlas name (emoteFrames.test.ts checks).
 const ACTIVITY_EMOTES: Record<string, string> = {
   fish: 'fish', garden: 'flower', perform: 'music',
-  contemplate: 'think', forage: 'flower', browse: 'sparkle',
+  contemplate: 'think', forage: 'flower', browse: 'question',
+  jog: 'sweat', comfort: 'sparkle', shoplifting: 'whisper', pickpocket: 'whisper', // the loot comes on leaving
+  cook: 'fire', speech: 'exclaim', announce: 'exclaim', protest: 'anger',
+  watch: 'star', people_watch: 'question',
+  scheme: 'skull', secret_meeting: 'whisper', confide: 'whisper', smuggle: 'money',
+  escape_attempt: 'exclaim', lock_out: 'anger',
+  plant: 'flower', harvest: 'flower', pick_flowers: 'flower',
+  collect_eggs: 'sparkle', feed_animals: 'heart',
 };
 
 interface BubbleEntry {

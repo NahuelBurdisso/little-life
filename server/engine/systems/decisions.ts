@@ -1308,7 +1308,24 @@ function scoreFreeTimeActions(
 
 // --- Build action object ---
 
-function buildAction(decision: ScoredAction, shoppingList: string[] = []): Record<string, unknown> {
+/** Action types the engine models itself; anything else a plan names is an activity verb. */
+const CORE_ACTIONS = new Set(['sleeping', 'eating', 'working', 'socializing', 'walking', 'idle', 'shopping', 'comfort']);
+
+/**
+ * The zone activity a decision stands for ('fish', 'perform', 'scheme'...), or undefined.
+ * Free-time scoring rides it on `source` of an idle action. A plan step puts the verb in
+ * `action` instead (PlanExecutor._actionToScored, `source: 'plan:decomposed'`), which used
+ * to fall through buildAction's default to a bare `idle` — the renderer, the zone lookup
+ * and the zone effects never heard what the agent was actually doing.
+ */
+export function zoneVerbOf(decision: Pick<ScoredAction, 'action' | 'source'>): string | undefined {
+  const fromPlan = decision.source?.startsWith('plan:') ?? false;
+  if (fromPlan) return CORE_ACTIONS.has(decision.action) ? undefined : decision.action;
+  return decision.action === 'idle' ? decision.source : undefined;
+}
+
+export function buildAction(decision: ScoredAction, shoppingList: string[] = []): Record<string, unknown> {
+  const zoneActivity = zoneVerbOf(decision);
   switch (decision.action) {
     case 'sleeping':
       return { type: 'sleeping' };
@@ -1321,13 +1338,13 @@ function buildAction(decision: ScoredAction, shoppingList: string[] = []): Recor
     case 'walking':
       return { type: 'walking', to: { x: 0, y: 0 } };
     case 'idle':
-      return { type: 'idle', ...(decision.source ? { zoneActivity: decision.source } : {}) };
+      return { type: 'idle', ...(zoneActivity ? { zoneActivity } : {}) };
     case 'shopping':
       return { type: 'shopping', shopId: decision.targetLocationId ?? '', items: shoppingList };
     case 'comfort':
       return { type: 'comfort', zoneActivity: 'comfort' };
     default:
-      return { type: 'idle' };
+      return { type: 'idle', ...(zoneActivity ? { zoneActivity } : {}) };
   }
 }
 
@@ -1682,7 +1699,7 @@ export function tick(world: WorldRow): void {
         // `agent.id` is passed so the agent is not counted against the capacity of
         // the zone it is already standing in — otherwise a single-occupant zone
         // (home:bed) blocks its own occupant on every re-decision.
-        const zone = findAvailableZone(locType, decision!.source ?? decision!.action, loc.id, agent.id);
+        const zone = findAvailableZone(locType, zoneVerbOf(decision!) ?? decision!.source ?? decision!.action, loc.id, agent.id);
         if (zone) {
           const locPos = loc.position as { x: number; y: number; width: number; height: number };
           const slot = zoneSlotOffset(agent.id);
