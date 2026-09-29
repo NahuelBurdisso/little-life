@@ -3,7 +3,13 @@ import { trpc } from "../../lib/trpc";
 import { pushToast } from "../../lib/toast";
 import { EmptyState } from "./EmptyState";
 import { Skeleton } from "./Skeleton";
-import { STORYTELLERS, matchStoryteller, type StorytellerPreset } from "../../../server/data/rulesCatalog";
+import {
+  POPULATION_TARGET_MAX,
+  POPULATION_TARGET_MIN,
+  STORYTELLERS,
+  matchStoryteller,
+  type StorytellerPreset,
+} from "../../../server/data/rulesCatalog";
 
 interface AutoplayPanelProps {
   isOpen: boolean;
@@ -226,6 +232,71 @@ function StorytellerSection({ poll }: { poll: number | false }) {
               <span className="text-ui-muted">{k}</span> {v}
             </span>
           ))}
+        </div>
+      )}
+      {rules && <PopulationRow poll={poll} flowOn={rules.populationFlow} />}
+    </div>
+  );
+}
+
+/**
+ * Population flow (server/lib/populationFlow.ts): whether residents move away
+ * and strangers move in on their own, and the size newcomers fill the town
+ * back up to. Not part of any preset: like death, it changes who is in the
+ * story, which is the player's call.
+ */
+function PopulationRow({ poll, flowOn }: { poll: number | false; flowOn: boolean }) {
+  const utils = trpc.useUtils();
+  const { data: pop } = trpc.world.getPopulation.useQuery(undefined, { refetchInterval: poll });
+  const setRules = trpc.world.setRules.useMutation({
+    onSettled: () => {
+      void utils.world.getRules.invalidate();
+      void utils.world.getPopulation.invalidate();
+    },
+    onError: () => pushToast("Couldn't change the population rule — is the server running?", "error"),
+  });
+  const pending = setRules.isPending;
+  const step = (delta: number) => {
+    if (!pop) return;
+    const next = Math.max(POPULATION_TARGET_MIN, Math.min(POPULATION_TARGET_MAX, pop.target + delta));
+    if (next !== pop.target) setRules.mutate({ populationTarget: next });
+  };
+  return (
+    <div className="mt-3 space-y-1.5">
+      <Toggle
+        checked={flowOn}
+        pending={pending}
+        onChange={(next) => setRules.mutate({ populationFlow: next })}
+        label="Comings & goings"
+        hint="Unhappy residents may move away; strangers take empty houses."
+      />
+      {pop && (
+        <div className={`flex items-center justify-between text-[10px] transition-opacity ${flowOn ? "" : "opacity-45"}`}>
+          <span className="text-ui-muted">
+            {pop.living} living · never below {pop.floor}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="text-ui-muted">target</span>
+            <button
+              type="button"
+              aria-label="Lower the target population"
+              disabled={pending || !flowOn || pop.target <= POPULATION_TARGET_MIN}
+              onClick={() => step(-1)}
+              className="w-5 h-5 border border-ui-line bg-ui-raised text-ui-dim hover:text-ui-text disabled:opacity-40"
+            >
+              −
+            </button>
+            <span className="w-5 text-center text-ui-text font-semibold text-xs">{pop.target}</span>
+            <button
+              type="button"
+              aria-label="Raise the target population"
+              disabled={pending || !flowOn || pop.target >= Math.min(POPULATION_TARGET_MAX, pop.cap)}
+              onClick={() => step(1)}
+              className="w-5 h-5 border border-ui-line bg-ui-raised text-ui-dim hover:text-ui-text disabled:opacity-40"
+            >
+              +
+            </button>
+          </span>
         </div>
       )}
     </div>
