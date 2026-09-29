@@ -7,7 +7,7 @@
  * Pure so the keyboard stepping and the badge sums are tested on their own.
  */
 
-export type JournalTab = 'brewing' | 'stories' | 'timeline' | 'paper' | 'inbox' | 'talks';
+export type JournalTab = 'brewing' | 'stories' | 'timeline' | 'paper' | 'inbox' | 'talks' | 'challenges';
 
 export interface JournalTabDef {
   key: JournalTab;
@@ -17,7 +17,7 @@ export interface JournalTabDef {
   hint: string;
 }
 
-/** In strip order; 1–6 pick them by position while the Journal is open. */
+/** In strip order; 1–7 pick them by position while the Journal is open. */
 export const JOURNAL_TABS: readonly JournalTabDef[] = [
   { key: 'brewing', icon: '🔥', label: 'Brewing', hint: 'What is about to boil over' },
   { key: 'stories', icon: '📖', label: 'Stories', hint: 'The town\'s running story arcs' },
@@ -25,6 +25,7 @@ export const JOURNAL_TABS: readonly JournalTabDef[] = [
   { key: 'paper', icon: '📰', label: 'Paper', hint: 'The Town Crier, one edition a day' },
   { key: 'inbox', icon: '🔔', label: 'Inbox', hint: 'Every alert, including what your nudges came to' },
   { key: 'talks', icon: '💬', label: 'Talks', hint: 'Every finished conversation, searchable' },
+  { key: 'challenges', icon: '🏆', label: 'Challenges', hint: 'Optional goals for this town, and your achievements' },
 ];
 
 /** The tab `step` places along the strip, wrapping at both ends (← / →). */
@@ -63,6 +64,7 @@ export function tabBadges(s: JournalSignals): Record<JournalTab, TabBadge> {
     paper: s.hasNewPaper ? 'new' : null,
     inbox: s.unreadAlerts > 0 ? s.unreadAlerts : null,
     talks: null,
+    challenges: null,
   };
 }
 

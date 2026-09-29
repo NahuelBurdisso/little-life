@@ -14,6 +14,7 @@ import { TimelineView } from "./Timeline";
 import { GazetteView } from "./Gazette";
 import { InboxView } from "./Inbox";
 import { ConversationHistoryView } from "./ConversationHistory";
+import { ChallengesView } from "./ChallengesView";
 
 interface JournalProps {
   /** The tab showing, or null when the Journal is closed (App owns it: `openJournal(tab)`). */
@@ -53,7 +54,7 @@ function isTypingTarget(t: EventTarget | null): boolean {
  *
  * Only the showing tab is mounted, so each keeps its old "query only while
  * visible" behaviour, and filters reset when the tab is left. Escape is App's
- * (its overlay chain); ← / → and 1–6 switch tabs here, taken in the capture
+ * (its overlay chain); ← / → and 1–7 switch tabs here, taken in the capture
  * phase so the digits don't also change the speed.
  */
 export function Journal({ tab, onTabChange, onClose, onSelectAgent, inbox, hasNewPaper, agents }: JournalProps) {
@@ -181,6 +182,8 @@ function JournalTabBody({
       return <InboxTab inbox={inbox} agents={agents} onSelectAgent={onSelectAgent} />;
     case "talks":
       return <ConversationHistoryView onSelectAgent={onSelectAgent} />;
+    case "challenges":
+      return <ChallengesView agents={agents} onSelectAgent={onSelectAgent} />;
   }
 }
 

@@ -1,7 +1,7 @@
 /**
  * What the "?" help overlay lists. HOTKEYS mirrors src/hooks/useKeyboardControls.ts
  * (Space, 1-4, Tab, F, C, M, J) plus the two owned by App (Esc, ?) and the Journal's own tab keys
- * (← / →, 1-6 while it is open, src/components/ui/Journal.tsx); the speeds are the ones the hook
+ * (← / →, 1-7 while it is open, src/components/ui/Journal.tsx); the speeds are the ones the hook
  * sends, so a change there should show up here too.
  */
 export interface HelpEntry {
@@ -20,7 +20,7 @@ export const HOTKEYS: HelpEntry[] = [
   { keys: ['C'], what: 'Show or hide the Director\'s captions (who is saying what)' },
   { keys: ['M'], what: 'Mute or unmute the sound' },
   { keys: ['J'], what: 'Open or close the Journal: the paper, alerts and stories' },
-  { keys: ['←', '→'], what: 'Switch Journal tabs (1–6 also pick one while it is open)' },
+  { keys: ['←', '→'], what: 'Switch Journal tabs (1–7 also pick one while it is open)' },
   { keys: ['Esc'], what: 'Close the topmost panel, menu or overlay' },
   { keys: ['?'], what: 'Show or hide this help' },
 ];
