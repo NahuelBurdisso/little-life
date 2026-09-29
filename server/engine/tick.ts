@@ -139,11 +139,18 @@ const SYSTEM_PHASES: Array<{
 /**
  * Run one system phase, logging (not propagating) any throw. Returns false when
  * the phase failed. Exported for tests.
+ *
+ * `onSuccess` runs after a successful phase — inside its transaction for the
+ * synchronous phases, so bookkeeping written there (gameTick's
+ * `current_tick_phase`) commits with the phase instead of as a commit of its
+ * own: that was eleven extra WAL commits a tick, the tick's largest single
+ * block of SQLite time after the phases themselves.
  */
 export async function runSystemPhase(
   phase: { name: string; run: (world: WorldRow) => void | Promise<void> },
   world: WorldRow,
   phaseNumber: number,
+  onSuccess?: () => void,
 ): Promise<boolean> {
   try {
     // Run phase. conversationsTick is async (dispatches LLM tasks) so we
@@ -152,10 +159,12 @@ export async function runSystemPhase(
     if (phase.name === 'conversations') {
       // Async phase: conversationsTick queues LLM tasks outside the transaction
       await phase.run(world);
+      onSuccess?.();
     } else {
       // Synchronous phases: wrap in a transaction for atomicity
       db.transaction(() => {
         phase.run(world);
+        onSuccess?.();
       });
     }
     return true;
@@ -179,6 +188,20 @@ export async function runSystemPhase(
 
 /** Guards against overlapping autoplay analysis windows (see step 9 below). */
 let isAnalyzing = false;
+
+/**
+ * Profiling probe (scripts/tick-profile.ts): told which slice of the tick is
+ * about to run — a phase name, 'overhead' (the per-phase bookkeeping between
+ * phases, which includes building the agent-states cache) or 'post' (perception,
+ * reflection, day-change jobs, finalize). The script attributes wall time and
+ * SQL statements to whatever slice was announced last. One probe at a time;
+ * null when nobody profiles, so the server pays a single null check per phase.
+ */
+let phaseProbe: ((slice: string) => void) | null = null;
+
+export function setPhaseProbe(fn: ((slice: string) => void) | null): void {
+  phaseProbe = fn;
+}
 
 /**
  * One full tick: advance the clock, run every phase, finalize. Exported so
@@ -243,6 +266,14 @@ export async function gameTick(): Promise<void> {
   // any phase can record.
   memoryService.setTick(newTime.totalTicks);
 
+  // Build the tick-level agent-states cache before any phase, so every phase
+  // — needs included, which reads each agent's states — answers
+  // getAgentStates() from memory. It used to be built only after the states
+  // phase, when it could not yet notice writes; since the write counter
+  // (server/db/index.ts) it rebuilds itself after any write, and a phase that
+  // rolls back invalidates it (runSystemPhase), so it is valid from here on.
+  cacheAllAgentStates();
+
   // 7. Run the system phases sequentially
   const phaseMs: Array<[string, number]> = [];
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
@@ -250,8 +281,20 @@ export async function gameTick(): Promise<void> {
     const phaseNumber = i + 1;
     const phaseStart = performance.now();
 
-    await runSystemPhase(phase, worldWithNewTime, phaseNumber);
+    // Record the phase as done — with the phase's own commit when it succeeds,
+    // and on its own after a failure (which rolled the phase back), as before.
+    const markPhaseDone = () => {
+      db.update(worldState)
+        .set({ current_tick_phase: phaseNumber })
+        .where(eq(worldState.id, world.id))
+        .run();
+    };
+
+    phaseProbe?.(phase.name);
+    const ok = await runSystemPhase(phase, worldWithNewTime, phaseNumber, markPhaseDone);
     phaseMs.push([phase.name, performance.now() - phaseStart]);
+    phaseProbe?.('overhead');
+    if (!ok) markPhaseDone();
 
     // Only the autoplay analyzer drains these samples, and it only runs when
     // AUTOPLAY is enabled — recording unconditionally accumulated ~950k phase
@@ -259,20 +302,9 @@ export async function gameTick(): Promise<void> {
     if (CONFIG.AUTOPLAY.ENABLED) {
       autoPlayer.perf.recordPhase(phase.name, performance.now() - phaseStart);
     }
-
-    // After the states phase completes, build the tick-level cache so that all
-    // subsequent phases (economy, relationships, conversations, decisions,
-    // movement, events) avoid per-agent DB round-trips for getAgentStates().
-    if (phase.name === 'states') {
-      cacheAllAgentStates();
-    }
-
-    // Update current_tick_phase after each successful phase
-    db.update(worldState)
-      .set({ current_tick_phase: phaseNumber })
-      .where(eq(worldState.id, world.id))
-      .run();
   }
+
+  phaseProbe?.('post');
 
   // Perception scan every 10 game minutes: agents observe and react to nearby
   // agents. Each step is guarded: unguarded, one throw here skipped the cache

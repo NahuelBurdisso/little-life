@@ -1,4 +1,4 @@
-import { db } from '../../db';
+import { db, getTableWriteVersion } from '../../db';
 import {
   agents,
   agentStates,
@@ -18,10 +18,12 @@ import { eq, and, gt, lt, or } from 'drizzle-orm';
 import { PersonalityProfile } from '../../lib/personality';
 import { clamp } from '../../lib/utils';
 import {
+  AgentStateRowsSnapshot,
   STATE_DEFINITIONS,
   StateType,
   clearEffectivePersonalities,
   setEffectivePersonality,
+  type AgentStateRow,
 } from '../../lib/states';
 import { emitter } from '../emitter';
 import { createFact, deactivateStaleFacts, getAgentName, jealousRumorContext } from '../../lib/gossip';
@@ -34,6 +36,7 @@ import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
 import { foodCount } from '../../lib/economyEngine';
 import { itemPhrase } from '../../data/economyData';
+import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import {
   asRecord,
@@ -54,6 +57,86 @@ interface CascadeEntry {
   targetAgentId?: number;
   severity?: number;
 }
+
+type AgentRow = typeof agents.$inferSelect;
+type NeedsRow = typeof needsTable.$inferSelect;
+type EconomyRow = typeof economyTable.$inferSelect;
+
+/**
+ * Reads the states phase used to repeat per agent (and per step), answered from
+ * one query each. Built fresh by every `statesTick()` call, so nothing in it
+ * outlives the phase's transaction.
+ */
+interface StatesTickContext {
+  /** agent_states rows; re-read only after a write (AgentStateRowsSnapshot). */
+  states: AgentStateRowsSnapshot;
+  /**
+   * The agent's needs row, from a snapshot re-read only after a write to
+   * `needs`. Read per agent twice a tick (conditional exits, death check); the
+   * snapshot still sees a mood a cascade rule or a side effect just changed.
+   */
+  needsOf(agentId: number): NeedsRow | undefined;
+  /**
+   * The agent's economy row, from a snapshot re-read only after a write to
+   * `economy`. The debt trigger read money and pantry per agent every tick;
+   * gifts, gambling and theft write it mid-phase, and the snapshot sees them.
+   */
+  economyOf(agentId: number): EconomyRow | undefined;
+  /**
+   * economy.job per agent. No tick code changes a job (the setup wizard and
+   * nudges create economy rows; nothing updates `job`), so one read serves the
+   * whole phase. It was read per agent twice a tick (death check, clinic) plus
+   * once per bystander whenever someone sick shared a room.
+   */
+  jobOf(agentId: number): string | undefined;
+  /** locations.type, fixed at worldgen. */
+  locationType(locationId: number): string | undefined;
+}
+
+function createStatesTickContext(): StatesTickContext {
+  let jobs: Map<number, string> | null = null;
+  let locationTypes: Map<number, string> | null = null;
+  // idx_needs_agent_id is UNIQUE: one row per agent, so `[0]` is the `.get()`.
+  const needs = new RowsByAgentSnapshot<NeedsRow>(
+    () => getTableWriteVersion('needs'),
+    () => db.select().from(needsTable).all(),
+    (row) => row.agent_id,
+  );
+  // idx_economy_agent_id is UNIQUE too.
+  const economy = new RowsByAgentSnapshot<EconomyRow>(
+    () => getTableWriteVersion('economy'),
+    () => db.select().from(economyTable).all(),
+    (row) => row.agent_id,
+  );
+  return {
+    states: new AgentStateRowsSnapshot(),
+    needsOf: (agentId) => needs.forAgent(agentId)[0],
+    economyOf: (agentId) => economy.forAgent(agentId)[0],
+    jobOf(agentId) {
+      jobs ??= new Map(
+        db.select({ agent_id: economyTable.agent_id, job: economyTable.job }).from(economyTable).all()
+          .map((e) => [e.agent_id, e.job]),
+      );
+      return jobs.get(agentId);
+    },
+    locationType(locationId) {
+      locationTypes ??= new Map(
+        db.select({ id: locations.id, type: locations.type }).from(locations).all().map((l) => [l.id, l.type]),
+      );
+      return locationTypes.get(locationId);
+    },
+  };
+}
+
+const isHealerJob = (job: string | undefined) => job === 'doctor' || job === 'medical_assistant';
+
+/** The columns the romance checks read from a relationship row. */
+const PAIR_ROMANCE = {
+  agent_a: relationships.agent_a,
+  agent_b: relationships.agent_b,
+  romance_ab: relationships.romance_ab,
+  romance_ba: relationships.romance_ba,
+};
 
 // ─── Module-level state ───────────────────────────────────────────────────────
 
@@ -176,71 +259,22 @@ export function statesTick() {
   previouslyActiveAgents = currentActiveIds;
 
   const pendingCascades: CascadeEntry[] = [];
+  const ctx = createStatesTickContext();
 
   // ── Pass 1: Per-agent processing ──────────────────────────────────────────
+  // Every step re-reads the agent's rows from `ctx.states`: each step can end
+  // or start states (and so can the simEvents listeners it fires), and the
+  // snapshot goes back to the table exactly when that happened.
   for (const agent of allAgents) {
-    let agentStateRows = db
-      .select()
-      .from(agentStates)
-      .where(eq(agentStates.agent_id, agent.id))
-      .all();
-
     // 1a. Expire time-bounded states
-    for (const state of agentStateRows) {
-      const def = STATE_DEFINITIONS[state.type as StateType];
-      if (def?.conditionalExit) continue; // handled in 1b
-      if (state.started_at + state.duration <= nowMinutes) {
-        // Track sickness recovery for immunity cooldown
-        if (state.type === 'sick') {
-          sickRecoveredAt.set(agent.id, nowMinutes);
-          logActivity({
-            type: 'state_lost',
-            initiator: agent.id,
-            templateData: { agent: agent.name, state: 'sick' },
-          });
-        } else if (state.type === 'arrested') {
-          // Release: the town remembers, so the sentence becomes a gossip fact.
-          logActivity({
-            type: 'drama',
-            initiator: agent.id,
-            severity: 0.5,
-            templateData: {
-              description: `${agent.name} was released from prison after ${Math.round(state.duration / 60)} hours.`,
-            },
-          });
-        } else {
-          logActivity({
-            type: 'state_lost',
-            initiator: agent.id,
-            templateData: { agent: agent.name, state: state.type },
-          });
-        }
-        simEvents.emit('state:cleared', { agentId: agent.id, state: state.type });
-        collectExpiryCascades(state, agent, pendingCascades);
-        db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
-      }
-    }
+    expireTimedStates(agent, ctx.states.forAgent(agent.id), nowMinutes, pendingCascades);
 
     // 1b. Check conditional exits (stressed, lonely, depressed, infatuated)
-    agentStateRows = db
-      .select()
-      .from(agentStates)
-      .where(eq(agentStates.agent_id, agent.id))
-      .all();
-    const agentNeeds = db
-      .select()
-      .from(needsTable)
-      .where(eq(needsTable.agent_id, agent.id))
-      .get();
-    checkConditionalExits(agentStateRows, agentNeeds, agent, nowMinutes, world.tick_speed);
+    const agentNeeds = ctx.needsOf(agent.id);
+    checkConditionalExits(ctx.states.forAgent(agent.id), agentNeeds, agent, nowMinutes, world.tick_speed, ctx);
 
     // 1c. Evaluate triggers for new states
-    agentStateRows = db
-      .select()
-      .from(agentStates)
-      .where(eq(agentStates.agent_id, agent.id))
-      .all();
-    const activeTypes = new Set(agentStateRows.map((s) => s.type));
+    const activeTypes = new Set(ctx.states.forAgent(agent.id).map((s) => s.type));
     evaluateTriggers(
       agent,
       agentNeeds,
@@ -251,83 +285,138 @@ export function statesTick() {
       removedAgentIds,
       allAgents,
       world.tick_speed,
+      ctx,
     );
 
     // 1d. Compute effective personality from all current states
-    agentStateRows = db
-      .select()
-      .from(agentStates)
-      .where(eq(agentStates.agent_id, agent.id))
-      .all();
     if (agent.personality) {
       const effective = computeEffectivePersonality(
         agent.personality as PersonalityProfile,
-        agentStateRows,
+        ctx.states.forAgent(agent.id),
       );
       setEffectivePersonality(agent.id, effective);
     }
   }
 
   // ── Pass 2: Cascades (max depth 2) ────────────────────────────────────────
-  applyCascades(pendingCascades, nowMinutes, 0, 2);
+  applyCascades(pendingCascades, nowMinutes, 0, 2, ctx);
 
   // ── Pass 3: Side effects ──────────────────────────────────────────────────
   for (const agent of allAgents) {
-    const states = db
-      .select()
-      .from(agentStates)
-      .where(eq(agentStates.agent_id, agent.id))
-      .all();
-    processStateEffects(agent, states, allAgents, nowMinutes, currentTick, world.tick_speed);
+    processStateEffects(agent, ctx.states.forAgent(agent.id), allAgents, nowMinutes, currentTick, world.tick_speed, ctx);
   }
 
   // ── Blackmail self-expose: honest victims have a small daily chance to expose ──
   // Once per game day, on the day rollover. `currentTick % 1440 < 2` rolled on
   // two consecutive ticks (doubling the chance) and every 1440 TICKS, which is
   // every 4 game days at 4x.
-  if (dayChanged(world.pending_transitions)) {
-    const blackmailFacts = db.select().from(shared_knowledge)
-      .where(and(eq(shared_knowledge.type, 'blackmail'), eq(shared_knowledge.is_active, true)))
-      .all();
-    for (const fact of blackmailFacts) {
-      const victimId = fact.target_id;
-      if (!victimId) continue;
-      const victim = db.select({ personality: agents.personality, name: agents.name }).from(agents).where(eq(agents.id, victimId)).get();
-      if (!victim?.personality) continue;
-      const honesty = (victim.personality as any).honesty ?? 50;
-      if (honesty > 60 && Math.random() < 0.05) {
-        // Self-expose: make the secret public, deactivate blackmail
-        db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, fact.id)).run();
-        simEvents.emit('state:triggered', { agentId: victimId, state: 'relieved', cause: 'exposed blackmail secret publicly' });
-        logActivity({ type: 'drama', initiator: victimId, templateData: { description: `${victim.name} publicly exposed their blackmailer's leverage, ending the blackmail.` } });
-      }
-    }
-  }
+  if (dayChanged(world.pending_transitions)) exposeBlackmailOnDayChange();
 
   // Public-knowledge spread is the gossip phase's job (gossipEngine.ts); it
   // used to run here too, doubling the work without changing the outcome.
   deactivateStaleFacts();
 
   // ── Death check — runs after all state processing ────────────────────
-  // Track agents who die this tick so Pass 3 (already run) didn't harm anything,
-  // and we avoid processing the same agent twice.
-  const diedThisTick = new Set<number>();
   // The wizard's "Death Enabled" rule (B20). Off means no one dies of anything
   // here — starvation, illness, drink, age or accident; the causes' states
   // (sick, alcoholic, ...) still run their course, they just aren't fatal.
-  const deathEnabled = isDeathEnabled();
-  for (const agent of deathEnabled ? allAgents : []) {
-    const agentNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
+  if (isDeathEnabled()) runDeathChecks(allAgents, nowMinutes, season, world.tick_speed, ctx);
+
+  emitter.markDirty('agents.all');
+}
+
+// ─── Pass 1a: expiry ──────────────────────────────────────────────────────────
+
+/** Delete the agent's time-bounded states whose duration has run out. */
+function expireTimedStates(
+  agent: AgentRow,
+  stateRows: readonly AgentStateRow[],
+  nowMinutes: number,
+  pendingCascades: CascadeEntry[],
+) {
+  for (const state of stateRows) {
+    const def = STATE_DEFINITIONS[state.type as StateType];
+    if (def?.conditionalExit) continue; // handled in 1b
+    if (state.started_at + state.duration > nowMinutes) continue;
+
+    // Track sickness recovery for immunity cooldown
+    if (state.type === 'sick') {
+      sickRecoveredAt.set(agent.id, nowMinutes);
+      logActivity({
+        type: 'state_lost',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: 'sick' },
+      });
+    } else if (state.type === 'arrested') {
+      // Release: the town remembers, so the sentence becomes a gossip fact.
+      logActivity({
+        type: 'drama',
+        initiator: agent.id,
+        severity: 0.5,
+        templateData: {
+          description: `${agent.name} was released from prison after ${Math.round(state.duration / 60)} hours.`,
+        },
+      });
+    } else {
+      logActivity({
+        type: 'state_lost',
+        initiator: agent.id,
+        templateData: { agent: agent.name, state: state.type },
+      });
+    }
+    simEvents.emit('state:cleared', { agentId: agent.id, state: state.type });
+    collectExpiryCascades(state, agent, pendingCascades);
+    db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
+  }
+}
+
+// ─── Day change: blackmail self-exposure ──────────────────────────────────────
+
+/** Honest blackmail victims have a small daily chance to expose the secret themselves. */
+function exposeBlackmailOnDayChange() {
+  const blackmailFacts = db.select().from(shared_knowledge)
+    .where(and(eq(shared_knowledge.type, 'blackmail'), eq(shared_knowledge.is_active, true)))
+    .all();
+  for (const fact of blackmailFacts) {
+    const victimId = fact.target_id;
+    if (!victimId) continue;
+    const victim = db.select({ personality: agents.personality, name: agents.name }).from(agents).where(eq(agents.id, victimId)).get();
+    if (!victim?.personality) continue;
+    const honesty = (victim.personality as any).honesty ?? 50;
+    if (honesty > 60 && Math.random() < 0.05) {
+      // Self-expose: make the secret public, deactivate blackmail
+      db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, fact.id)).run();
+      simEvents.emit('state:triggered', { agentId: victimId, state: 'relieved', cause: 'exposed blackmail secret publicly' });
+      logActivity({ type: 'drama', initiator: victimId, templateData: { description: `${victim.name} publicly exposed their blackmailer's leverage, ending the blackmail.` } });
+    }
+  }
+}
+
+// ─── Death check ──────────────────────────────────────────────────────────────
+
+/** Runs after all state processing, so a death never cuts a side effect short. */
+function runDeathChecks(
+  allAgents: AgentRow[],
+  nowMinutes: number,
+  season: string,
+  tickSpeed: number,
+  ctx: StatesTickContext,
+) {
+  // Agents who died this tick, so the same agent is never processed twice.
+  const diedThisTick = new Set<number>();
+  for (const agent of allAgents) {
+    // Through the snapshot, which re-reads after any needs write: a death
+    // (processAgentDeath) fires listeners that can touch the survivors' needs.
+    const agentNeeds = ctx.needsOf(agent.id);
     if (!agentNeeds) continue;
 
-    const states = db.select().from(agentStates).where(eq(agentStates.agent_id, agent.id)).all();
-    const econ = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+    const states = ctx.states.forAgent(agent.id);
     const action = (agent.current_action as any)?.type ?? 'idle';
     const isOutdoors = agent.current_location == null;
 
     const deathCause = checkDeathTriggers(
       { id: agent.id, name: agent.name, age: agent.age },
-      nowMinutes, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season, world.tick_speed,
+      nowMinutes, states as any, agentNeeds, ctx.jobOf(agent.id) ?? '', action, isOutdoors, season, tickSpeed,
     );
 
     if (deathCause && !diedThisTick.has(agent.id)) {
@@ -335,15 +424,13 @@ export function statesTick() {
       processAgentDeath(agent.id, agent.name, deathCause, nowMinutes);
     }
   }
-
-  emitter.markDirty('agents.all');
 }
 
 // ─── computeEffectivePersonality ──────────────────────────────────────────────
 
 function computeEffectivePersonality(
   base: PersonalityProfile,
-  states: Array<{ type: string; severity: number }>,
+  states: ReadonlyArray<{ type: string; severity: number }>,
 ): PersonalityProfile {
   const effective = { ...base };
 
@@ -406,6 +493,7 @@ function evaluateTriggers(
   allAgents: Array<typeof agents.$inferSelect>,
   /** Game minutes per tick, for windows over wall-clock-stamped tables. */
   tickSpeed: number,
+  ctx: StatesTickContext,
 ) {
   const personality = agent.personality as PersonalityProfile | null;
   if (!personality) return;
@@ -413,15 +501,10 @@ function evaluateTriggers(
   // ── Drunk ─────────────────────────────────────────────────────────────────
   if (!activeTypes.has('drunk') && !activeTypes.has('hungover')) {
     if (agent.current_location != null && personality.impulsiveness > 40) {
-      const loc = db
-        .select({ type: locations.type })
-        .from(locations)
-        .where(eq(locations.id, agent.current_location))
-        .get();
       // impulsiveness / 10000 per GAME MINUTE at the tavern: a 70-impulsiveness
       // agent has ~0.7% a minute to start drinking. Rolled per tick through
       // chancePerTick so an hour at the tavern carries the same risk at any speed.
-      if (loc?.type === 'tavern' && Math.random() < chancePerTick(personality.impulsiveness / 10000, tickSpeed)) {
+      if (ctx.locationType(agent.current_location) === 'tavern' && Math.random() < chancePerTick(personality.impulsiveness / 10000, tickSpeed)) {
         const severity = clamp(0.3 + (personality.impulsiveness / 100) * 0.7, 0, 1);
         const duration = Math.floor(120 + Math.random() * 120); // 2-4 hours
         db.insert(agentStates)
@@ -543,8 +626,7 @@ function evaluateTriggers(
 
   // ── In Debt ──────────────────────────────────────────────────────────────
   if (!activeTypes.has('in_debt')) {
-    const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
-      .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+    const eco = ctx.economyOf(agent.id);
     // `<= 0`, not `=== 0`: sale tax splits leave fractional balances and
     // disasters can push money negative, and both are more broke than zero.
     if (eco && eco.money <= 0) {
@@ -584,8 +666,16 @@ function evaluateTriggers(
     // wall clock at the current speed. A fixed ms window covered four times the
     // game time at 4x.
     const sinceWindow = Date.now() - gameMinutesToMs(60, tickSpeed);
+    // Projected (here and in the checks below): these run per agent per tick,
+    // and `select()` mapped every column of every row — descriptions, tags,
+    // whole conversation transcripts — to read two or three of them.
     const recentRomanceDrops = db
-      .select()
+      .select({
+        agent_a: relationshipEvents.agent_a,
+        agent_b: relationshipEvents.agent_b,
+        romance_delta_ab: relationshipEvents.romance_delta_ab,
+        romance_delta_ba: relationshipEvents.romance_delta_ba,
+      })
       .from(relationshipEvents)
       .where(
         and(
@@ -639,7 +729,7 @@ function evaluateTriggers(
     // game time at 4x.
     const sinceWindow = Date.now() - gameMinutesToMs(60, tickSpeed);
     const badConvos = db
-      .select()
+      .select({ participants: conversations.participants, sentiment: conversations.sentiment })
       .from(conversations)
       .where(
         and(
@@ -727,7 +817,7 @@ function evaluateTriggers(
     // game time at 4x.
     const sinceWindow = Date.now() - gameMinutesToMs(90, tickSpeed);
     const positiveConvoRows = db
-      .select()
+      .select({ participants: conversations.participants })
       .from(conversations)
       .where(
         and(
@@ -770,7 +860,7 @@ function evaluateTriggers(
     for (const removedId of removedAgentIds) {
       // Check if they had a close friendship
       const rel = db
-        .select()
+        .select({ agent_a: relationships.agent_a, friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })
         .from(relationships)
         .where(
           or(
@@ -816,7 +906,7 @@ function evaluateTriggers(
   // ── Infatuated ────────────────────────────────────────────────────────────
   if (!activeTypes.has('infatuated') && personality.sensuality > 40) {
     const rels = db
-      .select()
+      .select(PAIR_ROMANCE)
       .from(relationships)
       .where(or(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, agent.id)))
       .all();
@@ -850,7 +940,7 @@ function evaluateTriggers(
 
         // Check for affair: does the target have romance > 40 with any third agent?
         const targetRomanceRels = db
-          .select()
+          .select(PAIR_ROMANCE)
           .from(relationships)
           .where(or(eq(relationships.agent_a, targetId), eq(relationships.agent_b, targetId)))
           .all();
@@ -881,11 +971,10 @@ function evaluateTriggers(
 
   // ── Jealous ──────────────────────────────────────────────────────────────
   if (!activeTypes.has('jealous') && activeTypes.has('infatuated')) {
-    const infatuatedState = db.select().from(agentStates)
-      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'infatuated'))).get();
+    const infatuatedState = ctx.states.find(agent.id, 'infatuated');
     if (infatuatedState?.target_agent_id) {
       const loveInterestId = infatuatedState.target_agent_id;
-      const loveInterestRels = db.select().from(relationships)
+      const loveInterestRels = db.select(PAIR_ROMANCE).from(relationships)
         .where(or(eq(relationships.agent_a, loveInterestId), eq(relationships.agent_b, loveInterestId))).all();
       for (const rel of loveInterestRels) {
         const isA = rel.agent_a === loveInterestId;
@@ -929,7 +1018,7 @@ function evaluateTriggers(
         // (one real second per game minute); kept, only made speed-independent.
         const sinceWindow = Date.now() - gameMinutesToMs(3600, tickSpeed);
         const positiveConvoRows = db
-          .select()
+          .select({ participants: conversations.participants })
           .from(conversations)
           .where(
             and(
@@ -980,11 +1069,7 @@ function evaluateTriggers(
     let depressSource = '';
 
     // Lonely for > 3 days (4320 minutes)
-    const lonelyState = db
-      .select()
-      .from(agentStates)
-      .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'lonely')))
-      .get();
+    const lonelyState = ctx.states.find(agent.id, 'lonely');
     if (lonelyState && nowMinutes - lonelyState.started_at > 4320) {
       shouldDepress = true;
       depressSource = 'cascade:lonely';
@@ -1100,12 +1185,13 @@ export function isHeld(metadata: unknown, nowMinutes: number): boolean {
 }
 
 function checkConditionalExits(
-  stateRows: Array<typeof agentStates.$inferSelect>,
+  stateRows: readonly AgentStateRow[],
   agentNeeds: typeof needsTable.$inferSelect | undefined,
   agent: typeof agents.$inferSelect,
   nowMinutes: number,
   /** Game minutes per tick, for windows over wall-clock-stamped tables. */
   tickSpeed: number,
+  ctx: StatesTickContext,
 ) {
   for (const state of stateRows) {
     if (!STATE_DEFINITIONS[state.type as StateType]?.conditionalExit) continue;
@@ -1228,8 +1314,7 @@ function checkConditionalExits(
           break;
         }
         // Recovery path 2: rock bottom (money = 0, no food)
-        const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
-          .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        const eco = ctx.economyOf(agent.id);
         if (eco && eco.money <= 0) {
           const hasFood = foodCount(eco.inventory) > 0;
           if (!hasFood && Math.random() < chancePerTick(0.01, tickSpeed)) { // 1% per game minute
@@ -1287,8 +1372,7 @@ function checkConditionalExits(
       }
 
       case 'in_debt': {
-        const eco = db.select({ money: economyTable.money })
-          .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        const eco = ctx.economyOf(agent.id);
         shouldExit = eco != null && eco.money > 20;
         if (shouldExit) brokeSince.delete(agent.id);
         break;
@@ -1388,6 +1472,7 @@ function applyCascades(
   nowMinutes: number,
   depth: number,
   maxDepth: number,
+  ctx: StatesTickContext,
 ) {
   if (depth >= maxDepth || cascades.length === 0) return;
 
@@ -1395,17 +1480,7 @@ function applyCascades(
 
   for (const cascade of cascades) {
     // Check if this state already exists for the agent
-    const existing = db
-      .select()
-      .from(agentStates)
-      .where(
-        and(
-          eq(agentStates.agent_id, cascade.agentId),
-          eq(agentStates.type, cascade.stateType),
-        ),
-      )
-      .get();
-    if (existing) continue;
+    if (ctx.states.find(cascade.agentId, cascade.stateType)) continue;
 
     let duration: number;
     let severity = cascade.severity ?? 0.5;
@@ -1459,7 +1534,7 @@ function applyCascades(
   }
 
   if (nextCascades.length > 0) {
-    applyCascades(nextCascades, nowMinutes, depth + 1, maxDepth);
+    applyCascades(nextCascades, nowMinutes, depth + 1, maxDepth, ctx);
   }
 }
 
@@ -1467,13 +1542,14 @@ function applyCascades(
 
 function processStateEffects(
   agent: typeof agents.$inferSelect,
-  states: Array<typeof agentStates.$inferSelect>,
+  states: readonly AgentStateRow[],
   allAgents: Array<typeof agents.$inferSelect>,
   nowMinutes: number,
   /** TICK clock, for the tick-stamped memory stream only. */
   currentTick: number,
   /** Game minutes per tick, for durations accumulated per call. */
   tickSpeed: number,
+  ctx: StatesTickContext,
 ) {
   const personality = agent.personality as PersonalityProfile | null;
 
@@ -1527,14 +1603,7 @@ function processStateEffects(
           // Contagion after 30 minutes together, rolled per tick via chancePerTick.
           if (coLocMinutes > 30 && Math.random() < chancePerTick(contagionChancePerMinute(), tickSpeed)) {
             // Spread sick only if other doesn't already have it
-            const alreadySick = db
-              .select()
-              .from(agentStates)
-              .where(
-                and(eq(agentStates.agent_id, other.id), eq(agentStates.type, 'sick')),
-              )
-              .get();
-            if (!alreadySick) {
+            if (!ctx.states.find(other.id, 'sick')) {
               const severity = 0.2 + Math.random() * 0.4;
               const duration = Math.floor(360 + Math.random() * 720); // 6-18 hours
               db.insert(agentStates)
@@ -1554,11 +1623,8 @@ function processStateEffects(
         }
 
         // Doctor/medical_assistant at same location heals — consumes medicine for faster cure
-        const healerNearby = allAgents.find((a) => {
-          if (a.id === agent.id || a.current_location !== agent.current_location) return false;
-          const econ = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, a.id)).get();
-          return econ && (econ.job === 'doctor' || econ.job === 'medical_assistant');
-        });
+        const healerNearby = allAgents.find((a) =>
+          a.id !== agent.id && a.current_location === agent.current_location && isHealerJob(ctx.jobOf(a.id)));
         if (healerNearby) {
           const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, healerNearby.id)).get();
           const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
@@ -1732,7 +1798,7 @@ function processStateEffects(
 
         // Find if target is in a conversation with a high-sensuality agent
         const targetConvo = db
-          .select()
+          .select({ participants: conversations.participants })
           .from(conversations)
           .where(eq(conversations.status, 'active'))
           .all()
@@ -1783,12 +1849,7 @@ function processStateEffects(
 
         if (!negativeConvo) break;
 
-        const alreadyAngry = db
-          .select()
-          .from(agentStates)
-          .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'angry')))
-          .get();
-        if (alreadyAngry) break;
+        if (ctx.states.find(agent.id, 'angry')) break;
 
         const parts = negativeConvo.participants as number[];
         const targetId = parts.find((p) => p !== agent.id);
@@ -2100,12 +2161,11 @@ function processStateEffects(
 
   // ── Doctor: treat alcoholism and depression at clinic ──────────────────
   if (agent.current_location != null) {
-    const agentEconJob = db.select({ job: economyTable.job }).from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
-    if (agentEconJob && (agentEconJob.job === 'doctor' || agentEconJob.job === 'medical_assistant')) {
+    if (isHealerJob(ctx.jobOf(agent.id))) {
       // Zone gate: healer must be at clinic:exam_room
       const healerZone = zoneOccupancy.findAgentZone(agent.id);
       const inClinicExamRoom = healerZone?.building === 'clinic' && healerZone.zone === 'exam_room';
-      const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+      const healerEcon = ctx.economyOf(agent.id);
       const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
         (i: any) => i.itemId === 'medicine' && i.quantity > 0
       );
@@ -2116,8 +2176,7 @@ function processStateEffects(
         );
 
         for (const patient of nearbyPatients) {
-          const patientStates = db.select().from(agentStates)
-            .where(eq(agentStates.agent_id, patient.id)).all();
+          const patientStates = ctx.states.forAgent(patient.id);
 
           // Treat alcoholism: consume medicine, trigger recovery
           const alcoholicState = patientStates.find(s => s.type === 'alcoholic');
@@ -2192,11 +2251,10 @@ function processStateEffects(
 
   // ── Gambling: impulsive agents at tavern gamble (not state-dependent) ──
   if (personality && personality.impulsiveness > 40 && agent.current_location != null) {
-    const loc = db.select({ type: locations.type }).from(locations).where(eq(locations.id, agent.current_location)).get();
     // Zone gate: gambling requires tavern:tables zone
     const gamblerZone = zoneOccupancy.findAgentZone(agent.id);
     const atTables = gamblerZone?.building === 'tavern' && gamblerZone.zone === 'tables';
-    if (loc?.type === 'tavern' && atTables && Math.random() < chancePerTick(0.08, tickSpeed)) { // 8%/game minute
+    if (ctx.locationType(agent.current_location) === 'tavern' && atTables && Math.random() < chancePerTick(0.08, tickSpeed)) { // 8%/game minute
       const agentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
       if (agentEcon && agentEcon.money > 10) {
         const nearbyAgents = allAgents.filter(
@@ -2278,9 +2336,7 @@ function processStateEffects(
               gamblingHistory.set(agent.id, recentGambles);
 
               // Trigger gambling_addict state if 5+ gambles in 3 days
-              const agentActiveTypes = new Set(
-                db.select({ type: agentStates.type }).from(agentStates).where(eq(agentStates.agent_id, agent.id)).all().map(s => s.type)
-              );
+              const agentActiveTypes = new Set(ctx.states.forAgent(agent.id).map(s => s.type));
               if (recentGambles.length >= 5 && !agentActiveTypes.has('gambling_addict')) {
                 db.insert(agentStates).values({
                   agent_id: agent.id,

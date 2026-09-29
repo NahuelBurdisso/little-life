@@ -7,7 +7,8 @@ import { db } from '../../db';
 import { agents, agentStates, needs, economy, relationships, worldState, goals, locations } from '../../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { createFact, getAgentName, jealousRumorContext, type FactContext } from '../gossip';
-import { describeWitnessedAct } from './WitnessAmplifier';
+import { describeWitnessedAct, type WitnessAmplifier } from './WitnessAmplifier';
+import type { TensionTracker } from './TensionTracker';
 import { logActivity } from '../activityLogger';
 import { gameMinutesNow } from '../worldClock';
 import { getRules, type LiveRules } from '../worldRules';
@@ -23,6 +24,24 @@ interface QueueItem {
 interface RippleEngineOptions {
   rules?: RippleRule[];
   dryRun?: boolean;
+}
+
+/**
+ * The parts of the optional sub-systems the engine calls. Narrow on purpose:
+ * the engine only feeds tension and hands witnesses their behaviors, and a test
+ * can plug in a stand-in without building a whole tracker.
+ */
+export type RippleTensionSink = Pick<TensionTracker, 'addTension'>;
+export type RippleWitnessAmplifier = Pick<WitnessAmplifier, 'getWitnessBehaviors' | 'applyBehaviors'>;
+
+/** Run `read` on first call only, then keep answering with its result. */
+function once<T>(read: () => T): () => T {
+  let done = false;
+  let value: T;
+  return () => {
+    if (!done) { value = read(); done = true; }
+    return value;
+  };
 }
 
 /**
@@ -60,8 +79,8 @@ export class RippleEngine {
   private tickEventCount: number;
   private eventQueue: Array<QueueItem>;
   private dryRun: boolean;
-  private tensionTracker?: any;
-  private witnessAmplifier?: any;
+  private tensionTracker?: RippleTensionSink;
+  private witnessAmplifier?: RippleWitnessAmplifier;
 
   constructor(options: RippleEngineOptions = {}) {
     this.rules = options.rules ?? RIPPLE_RULES;
@@ -77,11 +96,11 @@ export class RippleEngine {
 
   // ─── Public setters for optional sub-systems ────────────────────────────────
 
-  setTensionTracker(tracker: any): void {
+  setTensionTracker(tracker: RippleTensionSink): void {
     this.tensionTracker = tracker;
   }
 
-  setWitnessAmplifier(amplifier: any): void {
+  setWitnessAmplifier(amplifier: RippleWitnessAmplifier): void {
     this.witnessAmplifier = amplifier;
   }
 
@@ -357,6 +376,11 @@ export class RippleEngine {
 
   private handleEvent(source: string, payload: any): void {
     const nowMinutes = gameMinutesNow();
+    // One context for every filter of this event: nothing below writes before
+    // the queue runs, so each rule's filter would read the same answers. It was
+    // rebuilt per filtered rule, and eagerly — 3-4 queries a rule, for filters
+    // that (today) all read only the payload.
+    let filterCtx: RippleContext | undefined;
 
     // Find all rules matching this source
     for (const rule of this.rules) {
@@ -367,8 +391,8 @@ export class RippleEngine {
 
       // Apply source filter if present
       if (rule.sourceFilter) {
-        const ctx = this.buildContext(payload);
-        if (!rule.sourceFilter(payload, ctx)) continue;
+        filterCtx ??= this.buildContext(payload);
+        if (!rule.sourceFilter(payload, filterCtx)) continue;
       }
 
       // Determine target agent ID
@@ -582,50 +606,64 @@ export class RippleEngine {
 
   // ─── DB helper methods ────────────────────────────────────────────────────────
 
+  /**
+   * The context a rule's filter and requirements are judged in.
+   *
+   * Every field is read on first use and then kept, instead of all up front:
+   * the eager version cost 3-4 queries (clock, agent row, co-located agents,
+   * perpetrator) per build, and most rules read one field or none — a `requires`
+   * of `state: 'drunk'` only ever needed `getAgentStates`. Callers read the
+   * context before firing anything (evaluateAndFire checks requirements before
+   * executing effects), so a field read late sees what an eager read would have.
+   */
   private buildContext(payload: any): RippleContext {
     const agentId = payload?._resolvedAgentId ?? payload?.agentId ?? 0;
-    const currentTick = this.getCurrentTick();
 
-    // Get target agent info
-    const agentRow = agentId ? db.select({ id: agents.id, current_location: agents.current_location, personality: agents.personality })
-      .from(agents)
-      .where(eq(agents.id, agentId))
-      .get() : null;
+    const agentRow = once(() => agentId
+      ? db.select({ id: agents.id, current_location: agents.current_location, personality: agents.personality })
+        .from(agents)
+        .where(eq(agents.id, agentId))
+        .get() ?? null
+      : null);
 
-    const locationId = agentRow?.current_location ?? null;
+    const targetAgent = once((): RippleContext['targetAgent'] => {
+      const row = agentRow();
+      return {
+        id: row?.id ?? agentId,
+        current_location: row?.current_location ?? null,
+        personality: row?.personality as PersonalityProfile | null ?? null,
+      };
+    });
 
-    // Get agents at same location
-    const coLocatedRows = locationId != null
-      ? db.select({ id: agents.id, personality: agents.personality })
-          .from(agents)
-          .where(and(eq(agents.current_location, locationId), eq(agents.is_active, true)))
-          .all()
-      : [];
+    // Agents at the target's location
+    const agentsAtLocation = once((): RippleContext['agentsAtLocation'] => {
+      const locationId = agentRow()?.current_location ?? null;
+      if (locationId == null) return [];
+      return db.select({ id: agents.id, personality: agents.personality })
+        .from(agents)
+        .where(and(eq(agents.current_location, locationId), eq(agents.is_active, true)))
+        .all()
+        .map(r => ({ id: r.id, personality: r.personality as PersonalityProfile | null }));
+    });
 
-    // Build perpetrator info if available
-    const perpetratorId = payload?.perpetratorId ?? payload?.agentId;
-    let perpetratorAgent: RippleContext['perpetratorAgent'] | undefined;
-    if (perpetratorId && perpetratorId !== agentId) {
+    // Perpetrator info, if the event names someone other than the target
+    const perpetratorAgent = once((): RippleContext['perpetratorAgent'] => {
+      const perpetratorId = payload?.perpetratorId ?? payload?.agentId;
+      if (!perpetratorId || perpetratorId === agentId) return undefined;
       const perpRow = db.select({ id: agents.id, current_location: agents.current_location })
         .from(agents)
         .where(eq(agents.id, perpetratorId))
         .get();
-      if (perpRow) {
-        perpetratorAgent = { id: perpRow.id, current_location: perpRow.current_location };
-      }
-    }
+      return perpRow ? { id: perpRow.id, current_location: perpRow.current_location } : undefined;
+    });
+
+    const currentTick = once(() => this.getCurrentTick());
 
     return {
-      targetAgent: {
-        id: agentRow?.id ?? agentId,
-        current_location: agentRow?.current_location ?? null,
-        personality: agentRow?.personality as PersonalityProfile | null ?? null,
-      },
-      perpetratorAgent,
-      agentsAtLocation: coLocatedRows.map(r => ({
-        id: r.id,
-        personality: r.personality as PersonalityProfile | null,
-      })),
+      get targetAgent() { return targetAgent(); },
+      get perpetratorAgent() { return perpetratorAgent(); },
+      get agentsAtLocation() { return agentsAtLocation(); },
+      get currentTick() { return currentTick(); },
       getRelationship: (a: number, b: number) => {
         const lo = Math.min(a, b);
         const hi = Math.max(a, b);
@@ -679,7 +717,6 @@ export class RippleEngine {
           .get();
         return row ?? { money: 0, work_performance: 0 };
       },
-      currentTick,
     };
   }
 

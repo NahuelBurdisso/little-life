@@ -105,4 +105,21 @@ describe('ReflectionTrigger', () => {
     const result = customTrigger.check(100);
     expect(result).toContain(1);
   });
+
+  it('skips the threshold lookup below the floor and during cooldown', () => {
+    // The production threshold reads personality from the DB; below its floor
+    // (and while cooling down) the answer is known without that read.
+    const calls: number[] = [];
+    const floored = new ReflectionTrigger((id) => { calls.push(id); return 100; }, 80);
+    floored.onMemoryCreated(1, 50);  // below the floor: no lookup
+    floored.onMemoryCreated(2, 90);  // above the floor, below 100: lookup, no trigger
+    floored.onMemoryCreated(3, 120); // triggers
+    expect(floored.check(100)).toEqual([3]);
+    expect(calls).toEqual([2, 3]);
+
+    calls.length = 0;
+    floored.onMemoryCreated(3, 120); // cooling down: no lookup
+    expect(floored.check(110)).toEqual([]);
+    expect(calls).toEqual([2]);
+  });
 });

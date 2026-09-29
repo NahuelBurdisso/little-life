@@ -203,13 +203,25 @@ function migrateSchema() {
 // uncommitted row, and the phase then throws, the snapshot keeps a state that no
 // longer exists. Whoever catches a rolled-back transaction must therefore call
 // `invalidateAgentStatesCache()` (lib/states.ts) — the tick's phase runner does.
+//
+// A second counter, `agentStatesRowVersion`, also moves on updates that only
+// touch a row's content (severity, duration, metadata). The type snapshot does
+// not care about those — rebuilding it for every metadata write would be waste —
+// but a snapshot of whole rows (`AgentStateRowsSnapshot`, lib/states.ts) does.
+// Every write that bumps the first counter bumps this one too.
 let agentStatesWriteVersion = 0;
+let agentStatesRowVersion = 0;
 sqlite.function('ll_agent_states_written', { deterministic: false }, () => {
   agentStatesWriteVersion++;
+  agentStatesRowVersion++;
+  return null;
+});
+sqlite.function('ll_agent_states_row_written', { deterministic: false }, () => {
+  agentStatesRowVersion++;
   return null;
 });
 
-const AGENT_STATES_TRIGGERS = ['ll_agent_states_ai', 'll_agent_states_ad', 'll_agent_states_au'];
+const AGENT_STATES_TRIGGERS = ['ll_agent_states_ai', 'll_agent_states_ad', 'll_agent_states_au', 'll_agent_states_au_row'];
 
 let agentStatesHookInstalled = false;
 function installAgentStatesWriteHook(): boolean {
@@ -222,6 +234,8 @@ function installAgentStatesWriteHook(): boolean {
         BEGIN SELECT ll_agent_states_written(); END;
       CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_au AFTER UPDATE OF agent_id, type ON main.agent_states
         BEGIN SELECT ll_agent_states_written(); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_au_row AFTER UPDATE ON main.agent_states
+        BEGIN SELECT ll_agent_states_row_written(); END;
     `);
     agentStatesHookInstalled = true;
   } catch (err) {
@@ -236,7 +250,8 @@ function installAgentStatesWriteHook(): boolean {
 }
 
 /**
- * Re-check that the write triggers still exist and reinstall them if not.
+ * Re-check that every write-counting trigger still exists and reinstall the
+ * missing ones (agent_states above, the counted tables below).
  *
  * TEMP triggers die with their table: anything that drops and recreates
  * `agent_states` on this connection (a migration, a test harness, a future
@@ -246,15 +261,25 @@ function installAgentStatesWriteHook(): boolean {
  * that blind spot to a single tick. A reinstall also bumps the counter, since
  * writes may have gone unseen while the triggers were missing.
  */
-export function verifyAgentStatesWriteHook(): void {
-  const placeholders = AGENT_STATES_TRIGGERS.map(() => '?').join(', ');
-  const present = sqlite
-    .prepare(`SELECT count(*) AS n FROM sqlite_temp_master WHERE type = 'trigger' AND name IN (${placeholders})`)
-    .get(...AGENT_STATES_TRIGGERS) as { n: number };
-  if (present.n === AGENT_STATES_TRIGGERS.length) return;
-  agentStatesHookInstalled = false;
-  agentStatesWriteVersion++;
-  installAgentStatesWriteHook();
+export function verifyWriteHooks(): void {
+  const expected = [...AGENT_STATES_TRIGGERS, ...COUNTED_TABLES.flatMap(tableTriggerNames)];
+  const placeholders = expected.map(() => '?').join(', ');
+  const present = new Set((sqlite
+    .prepare(`SELECT name FROM sqlite_temp_master WHERE type = 'trigger' AND name IN (${placeholders})`)
+    .all(...expected) as Array<{ name: string }>).map((r) => r.name));
+  if (present.size === expected.length) return;
+  if (!AGENT_STATES_TRIGGERS.every((t) => present.has(t))) {
+    agentStatesHookInstalled = false;
+    agentStatesWriteVersion++;
+    agentStatesRowVersion++;
+    installAgentStatesWriteHook();
+  }
+  for (const table of COUNTED_TABLES) {
+    if (tableTriggerNames(table).every((t) => present.has(t))) continue;
+    tableHooksInstalled.delete(table);
+    tableWriteVersions[table]++;
+    installTableWriteHook(table);
+  }
 }
 
 /**
@@ -272,6 +297,68 @@ export function getAgentStatesWriteVersion(): number {
 }
 
 /**
+ * Like `getAgentStatesWriteVersion`, but also moves when an update changes only
+ * a row's content (severity, duration, metadata, ...). For caches that hold
+ * whole rows. Same rollback blind spot, same never-trust-without-a-hook rule.
+ */
+export function getAgentStatesRowVersion(): number {
+  if (!installAgentStatesWriteHook()) return ++agentStatesRowVersion;
+  return agentStatesRowVersion;
+}
+
+// ─── Write counters for other per-agent tables ────────────────────────────
+// The same TEMP-trigger counter, for tables a phase used to re-read once per
+// agent: `needs` and `economy` in the states phase, `goals` in the goals phase.
+// A snapshot scoped to one phase call (lib/rowsByAgentSnapshot.ts) reads the
+// table once and again only when the counter moved — a write by the phase itself or by a
+// simEvents listener it fired (the cascade engine changes moods and creates
+// goals from inside other phases' events). Same ROLLBACK blind spot as above,
+// which is why those snapshots never outlive the phase that built them.
+
+export type CountedTable = 'needs' | 'goals' | 'economy';
+const COUNTED_TABLES: readonly CountedTable[] = ['needs', 'goals', 'economy'];
+const tableWriteVersions: Record<CountedTable, number> = { needs: 0, goals: 0, economy: 0 };
+const tableHooksInstalled = new Set<CountedTable>();
+sqlite.function('ll_table_written', { deterministic: false }, (table: unknown) => {
+  tableWriteVersions[table as CountedTable]++;
+  return null;
+});
+
+function tableTriggerNames(table: CountedTable): string[] {
+  return [`ll_${table}_ai`, `ll_${table}_ad`, `ll_${table}_au`];
+}
+
+function installTableWriteHook(table: CountedTable): boolean {
+  if (tableHooksInstalled.has(table)) return true;
+  try {
+    sqlite.exec(`
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_${table}_ai AFTER INSERT ON main.${table}
+        BEGIN SELECT ll_table_written('${table}'); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_${table}_ad AFTER DELETE ON main.${table}
+        BEGIN SELECT ll_table_written('${table}'); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_${table}_au AFTER UPDATE ON main.${table}
+        BEGIN SELECT ll_table_written('${table}'); END;
+    `);
+    tableHooksInstalled.add(table);
+  } catch (err) {
+    // As installAgentStatesWriteHook: only a missing table (fresh DB) is expected.
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/no such table/i.test(message)) throw err;
+  }
+  return tableHooksInstalled.has(table);
+}
+
+/**
+ * Monotonic count of inserts, updates and deletes on `table` through this
+ * connection. Without an installed hook it returns a fresh value every call, so
+ * a cache keyed on it is never trusted (see getAgentStatesWriteVersion).
+ */
+export function getTableWriteVersion(table: CountedTable): number {
+  if (!installTableWriteHook(table)) return ++tableWriteVersions[table];
+  return tableWriteVersions[table];
+}
+
+/**
  * Create the perf indexes and apply additive column migrations.
  *
  * Safe to call more than once (every statement is idempotent), so it can be
@@ -280,6 +367,7 @@ export function getAgentStatesWriteVersion(): number {
 export function initSchema(): void {
   createPerfIndexes();
   installAgentStatesWriteHook();
+  for (const table of COUNTED_TABLES) installTableWriteHook(table);
   // Independent steps (see runStartupSteps): the clock rebase must not depend
   // on migrateSchema succeeding. It still runs after it, since the column
   // migrations add goals.completed_at, and it skips columns a file lacks.

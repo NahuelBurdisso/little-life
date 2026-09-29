@@ -10,6 +10,7 @@ import { eq, and } from 'drizzle-orm';
 import type { PersonalityProfile } from '../personality';
 import { gameMinutes } from '../gameClock';
 import { snapThresholdScale } from '../worldRules';
+import { getAgentStates } from '../states';
 import type { SnapshotStore } from '../../engine/snapshotCodec';
 
 // ─── Singleton instances ────────────────────────────────────────────────────
@@ -200,12 +201,11 @@ export function cascadeTick(): void {
       sleepingAgents.delete(agent.id);
     }
 
-    // Get agent's active states
-    const stateRows = db.select({ type: agentStates.type })
-      .from(agentStates)
-      .where(eq(agentStates.agent_id, agent.id))
-      .all();
-    const activeStates = stateRows.map(s => s.type);
+    // Get agent's active states. From the tick's state-type cache (built after
+    // the states phase, rebuilt on any write since): this loop used to run the
+    // same `select type ... where agent_id` per agent that the cache answers,
+    // in the same order (both walk idx_agent_states_agent_type).
+    const activeStates: string[] = getAgentStates(agent.id);
 
     // Update tension
     tensionTracker.tickUpdate(agent.id, activeStates, elapsedMinutes);
