@@ -9,6 +9,7 @@ import { gameMinutesNow } from '../worldClock';
 import { CONFIG } from '../constants';
 import { summarizeConversation, MIN_SUMMARY_LINES, type SummaryLine } from './conversationSummary';
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
+import { getImportance } from './ImportanceScorer';
 
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
@@ -43,14 +44,18 @@ export function clearPerceptionDedup(): void {
 }
 
 export function initMemoryObserver(memoryService: MemoryService): void {
+  // Movement. These events never fired before B21 (movement.ts compared the
+  // destination with itself), so this is the first time they reach memory, and
+  // every walk that changes place is one of each: a dozen or more a day per
+  // agent, each costing an embedding and feeding the reflection trigger. So:
+  // only the arrival is stored (it says where the agent went; the departure
+  // only repeats the previous arrival), at the importance ImportanceScorer
+  // gives `moved_to_location`, and once per place per perception window — back
+  // and forth to the same shop is one trip worth remembering, not four.
   simEvents.on('agent:arrived', ({ agentId, locationName }: { agentId: number; locationName: string }) => {
+    if (!shouldRecordPerception(agentId, `arrival|${locationName}`, gameMinutesNow())) return;
     const description = describeEvent('arrival', { location: locationName });
-    memoryService.record(agentId, 'observation', description, { subtype: 'movement' });
-  });
-
-  simEvents.on('agent:departed', ({ agentId, locationName }: { agentId: number; locationName: string }) => {
-    const description = describeEvent('departure', { location: locationName });
-    memoryService.record(agentId, 'observation', description, { subtype: 'movement' });
+    memoryService.record(agentId, 'observation', description, { subtype: 'movement' }, 0, getImportance('moved_to_location'));
   });
 
   simEvents.on('conversation:started', ({ agentId, otherName }: { agentId: number; otherName: string }) => {

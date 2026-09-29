@@ -28,6 +28,22 @@ type WorldRow = {
 // Stuck detection: track positions for walking agents
 const stuckTracker = new Map<number, { x: number; y: number; minutes: number }>();
 
+/**
+ * agentId → the location the agent was last standing in when not walking
+ * (null = out in the open). The origin of the walk in progress, which the
+ * agent row no longer knows: the walk loop moves `current_location` tick by
+ * tick as the walker crosses footprints, so by the time the walk ends the row
+ * already names the destination. completeArrival used to compare that row with
+ * the destination — the same id twice — and `agent:arrived`/`agent:departed`
+ * never fired (B21).
+ *
+ * Refreshed every tick for every agent that isn't walking, so an agent moved
+ * without a walk (arrest, a nudge rehousing them, a world reload) leaves from
+ * where they really are. Crossings on the way (the square between home and
+ * work) are deliberately not events: only where a walk starts and ends is.
+ */
+const walkOrigin = new Map<number, number | null>();
+
 // Cached terrain cost map — rebuilt when season changes
 let cachedCostMap: Float32Array | null = null;
 let cachedSeason: string = '';
@@ -50,6 +66,7 @@ export function invalidateCostMap(): void {
  */
 export function clearMovementState(): void {
   stuckTracker.clear();
+  walkOrigin.clear();
 }
 
 function getWorldCostMap(world: WorldRow, allLocations: LocationRow[]): Float32Array {
@@ -377,19 +394,22 @@ function completeArrival(
   const oldLocationId = agent.current_location;
   const newLocationId = findContainingLocation(destPoint, allLocations);
 
-  // Emit arrival event when entering a new location
-  if (newLocationId && newLocationId !== oldLocationId) {
-    const arrivedLoc = allLocations.find((l) => l.id === newLocationId);
-    if (arrivedLoc) {
-      simEvents.emit('agent:arrived', { agentId: agent.id, locationName: arrivedLoc.name });
-    }
-  }
-
-  // Emit departure event when leaving a location
-  if (oldLocationId && newLocationId !== oldLocationId) {
-    const departedLoc = allLocations.find((l) => l.id === oldLocationId);
+  // Arrival/departure are about where the walk started, not the row's
+  // location, which the walk loop has already moved on (see walkOrigin). An
+  // agent with no recorded origin (first walk after a restart that began
+  // mid-walk) falls back to the row, which at worst misses one departure.
+  const origin = walkOrigin.has(agent.id) ? (walkOrigin.get(agent.id) ?? null) : oldLocationId;
+  // A two-leg walk (door, then spot) arrives twice; the second leg starts
+  // from where the first ended.
+  walkOrigin.set(agent.id, newLocationId);
+  if (origin !== newLocationId) {
+    const departedLoc = origin != null ? allLocations.find((l) => l.id === origin) : undefined;
     if (departedLoc) {
       simEvents.emit('agent:departed', { agentId: agent.id, locationName: departedLoc.name });
+    }
+    const arrivedLoc = newLocationId != null ? allLocations.find((l) => l.id === newLocationId) : undefined;
+    if (arrivedLoc) {
+      simEvents.emit('agent:arrived', { agentId: agent.id, locationName: arrivedLoc.name });
     }
   }
 
@@ -455,8 +475,12 @@ export function tick(world: WorldRow): void {
       continue;
     }
 
-    if (agent.current_destination === null) continue;
-    if ((agent.current_action as any)?.type !== 'walking') continue;
+    if (agent.current_destination === null || (agent.current_action as any)?.type !== 'walking') {
+      walkOrigin.set(agent.id, agent.current_location);
+      continue;
+    }
+    // A walker first seen mid-walk (server restart): the best origin left.
+    if (!walkOrigin.has(agent.id)) walkOrigin.set(agent.id, agent.current_location);
 
     // Stuck detection: if agent hasn't made 4px of progress in 30 game minutes,
     // force idle. Game minutes, not ticks: a walker covers `tick_speed` minutes of
