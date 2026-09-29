@@ -16,6 +16,7 @@ import { TownStats } from "./components/ui/TownStats";
 import { Gazette } from "./components/ui/Gazette";
 import { useGazette } from "./hooks/useGazette";
 import { NewAgentDialog } from "./components/ui/NewAgentDialog";
+import { LocationPanel } from "./components/ui/LocationPanel";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
 import { ConversationHistory } from "./components/ui/ConversationHistory";
 import { useWorldState } from "./hooks/useWorldState";
@@ -38,6 +39,8 @@ export default function App() {
   const [setupComplete, setSetupComplete] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null); // string representation of numeric ID
   const [focusNonce, setFocusNonce] = useState(0);
+  // The building/open area whose LocationPanel is open (canvas click).
+  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
   const [showGazette, setShowGazette] = useState(false);
@@ -58,6 +61,7 @@ export default function App() {
     if (isNewSimulation) {
       setSetupComplete(false);
       setSelectedAgentId(null);
+      setSelectedLocationId(null);
       setShowEventMenu(false);
       setShowTownStats(false);
       setShowGazette(false);
@@ -102,6 +106,7 @@ export default function App() {
   // `handleWorldReplaced` directly for the replaces this tab asked for.
   const handleWorldReplaced = useCallback(() => {
     setSelectedAgentId(null);
+    setSelectedLocationId(null);
     setContextMenuAgent(null);
     setContextMenuPos(null);
   }, []);
@@ -138,6 +143,9 @@ export default function App() {
           setShowConvoHistory(false);
         } else if (showRelGraph) {
           setShowRelGraph(false);
+        } else if (selectedLocationId != null) {
+          // The location card floats over the map, so it is above the agent panel.
+          setSelectedLocationId(null);
         } else if (selectedAgentId) {
           setSelectedAgentId(null);
         }
@@ -145,13 +153,14 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, selectedAgentId]);
+  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, selectedLocationId, selectedAgentId]);
 
   // Keyboard controls
   useKeyboardControls({
     // The wizard and loading screen render before the sim exists; Space there
     // would unpause an unseeded world and drop the user into the main UI.
     enabled: Boolean(world) && !worldLoading && !(isNewSimulation && !setupComplete),
+    isPaused: Boolean(world?.is_paused),
     onTogglePause: () => nudge.togglePause(),
     onChangeSpeed: (speed: number) => nudge.changeSpeed(speed),
   });
@@ -160,7 +169,6 @@ export default function App() {
   const handleAgentHover = useCallback(
     (agentId: string | null, pos?: { x: number; y: number }) => {
       if (!agentId || !pos) {
-    isPaused: Boolean(world?.is_paused),
         setHoveredAgent(null);
         setHoverPos(null);
         return;
@@ -195,6 +203,11 @@ export default function App() {
     setContextMenuAgent(null);
     setContextMenuPos(null);
   }, []);
+
+  const selectedLocation =
+    selectedLocationId != null
+      ? ((locations ?? []).find((l) => l.id === selectedLocationId) ?? null)
+      : null;
 
   // Show setup wizard if simulation hasn't started
   if (isNewSimulation && !setupComplete) {
@@ -248,6 +261,8 @@ export default function App() {
           onAgentSelect={setSelectedAgentId}
           onAgentContextMenu={handleAgentContextMenu}
           onAgentHover={handleAgentHover}
+          onLocationSelect={setSelectedLocationId}
+          selectedLocationId={selectedLocationId}
           selectedAgentId={selectedAgentId}
           focusNonce={focusNonce}
         />
@@ -306,6 +321,21 @@ export default function App() {
         </button>
       </div>
 
+      {/* Clicked building / open area */}
+      {selectedLocation && (
+        <LocationPanel
+          location={selectedLocation}
+          agents={agents}
+          events={events ?? []}
+          hour={world?.time?.hour ?? null}
+          nowMinutes={world?.time ? gameMinutes(world.time) : null}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={focusAgent}
+          onClose={() => setSelectedLocationId(null)}
+          left={leftWidth + 24}
+        />
+      )}
+
       {/* Acknowledgements for player actions (lib/toast.ts) */}
       <Toasts />
 
@@ -349,6 +379,7 @@ export default function App() {
       <NewAgentDialog
         isOpen={showNewAgent}
         onClose={() => setShowNewAgent(false)}
+        onCreated={(id) => focusAgent(String(id))}
       />
       <RelationshipGraph
         isOpen={showRelGraph}
@@ -370,4 +401,3 @@ export default function App() {
     </div>
   );
 }
-        onCreated={(id) => focusAgent(String(id))}

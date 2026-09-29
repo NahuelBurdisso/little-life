@@ -9,6 +9,7 @@ import { WeatherEffects } from "./WeatherEffects";
 import { SpritePool, actionTypeOf } from "./SpritePool";
 import { BubbleSystem } from "./BubbleSystem";
 import { InteractionLayer } from "./InteractionLayer";
+import { locationAt, type LocationLike } from "../../lib/locationInfo";
 import { ParticleEngine } from "./particles/ParticleEngine";
 import { SYSTEM_FACTORIES } from "./systems";
 import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
@@ -92,6 +93,10 @@ interface GameCanvasProps {
   onAgentSelect: (agentId: string) => void;
   onAgentContextMenu: (agentId: string, pos: { x: number; y: number }) => void;
   onAgentHover: (agentId: string | null, pos?: { x: number; y: number }) => void;
+  /** A click on a building/open area (no agent under it); `null` = bare ground. */
+  onLocationSelect?: (locationId: number | null) => void;
+  /** The location whose panel is open; outlined on the map. */
+  selectedLocationId?: number | null;
   selectedAgentId: string | null;
   /** Bumped on every explicit focus request, so re-picking the same agent re-centers. */
   focusNonce?: number;
@@ -107,6 +112,8 @@ export const GameCanvas = React.memo(function GameCanvas({
   onAgentSelect,
   onAgentContextMenu,
   onAgentHover,
+  onLocationSelect,
+  selectedLocationId,
   selectedAgentId,
   focusNonce,
 }: GameCanvasProps) {
@@ -206,12 +213,17 @@ export const GameCanvas = React.memo(function GameCanvas({
   }, [conversations, agents, world]);
 
   // Stable callback refs so the interaction layer doesn't go stale
-  const callbacksRef = useRef({ onAgentSelect, onAgentContextMenu, onAgentHover });
-  callbacksRef.current = { onAgentSelect, onAgentContextMenu, onAgentHover };
+  const callbacksRef = useRef({ onAgentSelect, onAgentContextMenu, onAgentHover, onLocationSelect });
+  callbacksRef.current = { onAgentSelect, onAgentContextMenu, onAgentHover, onLocationSelect };
 
   const stableOnSelect = useCallback((id: string) => callbacksRef.current.onAgentSelect(id), []);
   const stableOnHover = useCallback((id: string | null, pos?: { x: number; y: number }) => callbacksRef.current.onAgentHover(id, pos), []);
   const stableOnContext = useCallback((id: string, pos: { x: number; y: number }) => callbacksRef.current.onAgentContextMenu(id, pos), []);
+  const stableOnLocation = useCallback((id: number | null) => callbacksRef.current.onLocationSelect?.(id), []);
+  const stableLocationAt = useCallback(
+    (x: number, y: number) => locationAt(x, y, (locationsRef.current ?? []) as LocationLike[])?.id ?? null,
+    [],
+  );
 
   /**
    * Tension + relationship lines. Anchored to interpolated sprite positions, so
@@ -423,6 +435,8 @@ export const GameCanvas = React.memo(function GameCanvas({
       onAgentSelect: stableOnSelect,
       onAgentHover: stableOnHover,
       onAgentContextMenu: stableOnContext,
+      locationAt: stableLocationAt,
+      onLocationSelect: stableOnLocation,
     });
     interaction.setup(app, worldContainer);
     interactionRef.current = interaction;
@@ -492,7 +506,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       particleEngineRef.current = null;
       worldContainerRef.current = null;
     };
-  }, [app, stableOnSelect, stableOnHover, stableOnContext]);
+  }, [app, stableOnSelect, stableOnHover, stableOnContext, stableLocationAt, stableOnLocation]);
 
   // Drive tilemap + camera dimensions from world state
   const mapW = (world as any)?.map_width ?? 0;
@@ -516,6 +530,14 @@ export const GameCanvas = React.memo(function GameCanvas({
     // effect it gates; if locations arrive first this effect must re-run once it
     // exists, otherwise the map stays empty.
   }, [locations, app]);
+
+  // Outline the location whose panel is open.
+  useEffect(() => {
+    const loc = selectedLocationId != null
+      ? (locations ?? []).find((l: any) => l.id === selectedLocationId)
+      : null;
+    buildingRendererRef.current?.setSelectedRect(loc?.position ?? null);
+  }, [selectedLocationId, locations, app]);
 
   // Update sprite targets when server data changes (sets targets, creates/removes sprites)
   useEffect(() => {

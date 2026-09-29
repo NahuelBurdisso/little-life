@@ -259,6 +259,8 @@ export class BuildingRenderer {
   private tooltipText: PIXI.Text;
   /** Outline drawn around the hovered building. World-space, so never scaled. */
   private hoverOutline: PIXI.Graphics;
+  /** Persistent outline on the location whose panel is open (see `setSelectedRect`). */
+  private selectedOutline: PIXI.Graphics;
 
   private buildings: Map<number, BuildingEntry> = new Map();
   /** How many agents each building currently holds, from the last `update()`. */
@@ -308,8 +310,13 @@ export class BuildingRenderer {
     this.hoverOutline.eventMode = 'none';
     this.hoverOutline.visible = false;
 
+    this.selectedOutline = new PIXI.Graphics();
+    this.selectedOutline.eventMode = 'none';
+    this.selectedOutline.visible = false;
+
     this.container.addChild(this.buildingLayer);
     this.container.addChild(this.hoverOutline);
+    this.container.addChild(this.selectedOutline);
     this.container.addChild(this.labelLayer);
     this.container.addChild(this.tooltipLayer);
 
@@ -372,10 +379,30 @@ export class BuildingRenderer {
     this.hoverOutline.visible = true;
   }
 
+  /**
+   * Outline the location whose panel is open, so a click on a building visibly
+   * "takes" and the panel's subject is unambiguous. Takes a raw rect rather than a
+   * building id because Main Street (no building entry) is selectable too.
+   */
+  setSelectedRect(rect: { x: number; y: number; width: number; height: number } | null): void {
+    this.selectedOutline.clear();
+    if (!rect) {
+      this.selectedOutline.visible = false;
+      return;
+    }
+    const { x, y, width, height } = rect;
+    this.selectedOutline.rect(x - 4, y - 4, width + 8, height + 8)
+      .stroke({ width: 2, color: 0xc8a84b, alpha: 0.95 });
+    this.selectedOutline.rect(x - 2, y - 2, width + 4, height + 4)
+      .stroke({ width: 1, color: 0x2a2016, alpha: 0.6 });
+    this.selectedOutline.visible = true;
+  }
+
   /** Wire hover on a building's hit graphic: fade the interior in, show the card. */
   private bindHover(g: PIXI.Container, id: number): void {
     g.eventMode = 'static';
-    g.cursor = 'default';
+    // Buildings are clickable (InteractionLayer -> LocationPanel), so say so.
+    g.cursor = 'pointer';
     g.on('pointerover', () => {
       this.hoveredBuildingId = id;
       this.syncInteriorVisibility();
