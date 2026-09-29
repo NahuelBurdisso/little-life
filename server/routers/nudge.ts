@@ -31,6 +31,7 @@ import {
 import { rumorReachedSubject } from '../lib/gossip';
 import { nightSkip } from '../engine/nightSkip';
 import { workplaceForJob } from '../lib/jobWorkplace';
+import { generateNewResident } from '../lib/newResident';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -453,19 +454,34 @@ export const nudgeRouter = router({
           }
 
           // Find workplace by the job's building type (null when jobless).
-          const workplace = workplaceForJob(job, db.select().from(locations).all());
+          const allLocations = db.select().from(locations).all();
+          const workplace = workplaceForJob(job, allLocations);
 
           const homeEntry = availableHome.entry_point as { x: number; y: number };
+
+          // Personality, gender, age, the job's real hours, free-time places
+          // that exist, a bio if the player left it blank, starting needs —
+          // seeded by the world and the name (lib/newResident.ts has why).
+          const worldSeed = (world.setup_config as { worldgen?: { seed?: unknown } } | null)?.worldgen?.seed;
+          const profile = generateNewResident({
+            name,
+            bio,
+            traits,
+            job,
+            worldSeed: typeof worldSeed === 'string' || typeof worldSeed === 'number' ? worldSeed : 'world',
+            availableLocationTypes: [...new Set(allLocations.map((l) => l.type))],
+          });
 
           // Create agent
           const result = db
             .insert(agents)
             .values({
               name,
-              bio,
-              traits,
-              age: 25,
-              gender: 'neutral',
+              bio: profile.bio,
+              traits: profile.traits,
+              personality: profile.personality,
+              age: profile.age,
+              gender: profile.gender,
               sprite_sheet: 'default',
               portrait_sprite: 'default',
               position: { x: homeEntry.x, y: homeEntry.y },
@@ -476,14 +492,7 @@ export const nudgeRouter = router({
               action_duration: null,
               action_queue: [],
               current_path: null,
-              schedule: {
-                wakeTime: 7,
-                sleepTime: 23,
-                workStart: 9,
-                workEnd: 17,
-                lunchTime: 12,
-                freeTimePreferences: ['socializing', 'shopping'],
-              },
+              schedule: profile.schedule,
               home: availableHome.id,
               workplace: workplace ? workplace.id : null,
               created_at: now,
@@ -506,13 +515,7 @@ export const nudgeRouter = router({
           db.insert(needs)
             .values({
               agent_id: agentId,
-              hunger: 80,
-              energy: 80,
-              social: 80,
-              comfort: 80,
-              fun: 80,
-              mood: 80,
-              stress: 10,
+              ...profile.needs,
               decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
               thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
               mood_modifiers: [],
@@ -531,8 +534,8 @@ export const nudgeRouter = router({
             .values({
               agent_id: agentId,
               job,
-              job_title: job,
-              salary: 20,
+              job_title: profile.jobTitle,
+              salary: profile.salary,
               work_performance: 0.7,
               money: CONFIG.ECONOMY.STARTING_MONEY,
               daily_expenses: CONFIG.ECONOMY.DAILY_EXPENSES.min,

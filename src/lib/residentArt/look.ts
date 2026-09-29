@@ -203,7 +203,8 @@ function pick<T>(rnd: () => number, list: readonly T[]): T {
 /**
  * The look for a resident. `gender` and `age` only steer the odds (skirts and buns for women,
  * beards and receding hairlines for older men, grey hair with age); the dice come from the name.
- * Nudged residents are stored as gender "neutral", age 25, which draws from the full wardrobe.
+ * Residents nudged in before server/lib/newResident.ts were stored as gender "neutral", age 25,
+ * which draws from the full wardrobe; newer ones get a real gender and an age for their job.
  *
  * Every roll is taken unconditionally and in a fixed order, so changing one rule (say, the beard
  * odds) doesn't reshuffle everyone's shirt colour.
