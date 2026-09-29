@@ -23,6 +23,8 @@ interface AgentPanelProps {
   onClose: () => void;
   /** Select + focus another resident (relationship rows, conversation speakers). */
   onSelectAgent?: (agentId: string) => void;
+  /** Open the pair dossier for this resident and another (relationship rows' history button). */
+  onViewPair?: (a: string, b: string) => void;
 }
 
 const PERSONALITY_AXES: (keyof PersonalityProfile)[] = [
@@ -63,7 +65,7 @@ function PersonalityAxes({ personality }: { personality: PersonalityProfile | nu
   );
 }
 
-export function AgentPanel({ agentId, onClose, onSelectAgent }: AgentPanelProps) {
+export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: AgentPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
 
   // Reset tab when agent changes
@@ -271,6 +273,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent }: AgentPanelProps)
               relationships={relationships ?? []}
               selectedAgentId={agentId}
               onSelectAgent={onSelectAgent}
+              onViewPair={onViewPair ? (other) => onViewPair(agentId, other) : undefined}
             />
 
             {/* Active conversation */}

@@ -25,6 +25,8 @@ interface RelationshipListProps {
   selectedAgentId?: string;
   /** Makes each row a button that selects + focuses that resident. */
   onSelectAgent?: (agentId: string) => void;
+  /** Adds a history button to each row that opens the pair dossier with that resident. */
+  onViewPair?: (otherAgentId: string) => void;
 }
 
 function strengthIndicator(value: number, max = 100): number {
@@ -81,6 +83,7 @@ export function RelationshipList({
   relationships,
   selectedAgentId,
   onSelectAgent,
+  onViewPair,
 }: RelationshipListProps) {
   if (relationships.length === 0) {
     return (
@@ -159,7 +162,7 @@ export function RelationshipList({
 
           // A button only when there is somewhere to go, so a read-only list
           // isn't announced as a set of dead buttons.
-          return onSelectAgent ? (
+          const row = onSelectAgent ? (
             <button
               key={otherAgent.id}
               type="button"
@@ -172,6 +175,24 @@ export function RelationshipList({
           ) : (
             <div key={otherAgent.id} className="flex items-center justify-between gap-2 px-1.5 py-1">
               {rowBody}
+            </div>
+          );
+          if (!onViewPair) return row;
+
+          // The history button is the row's sibling, not a child: buttons can't
+          // nest, and the row's own click already means "go to them".
+          return (
+            <div key={otherAgent.id} className="flex items-center gap-1">
+              <div className="flex-1 min-w-0">{row}</div>
+              <button
+                type="button"
+                onClick={() => onViewPair(String(otherAgent.id))}
+                title={`History with ${otherAgent.name}: turning points, secrets, story`}
+                aria-label={`Relationship history with ${otherAgent.name}`}
+                className="shrink-0 px-1.5 py-1 text-xs text-ui-dim hover:text-ui-gold hover:bg-ui-hover rounded-sm focus-visible:outline focus-visible:outline-1 focus-visible:outline-ui-gold transition-colors"
+              >
+                📖
+              </button>
             </div>
           );
         })}

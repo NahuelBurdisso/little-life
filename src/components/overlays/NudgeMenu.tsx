@@ -13,6 +13,8 @@ interface NudgeMenuProps {
   locations: any[];
   onClose: () => void;
   onSelectAgent: (id: string) => void;
+  /** Opens the pair dossier for the two residents. Without it "View relationship" just selects. */
+  onViewPair?: (a: string, b: string) => void;
 }
 
 type SubMenu =
@@ -136,6 +138,7 @@ export function NudgeMenu({
   locations,
   onClose,
   onSelectAgent,
+  onViewPair,
 }: NudgeMenuProps) {
   const {
     suggestTalk, suggestGoTo, giveMoney, removeAgent, tellSecret, forceConfront,
@@ -398,7 +401,10 @@ export function NudgeMenu({
             <Item
               icon="👁️"
               onClick={() => {
-                onSelectAgent(agentId);
+                // The dossier is the relationship view; selecting the resident
+                // was all this entry could do before there was a per-pair page.
+                if (onViewPair && partnerId) onViewPair(agentId, partnerId);
+                else onSelectAgent(agentId);
                 onClose();
               }}
             >

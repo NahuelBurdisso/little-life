@@ -18,6 +18,7 @@ import { useGazette } from "./hooks/useGazette";
 import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { LocationPanel } from "./components/ui/LocationPanel";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
+import { PairDossier } from "./components/ui/PairDossier";
 import { ConversationHistory } from "./components/ui/ConversationHistory";
 import { useWorldState } from "./hooks/useWorldState";
 import { gameMinutes } from "../server/lib/gameClock";
@@ -60,6 +61,9 @@ export default function App() {
   const gazette = useGazette(showGazette);
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
+  // The pair whose dossier is open (numeric ids). Opened from the graph, the agent
+  // panel's relationship rows and the nudge menu; stacks above all of them.
+  const [pairDossier, setPairDossier] = useState<{ a: number; b: number } | null>(null);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
   const [showAutoplay, setShowAutoplay] = useState(false);
   const [autoCut, setAutoCut] = useState(false);
@@ -81,6 +85,7 @@ export default function App() {
       setShowGazette(false);
       setShowNewAgent(false);
       setShowRelGraph(false);
+      setPairDossier(null);
       setShowConvoHistory(false);
       setShowAutoplay(false);
     }
@@ -124,6 +129,8 @@ export default function App() {
     setSelectedLocationId(null);
     setContextMenuAgent(null);
     setContextMenuPos(null);
+    // Agent ids restart at 1 in a new world, so a dossier would silently show two strangers.
+    setPairDossier(null);
   }, []);
   const totalTicks = world?.time?.totalTicks ?? null;
   const lastTotalTicksRef = useRef<number | null>(null);
@@ -141,7 +148,10 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (contextMenuAgent) {
+        if (pairDossier) {
+          // Painted last (z-50), over the graph it is usually opened from.
+          setPairDossier(null);
+        } else if (contextMenuAgent) {
           setContextMenuAgent(null);
           setContextMenuPos(null);
         } else if (showEventMenu) {
@@ -170,12 +180,14 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showAutoplay, selectedLocationId, selectedAgentId]);
+  }, [pairDossier, contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showAutoplay, selectedLocationId, selectedAgentId]);
 
   // Cast bar: favourites are per world (keyed by seed) and sort first, both in the
   // bar and in Tab order, so the two never disagree about who is "next".
   const { favorites, toggleFavorite } = useFavorites(worldSeedOf(world?.setup_config));
   const cast = useMemo(() => orderCast(agents, favorites), [agents, favorites]);
+
+  const openPair = useCallback((a: string, b: string) => setPairDossier({ a: Number(a), b: Number(b) }), []);
 
   // Select an agent AND re-center on them, even if they were already selected.
   const focusAgent = useCallback((agentId: string) => {
@@ -212,7 +224,7 @@ export default function App() {
     },
     agentKeysEnabled: !(
       contextMenuAgent || showEventMenu || showGazette || showTownStats || showNewAgent ||
-      showRelGraph || showConvoHistory || showAutoplay || guide.tourOpen || guide.helpOpen
+      showRelGraph || pairDossier || showConvoHistory || showAutoplay || guide.tourOpen || guide.helpOpen
     ),
     onToggleHelp: guide.toggleHelp,
   });
@@ -328,6 +340,7 @@ export default function App() {
                 agentId={selectedAgentId}
                 onClose={() => setSelectedAgentId(null)}
                 onSelectAgent={focusAgent}
+                onViewPair={openPair}
               />
             </div>
           </>
@@ -388,6 +401,7 @@ export default function App() {
             setSelectedAgentId(id);
             handleCloseContextMenu();
           }}
+          onViewPair={openPair}
         />
       )}
 
@@ -418,6 +432,7 @@ export default function App() {
           setSelectedAgentId(id);
           setShowRelGraph(false);
         }}
+        onViewPair={openPair}
       />
       <ConversationHistory
         isOpen={showConvoHistory}
@@ -430,6 +445,17 @@ export default function App() {
         }}
       />
       <AutoplayPanel isOpen={showAutoplay} onClose={() => setShowAutoplay(false)} />
+      <PairDossier
+        pair={pairDossier}
+        onClose={() => setPairDossier(null)}
+        onFocusAgent={(id) => {
+          // The dossier and the graph under it cover the map, so the camera move
+          // would otherwise happen behind them.
+          setPairDossier(null);
+          setShowRelGraph(false);
+          focusAgent(id);
+        }}
+      />
 
       {/* First-run guide + help: they take Escape themselves (useEscapeClose). */}
       <MeetTheTown
