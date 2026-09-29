@@ -73,6 +73,20 @@ describe('VoiceAllocator', () => {
     expect(w.reserveBell(0, 0, 5)).toBe(false);
   });
 
+  it('counts a bell about to ring against a new one-shot, so the cap is not overshot', () => {
+    const v = new VoiceAllocator();
+    for (let i = 0; i < bellMax; i++) v.reserveBell(0, 0.5, 5);
+    let birds = 0;
+    while (v.reserve('ambience', 1, 0)) birds++;
+    expect(birds).toBe(max - bellMax);
+    // Well before the bells start they don't matter yet.
+    const w = new VoiceAllocator();
+    for (let i = 0; i < bellMax; i++) w.reserveBell(0, 20, 25);
+    let early = 0;
+    while (w.reserve('ambience', 1, 0)) early++;
+    expect(early).toBe(max);
+  });
+
   it('forgets expired bells so the interval list stays short', () => {
     const v = new VoiceAllocator();
     for (let i = 0; i < 1000; i++) v.reserveBell(i, i, i + 0.5);

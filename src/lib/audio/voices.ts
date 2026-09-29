@@ -30,6 +30,9 @@ export interface VoiceLimits {
 
 export const VOICE_LIMITS: VoiceLimits = { max: 32, ambienceFloor: 8, bellMax: 6 };
 
+/** Seconds ahead in which a scheduled bell already counts against a new one-shot. */
+const BELL_LOOKAHEAD = 1.5;
+
 export class VoiceAllocator {
   private ambience = 0;
   private fx = 0;
@@ -72,7 +75,10 @@ export class VoiceAllocator {
   reserve(cls: VoiceClass, n: number, now: number): boolean {
     this.prune(now);
     const { max, ambienceFloor } = this.limits;
-    const bellsNow = this.bellsAt(now);
+    // Bells that will be ringing within the next moment count too: a one-shot reserved now is
+    // still sounding then, and without the lookahead a full pool of birds plus a peal that
+    // starts a heartbeat later would overshoot the cap by up to `bellMax`.
+    const bellsNow = this.bellPeak(now, now + BELL_LOOKAHEAD);
     if (this.ambience + this.fx + bellsNow + n > max) return false;
     if (cls === 'fx' && this.fx + bellsNow + n > max - ambienceFloor) return false;
     if (cls === 'ambience') this.ambience += n;
