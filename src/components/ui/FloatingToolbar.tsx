@@ -3,9 +3,6 @@ import { trpc } from "../../lib/trpc";
 interface FloatingToolbarProps {
   onNewAgent: () => void;
   onShowRelationships: () => void;
-  onShowHistory: () => void;
-  /** The town's record by game day ("what happened yesterday?"). */
-  onShowTimeline: () => void;
   onShowAutoplay: () => void;
   autoCut: boolean;
   onToggleAutoCut: () => void;
@@ -78,8 +75,6 @@ function ToolButton({
 export function FloatingToolbar({
   onNewAgent,
   onShowRelationships,
-  onShowHistory,
-  onShowTimeline,
   onShowAutoplay,
   autoCut,
   onToggleAutoCut,
@@ -118,8 +113,6 @@ export function FloatingToolbar({
       </button>
       <ToolButton rail={rail} icon="➕" label="New Resident" title="Add a new resident to the town" onClick={onNewAgent} />
       <ToolButton rail={rail} icon="🔗" label="Relationships" title="Who likes, loves and loathes whom" onClick={onShowRelationships} />
-      <ToolButton rail={rail} icon="📜" label="History" title="Every conversation, searchable" onClick={onShowHistory} />
-      <ToolButton rail={rail} icon="🕰" label="Timeline" title="The town's big moments, day by day" onClick={onShowTimeline} />
       <ToolButton
         rail={rail}
         icon="🎞"

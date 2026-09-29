@@ -13,19 +13,17 @@ import { DramaAlerts } from "./components/overlays/DramaAlerts";
 import { DirectorCaption, DirectorChip } from "./components/overlays/DirectorCaption";
 import { useDirector } from "./hooks/useDirector";
 import { pushToast } from "./lib/toast";
-import { Inbox } from "./components/ui/Inbox";
 import { useDramaAlerts } from "./hooks/useDramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
 import { EventMenu } from "./components/ui/EventMenu";
 import { TownStats } from "./components/ui/TownStats";
-import { Gazette } from "./components/ui/Gazette";
 import { useGazette } from "./hooks/useGazette";
 import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { LocationPanel } from "./components/ui/LocationPanel";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
 import { PairDossier } from "./components/ui/PairDossier";
-import { ConversationHistory } from "./components/ui/ConversationHistory";
-import { Timeline } from "./components/ui/Timeline";
+import { Journal } from "./components/ui/Journal";
+import { journalUnread, type JournalTab } from "./lib/journal";
 import { useWorldState } from "./hooks/useWorldState";
 import { gameMinutes } from "../server/lib/gameClock";
 import { useAgents } from "./hooks/useAgents";
@@ -66,16 +64,17 @@ export default function App() {
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
-  const [showGazette, setShowGazette] = useState(false);
-  const gazette = useGazette(showGazette);
-  const [showInbox, setShowInbox] = useState(false);
+  // The Town Journal (paper, inbox, brewing, stories, timeline, talks): the tab
+  // showing, or null when closed. Every story surface opens it on its own tab.
+  const [journalTab, setJournalTab] = useState<JournalTab | null>(null);
+  // Where the Journal reopens when nothing is unread: wherever it was left.
+  const lastJournalTab = useRef<JournalTab>("brewing");
+  const gazette = useGazette(journalTab === "paper");
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   // The pair whose dossier is open (numeric ids). Opened from the graph, the agent
   // panel's relationship rows and the nudge menu; stacks above all of them.
   const [pairDossier, setPairDossier] = useState<{ a: number; b: number } | null>(null);
-  const [showConvoHistory, setShowConvoHistory] = useState(false);
-  const [showTimeline, setShowTimeline] = useState(false);
   const [showAutoplay, setShowAutoplay] = useState(false);
   const [autoCut, setAutoCut] = useState(false);
 
@@ -93,13 +92,10 @@ export default function App() {
       setSelectedLocationId(null);
       setShowEventMenu(false);
       setShowTownStats(false);
-      setShowGazette(false);
-      setShowInbox(false);
+      setJournalTab(null);
       setShowNewAgent(false);
       setShowRelGraph(false);
       setPairDossier(null);
-      setShowConvoHistory(false);
-      setShowTimeline(false);
       setShowAutoplay(false);
     }
   }, [isNewSimulation]);
@@ -146,10 +142,25 @@ export default function App() {
   const worldSeed = worldSeedOf(world?.setup_config);
   const { favorites, toggleFavorite } = useFavorites(worldSeed);
   // Alert toasts + the inbox. Here rather than inside the toast overlay: the
-  // TopBar badge and the Inbox panel read the same state. Favourites' rows
+  // TopBar's Journal badge and the Journal's Inbox tab read the same state. Favourites' rows
   // alert at a lower bar (server/lib/alertTiers.ts).
   const drama = useDramaAlerts(worldSeed, favorites);
   const resetAlerts = drama.reset;
+
+  // Deep link into the Journal. With no tab named (TopBar 📖, J) it opens where
+  // the news is: unread alerts first, then a new paper, else the tab it was left on.
+  const unreadAlerts = drama.unread;
+  const hasNewPaper = gazette.hasNew;
+  const openJournal = useCallback((tab?: JournalTab) => {
+    const next = tab ?? (unreadAlerts > 0 ? "inbox" : hasNewPaper ? "paper" : lastJournalTab.current);
+    lastJournalTab.current = next;
+    setJournalTab(next);
+  }, [unreadAlerts, hasNewPaper]);
+  const closeJournal = useCallback(() => setJournalTab(null), []);
+  const toggleJournal = useCallback(() => {
+    if (journalTab) closeJournal();
+    else openJournal();
+  }, [journalTab, closeJournal, openJournal]);
 
   const handleWorldReplaced = useCallback(() => {
     setSelectedAgentId(null);
@@ -185,20 +196,16 @@ export default function App() {
           setContextMenuPos(null);
         } else if (showEventMenu) {
           setShowEventMenu(false);
-        } else if (showGazette) {
-          setShowGazette(false);
         } else if (showTownStats) {
           setShowTownStats(false);
         } else if (showNewAgent) {
           setShowNewAgent(false);
         } else if (showAutoplay) {
           setShowAutoplay(false);
-        } else if (showTimeline) {
-          setShowTimeline(false);
-        } else if (showConvoHistory) {
+        } else if (journalTab) {
           // Escape closes the topmost layer, so this chain must match paint
-          // order: ConversationHistory is rendered last and covers the graph.
-          setShowConvoHistory(false);
+          // order: the Journal is rendered after the graph and covers it.
+          setJournalTab(null);
         } else if (showRelGraph) {
           setShowRelGraph(false);
         } else if (selectedLocationId != null) {
@@ -211,7 +218,7 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [pairDossier, contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showTimeline, showAutoplay, selectedLocationId, selectedAgentId]);
+  }, [pairDossier, contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, journalTab, showAutoplay, selectedLocationId, selectedAgentId]);
 
   const cast = useMemo(() => orderCast(agents, favorites), [agents, favorites]);
 
@@ -278,6 +285,13 @@ export default function App() {
     ready: Boolean(world) && !worldLoading && !(isNewSimulation && !setupComplete) && agents.length > 0,
   });
 
+  // Every overlay but the Journal: while one is open the resident keys stand
+  // down, and J doesn't stack the Journal on top of it.
+  const otherOverlayOpen = Boolean(
+    contextMenuAgent || showEventMenu || showTownStats || showNewAgent || showRelGraph || pairDossier ||
+    showAutoplay || guide.tourOpen || guide.helpOpen,
+  );
+
   // Keyboard controls
   useKeyboardControls({
     // The wizard and loading screen render before the sim exists; Space there
@@ -296,11 +310,10 @@ export default function App() {
       setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
     },
     onToggleCaptions: handleToggleCaptions,
-    agentKeysEnabled: !(
-      contextMenuAgent || showEventMenu || showGazette || showInbox || showTownStats || showNewAgent ||
-      showRelGraph || pairDossier || showConvoHistory || showTimeline || showAutoplay || guide.tourOpen || guide.helpOpen
-    ),
+    agentKeysEnabled: !otherOverlayOpen && journalTab == null,
     onToggleHelp: guide.toggleHelp,
+    onToggleJournal: toggleJournal,
+    journalKeyEnabled: !otherOverlayOpen,
   });
 
   // Canvas callbacks
@@ -367,10 +380,9 @@ export default function App() {
         }).length}
         onShowEvents={() => setShowEventMenu(true)}
         onShowStats={() => setShowTownStats(true)}
-        onShowGazette={() => setShowGazette(true)}
-        hasNewGazette={gazette.hasNew}
-        onShowInbox={() => setShowInbox(v => !v)}
-        unreadAlerts={drama.unread}
+        onShowJournal={() => openJournal()}
+        journalUnread={journalUnread({ unreadAlerts: drama.unread, hasNewPaper: gazette.hasNew })}
+        hasNewPaper={gazette.hasNew}
         onWorldReplaced={handleWorldReplaced}
       />
       {/* Socket down / LLM offline or slow / ticks lagging (renders nothing when fine) */}
@@ -420,8 +432,6 @@ export default function App() {
           <FloatingToolbar
             onNewAgent={() => setShowNewAgent(true)}
             onShowRelationships={() => setShowRelGraph(true)}
-            onShowHistory={() => setShowConvoHistory(true)}
-            onShowTimeline={() => setShowTimeline(true)}
             onShowAutoplay={() => setShowAutoplay(true)}
             autoCut={autoCut}
             onToggleAutoCut={() => setAutoCut(v => !v)}
@@ -448,7 +458,7 @@ export default function App() {
       </div>
       <ResizeHandle direction="vertical" onResize={handleBottomResize} />
       <div style={{ height: bottomHeight }} className="flex-shrink-0 overflow-hidden">
-        <ActivityFeed onSelectAgent={focusAgent} />
+        <ActivityFeed onSelectAgent={focusAgent} onOpenBrewing={() => openJournal("brewing")} />
       </div>
 
       {/* Clicked building / open area */}
@@ -468,19 +478,6 @@ export default function App() {
 
       {/* Acknowledgements for player actions (lib/toast.ts) */}
       <Toasts />
-
-      <Inbox
-        isOpen={showInbox}
-        onClose={() => setShowInbox(false)}
-        entries={drama.inbox}
-        onMarkAllRead={drama.markAllRead}
-        onClear={drama.clearInbox}
-        agents={agents}
-        onFocusAgent={focusAgent}
-        nowTicks={world.time.totalTicks}
-        tickSpeed={world.tick_speed}
-        isPaused={world.is_paused}
-      />
 
       {/* Tooltip overlay */}
       <AgentTooltip agent={hoveredAgent} position={hoverPos} />
@@ -509,10 +506,6 @@ export default function App() {
         activeEvents={events ?? []}
         nowMinutes={world?.time ? gameMinutes(world.time) : null}
       />
-      <Gazette
-        isOpen={showGazette}
-        onClose={() => setShowGazette(false)}
-      />
       <TownStats
         isOpen={showTownStats}
         onClose={() => setShowTownStats(false)}
@@ -531,25 +524,19 @@ export default function App() {
         }}
         onViewPair={openPair}
       />
-      <ConversationHistory
-        isOpen={showConvoHistory}
-        onClose={() => setShowConvoHistory(false)}
+      <Journal
+        tab={journalTab}
+        onTabChange={openJournal}
+        onClose={closeJournal}
         onSelectAgent={(id) => {
-          // Close first: the history modal covers the map, so the camera move
-          // would otherwise happen behind it.
-          setShowConvoHistory(false);
+          // Close first: the Journal covers the map, so the camera move would
+          // otherwise happen behind it.
+          closeJournal();
           focusAgent(id);
         }}
-      />
-      <Timeline
-        isOpen={showTimeline}
-        onClose={() => setShowTimeline(false)}
-        onSelectAgent={(id) => {
-          // Close first, like the history modal: it covers the map, so the
-          // camera move would otherwise happen behind it.
-          setShowTimeline(false);
-          focusAgent(id);
-        }}
+        inbox={{ entries: drama.inbox, unread: drama.unread, markAllRead: drama.markAllRead, clear: drama.clearInbox }}
+        hasNewPaper={gazette.hasNew}
+        agents={agents}
       />
       <AutoplayPanel isOpen={showAutoplay} onClose={() => setShowAutoplay(false)} />
       <PairDossier

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useActivityFeed } from "../../hooks/useActivityFeed";
 import { useWorldState } from "../../hooks/useWorldState";
-import { formatGameMinute, gameTimeAgo, timeAgo } from "../../lib/formatters";
-import { gameMinutes } from "../../../server/lib/gameClock";
+import { timeAgo } from "../../lib/formatters";
 import { renderMessage, type ActivityEntry } from "../../lib/activityMessage";
-import type { ArcKind, StoryArc } from "../../../server/lib/chronicle";
-import type { BrewingItem, BrewingKind } from "../../../server/lib/brewing";
+import { HOT_BREWING } from "../../lib/journal";
+import type { BrewingItem } from "../../../server/lib/brewing";
 
 // --- Event Categories ---
 
@@ -26,36 +25,6 @@ const EVENT_CATEGORIES = {
 } as const;
 
 type EventCategory = keyof typeof EVENT_CATEGORIES;
-
-/** Presentation for the derived story arcs on the Stories tab. */
-const ARC_KINDS: Record<ArcKind, { icon: string; color: string }> = {
-  romance:        { icon: '♥', color: '#c06090' },
-  rivalry:        { icon: '⚔', color: '#a03028' },
-  reconciliation: { icon: '☘', color: '#a0c060' },
-  love_triangle:  { icon: '△', color: '#9b7ab0' },
-  downfall:       { icon: '▼', color: '#c07840' },
-  scandal:        { icon: '◉', color: '#c8a84b' },
-};
-
-/** Presentation for the Brewing tab: what kind of trouble a row is. */
-const BREWING_KINDS: Record<BrewingKind, { icon: string; label: string }> = {
-  snap:          { icon: '🔥', label: 'About to snap' },
-  secret:        { icon: '🤫', label: 'Secret spreading' },
-  confrontation: { icon: '⚔', label: 'Confrontation queued' },
-  nudge:         { icon: '✦', label: 'Your nudge is waiting' },
-  goal:          { icon: '▶', label: 'Goal within reach' },
-  relationship:  { icon: '♥', label: 'About to change' },
-};
-
-/**
- * Heat -> colour, on the feed's own warm ramp (ui-gold -> the goal orange -> the
- * drama red) so a hot row reads as the same "danger" the Drama chip already means.
- */
-function heatColor(heat: number): string {
-  if (heat >= 0.85) return '#a03028';
-  if (heat >= 0.6) return '#c07840';
-  return '#c8a84b';
-}
 
 function getCategory(type: string): EventCategory {
   if (type === 'conversation_ended') return 'conversation';
@@ -101,12 +70,19 @@ type DisplayItem =
 interface ActivityFeedProps {
   /** Selects the agent an event is about, which also focuses the camera on them. */
   onSelectAgent?: (agentId: string) => void;
+  /** The 🔥 chip: open the Journal on its Brewing tab. */
+  onOpenBrewing?: () => void;
 }
 
-export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
-  const { activities, highlights, arcs, brewing } = useActivityFeed();
+/**
+ * The live strip under the map: what is happening now (All) and the big beats
+ * (Highlights). Stories, Brewing and the rest of the history live in the
+ * Journal; the 🔥 chip is the way there when something is close to the boil.
+ */
+export function ActivityFeed({ onSelectAgent, onOpenBrewing }: ActivityFeedProps) {
+  const { activities, highlights, brewing } = useActivityFeed();
   const { world } = useWorldState();
-  const [tab, setTab] = useState<'all' | 'highlights' | 'stories' | 'brewing'>('all');
+  const [tab, setTab] = useState<'all' | 'highlights'>('all');
   const [filters, setFilters] = useState<Record<EventCategory, boolean>>({
     conversation: true,
     economy: true,
@@ -123,7 +99,6 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
     cascade: true,
   });
   const [expandedChains, setExpandedChains] = useState<Set<string>>(new Set());
-  const [expandedArcs, setExpandedArcs] = useState<Set<string>>(new Set());
 
   const toggleFilter = (cat: EventCategory) => {
     setFilters(prev => ({ ...prev, [cat]: !prev[cat] }));
@@ -136,18 +111,6 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
         next.delete(chainId);
       } else {
         next.add(chainId);
-      }
-      return next;
-    });
-  };
-
-  const toggleArc = (arcId: string) => {
-    setExpandedArcs(prev => {
-      const next = new Set(prev);
-      if (next.has(arcId)) {
-        next.delete(arcId);
-      } else {
-        next.add(arcId);
       }
       return next;
     });
@@ -269,20 +232,18 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
   }, [allEntries, chainMap, filters]);
 
   // Highlights are server-filtered to high-importance story beats, so they skip
-  // the category filters and cascade grouping entirely. Stories render from
-  // `arcs` instead and never touch this list.
+  // the category filters and cascade grouping entirely.
   const items: DisplayItem[] =
     tab === 'highlights' ? (highlights as unknown as ActivityEntry[]) : filtered;
 
-  const storyArcs = arcs as StoryArc[];
   const brewingItems = brewing as BrewingItem[];
-  const hotCount = brewingItems.filter(b => b.heat >= 0.7).length;
+  const hotCount = brewingItems.filter(b => b.heat >= HOT_BREWING).length;
 
   return (
     <div className="h-full bg-[#1a1814] border-t border-[#3a3028] flex flex-col">
       {/* Tabs */}
       <div className="flex gap-1 px-2 pt-1 shrink-0">
-        {([['all', 'All'], ['highlights', '★ Highlights'], ['stories', '📖 Stories'], ['brewing', '🔥 Brewing']] as const).map(([key, label]) => (
+        {([['all', 'All'], ['highlights', '★ Highlights']] as const).map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -295,13 +256,26 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
             }`}
           >
             {label}
-            {/* How many rows are near the boil, so the tab can be noticed while
-                another one is open. */}
-            {key === 'brewing' && hotCount > 0 && (
-              <span className="ml-1 text-ui-warn" aria-label={`${hotCount} hot`}>{hotCount}</span>
-            )}
           </button>
         ))}
+        {/* What is brewing, as a count that stays visible whatever the tab: the
+            list itself is the Journal's Brewing tab. Warm when something is
+            close to going off, quiet otherwise; absent when nothing brews. */}
+        {onOpenBrewing && brewingItems.length > 0 && (
+          <button
+            type="button"
+            onClick={onOpenBrewing}
+            title={`${brewingItems.length} brewing${hotCount > 0 ? `, ${hotCount} close to the boil` : ''} — open the Journal`}
+            aria-label={`${brewingItems.length} brewing${hotCount > 0 ? `, ${hotCount} hot` : ''}: open the Journal's Brewing tab`}
+            className={`ml-auto text-[10px] px-2 py-0.5 border transition-colors ${
+              hotCount > 0
+                ? 'text-ui-warn border-[#c07840] bg-[#a0302820] hover:bg-[#a0302840]'
+                : 'text-[#8a7f65] border-[#3a3028] hover:bg-[#2e2b20]'
+            }`}
+          >
+            <span aria-hidden="true">🔥</span> {hotCount > 0 ? hotCount : brewingItems.length}
+          </button>
+        )}
       </div>
 
       {/* Filter bar */}
@@ -334,131 +308,7 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
-        {tab === 'brewing' ? (
-          brewingItems.length === 0 ? (
-            <p className="text-ui-muted text-xs">All quiet — nothing is about to boil over.</p>
-          ) : (
-            <div className="space-y-0.5">
-              {brewingItems.map(item => {
-                const { icon, label } = BREWING_KINDS[item.kind];
-                const color = heatColor(item.heat);
-                const pct = Math.round(item.heat * 100);
-                const focusId = item.agentIds[0];
-                const body = (
-                  <>
-                    <span className="shrink-0" title={label}>{icon}</span>
-                    <span className="text-ui-dim flex-1">{item.text}</span>
-                    {/* Heat bar: how close to going off. The hottest pulse. */}
-                    <span
-                      className="shrink-0 inline-block w-12 h-1.5 bg-ui-line self-center"
-                      title={`${label} — heat ${pct}%`}
-                      role="img"
-                      aria-label={`Heat ${pct}%`}
-                    >
-                      <span
-                        className={`block h-full ${item.heat >= 0.85 ? 'brew-pulse' : ''}`}
-                        style={{ width: `${pct}%`, backgroundColor: color }}
-                      />
-                    </span>
-                  </>
-                );
-                const rowClass = 'w-full text-left text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5';
-                return onSelectAgent && focusId != null ? (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onSelectAgent(String(focusId))}
-                    className={`${rowClass} cursor-pointer hover:bg-ui-hover focus-visible:bg-ui-hover transition-colors`}
-                    style={{ borderLeftColor: color }}
-                    aria-label={`${item.text} — focus agent`}
-                  >
-                    {body}
-                  </button>
-                ) : (
-                  <div key={item.id} className={rowClass} style={{ borderLeftColor: color }}>
-                    {body}
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ) : tab === 'stories' ? (
-          storyArcs.length === 0 ? (
-            <p className="text-[#504838] text-xs">No stories yet — the town needs more history.</p>
-          ) : (
-            <div className="space-y-1">
-              {storyArcs.map(arc => {
-                const { icon, color } = ARC_KINDS[arc.kind];
-                const isExpanded = expandedArcs.has(arc.id);
-                return (
-                  <div key={arc.id} className="border-l-2 pl-1.5" style={{ borderLeftColor: color }}>
-                    <button
-                      type="button"
-                      onClick={() => toggleArc(arc.id)}
-                      aria-expanded={isExpanded}
-                      className="w-full text-left text-[11px] flex gap-1.5 items-center py-0.5 cursor-pointer hover:bg-[#2e2b20] focus-visible:bg-[#2e2b20] transition-colors"
-                    >
-                      <span className="shrink-0" style={{ color }}>{icon}</span>
-                      <span className="font-semibold flex-1" style={{ color }}>{arc.title}</span>
-                      {/* Heat: how live the thread is, not how long it has run. */}
-                      <span
-                        className="shrink-0 inline-block w-8 h-1 bg-[#3a3028]"
-                        title={`Heat ${Math.round(arc.heat * 100)}%`}
-                      >
-                        <span
-                          className="block h-full"
-                          style={{ width: `${Math.round(arc.heat * 100)}%`, backgroundColor: color }}
-                        />
-                      </span>
-                      <span className="shrink-0 text-[#504838]">{isExpanded ? '▲' : '▼'}</span>
-                    </button>
-
-                    <p className="text-[10px] text-[#8a7f65] italic pl-4">{arc.summary}</p>
-
-                    {/* Cast, so an arc can be used to jump to whoever is in it —
-                        the header is already a toggle, so these can't live in it. */}
-                    {onSelectAgent && (
-                      <div className="flex flex-wrap gap-1 pl-4 py-0.5">
-                        {arc.participants.map((id, pi) => (
-                          <button
-                            key={id}
-                            type="button"
-                            onClick={() => onSelectAgent(String(id))}
-                            className="text-[10px] px-1 border border-[#3a3028] text-[#a09070] hover:bg-[#2e2b20] focus-visible:bg-[#2e2b20] transition-colors"
-                          >
-                            {arc.participantNames[pi]}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {isExpanded && (
-                      <div className="ml-3 border-l-2 border-[#6b5c30] pl-1.5 space-y-0.5 mb-1">
-                        {arc.beats.map((beat, bi) => (
-                          <div key={`${arc.id}-${bi}`} className="text-[11px] flex gap-1.5">
-                            {/* Game time on both ends: a beat's age stands still while
-                                the game is paused and counts game days, not the hours
-                                the server happened to run. Undated beats (a scandal's
-                                backstory secret) get no age rather than a made-up one. */}
-                            <span
-                              className="text-[#504838] shrink-0 w-12 text-right"
-                              title={beat.gameMinute != null ? formatGameMinute(beat.gameMinute) : undefined}
-                            >
-                              {world && beat.gameMinute != null
-                                ? gameTimeAgo(beat.gameMinute, gameMinutes(world.time))
-                                : ''}
-                            </span>
-                            <span className="text-[#a09070]">{beat.description}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ) : items.length === 0 ? (
+        {items.length === 0 ? (
           <p className="text-[#504838] text-xs">
             {tab === 'all' ? 'No activity yet...' : 'No dramatic events yet...'}
           </p>

@@ -24,7 +24,7 @@ const REFRESH_MS = 4000;
 /**
  * The activity log by game day, paged back with the server's cursor.
  *
- * Mount it only while the view is visible (Timeline's inner body, the Story
+ * Mount it only while the view is visible (the Journal's Timeline tab, the Story
  * tab): the subscription below is what keeps the query fresh (CLAUDE.md
  * "Client data freshness" — `refetchOnWindowFocus` is off), and a hidden view
  * shouldn't pay for it.

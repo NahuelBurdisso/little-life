@@ -4,7 +4,7 @@
  * Toasts last seconds and cap at three on screen, so a player who looked away
  * (or had a cascade fire six rules at once) lost them for good — including the
  * report on their own nudge. The inbox keeps the newest `INBOX_MAX`, newest
- * first, with a read flag for the 🔔 badge.
+ * first, with a read flag for the Journal's unread badges.
  *
  * Pure: the hook (useDramaAlerts) owns the React state and the storage, this
  * module owns what the list looks like after each thing that can happen to it.
