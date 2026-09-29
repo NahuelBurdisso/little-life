@@ -13,6 +13,13 @@ interface NudgeResult {
 
 type Id = number | string;
 
+/** The feelings `stir_feeling` can plant (server/lib/godPowers.ts STIRRABLE_STATES). */
+export type StirFeeling = 'infatuated' | 'jealous' | 'confident' | 'stressed';
+
+export const FEELING_ICONS: Record<StirFeeling, string> = {
+  infatuated: '💘', jealous: '😒', confident: '😎', stressed: '😰',
+};
+
 export function useNudge() {
   const mutation = trpc.nudge.execute.useMutation();
   const utils = trpc.useUtils();
@@ -40,6 +47,7 @@ export function useNudge() {
       icon?: string;
       locationId?: number;
       amount?: number;
+      feeling?: string;
     },
   ): Promise<NudgeResult> {
     return mutation.mutateAsync(input).then(
@@ -60,9 +68,12 @@ export function useNudge() {
           agentIds: ids,
           locationId: announce.locationId,
           amount: announce.amount,
+          feeling: announce.feeling,
         });
         if (r.queued) pushToast(r.message ?? 'Queued', 'info', '⏳');
-        else pushToast(announce.success, 'success', announce.icon);
+        // The planting powers answer with what actually happened ("Sam heard
+        // it, but may be too upright to repeat it"); that beats a canned line.
+        else pushToast(r.message ?? announce.success, 'success', announce.icon);
         return r;
       },
       (err: unknown) => {
@@ -115,6 +126,33 @@ export function useNudge() {
       run({ action: { type: 'force_confront', agentA: Number(agentA), agentB: Number(agentB) } }, {
         kind: 'force_confront', agentIds: [agentA, agentB], icon: '⚔',
         success: `${nameOf(agentA)} is going to confront ${nameOf(agentB)}`,
+      }),
+    whisperThought: (agentId: Id, text: string) =>
+      run({ action: { type: 'whisper_thought', agentId: Number(agentId), text } }, {
+        kind: 'whisper_thought', agentIds: [agentId], icon: '💭',
+        success: `${nameOf(agentId)} had a thought`,
+      }),
+    /** `seederId` hears the rumor first; it is about `subjectId`, optionally involving `targetId`. */
+    startRumor: (seederId: Id, subjectId: Id, detail: string, targetId?: Id) =>
+      run({
+        action: {
+          type: 'start_rumor', seederId: Number(seederId), subjectId: Number(subjectId), detail,
+          ...(targetId != null ? { targetId: Number(targetId) } : {}),
+        },
+      }, {
+        kind: 'start_rumor', agentIds: [seederId, subjectId], icon: '🗣',
+        success: `${nameOf(seederId)} heard a rumor about ${nameOf(subjectId)}`,
+      }),
+    stirFeeling: (agentId: Id, state: StirFeeling, targetId?: Id) =>
+      run({
+        action: {
+          type: 'stir_feeling', agentId: Number(agentId), state,
+          ...(targetId != null ? { targetId: Number(targetId) } : {}),
+        },
+      }, {
+        kind: 'stir_feeling', agentIds: targetId != null ? [agentId, targetId] : [agentId], feeling: state,
+        icon: FEELING_ICONS[state],
+        success: `${nameOf(agentId)} feels ${state}`,
       }),
   };
 }
