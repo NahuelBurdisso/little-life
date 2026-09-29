@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { formatTime, weatherEmoji, seasonEmoji } from "../../lib/formatters";
 import { SpeedControls } from "./SpeedControls";
+import { SavesDialog } from "./SavesDialog";
 import { trpc } from "../../lib/trpc";
 
 interface TopBarProps {
@@ -35,6 +36,7 @@ const BAR_BTN =
 export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
+  const [showSaves, setShowSaves] = useState(false);
 
   // Both replace the world wholesale, but the server's `markAllDirty` only
   // reaches queries a subscription hook is wired to — `locations.getAll` isn't,
@@ -164,6 +166,15 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           </button>
           <div className="w-px h-6 bg-ui-line" />
           <button
+            onClick={() => setShowSaves(true)}
+            disabled={isResetting}
+            title="Save or load a town"
+            className={`${BAR_BTN} !px-2`}
+            aria-label="Saves"
+          >
+            💾
+          </button>
+          <button
             onClick={() => setConfirmAction('restart')}
             disabled={isResetting || !hasConfig}
             title={hasConfig ? "Restart with same settings" : "No saved config — use Reset to Wizard"}
@@ -181,6 +192,17 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           </button>
         </div>
       </div>
+
+      {showSaves && (
+        <SavesDialog
+          onClose={() => setShowSaves(false)}
+          // A load replaces the world exactly like Restart does: same cache
+          // invalidation, same selection drop in App.
+          onLoaded={() => { utils.invalidate(); onWorldReplaced(); }}
+          canSave={hasConfig}
+          defaultName={`Day ${world.time.day}, ${world.time.season}`}
+        />
+      )}
 
       {/* Confirmation dialog overlay */}
       {confirmAction && !isResetting && (
