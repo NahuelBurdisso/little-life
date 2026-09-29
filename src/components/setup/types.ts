@@ -71,22 +71,9 @@ export const DEFAULT_WORLD: WorldConfig = {
 import { getDefaultRules } from './configRegistry';
 export const DEFAULT_RULES: RulesConfig = getDefaultRules();
 
-// Daily wages; same scale as server/data/agents.ts (floor $20 = three meals + rent).
-export const JOB_OPTIONS = [
-  { job: 'farmer', title: 'Farmer', salary: 24, workplace: 'Green Acres Farm' },
-  { job: 'farmhand', title: 'Farmhand', salary: 20, workplace: 'Green Acres Farm' },
-  { job: 'baker', title: 'Baker', salary: 22, workplace: "Priya's Bakery" },
-  { job: 'bartender', title: 'Bartender', salary: 22, workplace: 'The Rusty Lantern' },
-  { job: 'shopkeeper', title: 'Shopkeeper', salary: 24, workplace: "Rosa's General Store" },
-  { job: 'shop_assistant', title: 'Shop Assistant', salary: 20, workplace: "Rosa's General Store" },
-  { job: 'doctor', title: 'Doctor', salary: 28, workplace: "Dr. Petrov's Clinic" },
-  { job: 'medical_assistant', title: 'Medical Assistant', salary: 21, workplace: "Dr. Petrov's Clinic" },
-  { job: 'mayor', title: 'Mayor', salary: 26, workplace: 'Town Hall' },
-  { job: 'handyperson', title: 'Handyperson', salary: 20, workplace: "Carlos' Workshop" },
-  { job: 'musician', title: 'Musician', salary: 20, workplace: 'The Rusty Lantern' },
-  { job: 'constable', title: 'Constable', salary: 24, workplace: 'Town Jail' },
-  { job: 'retired', title: 'Retired', salary: 20, workplace: null },
-];
+// Daily wages, titles and default workplaces: one table shared with the server seeds
+// (server/data/jobs.ts), so the dropdown can't drift from what the town actually pays.
+export { JOB_OPTIONS } from '../../../server/data/jobs';
 
 // Homes auto-scale with agent count — this generates the options list
 export function getHomeOptions(agentCount: number): string[] {

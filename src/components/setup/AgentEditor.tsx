@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { AgentConfig, PersonalityConfig } from './types';
 import { JOB_OPTIONS, getHomeOptions, MAX_AGENTS } from './types';
+import { jobSalary } from '../../../server/data/jobs';
 
 interface AgentEditorProps {
   agents: AgentConfig[];
@@ -51,7 +52,7 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
     const newAgent: AgentConfig = {
       id, name: 'New Resident', age: 25 + Math.floor(Math.random() * 30),
       gender: Math.random() > 0.5 ? 'male' : 'female', bio: '', traits: [],
-      job: 'retired', jobTitle: 'Retired', salary: 20,
+      job: 'retired', jobTitle: 'Retired', salary: jobSalary('retired'),
       homeName: `Home ${Math.ceil((agents.length + 1) / 2)}`, workplaceName: null,
       schedule: { wakeTime: 7, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: ['park', 'tavern'] },
       personality: randomPersonality(), backstoryMemories: [],

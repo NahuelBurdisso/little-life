@@ -1,3 +1,5 @@
+import { WAGE_FLOOR } from '../data/jobs';
+
 /**
  * AutoPlay knobs, hoisted out of CONFIG because they are the only settings
  * mutated at runtime (`autoplayRouter.configure`). Keeping them in a separate
@@ -101,9 +103,10 @@ export const CONFIG = {
     UPKEEP: { BASE: 4, ALLOWANCE_OF_TARGET: 0.8, LIFESTYLE_RATE: 0.35 },
     // The stipend tops anyone below this up at settlement: ~3 meals at $5-6.
     STIPEND_FLOOR: 18,
-    // Lowest daily wage: three meals plus BASE upkeep (E5). Also the floor the
-    // one-time salary migration raises old saves to (server/db/wageFloorMigration.ts).
-    WAGE_FLOOR: 20,
+    // Lowest daily wage: three meals plus BASE upkeep (E5). Defined with the job
+    // table (data/jobs.ts). Also the floor the one-time salary migration raises
+    // old saves to (server/db/wageFloorMigration.ts).
+    WAGE_FLOOR,
     // A shop owner pays their staff only while keeping this much in the till.
     EMPLOYER_CASH_FLOOR: 50,
     // Treasury reserve a new town starts with, per resident: the wage bill

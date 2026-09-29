@@ -1,5 +1,6 @@
 import type { AgentConfig, RelationshipConfig } from './types';
 import { AGENT_SEEDS } from '../../../server/data/agents';
+import { jobSalary } from '../../../server/data/jobs';
 
 // Default agents — a wizard-facing copy of the 13 agents in server/data/agents.ts.
 // The client CAN import pure-data server modules (getDefaultRelationships below
@@ -7,12 +8,12 @@ import { AGENT_SEEDS } from '../../../server/data/agents';
 // against agents.ts when either changes.
 // Backstory memories include personal history + relationship context from agents.ts
 export function getDefaultAgents(): AgentConfig[] {
-  return [
+  const agents: Array<Omit<AgentConfig, 'salary'>> = [
     {
       id: '1', name: 'Elena Voss', age: 34, gender: 'female',
       bio: 'Elena runs Green Acres Farm with quiet determination.',
       traits: ['hardworking', 'loyal', 'skeptical', 'creative'],
-      job: 'farmer', jobTitle: 'Head Farmer', salary: 24,
+      job: 'farmer', jobTitle: 'Head Farmer',
       homeName: 'Home 1', workplaceName: 'Green Acres Farm',
       schedule: { wakeTime: 5, sleepTime: 21, workStart: 6, workEnd: 15, lunchTime: 12, freeTimePreferences: ['park', 'home', 'tavern'] },
       personality: { honesty: 65, aggression: 30, warmth: 55, impulsiveness: 25, vanity: 30, curiosity: 45, loyalty: 80, morality: 75, sensuality: 35, neuroticism: 40 },
@@ -29,7 +30,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '2', name: 'James O\'Brien', age: 58, gender: 'male',
       bio: 'James is the quiet backbone of the farm.',
       traits: ['gruff', 'traditional', 'kindhearted'],
-      job: 'farmhand', jobTitle: 'Farmhand', salary: 20,
+      job: 'farmhand', jobTitle: 'Farmhand',
       homeName: 'Home 1', workplaceName: 'Green Acres Farm',
       schedule: { wakeTime: 5, sleepTime: 20, workStart: 6, workEnd: 15, lunchTime: 12, freeTimePreferences: ['tavern', 'home', 'park'] },
       personality: { honesty: 70, aggression: 35, warmth: 45, impulsiveness: 20, vanity: 15, curiosity: 25, loyalty: 85, morality: 70, sensuality: 20, neuroticism: 30 },
@@ -46,7 +47,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '3', name: 'Marco Rivera', age: 41, gender: 'male',
       bio: 'Marco is the charming bartender who knows everyone\'s secrets.',
       traits: ['charming', 'empathetic', 'secretive', 'humorous'],
-      job: 'bartender', jobTitle: 'Bartender', salary: 22,
+      job: 'bartender', jobTitle: 'Bartender',
       homeName: 'Home 2', workplaceName: 'The Rusty Lantern',
       schedule: { wakeTime: 10, sleepTime: 1, workStart: 15, workEnd: 23, lunchTime: 14, freeTimePreferences: ['park', 'town_square', 'home'] },
       personality: { honesty: 40, aggression: 25, warmth: 70, impulsiveness: 45, vanity: 50, curiosity: 75, loyalty: 55, morality: 50, sensuality: 80, neuroticism: 35 },
@@ -63,7 +64,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '4', name: 'Rosa Chen', age: 38, gender: 'female',
       bio: 'Rosa runs the town\'s only general store.',
       traits: ['shrewd', 'organized', 'generous'],
-      job: 'shopkeeper', jobTitle: 'Shopkeeper', salary: 24,
+      job: 'shopkeeper', jobTitle: 'Shopkeeper',
       homeName: 'Home 3', workplaceName: 'Rosa\'s General Store',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 8, workEnd: 18, lunchTime: 12, freeTimePreferences: ['home', 'park', 'tavern'] },
       personality: { honesty: 55, aggression: 30, warmth: 75, impulsiveness: 30, vanity: 40, curiosity: 50, loyalty: 70, morality: 65, sensuality: 40, neuroticism: 35 },
@@ -81,7 +82,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '5', name: 'Yuki Tanaka', age: 67, gender: 'female',
       bio: 'Yuki is the retired teacher who taught everyone in town.',
       traits: ['wise', 'patient', 'mischievous'],
-      job: 'retired', jobTitle: 'Retired Teacher', salary: 20,
+      job: 'retired', jobTitle: 'Retired Teacher',
       homeName: 'Home 3', workplaceName: null,
       schedule: { wakeTime: 7, sleepTime: 21, workStart: 0, workEnd: 0, lunchTime: 12, freeTimePreferences: ['park', 'town_square', 'home'] },
       personality: { honesty: 70, aggression: 15, warmth: 80, impulsiveness: 30, vanity: 25, curiosity: 85, loyalty: 75, morality: 80, sensuality: 30, neuroticism: 20 },
@@ -98,7 +99,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '6', name: 'Dr. Sofia Petrov', age: 32, gender: 'female',
       bio: 'Sofia chose rural medicine over a city career.',
       traits: ['intelligent', 'introverted', 'awkward'],
-      job: 'doctor', jobTitle: 'Town Doctor', salary: 28,
+      job: 'doctor', jobTitle: 'Town Doctor',
       homeName: 'Home 4', workplaceName: 'Dr. Petrov\'s Clinic',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 8, workEnd: 17, lunchTime: 12, freeTimePreferences: ['home', 'park', 'clinic'] },
       personality: { honesty: 75, aggression: 15, warmth: 45, impulsiveness: 20, vanity: 25, curiosity: 70, loyalty: 65, morality: 85, sensuality: 30, neuroticism: 55 },
@@ -115,7 +116,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '7', name: 'Omar Hassan', age: 39, gender: 'male',
       bio: 'Omar is the quiet, dependable medical assistant.',
       traits: ['quiet', 'dependable', 'observant'],
-      job: 'medical_assistant', jobTitle: 'Medical Assistant', salary: 21,
+      job: 'medical_assistant', jobTitle: 'Medical Assistant',
       homeName: 'Home 4', workplaceName: 'Dr. Petrov\'s Clinic',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 8, workEnd: 17, lunchTime: 12, freeTimePreferences: ['park', 'home', 'town_square'] },
       personality: { honesty: 65, aggression: 15, warmth: 80, impulsiveness: 20, vanity: 15, curiosity: 55, loyalty: 75, morality: 80, sensuality: 30, neuroticism: 25 },
@@ -132,7 +133,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '8', name: 'Thomas Park', age: 52, gender: 'male',
       bio: 'Thomas has been mayor for 12 years.',
       traits: ['responsible', 'fair', 'inflexible'],
-      job: 'mayor', jobTitle: 'Town Mayor', salary: 26,
+      job: 'mayor', jobTitle: 'Town Mayor',
       homeName: 'Home 5', workplaceName: 'Town Hall',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: ['home', 'town_square', 'tavern'] },
       personality: { honesty: 60, aggression: 35, warmth: 40, impulsiveness: 20, vanity: 70, curiosity: 40, loyalty: 65, morality: 65, sensuality: 25, neuroticism: 45 },
@@ -149,7 +150,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '9', name: 'Priya Sharma', age: 30, gender: 'female',
       bio: 'Priya escaped a family restaurant empire to bake on her own terms.',
       traits: ['energetic', 'perfectionist', 'warm'],
-      job: 'baker', jobTitle: 'Baker', salary: 22,
+      job: 'baker', jobTitle: 'Baker',
       homeName: 'Home 5', workplaceName: 'Priya\'s Bakery',
       schedule: { wakeTime: 4, sleepTime: 21, workStart: 5, workEnd: 14, lunchTime: 11, freeTimePreferences: ['tavern', 'park', 'town_square'] },
       personality: { honesty: 60, aggression: 25, warmth: 75, impulsiveness: 50, vanity: 45, curiosity: 55, loyalty: 65, morality: 70, sensuality: 50, neuroticism: 40 },
@@ -166,7 +167,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '10', name: 'Carlos Mendez', age: 45, gender: 'male',
       bio: 'Carlos fixes everything for free. He\'s better at helping others than himself.',
       traits: ['generous', 'funny', 'unreliable'],
-      job: 'handyperson', jobTitle: 'Handyperson', salary: 20,
+      job: 'handyperson', jobTitle: 'Handyperson',
       homeName: 'Home 6', workplaceName: 'Carlos\' Workshop',
       schedule: { wakeTime: 7, sleepTime: 23, workStart: 9, workEnd: 16, lunchTime: 12, freeTimePreferences: ['tavern', 'town_square', 'park'] },
       personality: { honesty: 50, aggression: 25, warmth: 70, impulsiveness: 60, vanity: 30, curiosity: 40, loyalty: 55, morality: 50, sensuality: 45, neuroticism: 50 },
@@ -184,7 +185,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '11', name: 'Lucia Fernandez', age: 23, gender: 'female',
       bio: 'Lucia is the youngest resident, dreaming of leaving.',
       traits: ['optimistic', 'creative', 'restless'],
-      job: 'shop_assistant', jobTitle: 'Shop Assistant', salary: 20,
+      job: 'shop_assistant', jobTitle: 'Shop Assistant',
       homeName: 'Home 7', workplaceName: 'Rosa\'s General Store',
       schedule: { wakeTime: 7, sleepTime: 23, workStart: 8, workEnd: 18, lunchTime: 12, freeTimePreferences: ['park', 'town_square', 'tavern'] },
       personality: { honesty: 55, aggression: 20, warmth: 70, impulsiveness: 55, vanity: 45, curiosity: 65, loyalty: 60, morality: 60, sensuality: 55, neuroticism: 50 },
@@ -201,7 +202,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '12', name: 'Diego Santos', age: 26, gender: 'male',
       bio: 'Diego is a traveling musician who stayed for the town — or for someone.',
       traits: ['passionate', 'impulsive', 'dramatic'],
-      job: 'musician', jobTitle: 'Musician', salary: 20,
+      job: 'musician', jobTitle: 'Musician',
       homeName: 'Home 8', workplaceName: 'The Rusty Lantern',
       schedule: { wakeTime: 10, sleepTime: 1, workStart: 17, workEnd: 23, lunchTime: 14, freeTimePreferences: ['park', 'town_square', 'home'] },
       personality: { honesty: 45, aggression: 40, warmth: 60, impulsiveness: 75, vanity: 55, curiosity: 50, loyalty: 45, morality: 40, sensuality: 85, neuroticism: 60 },
@@ -218,7 +219,7 @@ export function getDefaultAgents(): AgentConfig[] {
       id: '13', name: 'Ray Kowalski', age: 44, gender: 'male',
       bio: 'Ray is a former city cop who transferred for a fresh start.',
       traits: ['cynical', 'observant', 'intimidating', 'pragmatic'],
-      job: 'constable', jobTitle: 'Town Constable', salary: 24,
+      job: 'constable', jobTitle: 'Town Constable',
       homeName: 'Home 9', workplaceName: 'Town Jail',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 7, workEnd: 17, lunchTime: 12, freeTimePreferences: ['tavern', 'town_square', 'park'] },
       personality: { honesty: 35, aggression: 65, warmth: 30, impulsiveness: 45, vanity: 55, curiosity: 70, loyalty: 50, morality: 40, sensuality: 35, neuroticism: 45 },
@@ -234,6 +235,8 @@ export function getDefaultAgents(): AgentConfig[] {
       ],
     },
   ];
+  // Wages come from the job table (server/data/jobs.ts), the same one the seeds use.
+  return agents.map((a) => ({ ...a, salary: jobSalary(a.job) }));
 }
 
 /**

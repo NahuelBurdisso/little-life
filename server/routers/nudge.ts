@@ -31,6 +31,7 @@ import {
 import { rumorReachedSubject } from '../lib/gossip';
 import { nightSkip } from '../engine/nightSkip';
 import { workplaceForJob } from '../lib/jobWorkplace';
+import { jobSalary } from '../data/jobs';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -532,7 +533,7 @@ export const nudgeRouter = router({
               agent_id: agentId,
               job,
               job_title: job,
-              salary: 20,
+              salary: jobSalary(job),
               work_performance: 0.7,
               money: CONFIG.ECONOMY.STARTING_MONEY,
               daily_expenses: CONFIG.ECONOMY.DAILY_EXPENSES.min,

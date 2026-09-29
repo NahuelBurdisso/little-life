@@ -1,3 +1,5 @@
+import { jobSalary } from './jobs';
+
 export interface AgentSeed {
   name: string;
   age: number;
@@ -9,11 +11,8 @@ export interface AgentSeed {
   job: string;
   jobTitle: string;
   /**
-   * Daily wage, paid by the town treasury (or the shop owner, for staff).
-   * Floor $20: three meals at the $5-6 menus plus the $4 base upkeep (E5 —
-   * the musician on $14 lived on the pantry). Top $28: the lifestyle upkeep
-   * returns what the best paid don't spend. Mirrored in the wizard tables
-   * (src/components/setup/defaults.ts, types.ts JOB_OPTIONS).
+   * Daily wage, derived from the job table (data/jobs.ts) — never typed per seed, so a wage
+   * change is one edit. Filled in below where `AGENT_SEEDS` is built.
    */
   salary: number;
   homeName: string;
@@ -54,7 +53,7 @@ export interface AgentSeed {
   }>;
 }
 
-export const AGENT_SEEDS: AgentSeed[] = [
+const AGENT_SEED_DATA: Array<Omit<AgentSeed, 'salary'>> = [
   {
     name: "Elena Voss",
     age: 34,
@@ -65,7 +64,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "elena_voss_portrait",
     job: "farmer",
     jobTitle: "Head Farmer",
-    salary: 24,
     homeName: "Home 1",
     workplaceName: "Green Acres Farm",
     schedule: {
@@ -132,7 +130,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "james_obrien_portrait",
     job: "farmhand",
     jobTitle: "Farmhand",
-    salary: 20,
     homeName: "Home 1",
     workplaceName: "Green Acres Farm",
     schedule: {
@@ -199,7 +196,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "marco_rivera_portrait",
     job: "bartender",
     jobTitle: "Bartender",
-    salary: 22,
     homeName: "Home 2",
     workplaceName: "The Rusty Lantern",
     schedule: {
@@ -266,7 +262,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "rosa_chen_portrait",
     job: "shopkeeper",
     jobTitle: "Shopkeeper",
-    salary: 24,
     homeName: "Home 3",
     workplaceName: "Rosa's General Store",
     schedule: {
@@ -346,7 +341,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "yuki_tanaka_portrait",
     job: "retired",
     jobTitle: "Retired Teacher",
-    salary: 20,
     homeName: "Home 3",
     workplaceName: null,
     schedule: {
@@ -413,7 +407,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "sofia_petrov_portrait",
     job: "doctor",
     jobTitle: "Town Doctor",
-    salary: 28,
     homeName: "Home 4",
     workplaceName: "Dr. Petrov's Clinic",
     schedule: {
@@ -480,7 +473,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "omar_hassan_portrait",
     job: "medical_assistant",
     jobTitle: "Medical Assistant",
-    salary: 21,
     homeName: "Home 4",
     workplaceName: "Dr. Petrov's Clinic",
     schedule: {
@@ -547,7 +539,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "thomas_park_portrait",
     job: "mayor",
     jobTitle: "Town Mayor",
-    salary: 26,
     homeName: "Home 5",
     workplaceName: "Town Hall",
     schedule: {
@@ -614,7 +605,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "priya_sharma_portrait",
     job: "baker",
     jobTitle: "Baker",
-    salary: 22,
     homeName: "Home 5",
     workplaceName: "Priya's Bakery",
     schedule: {
@@ -681,7 +671,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "carlos_mendez_portrait",
     job: "handyperson",
     jobTitle: "Handyperson",
-    salary: 20,
     homeName: "Home 6",
     workplaceName: "Carlos' Workshop",
     schedule: {
@@ -761,7 +750,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "lucia_fernandez_portrait",
     job: "shop_assistant",
     jobTitle: "Shop Assistant",
-    salary: 20,
     homeName: "Home 7",
     workplaceName: "Rosa's General Store",
     schedule: {
@@ -828,7 +816,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "diego_santos_portrait",
     job: "musician",
     jobTitle: "Musician",
-    salary: 20,
     homeName: "Home 8",
     workplaceName: "The Rusty Lantern",
     schedule: {
@@ -895,7 +882,6 @@ export const AGENT_SEEDS: AgentSeed[] = [
     portraitSprite: "ray_kowalski_portrait",
     job: "constable",
     jobTitle: "Town Constable",
-    salary: 24,
     homeName: "Home 9",
     workplaceName: "Town Jail",
     schedule: {
@@ -979,3 +965,5 @@ export const AGENT_SEEDS: AgentSeed[] = [
     ],
   },
 ];
+
+export const AGENT_SEEDS: AgentSeed[] = AGENT_SEED_DATA.map((seed) => ({ ...seed, salary: jobSalary(seed.job) }));
