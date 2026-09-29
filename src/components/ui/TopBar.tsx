@@ -107,7 +107,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
         <div className="flex items-center gap-3 text-sm" title={`Tick ${world.time.totalTicks}`}>
           <span className="font-bold text-ui-gold">Day {world.time.day}</span>
           <span>{formatTime(world.time)}</span>
-          <span>{weatherEmoji(world.weather)}</span>
+          <span title={`Weather: ${world.weather}`}>{weatherEmoji(world.weather, world.time.hour)}</span>
           <span className="text-ui-dim capitalize">
             {seasonEmoji(world.time.season)} {world.time.season}
           </span>
