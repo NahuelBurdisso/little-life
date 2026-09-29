@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { useNudge } from "../../hooks/useNudge";
+import { W } from "./warmClasses";
 
 interface NewAgentDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Called with the newcomer's id once the server accepted them. */
+  onCreated?: (agentId: number) => void;
 }
 
 const TRAIT_OPTIONS = [
@@ -18,11 +21,13 @@ const JOB_OPTIONS = [
   "handyperson", "musician", "baker", "unemployed",
 ];
 
-export function NewAgentDialog({ isOpen, onClose }: NewAgentDialogProps) {
+export function NewAgentDialog({ isOpen, onClose, onCreated }: NewAgentDialogProps) {
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
   const [traits, setTraits] = useState<string[]>([]);
   const [job, setJob] = useState("unemployed");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { introduceAgent } = useNudge();
 
   if (!isOpen) return null;
@@ -33,58 +38,82 @@ export function NewAgentDialog({ isOpen, onClose }: NewAgentDialogProps) {
     );
   };
 
-  const handleSubmit = () => {
-    if (!name.trim()) return;
-    introduceAgent(name.trim(), bio.trim(), traits, job);
+  const close = () => {
+    setError(null);
+    onClose();
+  };
+
+  const canSubmit = name.trim().length > 0 && !pending;
+
+  // The form only resets once the server said yes. It used to clear and close
+  // straight away, so a refusal ("No available housing") threw away everything the
+  // player had typed and the dialog looked as if it had worked.
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    setPending(true);
+    setError(null);
+    const result = await introduceAgent(name.trim(), bio.trim(), traits, job);
+    setPending(false);
+    if (!result.success) {
+      setError(
+        result.reason === "network"
+          ? "Could not reach the server. Try again."
+          : result.reason ?? "The town could not take them in.",
+      );
+      return;
+    }
     setName("");
     setBio("");
     setTraits([]);
     setJob("unemployed");
     onClose();
+    if (result.agentId != null) onCreated?.(result.agentId);
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className={W.backdrop} onClick={close}>
       <div
-        className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl w-[420px] max-h-[80vh] overflow-y-auto"
+        className={`${W.modal} w-[420px] max-w-[95vw] max-h-[85vh]`}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-sm font-bold text-white">New Resident</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">
+        <div className={W.modalHeader}>
+          <h2 className={W.title}>New Resident</h2>
+          <button onClick={close} className={W.close} aria-label="Close">
             &times;
           </button>
         </div>
 
-        <div className="px-5 py-4 space-y-4">
-          {/* Name */}
+        <div className="px-4 py-4 space-y-4">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Name</label>
+            <label className={`block text-[10px] uppercase tracking-wider ${W.muted} mb-1`}>Name</label>
             <input
               type="text"
               value={name}
+              autoFocus
+              disabled={pending}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSubmit();
+              }}
               placeholder="Enter name..."
-              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500"
+              className={W.input}
             />
           </div>
 
-          {/* Bio */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Bio</label>
+            <label className={`block text-[10px] uppercase tracking-wider ${W.muted} mb-1`}>Bio</label>
             <textarea
               value={bio}
+              disabled={pending}
               onChange={(e) => setBio(e.target.value)}
               placeholder="A short backstory..."
               rows={3}
-              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500 resize-none"
+              className={`${W.input} resize-none`}
             />
           </div>
 
-          {/* Traits */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">
+            <label className={`block text-[10px] uppercase tracking-wider ${W.muted} mb-1.5`}>
               Traits ({traits.length} selected)
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -93,11 +122,14 @@ export function NewAgentDialog({ isOpen, onClose }: NewAgentDialogProps) {
                 return (
                   <button
                     key={trait}
+                    type="button"
+                    disabled={pending}
+                    aria-pressed={selected}
                     onClick={() => toggleTrait(trait)}
-                    className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                    className={`px-2 py-0.5 text-xs border transition-colors ${
                       selected
-                        ? "bg-blue-600/30 border-blue-500 text-blue-300"
-                        : "bg-gray-700 border-gray-600 text-gray-400 hover:border-gray-500"
+                        ? "bg-[var(--ui-accent-gold)]/15 border-[var(--ui-accent-gold)] text-[var(--ui-accent-gold)]"
+                        : "bg-[var(--ui-bg-raised)] border-[var(--ui-border)] text-[var(--ui-text-secondary)] hover:border-[var(--ui-border-accent)]"
                     }`}
                   >
                     {trait}
@@ -107,13 +139,13 @@ export function NewAgentDialog({ isOpen, onClose }: NewAgentDialogProps) {
             </div>
           </div>
 
-          {/* Job */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Job</label>
+            <label className={`block text-[10px] uppercase tracking-wider ${W.muted} mb-1`}>Job</label>
             <select
               value={job}
+              disabled={pending}
               onChange={(e) => setJob(e.target.value)}
-              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500"
+              className={W.input}
             >
               {JOB_OPTIONS.map((j) => (
                 <option key={j} value={j}>
@@ -123,17 +155,22 @@ export function NewAgentDialog({ isOpen, onClose }: NewAgentDialogProps) {
             </select>
           </div>
 
-          {/* Submit */}
+          {error && (
+            <p
+              role="alert"
+              className="text-xs px-2.5 py-1.5 border border-[var(--ui-negative)] bg-[var(--ui-negative)]/10 text-[var(--ui-negative)]"
+            >
+              {error}
+            </p>
+          )}
+
           <button
             onClick={handleSubmit}
-            disabled={!name.trim()}
-            className={`w-full py-2 text-sm font-medium rounded transition-colors ${
-              name.trim()
-                ? "bg-green-600 hover:bg-green-500 text-white"
-                : "bg-gray-600 text-gray-500 cursor-not-allowed"
-            }`}
+            disabled={!canSubmit}
+            aria-busy={pending}
+            className={`w-full py-2 text-sm font-medium ${W.btnPrimary}`}
           >
-            Introduce to Town
+            {pending ? "Introducing…" : "Introduce to Town"}
           </button>
         </div>
       </div>

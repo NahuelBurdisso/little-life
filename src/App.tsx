@@ -369,3 +369,4 @@ export default function App() {
     </div>
   );
 }
+        onCreated={(id) => focusAgent(String(id))}
