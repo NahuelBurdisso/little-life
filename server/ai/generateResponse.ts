@@ -160,19 +160,20 @@ export async function generateResponse(
   // 3b. Validate response quality. A reply the sanitiser emptied (it was all
   // stage direction) is judged here like any too-short reply: one nudge retry,
   // then the canned fallback — the same path an empty model reply ends up on.
-  if (rawText !== null && responseText !== null) {
-    const trimmed = responseText.trim();
-    const lastMsg = conversation.messages.length > 0
-      ? (conversation.messages[conversation.messages.length - 1] as Record<string, any>)?.text as string | undefined
-      : undefined;
-    const sentiment = analyzeSentiment(trimmed);
-    const isInvalid =
+  const lastMsg = conversation.messages.length > 0
+    ? (conversation.messages[conversation.messages.length - 1] as Record<string, any>)?.text as string | undefined
+    : undefined;
+  const isInvalid = (text: string) => {
+    const trimmed = text.trim();
+    return (
       trimmed.length < 2 ||                                    // too short
       trimmed === lastMsg?.trim() ||                            // exact repeat
       /^(undefined|null|error|Error)$/i.test(trimmed) ||        // broken output
-      (trimmed.length < 10 && Math.abs(sentiment) < 0.2);       // low-quality filler ("Ok", "Mm")
-
-    if (isInvalid) {
+      (trimmed.length < 10 && Math.abs(analyzeSentiment(trimmed)) < 0.2) // low-quality filler ("Ok", "Mm")
+    );
+  };
+  if (rawText !== null && responseText !== null) {
+    if (isInvalid(responseText)) {
       // One retry with nudge. The rejection is booked against this real call
       // instead of a synthetic { durationMs: 0, success: true } record — that
       // record counted as a completed request and pulled avgResponseMs and
@@ -199,11 +200,11 @@ export async function generateResponse(
             repeat_penalty: CONFIG.AI.CHAT_REPEAT_PENALTY,
           },
         });
-        // "Succeeded" means the retry produced text we actually used. A call
-        // that returned but was still too short falls through to the fallback,
-        // so booking it as a success overstated the retry's hit rate.
+        // "Succeeded" means the retry produced text we actually used. The retry
+        // faces the same validator as the first reply: a nudge that came back
+        // as "Ok" or a repeat of the last line used to be saved as is.
         const cleaned = nudge.text ? clean(nudge.text, nudge.truncated) : '';
-        if (cleaned.length >= 2) {
+        if (!isInvalid(cleaned)) {
           responseText = cleaned;
           nudgeSucceeded = true;
         }

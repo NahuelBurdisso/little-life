@@ -66,6 +66,16 @@ describe('generateResponse', () => {
     expect(vi.mocked(addMessage).mock.calls[0][6]).toBe(false);
   });
 
+  it('holds the nudge retry to the same validator: filler falls back', async () => {
+    vi.mocked(callOllamaChat)
+      .mockResolvedValueOnce({ text: 'Ok' } as never)
+      .mockResolvedValueOnce({ text: 'Mm' } as never);
+
+    await generateResponse(1, 1);
+
+    expect(vi.mocked(addMessage).mock.calls[0][2]).toMatch(FALLBACK_PATTERN);
+  });
+
   it('stores the sanitised reply, not the raw model text', async () => {
     vi.mocked(callOllamaChat).mockResolvedValueOnce({
       text: '(You glance at the door.) "Oh, Diego, you seem deep in thought today." 😉',
