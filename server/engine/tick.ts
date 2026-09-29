@@ -256,6 +256,14 @@ export async function gameTick(): Promise<void> {
   // any phase can record.
   memoryService.setTick(newTime.totalTicks);
 
+  // Build the tick-level agent-states cache before any phase, so every phase
+  // — needs included, which reads each agent's states — answers
+  // getAgentStates() from memory. It used to be built only after the states
+  // phase, when it could not yet notice writes; since the write counter
+  // (server/db/index.ts) it rebuilds itself after any write, and a phase that
+  // rolls back invalidates it (runSystemPhase), so it is valid from here on.
+  cacheAllAgentStates();
+
   // 7. Run the system phases sequentially
   const phaseMs: Array<[string, number]> = [];
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
@@ -273,13 +281,6 @@ export async function gameTick(): Promise<void> {
     // samples a day in a process meant to stay up for days.
     if (CONFIG.AUTOPLAY.ENABLED) {
       autoPlayer.perf.recordPhase(phase.name, performance.now() - phaseStart);
-    }
-
-    // After the states phase completes, build the tick-level cache so that all
-    // subsequent phases (economy, relationships, conversations, decisions,
-    // movement, events) avoid per-agent DB round-trips for getAgentStates().
-    if (phase.name === 'states') {
-      cacheAllAgentStates();
     }
 
     // Update current_tick_phase after each successful phase
