@@ -12,6 +12,10 @@ export function useAgents() {
       // these, and window-focus refetch is off — so the canvas tension lines,
       // the relationship graph and TownStats kept their load-time data all session.
       utils.relationships.getGraph.invalidate();
+      // The pair dossier (open one at a time, so this is at most one refetch)
+      // shows the same feelings plus their history, and would otherwise sit on
+      // the values it loaded with.
+      utils.relationships.getPair.invalidate();
       utils.economy.getTownStats.invalidate();
     },
   });

@@ -7,6 +7,8 @@ interface RelationshipGraphProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectAgent?: (agentId: string) => void;
+  /** Clicking an edge opens the pair dossier for its two residents. */
+  onViewPair?: (a: string, b: string) => void;
 }
 
 interface GraphNode {
@@ -111,7 +113,7 @@ function passesFilter(edge: GraphEdge, filter: FilterMode): boolean {
 
 // --- Component ---
 
-export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: RelationshipGraphProps) {
+export function RelationshipGraph({ isOpen, onClose, onSelectAgent, onViewPair }: RelationshipGraphProps) {
   const { agents } = useAgents();
   const { data: relationships } = trpc.relationships.getGraph.useQuery();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -136,6 +138,10 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
   // Camera state
   const cameraRef = useRef({ offsetX: 0, offsetY: 0, zoom: 1 });
   const dragRef = useRef<{ type: 'pan' | 'node'; startX: number; startY: number; nodeId?: string } | null>(null);
+  // Where the button went down, in canvas pixels. A pan or a node drag also ends
+  // in a `click`; comparing against this is what tells a click on an edge from
+  // the end of a drag that happened to finish over one.
+  const pressRef = useRef<{ x: number; y: number } | null>(null);
 
   const buildGraph = useCallback(() => {
     if (!agents.length) return;
@@ -208,6 +214,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const { x, y } = screenToWorld(sx, sy);
+    pressRef.current = { x: sx, y: sy };
 
     // Check if clicking a node
     for (const node of nodesRef.current) {
@@ -223,6 +230,27 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
     // Pan
     dragRef.current = { type: 'pan', startX: sx, startY: sy };
   }, [screenToWorld]);
+
+  /** The visible edge within 8 px of a world-space point, if any. */
+  const findEdgeAt = useCallback((x: number, y: number): GraphEdge | null => {
+    for (const edge of edgesRef.current) {
+      if (!passesFilter(edge, filter)) continue;
+      const a = nodesRef.current.find(n => n.id === edge.source);
+      const b = nodesRef.current.find(n => n.id === edge.target);
+      if (!a || !b) continue;
+      // Point-to-line distance
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      if (len2 === 0) continue;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2));
+      const projX = a.x + t * dx;
+      const projY = a.y + t * dy;
+      const dist = Math.sqrt((x - projX) ** 2 + (y - projY) ** 2);
+      if (dist < 8) return edge;
+    }
+    return null;
+  }, [filter]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -272,35 +300,34 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
       hoveredNodeIdRef.current = null;
 
       // Hover detection — edges
-      let foundEdge = false;
-      const filteredEdges = edgesRef.current.filter(e => passesFilter(e, filter));
-      for (const edge of filteredEdges) {
-        const a = nodesRef.current.find(n => n.id === edge.source);
-        const b = nodesRef.current.find(n => n.id === edge.target);
-        if (!a || !b) continue;
-        // Point-to-line distance
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const len2 = dx * dx + dy * dy;
-        if (len2 === 0) continue;
-        const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2));
-        const projX = a.x + t * dx;
-        const projY = a.y + t * dy;
-        const dist = Math.sqrt((x - projX) ** 2 + (y - projY) ** 2);
-        if (dist < 8) {
-          setHoveredEdge(edge);
-          setTooltipPos({ x: sx, y: sy });
-          hoveredEdgeKeyRef.current = edgeKey(edge);
-          foundEdge = true;
-          break;
-        }
-      }
-      if (!foundEdge) {
+      const edge = findEdgeAt(x, y);
+      if (edge) {
+        setHoveredEdge(edge);
+        setTooltipPos({ x: sx, y: sy });
+        hoveredEdgeKeyRef.current = edgeKey(edge);
+      } else {
         setHoveredEdge(null);
         hoveredEdgeKeyRef.current = null;
       }
     }
-  }, [filter, screenToWorld]);
+  }, [findEdgeAt, screenToWorld]);
+
+  // A click that didn't travel, landing on a line (and not on a resident, whose
+  // circle sits over its edges), opens that pair's dossier. Hover only ever
+  // showed a tooltip, so the "why" behind a line stayed out of reach.
+  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const press = pressRef.current;
+    pressRef.current = null;
+    if (!rect || !press || !onViewPair) return;
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    if (Math.hypot(sx - press.x, sy - press.y) > 4) return;
+    const { x, y } = screenToWorld(sx, sy);
+    if (nodesRef.current.some((n) => (x - n.x) ** 2 + (y - n.y) ** 2 < 18 * 18)) return;
+    const edge = findEdgeAt(x, y);
+    if (edge) onViewPair(edge.source, edge.target);
+  }, [findEdgeAt, onViewPair, screenToWorld]);
 
   const handleMouseUp = useCallback(() => {
     dragRef.current = null;
@@ -617,7 +644,10 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
             ref={canvasRef}
             width={800}
             height={600}
-            className="w-full rounded-sm bg-ui-deep cursor-grab active:cursor-grabbing"
+            className={`w-full rounded-sm bg-ui-deep ${
+              hoveredEdge && !hoveredNode && onViewPair ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+            }`}
+            onClick={handleClick}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -680,6 +710,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
               {hoveredEdge.tags.length > 0 && (
                 <div className="text-ui-dim mt-1">Tags: {hoveredEdge.tags.join(', ')}</div>
               )}
+              {onViewPair && <div className="text-ui-muted mt-1 italic">Click for their story</div>}
             </div>
           )}
         </div>
@@ -711,6 +742,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
             {[
               ['drag', 'move or pan'],
               ['scroll', 'zoom'],
+              ['click line', 'their story'],
               ['double-click', 'open resident'],
               ['double-click empty', 'reset view'],
             ].map(([key, what]) => (
