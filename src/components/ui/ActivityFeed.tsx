@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useActivityFeed } from "../../hooks/useActivityFeed";
 import { useWorldState } from "../../hooks/useWorldState";
-import { timeAgo } from "../../lib/formatters";
+import { formatGameMinute, gameTimeAgo, timeAgo } from "../../lib/formatters";
+import { gameMinutes } from "../../../server/lib/gameClock";
 import { renderMessage, type ActivityEntry } from "../../lib/activityMessage";
 import type { ArcKind, StoryArc } from "../../../server/lib/chronicle";
 
@@ -359,11 +360,16 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
                       <div className="ml-3 border-l-2 border-[#6b5c30] pl-1.5 space-y-0.5 mb-1">
                         {arc.beats.map((beat, bi) => (
                           <div key={`${arc.id}-${bi}`} className="text-[11px] flex gap-1.5">
-                            {/* Backstory secrets carry timestamp 0, which `timeAgo`
-                                would read as a game tick and render as an age. */}
-                            <span className="text-[#504838] shrink-0 w-12 text-right">
-                              {world && beat.timestamp > 0
-                                ? timeAgo(beat.timestamp, world.time.totalTicks, world.tick_speed, world.is_paused)
+                            {/* Game time on both ends: a beat's age stands still while
+                                the game is paused and counts game days, not the hours
+                                the server happened to run. Undated beats (a scandal's
+                                backstory secret) get no age rather than a made-up one. */}
+                            <span
+                              className="text-[#504838] shrink-0 w-12 text-right"
+                              title={beat.gameMinute != null ? formatGameMinute(beat.gameMinute) : undefined}
+                            >
+                              {world && beat.gameMinute != null
+                                ? gameTimeAgo(beat.gameMinute, gameMinutes(world.time))
                                 : ''}
                             </span>
                             <span className="text-[#a09070]">{beat.description}</span>
