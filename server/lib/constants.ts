@@ -82,6 +82,12 @@ export const CONFIG = {
     MAX_QUEUE_SIZE: 10,
     MAX_TURNS_DEEP: 10,
     MAX_TURNS_STANDARD: 6,
+    // Tier for acquaintances with nothing special to talk about. It was always
+    // 'template' to spare the model, and half of all conversations were canned
+    // non-sequiturs. With Gemma 4 26B a turn is ~2 s and ~35 tokens, so small
+    // talk runs on the LLM too; the scheduler still falls back to a template
+    // when slots are full or the measured latency won't fit (planConversation).
+    SMALL_TALK_TIER: (process.env.SMALL_TALK_TIER ?? 'llm_standard') as 'llm_standard' | 'template',
     // CLOCK: GAME MINUTES. How long a queue entry may wait for its pair to be
     // free (or for an LLM slot) before it falls back to a template chat or is
     // dropped. These were wall-clock ms (10 s / 30 s), so at 4x an entry waited

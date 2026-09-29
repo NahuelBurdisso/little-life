@@ -1739,7 +1739,7 @@ export function tick(world: WorldRow): void {
       } else if (friendship > 40 || romance > 10 || agentNeeds.mood < 40 || agentNeeds.social < 30) {
         tier = 'llm_standard'; // 4 turns — friends talking, lonely/sad agents
       } else {
-        tier = 'template'; // no LLM — acquaintances with nothing to say
+        tier = CONFIG.CONVERSATIONS.SMALL_TALK_TIER; // acquaintances with nothing special to say
       }
 
       const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
@@ -1833,7 +1833,7 @@ export function tick(world: WorldRow): void {
     } else if (friendship > 40 || romance > 10 || aMood < 40) {
       tier = 'llm_standard';
     } else {
-      tier = 'template';
+      tier = CONFIG.CONVERSATIONS.SMALL_TALK_TIER;
     }
 
     const aPersonality = a.personality as PersonalityProfile | null;
