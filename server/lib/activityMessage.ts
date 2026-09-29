@@ -2,7 +2,7 @@
  *  Lives outside ActivityFeed so DramaAlerts renders the same sentence for the
  *  same row instead of drifting into a second, subtly different phrasing. */
 
-import { endSentence, shortenForFeed } from '../../server/lib/factText';
+import { endSentence, shortenForFeed } from './factText';
 
 export interface ActivityEntry {
   id?: number;
@@ -40,6 +40,11 @@ const GOAL_PHRASES: Record<string, string> = {
   get_sober: 'getting sober',
   befriend: 'making a friend',
   comfort_grieving: 'comforting someone grieving',
+};
+
+/** Relationship status keys whose plain humanized form reads wrong. */
+const STATUS_PHRASES: Record<string, string> = {
+  romantic_interest: 'sweet on each other',
 };
 
 /** State types are registry keys like `in_debt`; make them readable. */
@@ -90,7 +95,8 @@ export function renderMessage(entry: ActivityEntry): string {
   }
 
   // Relationships
-  if (d.agent1 && d.agent2 && d.status) return `${d.agent1} and ${d.agent2} are now ${d.status}.`;
+  // Status is a relationship key ("romantic_interest", "close_friends").
+  if (d.agent1 && d.agent2 && d.status) return `${d.agent1} and ${d.agent2} are now ${STATUS_PHRASES[String(d.status)] ?? humanize(d.status)}.`;
   if (d.agent1 && d.agent2 && d.location !== undefined) {
     // Rows written before `topic` existed carried the topic in `location`
     // ("finished talking at flirting"), so only trust `location` on rows that
