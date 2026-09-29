@@ -103,7 +103,8 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   gift_given: (s, t, ctx) =>
     ctx?.detail ? `${s} gave ${ctx.detail} to ${t ?? 'someone'}` :
     `${s} was very generous with ${t ?? 'someone'}`,
-  secret_shared: (s, t) =>
+  secret_shared: (s, t, ctx) =>
+    ctx?.detail ? `${ctx.detail.replace(/[.!]+$/, '')} — told in confidence to ${t ?? 'someone'}` :
     `${s} confided something personal to ${t ?? 'someone'}`,
   confrontation: (s, t) =>
     `${s} and ${t ?? 'someone'} got into a public confrontation`,
@@ -178,6 +179,12 @@ export function getRelationshipFriendship(agentA: number, agentB: number): numbe
 
 // ─── createFact ───────────────────────────────────────────────────────────────
 
+/** The sentence a fact of `type` is stored as (pure; exported for tests). */
+export function renderFact(type: string, subjectName: string, targetName?: string, context?: FactContext): string {
+  const generator = FACT_GENERATORS[type];
+  return generator ? generator(subjectName, targetName, context ?? {}) : `${subjectName}: ${type}`;
+}
+
 export function createFact(
   type: string,
   subjectId: number,
@@ -190,9 +197,7 @@ export function createFact(
   const subjectName = getAgentName(subjectId);
   const targetName = targetId != null ? getAgentName(targetId) : undefined;
 
-  const generator = FACT_GENERATORS[type];
-  const ctx = context ?? {};
-  const content = generator ? generator(subjectName, targetName, ctx) : `${subjectName}: ${type}`;
+  const content = renderFact(type, subjectName, targetName, context);
 
   // Check for existing duplicate (same type + subject + target)
   // For low-churn types (sickness, financial, work_issue), also check inactive shared_knowledge

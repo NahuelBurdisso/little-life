@@ -74,7 +74,9 @@ function initSecretSharing(): void {
 
     // Pick a secret this agent hasn't shared yet
     const agentSecrets = sharedSecrets.get(payload.agentId) ?? new Set();
-    const availableSecrets = SECRETS_POOL.filter(s => !agentSecrets.has(s.id) && s.sensitivity >= 2);
+    // Only secrets about the sharer alone: a {target} template would put a
+    // made-up claim about a third resident into circulation.
+    const availableSecrets = SECRETS_POOL.filter(s => !agentSecrets.has(s.id) && s.sensitivity >= 2 && !s.template.includes('{target}'));
     if (availableSecrets.length === 0) return;
 
     const chosen = availableSecrets[Math.floor(Math.random() * availableSecrets.length)];
@@ -86,6 +88,12 @@ function initSecretSharing(): void {
     // confided returns null. Bail out: otherwise the drama log and the trust boost
     // fire again and again off a fact that was never written, ratcheting trust
     // upward without limit.
+    const sharerName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, payload.agentId)).get()?.name ?? 'Someone';
+    const listenerName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name ?? 'someone';
+
+    // The fact carries what was confided. It used to be only "X confided
+    // something personal to Y", so when the listener betrayed it the rumor
+    // going round town said nothing at all.
     const factId = createFact(
       'secret_shared',
       payload.agentId,
@@ -93,11 +101,9 @@ function initSecretSharing(): void {
       chosen.sensitivity,
       [payload.agentId, otherId],
       'confided',
+      { detail: chosen.template.replace(/\{subject\}/g, sharerName) },
     );
     if (factId === null) return;
-
-    const sharerName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, payload.agentId)).get()?.name ?? 'Someone';
-    const listenerName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name ?? 'someone';
 
     logActivity({
       type: 'drama',
