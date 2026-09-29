@@ -35,8 +35,8 @@ import {
  * load (lib/saves.ts) swaps their contents for a save file's. A table that is
  * in one list and not the other is a bug either way — a replace that leaves it
  * behind hands the old world's rows to the new town, a load that skips it
- * keeps the current town's rows next to the loaded one's. `db/seed.ts` keeps
- * its own copy for the standalone reseed script.
+ * keeps the current town's rows next to the loaded one's. The standalone
+ * reseed script (`db/seed.ts`) wipes with this list too.
  */
 export const ALL_TABLES = [
   simSnapshots,
