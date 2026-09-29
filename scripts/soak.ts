@@ -22,9 +22,10 @@
  * outright — copy it to data/verify.db first if you want to soak your world.
  *
  * LLM: `fetch` is replaced before any server module loads, so every chat and
- * embedding call fails at once like a refused connection. Conversations fall
- * back to the template tier and planning to routine plans — exactly what
- * happens when Ollama is down, minus the timeouts.
+ * embedding call fails at once like a refused connection. Planning falls back
+ * to routine plans, and every conversation is forced onto the template tier
+ * (see `forceTemplateTier`): left to the LLM tiers, each one opened, failed its
+ * first turn and ended empty, so the social numbers (E10) measured nothing.
  *
  * Speed: ticks are driven back-to-back through `gameTick()` (exported for this
  * script), not the 1 s setTimeout loop.
@@ -120,7 +121,7 @@ const out = (...args: unknown[]) => realLog(...args);
 async function main(): Promise<void> {
   const { db, sqlite } = await import('../server/db');
   const schema = await import('../server/db/schema');
-  const { eq, gt, and, inArray, sql } = await import('drizzle-orm');
+  const { eq, gt, ne, and, inArray, sql } = await import('drizzle-orm');
   const { gameTick, stopTickLoopAndWait } = await import('../server/engine/tick');
   const { CONFIG } = await import('../server/lib/constants');
   const { TRADE_RULES } = await import('../server/data/economyData');
@@ -149,7 +150,18 @@ async function main(): Promise<void> {
     }
   });
 
-  const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, needs, agentStates } = schema;
+  const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, conversationQueue, needs, agentStates } = schema;
+
+  // With the LLM off, an llm_standard / llm_deep queue entry still opens a
+  // conversation, fails its first turn against the dead `fetch` and ends with no
+  // lines, so the soak counted empty chats and none of the template chats a
+  // town without a model really has (the shipped fallback when no slot is free).
+  // Entries are queued by several phases (decisions, perception, nudges), so
+  // flip them all after each tick: the next tick's conversations phase then only
+  // ever sees the template tier, which it runs immediately and without a model.
+  const forceTemplateTier = () => {
+    db.update(conversationQueue).set({ tier: 'template' }).where(ne(conversationQueue.tier, 'template')).run();
+  };
 
   if (!SOURCE_DB) {
     // The wizard's own defaults, imported rather than restated so the soak
@@ -315,6 +327,7 @@ async function main(): Promise<void> {
     fallbackDay.clear();
     for (let i = 0; i < ticksPerDay; i++) {
       await gameTick();
+      forceTemplateTier();
       ticks++;
       const rows = db.select({
         id: agents.id, home: agents.home, loc: agents.current_location,
