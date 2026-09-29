@@ -6,6 +6,7 @@
  *   npm run soak -- --days 10 --seed abc  # deterministic worldgen seed
  *   npm run soak -- --db data/verify.db   # soak a COPY of an existing save
  *   npm run soak -- --tick-speed 5 --keep --verbose
+ *   npm run soak -- --season winter       # start in another season (fresh world or --db copy)
  *
  * Safety: the database is always a temp file under the OS temp dir. `--db` is
  * copied, never opened; `data/little-life.db` (the live world) is refused
@@ -36,6 +37,11 @@ const DAYS = Number(arg('days') ?? 5);
 const SEED = arg('seed') ?? 'soak';
 const TICK_SPEED = arg('tick-speed') ? Number(arg('tick-speed')) : undefined;
 const SOURCE_DB = arg('db');
+const SEASON = arg('season');
+if (SEASON && !['spring', 'summer', 'autumn', 'winter'].includes(SEASON)) {
+  console.error(`--season must be spring, summer, autumn or winter (got "${SEASON}")`);
+  process.exit(1);
+}
 const KEEP = flag('keep');
 const VERBOSE = flag('verbose');
 
@@ -105,8 +111,15 @@ async function main(): Promise<void> {
   const { TRADE_RULES } = await import('../server/data/economyData');
   // Registers the gift / jealousy listeners the server gets from index.ts.
   await import('../server/lib/giftEngine');
+  // Food made per day (farm output, bread, drinks): meals are real food now, so
+  // supply is part of the economy picture.
+  const { simEvents } = await import('../server/lib/simEvents');
+  const produced = new Map<string, number>();
+  simEvents.on('economy:production', (p: { item: string; quantity: number }) => {
+    produced.set(p.item, (produced.get(p.item) ?? 0) + p.quantity);
+  });
 
-  const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations } = schema;
+  const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, needs, agentStates } = schema;
 
   if (!SOURCE_DB) {
     const { AGENT_SEEDS } = await import('../server/data/agents');
@@ -129,7 +142,7 @@ async function main(): Promise<void> {
         personality: s.personality, backstoryMemories: s.backstoryMemories,
       })),
       relationships,
-      world: { season: 'spring', weather: 'sunny', startHour: 8, startDay: 1 },
+      world: { season: SEASON ?? 'spring', weather: 'sunny', startHour: 8, startDay: 1 },
       rules: {
         deathEnabled: true, sicknessRate: 'low', contagionRate: 'low',
         dramaIntensity: 'high', tickSpeed: 1, startingMoney: 50,
@@ -143,7 +156,12 @@ async function main(): Promise<void> {
   const world0 = db.select().from(worldState).get();
   if (!world0) throw new Error('No world in the database');
   db.update(worldState)
-    .set({ is_paused: false, ...(TICK_SPEED ? { tick_speed: TICK_SPEED } : {}) })
+    .set({
+      is_paused: false,
+      ...(TICK_SPEED ? { tick_speed: TICK_SPEED } : {}),
+      // A --db copy keeps its own clock; --season overrides just the season.
+      ...(SEASON && SOURCE_DB ? { time: { ...world0.time!, season: SEASON as any } } : {}),
+    })
     .where(eq(worldState.id, world0.id)).run();
   const tickSpeed = TICK_SPEED ?? world0.tick_speed;
   const ticksPerDay = Math.ceil(1440 / tickSpeed);
@@ -157,6 +175,13 @@ async function main(): Promise<void> {
   out('');
   out('day | agents | $/capita | min$ | ratio | tax pool | salary | buys (n/$) | covers (n/$) | wholesale $ | gifts (n/$) | convos');
   out('----+--------+----------+------+-------+----------+--------+------------+--------------+-------------+-------------+-------');
+  // Second table, printed after the run: needs and meals per day. Needs are
+  // averaged over every agent-tick (time-weighted, not a daily snapshot), so a
+  // town pinned at 100 and one that dips at lunch read differently.
+  const needsRows: string[] = [];
+  // Minutes each agent has currently spent at hunger 0 without a break — the
+  // starvation death clock (lifeEventsEngine: 4320). Carried across days.
+  const hungerZeroRun = new Map<number, number>();
 
   const anomalies: string[] = [];
   const t0 = performance.now();
@@ -164,9 +189,47 @@ async function main(): Promise<void> {
 
   for (let d = 0; d < DAYS; d++) {
     const dayStart = db.select().from(worldState).get()!.time;
+    const activeAtStart = new Set(db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all().map((a) => a.id));
+    const locTypeById = new Map(db.select({ id: locations.id, type: locations.type }).from(locations).all().map((l) => [l.id, l.type]));
+    const needSum = { hunger: 0, energy: 0, social: 0, fun: 0 };
+    let needSamples = 0;
+    let eatingSamples = 0;
+    let minHunger = 100;
+    const starving = new Set<number>(); // hunger < 15 at any tick of the day
+    // Agents who carried these states at any tick of the day: the needs-driven
+    // ones that a hungrier town could push up (stressed: 3 needs < 35).
+    const stateHolders = { stressed: new Set<number>(), lonely: new Set<number>() };
+    let maxZeroRun = 0;
+    // One eating action = one meal, keyed like economy.ts keys a meal.
+    const meals = new Map<string, 'home' | 'out' | 'other'>();
     for (let i = 0; i < ticksPerDay; i++) {
       await gameTick();
       ticks++;
+      const rows = db.select({
+        id: agents.id, home: agents.home, loc: agents.current_location,
+        action: agents.current_action, started: agents.action_started,
+      }).from(agents).where(eq(agents.is_active, true)).all();
+      const needByAgent = new Map(db.select().from(needs).all().map((n) => [n.agent_id, n]));
+      for (const st of db.select({ agent: agentStates.agent_id, type: agentStates.type }).from(agentStates)
+        .where(inArray(agentStates.type, ['stressed', 'lonely'])).all()) {
+        stateHolders[st.type as 'stressed' | 'lonely'].add(st.agent);
+      }
+      for (const r of rows) {
+        const n = needByAgent.get(r.id);
+        if (!n) continue;
+        needSum.hunger += n.hunger; needSum.energy += n.energy; needSum.social += n.social; needSum.fun += n.fun;
+        needSamples++;
+        minHunger = Math.min(minHunger, n.hunger);
+        if (n.hunger < 15) starving.add(r.id);
+        const run = n.hunger <= 0 ? (hungerZeroRun.get(r.id) ?? 0) + tickSpeed : 0;
+        hungerZeroRun.set(r.id, run);
+        maxZeroRun = Math.max(maxZeroRun, run);
+        if ((r.action as any)?.type === 'eating' && r.loc != null) {
+          eatingSamples++;
+          const where = r.loc === r.home ? 'home' : TRADE_RULES[locTypeById.get(r.loc) ?? ''] ? 'out' : 'other';
+          meals.set(`${r.id}:${r.started}`, where);
+        }
+      }
       // Let rejected LLM promises and queued task-runner work settle between ticks.
       if (ticks % 20 === 0) await new Promise((r) => setImmediate(r));
     }
@@ -195,12 +258,34 @@ async function main(): Promise<void> {
 
     const errors = db.select().from(activityLog)
       .where(and(gt(activityLog.id, logMark), eq(activityLog.type, 'error'))).all();
+    // Deaths log as 'drama' ("X has died. <cause>. The town mourns.").
+    const deathCauses = db.select().from(activityLog)
+      .where(and(gt(activityLog.id, logMark), eq(activityLog.type, 'drama'))).all()
+      .map((r) => String((r.template_data as any)?.description ?? ''))
+      .filter((d) => d.includes(' has died. '))
+      .map((d) => d.replace(/ has died\. /, ': ').replace(/\. The town mourns\.$/, ''));
     logMark = maxId(activityLog);
     const convos = db.select({ n: sql<number>`count(*)` }).from(conversations)
       .where(and(gt(conversations.id, convoMark), inArray(conversations.status, ['ended', 'completed']))).get()?.n ?? 0;
     convoMark = maxId(conversations);
 
     const f = (n: number) => n.toFixed(0);
+    const avg = (k: keyof typeof needSum) => f(needSum[k] / Math.max(1, needSamples));
+    const mealCount = (w: string) => [...meals.values()].filter((v) => v === w).length;
+    const died = [...activeAtStart].filter((id) => !active.some((a) => a.id === id));
+    needsRows.push([
+      String(dayStart.day).padStart(3),
+      avg('hunger').padStart(6), avg('energy').padStart(6), avg('social').padStart(6), avg('fun').padStart(4),
+      f(minHunger).padStart(5),
+      String(starving.size).padStart(6),
+      `${(maxZeroRun / 60).toFixed(1)}h`.padStart(8),
+      String(stateHolders.stressed.size).padStart(8),
+      String(stateHolders.lonely.size).padStart(6),
+      `${(100 * eatingSamples / Math.max(1, needSamples)).toFixed(1)}%`.padStart(7),
+      `${mealCount('home')}/${mealCount('out')}/${mealCount('other')}`.padStart(15),
+      String(died.length).padStart(6) + (died.length ? ` (${deathCauses.join('; ') || died.map((id) => nameOf.get(id)).join(', ')})` : ''),
+    ].join(' | ') + `  | made: ${[...produced].map(([k, v]) => `${k} ${v}`).join(', ') || '-'}`);
+    produced.clear();
     out([
       String(dayStart.day).padStart(3),
       String(active.length).padStart(6),
@@ -259,6 +344,10 @@ async function main(): Promise<void> {
   }
 
   const ms = performance.now() - t0;
+  out('');
+  out('day | hunger | energy | social | fun | min h | h<15 | h=0 run | stressed | lonely | eating | meals h/out/oth | deaths');
+  out('----+--------+--------+--------+-----+-------+------+---------+----------+--------+---------+-----------------+-------');
+  for (const r of needsRows) out(r);
   out('');
   out(`${ticks} ticks in ${(ms / 1000).toFixed(1)} s (${(ms / ticks).toFixed(1)} ms/tick)`);
   out('');

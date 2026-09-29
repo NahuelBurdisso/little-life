@@ -19,7 +19,7 @@ import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
-import { gameMinutes } from '../../lib/gameClock';
+import { gameMinutes, isOpenAt } from '../../lib/gameClock';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
@@ -34,13 +34,15 @@ import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
 import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
-import { getCheapestFoodPrice } from '../../lib/economyEngine';
 import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
 import { getReputationSocialModifier } from '../../lib/reputationEngine';
 import { getSharedHobbies } from '../../lib/hobbyEngine';
 import { getFavorSocialModifier } from '../../lib/favorEngine';
 import { getComfortVisit, completeComfortVisit } from '../../lib/lonelinessEngine';
+import { quoteMeal, pantryWouldServe } from './economy';
+import { foodCount, isFood } from '../../lib/economyEngine';
+import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 
 // --- Types ---
 
@@ -193,21 +195,150 @@ function isEvening(hour: number): boolean {
   return hour >= 17 && hour < 22;
 }
 
-// Reads from item registry — no hardcoded prices
-function cheapestFoodPrice(): number {
-  return getCheapestFoodPrice();
+// --- Meals and groceries (G2 / E4) ---
+//
+// Hunger is only restored by a meal someone actually has: bought at a food
+// vendor, or an item from the agent's own inventory (see serveMeal in
+// economy.ts). Eating used to be free anywhere, so these choices didn't matter;
+// now "eat at home" with an empty pantry feeds nobody, and the decision has to
+// send the agent somewhere a meal exists.
+
+/**
+ * Where an eating decision should happen: a location id, or `here: true` for
+ * "right where they stand" (a packed lunch at the farm, a snack on the bench).
+ */
+export type MealPlan = { locationId: number | undefined; here: boolean };
+
+/**
+ * Where this agent can actually eat right now, given where they meant to.
+ * 1. already standing in a vendor that will serve them (open, food in stock,
+ *    affordable — or their own): eat there;
+ * 2. carrying food: eat it where they stand. Walking across town to buy a meal
+ *    with groceries in the bag cost farmers an hour of their shift per meal,
+ *    and the food at home went uneaten;
+ * 3. the requested vendor, if it will serve them;
+ * 4. the nearest vendor that will serve them;
+ * 5. home, if the pantry would feed them (broke or starving, once a day);
+ * 6. null: no meal to be had right now (vendors closed or sold out, pantry
+ *    used). The caller drops the eating option instead — sitting at an empty
+ *    table is what pinned a starving town in a 9999-score "eating" loop.
+ */
+export function chooseMealTarget(
+  agent: Pick<AgentRow, 'id' | 'home' | 'position' | 'current_location'>,
+  econ: Pick<EconRow, 'money' | 'inventory'> | null,
+  requested: number | undefined,
+  allLocations: LocationRow[],
+  econMap: Map<number, EconRow>,
+  time: { hour: number; season: string; day: number },
+  hunger?: number,
+  critical?: number,
+): MealPlan | null {
+  const money = econ?.money ?? 0;
+  const canServe = (loc: LocationRow): boolean => {
+    if (loc.owner == null || !isOpenAt(loc.operating_hours, time.hour)) return false;
+    const ownerEcon = econMap.get(loc.owner);
+    if (!ownerEcon) return false;
+    const quote = quoteMeal(loc, ownerEcon, time.season, agent.id);
+    return quote != null && (loc.owner === agent.id || money >= quote.price);
+  };
+  const at = (id: number): MealPlan => ({ locationId: id, here: false });
+
+  const current = agent.current_location != null ? allLocations.find((l) => l.id === agent.current_location) : undefined;
+  if (current && canServe(current)) return at(current.id);
+
+  if (econ && foodCount(econ.inventory) > 0) {
+    return { locationId: agent.current_location ?? undefined, here: true };
+  }
+
+  const req = requested != null ? allLocations.find((l) => l.id === requested) : undefined;
+  if (req && canServe(req)) return at(req.id);
+
+  let best: LocationRow | null = null;
+  let bestDist = Infinity;
+  for (const loc of allLocations) {
+    if (!canServe(loc)) continue;
+    const d = distance(agent.position, loc.entry_point);
+    if (d < bestDist) { bestDist = d; best = loc; }
+  }
+  if (best) return at(best.id);
+  if (agent.home != null && pantryWouldServe(agent.id, money, hunger, time.day, critical)) return at(agent.home);
+  return null;
+}
+
+/**
+ * Resolve an eating decision to where the meal is (see chooseMealTarget), or
+ * null to drop it so the caller falls through to its next-best option.
+ */
+function withMeal(
+  decision: ScoredAction,
+  plan: (requested: number | undefined) => MealPlan | null,
+): ScoredAction | null {
+  if (decision.action !== 'eating') return decision;
+  const meal = plan(decision.targetLocationId);
+  if (!meal) return null;
+  return { ...decision, targetLocationId: meal.locationId };
+}
+
+/** A shopping trip restocks food only while the agent holds fewer than this. */
+const PANTRY_TARGET = 2;
+/** Free-time score of a grocery run before hunger is added (a stroll on the square is 35+). */
+const GROCERY_BASE_SCORE = 40;
+
+/**
+ * What a shopping trip to `shop` should buy, from needs: the two cheapest foods
+ * the shop sells while the agent's pantry is low. The list used to be always
+ * empty (`items: []`), so a trip bought nothing (E4).
+ */
+export function groceryList(econ: Pick<EconRow, 'inventory'> | null, shop: LocationRow | undefined): string[] {
+  if (!econ || !shop) return [];
+  const rule = TRADE_RULES[shop.type];
+  if (!rule || foodCount(econ.inventory) >= PANTRY_TARGET) return [];
+  return rule.sells
+    .filter(isFood)
+    .sort((a, b) => ITEM_REGISTRY[a].basePrice - ITEM_REGISTRY[b].basePrice)
+    .slice(0, PANTRY_TARGET);
+}
+
+/**
+ * The nearest open store (not the agent's own) with food on its shelves, for a
+ * grocery run. Null if the agent can't afford even the cheapest thing there.
+ */
+function nearestGrocer(
+  agent: Pick<AgentRow, 'id' | 'position'>,
+  money: number,
+  allLocations: LocationRow[],
+  econMap: Map<number, EconRow> | undefined,
+  hour: number,
+): LocationRow | null {
+  if (!econMap) return null;
+  let best: LocationRow | null = null;
+  let bestDist = Infinity;
+  for (const loc of allLocations) {
+    const rule = TRADE_RULES[loc.type];
+    if (!rule || loc.owner == null || loc.owner === agent.id || !isOpenAt(loc.operating_hours, hour)) continue;
+    const shelf = econMap.get(loc.owner)?.inventory ?? [];
+    const affordable = shelf.some((i) => i.quantity > 0 && rule.sells.includes(i.itemId) && isFood(i.itemId)
+      && ITEM_REGISTRY[i.itemId].basePrice * 2 <= money);
+    if (!affordable) continue;
+    const d = distance(agent.position, loc.entry_point);
+    if (d < bestDist) { bestDist = d; best = loc; }
+  }
+  return best;
 }
 
 // --- Emergency Check ---
 
-function checkEmergency(
+/** Below this hunger a hunger emergency takes someone off their shift. */
+export const HUNGER_INTERRUPTS_WORK = 5;
+
+export function checkEmergency(
   agent: AgentRow,
   agentNeeds: NeedsRow,
-  agentEcon: EconRow | null,
   allLocations: LocationRow[],
   allRelationships: RelRow[],
   otherAgents: AgentRow[],
   activeEventTypes?: Set<string>,
+  mealTarget?: () => MealPlan | null,
 ): ScoredAction | null {
   const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
 
@@ -217,7 +348,20 @@ function checkEmergency(
   }
 
   const crises: { need: string; value: number }[] = [];
-  if (agentNeeds.hunger < critical) crises.push({ need: 'hunger', value: agentNeeds.hunger });
+  // A hunger crisis with no meal to be had anywhere is not actionable: it would
+  // win every pass and hold the agent at an empty table. Let the next crisis
+  // (sleep, company) or the normal layers run until a shop opens or restocks.
+  //
+  // Nor does it pull someone off a shift until they are truly starving: the
+  // farm's output was half a shift a day once meals cost food, because every
+  // dip under 15 walked the farmers into town. Workers eat at lunch
+  // (checkSchedule) and, carrying food, where they stand.
+  let hungerMeal: MealPlan | null = null;
+  const onShift = (agent.current_action as { type?: string } | null)?.type === 'working';
+  if (agentNeeds.hunger < critical && !(onShift && agentNeeds.hunger >= HUNGER_INTERRUPTS_WORK)) {
+    hungerMeal = mealTarget ? mealTarget() : { locationId: agent.home ?? undefined, here: false };
+    if (hungerMeal != null) crises.push({ need: 'hunger', value: agentNeeds.hunger });
+  }
   if (agentNeeds.energy < critical) crises.push({ need: 'energy', value: agentNeeds.energy });
   if (agentNeeds.social < critical) crises.push({ need: 'social', value: agentNeeds.social });
 
@@ -241,14 +385,9 @@ function checkEmergency(
 
   switch (worst.need) {
     case 'hunger': {
-      const money = agentEcon?.money ?? 0;
-      if (money >= cheapestFoodPrice()) {
-        const shop = nearestLocation(agent.position, allLocations, 'shop');
-        if (shop) {
-          return { action: 'eating', score: 9999, targetLocationId: shop.id };
-        }
-      }
-      return { action: 'eating', score: 9999, targetLocationId: agent.home };
+      // Where a meal actually is (see chooseMealTarget); used to be "the shop
+      // if you have $3, else home" whatever the shop's hours or stock.
+      return { action: 'eating', score: 9999, targetLocationId: hungerMeal?.locationId };
     }
     case 'energy': {
       return { action: 'sleeping', score: 9999, targetLocationId: agent.home };
@@ -288,6 +427,7 @@ function checkSchedule(
   agent: AgentRow,
   world: WorldRow,
   allLocations: LocationRow[],
+  hunger?: number,
 ): ScoredAction | null {
   const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
   const { hour, minute } = world.time;
@@ -368,7 +508,13 @@ function checkSchedule(
 
   // Morning routine: personality-driven activities between wake and work
   if (hour >= effectiveWakeTime && agent.workplace && hour < sched.workStart) {
-    // Morning window: agent is awake but work hasn't started yet
+    // Morning window: agent is awake but work hasn't started yet.
+    // Breakfast first when the night left them hungry: a worker's next meal is
+    // lunch, and the jog/coffee/contemplate branches below used to take the
+    // wake hour, so most of the town started its shift on an empty stomach.
+    if (hunger !== undefined && hunger < LUNCH_BELOW_HUNGER) {
+      return { action: 'eating', score: 3500, targetLocationId: agent.home };
+    }
     if (personality) {
       // Athletic / impulsive agents: morning jog
       if (personality.impulsiveness > 55 && hour === effectiveWakeTime) {
@@ -391,16 +537,13 @@ function checkSchedule(
     }
   }
 
-  // Work time
-  if (agent.workplace && hour >= sched.workStart && hour < sched.workEnd) {
-    workSkipCount.set(agent.id, 0); // agent actually went to work — reset counter
-    return { action: 'working', score: 4000, targetLocationId: agent.workplace };
-  }
-
-  // Lunch time
+  // Lunch time — a break in the shift. It sat below the work-time return, so
+  // it only ever fed people with no job: every worker's lunchTime is inside
+  // their shift. Skipped when already fed (a 60-minute meal that starts at the
+  // window's opening edge would otherwise be followed by a second one).
   const lunchMinutes = sched.lunchTime * 60;
   const currentMinutes = hour * 60 + minute;
-  if (Math.abs(currentMinutes - lunchMinutes) <= 30) {
+  if (Math.abs(currentMinutes - lunchMinutes) <= 30 && (hunger === undefined || hunger < LUNCH_BELOW_HUNGER)) {
     const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern', 'bakery']);
     if (foodLoc) {
       return { action: 'eating', score: 3000, targetLocationId: foodLoc.id };
@@ -408,8 +551,37 @@ function checkSchedule(
     return { action: 'eating', score: 3000, targetLocationId: agent.home };
   }
 
+  // Dinner: the evening meal the schedule never had. Soaks put the town at 1.3
+  // meals a person a day once meals cost food — breakfast and lunch at best,
+  // then an evening out that a hunger of 40 rarely beat — against ~106 hunger
+  // a day of decay. From the end of the shift (18:00 without one) until bed.
+  const dinnerFrom = agent.workplace ? sched.workEnd : DINNER_HOUR;
+  if (hour >= dinnerFrom && hour >= DINNER_HOUR - 1 && hunger !== undefined && hunger < DINNER_BELOW_HUNGER) {
+    return { action: 'eating', score: 3000, targetLocationId: agent.home };
+  }
+
+  // Work time
+  if (agent.workplace && hour >= sched.workStart && hour < sched.workEnd) {
+    workSkipCount.set(agent.id, 0); // agent actually went to work — reset counter
+    return { action: 'working', score: 4000, targetLocationId: agent.workplace };
+  }
+
   return null;
 }
+
+/** Added to the free-time eating score below the agent's "low" hunger threshold. */
+const HUNGRY_EAT_BONUS = 60;
+
+/** Too tired for a meal before bed below this energy: sleep first. */
+const SUPPER_MIN_ENERGY = 5;
+
+/** Dinner starts no earlier than this hour (at the end of a shift for workers). */
+const DINNER_HOUR = 18;
+/** Dinner is skipped by anyone fuller than this. */
+const DINNER_BELOW_HUNGER = 60;
+
+/** Lunch is skipped by anyone fuller than this. */
+const LUNCH_BELOW_HUNGER = 70;
 
 // --- Free Time Scoring ---
 
@@ -450,12 +622,34 @@ function scoreFreeTimeActions(
   if (mods) {
     eatScore *= mods.eatImpulsiveness;
   }
+  // Below the "low" line, eat before an evening out rather than after the
+  // emergency: a crowded tavern (gatheringBonus) outscored a hunger of 30, and
+  // once meals cost food the town spent its evenings hungry and its nights
+  // under the critical line.
+  const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
+  if (agentNeeds.hunger < low) eatScore += HUNGRY_EAT_BONUS;
   const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern', 'bakery']);
   scores.push({
     action: 'eating',
     score: addNoise(eatScore),
     targetLocationId: foodLoc?.id ?? agent.home,
   });
+
+  // Grocery run: an empty pantry means the next meal at home is no meal (G2).
+  // Scored below eating at the same hunger so a hungry agent eats out first;
+  // a peckish one restocks while the shops are open — food in hand is what
+  // feeds a worker's breakfast and dinner, when the shop and bakery are shut.
+  // The trip's list comes from groceryList.
+  if (agentEcon && foodCount(agentEcon.inventory) < PANTRY_TARGET) {
+    const grocer = nearestGrocer(agent, agentEcon.money, allLocations, econMap, world.time.hour);
+    if (grocer) {
+      scores.push({
+        action: 'shopping',
+        score: addNoise(GROCERY_BASE_SCORE + (100 - agentNeeds.hunger) * 0.5),
+        targetLocationId: grocer.id,
+      });
+    }
+  }
 
   // Pre-filter social candidates to avoid scoring all 100 agents per agent.
   // Include: same-location agents, agents with existing relationship, + a few strangers for curious agents.
@@ -1037,7 +1231,7 @@ function scoreFreeTimeActions(
 
 // --- Build action object ---
 
-function buildAction(decision: ScoredAction): Record<string, unknown> {
+function buildAction(decision: ScoredAction, shoppingList: string[] = []): Record<string, unknown> {
   switch (decision.action) {
     case 'sleeping':
       return { type: 'sleeping' };
@@ -1052,7 +1246,7 @@ function buildAction(decision: ScoredAction): Record<string, unknown> {
     case 'idle':
       return { type: 'idle', ...(decision.source ? { zoneActivity: decision.source } : {}) };
     case 'shopping':
-      return { type: 'shopping', shopId: decision.targetLocationId ?? '', items: [] };
+      return { type: 'shopping', shopId: decision.targetLocationId ?? '', items: shoppingList };
     case 'comfort':
       return { type: 'comfort', zoneActivity: 'comfort' };
     default:
@@ -1143,8 +1337,12 @@ export function tick(world: WorldRow): void {
     if (getAgentStates(agent.id).includes('arrested')) {
       const prisonLoc = allLocations.find(l => l.type === 'prison');
       if (prisonLoc) {
+        // The jail feeds its prisoners (economy.ts serveMeal: 'ration'); a
+        // sentence runs up to 48 game hours of the 72-hour starvation clock.
+        const prisonerHunger = needsMap.get(agent.id)?.hunger ?? 100;
+        const mealtime = prisonerHunger < CONFIG.NEEDS.THRESHOLDS.low;
         db.update(agents).set({
-          current_action: { type: 'idle' },
+          current_action: mealtime ? { type: 'eating', locationId: prisonLoc.id } : { type: 'idle' },
           position: { x: prisonLoc.entry_point.x, y: prisonLoc.entry_point.y },
           current_destination: null,
           current_location: prisonLoc.id,
@@ -1189,6 +1387,10 @@ export function tick(world: WorldRow): void {
     if (!agentNeeds) continue;
 
     const agentEcon = econMap.get(agent.id) ?? null;
+    const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
+    const mealPlan = (requested: number | undefined) => chooseMealTarget(
+      agent, agentEcon, requested, allLocations, econMap, world.time, agentNeeds.hunger, critical,
+    );
 
     let decision: ScoredAction | null = null;
 
@@ -1197,11 +1399,11 @@ export function tick(world: WorldRow): void {
       decision = checkEmergency(
         agent,
         agentNeeds,
-        agentEcon,
         allLocations,
         allRelationships,
         activeAgents,
         activeEventTypes,
+        () => mealPlan(agent.home ?? undefined),
       );
     }
 
@@ -1234,14 +1436,16 @@ export function tick(world: WorldRow): void {
     // Phase 1b: Plan layer (score 6000 — above free-time, below emergency)
     if (!decision) {
       const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day, world.time.minute);
+      // A planned meal with no meal to be had falls through to the schedule.
       if (planned) {
-        decision = planned;
+        decision = withMeal(planned, mealPlan);
       }
     }
 
     // Phase 2: Schedule
     if (!decision) {
-      decision = checkSchedule(agent, world, allLocations);
+      const scheduled = checkSchedule(agent, world, allLocations, agentNeeds.hunger);
+      decision = scheduled && withMeal(scheduled, mealPlan);
     }
 
     // Phase 2b: Event crowd behavior — idle agents gravitate toward active events
@@ -1324,14 +1528,33 @@ export function tick(world: WorldRow): void {
           }
         }
 
-        scored.sort((a, b) => b.score - a.score);
-        decision = scored[0];
+        // Eating options go where the meal is; with none to be had they are
+        // dropped and the next-best action wins (it used to be a 10-minute
+        // idle at home, re-decided into the same empty table).
+        const viable = scored
+          .map((s) => withMeal(s, mealPlan))
+          .filter((s): s is ScoredAction => s != null);
+        viable.sort((a, b) => b.score - a.score);
+        decision = viable[0] ?? null;
       }
     }
 
     // Fallback
     if (!decision) {
       decision = { action: 'idle', score: 0, targetLocationId: agent.home };
+    }
+
+    // Don't go to bed hungry. Sleep is 6 game hours (and an energy emergency
+    // outranks a hunger one whenever energy is lower), so a hungry agent who
+    // went to bed woke up under the critical line: in the soaks most of the
+    // town's time below hunger 35 was spent asleep. An hour's meal first, if
+    // there is one to be had; bed on the next pass.
+    if (decision.action === 'sleeping') {
+      const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
+      const supper = agentNeeds.hunger < low && agentNeeds.energy >= SUPPER_MIN_ENERGY
+        ? mealPlan(agent.home ?? undefined)
+        : null;
+      if (supper) decision = { action: 'eating', score: decision.score, targetLocationId: supper.locationId };
     }
 
     // --- Validate action makes sense at target location ---
@@ -1347,9 +1570,8 @@ export function tick(world: WorldRow): void {
           decision = { action: 'sleeping', score: decision!.score, targetLocationId: agent.home };
         }
         // Check operating hours for commercial locations
-        if (['eating', 'shopping'].includes(decision!.action) && targetLoc.operating_hours) {
-          const hours = targetLoc.operating_hours as { open: number; close: number };
-          if (world.time.hour < hours.open || world.time.hour >= hours.close) {
+        if (['eating', 'shopping'].includes(decision!.action)) {
+          if (!isOpenAt(targetLoc.operating_hours, world.time.hour)) {
             decision = { action: 'idle', score: 0, targetLocationId: agent.home };
           }
         }
@@ -1436,7 +1658,12 @@ export function tick(world: WorldRow): void {
 
     // If a zone target exists, embed its coordinates into the queued action so that
     // movement.ts can teleport the agent to the exact zone position on arrival.
-    const baseAction = buildAction(decision);
+    const baseAction = buildAction(
+      decision,
+      decision.action === 'shopping'
+        ? groceryList(agentEcon, allLocations.find((l) => l.id === decision!.targetLocationId))
+        : [],
+    );
     // `pose` is a cosmetic hint for the renderer. It rides on the action rather
     // than being derived client-side because the zone id is stripped from
     // `current_action` by the time movement.ts finishes the interior hop, and it

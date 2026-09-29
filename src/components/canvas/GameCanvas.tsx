@@ -387,7 +387,9 @@ export const GameCanvas = React.memo(function GameCanvas({
 
     // A system that fails to build must not take the canvas down with it.
     systemsRef.current = [];
-    for (const make of SYSTEM_FACTORIES) {
+    // `?nosystems` in the URL skips them all — the A/B switch for frame-time comparisons.
+    const factories = new URLSearchParams(window.location.search).has('nosystems') ? [] : SYSTEM_FACTORIES;
+    for (const make of factories) {
       try {
         systemsRef.current.push(make(
           { ground: systemGround, overAgents: systemOver },

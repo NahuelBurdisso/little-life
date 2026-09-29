@@ -33,9 +33,16 @@ export interface Recipe {
   seasonal?: boolean;
 }
 
+// Farm rates are units per game hour at work. Tripled from 1.0/0.8 once meals
+// had to be real food (G2). Nominally a full spring shift would grow ~70, but
+// the soaks (G1 conversation budget included) show farmers at work only about
+// 2-3 hours of their 8-9 hour shifts — walking across the map, talking, eating
+// — so real output is ~10-40 food_raw a day against ~20-25 meals for 13
+// people; at 1.0/0.8 it was a quarter of that. Winter's 0.4 bites hardest.
+// Re-check against real shift time whenever labour changes (P1 pathfinding).
 export const RECIPE_REGISTRY: Recipe[] = [
-  { job: 'farmer',            inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 1.0, seasonal: true },
-  { job: 'farmhand',          inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 0.8, seasonal: true },
+  { job: 'farmer',           inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 3.0, seasonal: true },
+  { job: 'farmhand',          inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 2.4, seasonal: true },
   { job: 'baker',             inputs: { food_raw: 1 }, output: 'bread',     outputQuantity: 2, rate: 1.0 },
   { job: 'bartender',         inputs: { food_raw: 2 }, output: 'drink',     outputQuantity: 4, rate: 1.0 },
   { job: 'doctor',            inputs: null,            output: 'medicine',  outputQuantity: 1, rate: 0.5 },

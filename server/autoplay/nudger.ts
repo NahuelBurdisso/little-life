@@ -6,7 +6,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
 import { queueMaxWait } from '../lib/conversationPacing';
-import { gameMinutes } from '../lib/gameClock';
+import { gameMinutes, isOpenAt } from '../lib/gameClock';
 import type { Diagnosis, NudgeAction, AnalysisWindow } from './types';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
@@ -402,7 +402,7 @@ export class SmartNudger {
     for (const loc of locs) {
       const occ = (loc.current_occupants as number[]).length;
       const hours = loc.operating_hours as { open: number; close: number } | null;
-      if (occ === 0 && (!hours || (window.gameHour >= hours.open && window.gameHour < hours.close))) {
+      if (occ === 0 && isOpenAt(hours, window.gameHour)) {
         return loc.id;
       }
     }

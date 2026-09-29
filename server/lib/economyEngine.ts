@@ -77,6 +77,20 @@ export function getCheapestFoodPrice(): number {
 
 // --- Inventory Helpers ---
 
+/**
+ * Items that count as food: the item data says they satisfy hunger. The one
+ * definition of "food" — hardcoded lists drifted (states.ts checked only
+ * food_raw/food_prepared, so an agent holding bread counted as having none).
+ */
+export function isFood(itemId: string): boolean {
+  return ITEM_REGISTRY[itemId]?.satisfies?.need === 'hunger';
+}
+
+/** Units of food an inventory holds, all kinds together. */
+export function foodCount(inventory: readonly { itemId: string; quantity: number }[]): number {
+  return inventory.reduce((n, i) => n + (isFood(i.itemId) ? i.quantity : 0), 0);
+}
+
 export function getInventoryCount(inventory: InventoryItem[], itemId: string): number {
   return inventory.find((i) => i.itemId === itemId)?.quantity ?? 0;
 }

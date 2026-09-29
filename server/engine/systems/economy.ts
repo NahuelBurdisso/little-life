@@ -6,12 +6,13 @@ import { CONFIG } from '../../lib/constants';
 import type { Season } from '../../lib/types';
 import { emitter } from '../emitter';
 import { createFact } from '../../lib/gossip';
-import { getRecipeForJob, getMarketPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation, setEventPriceModifiers, getEventProductionMultiplier } from '../../lib/economyEngine';
+import { isFood, getRecipeForJob, getMarketPrice, getCheapestFoodPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation, setEventPriceModifiers, getEventProductionMultiplier } from '../../lib/economyEngine';
 import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { simEvents } from '../../lib/simEvents';
 import { getReputationPriceModifier } from '../../lib/reputationEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
-import { gameMinutes } from '../../lib/gameClock';
+import { gameMinutes, isOpenAt } from '../../lib/gameClock';
+import { getAgentStates } from '../../lib/states';
 
 // --- Module-level state for batching and milestones ---
 
@@ -56,10 +57,285 @@ const purchasesThisAction = new Map<number, { actionKey: string; handled: Set<st
 export function clearPurchaseTracking(): void {
   purchasesThisAction.clear();
   venueVisitPaid.clear();
+  mealThisAction.clear();
+  pantryMealDay.clear();
 }
 
-/** Sentinel in the handled set for "this eating action has paid for its meal". */
-const MEAL = '__meal__';
+// --- Meals ---
+
+/**
+ * Where the food of one eating action came from.
+ * - `bought`    served by a food vendor (shop, bakery, tavern) and paid for
+ * - `own_stock` a vendor's owner eating a unit of their own stock
+ * - `own_food`  a food item from the eater's inventory (groceries, own harvest)
+ * - `pantry`    the starvation safety net: no food, no money (or starving) —
+ *               see pantryMealDay below
+ * - `ration`    the jail feeds its prisoners (they can't go anywhere to eat)
+ */
+export type MealSource = 'bought' | 'own_stock' | 'own_food' | 'pantry' | 'ration';
+export interface Meal {
+  source: MealSource;
+  /** Where the meal was had (null outdoors); location services only feed you where you ate. */
+  locationId: number | null;
+  item: string | null;
+}
+
+/**
+ * agentId → the meal of their current eating action, keyed like purchases
+ * (`eating:action_started`). One eating action is one meal: it is served (and
+ * paid for, or an item consumed) once, then feeds the agent for the rest of the
+ * action. Needs used to restore hunger for anyone "eating" — and a home's
+ * `hunger` service fed anyone standing in it — whether or not there was any
+ * food, so nobody ever had to buy any (G2).
+ */
+const mealThisAction = new Map<number, { actionKey: string; meal: Meal }>();
+
+/**
+ * agentId → game day of their last pantry meal. The pantry is the no-deaths
+ * guarantee, not a free lunch: once per game day, only at home, only for someone
+ * who is broke or already starving. Starvation needs 72 game hours at hunger 0
+ * without a break (lifeEventsEngine), so one meal a day is enough to rule it out,
+ * and the mood penalty plus the missing home-service bonus keep it strictly worse
+ * than buying food.
+ */
+const pantryMealDay = new Map<number, number>();
+
+export const PANTRY_MOOD_PENALTY = -5;
+export const PANTRY_MOOD_MINUTES = 180;
+
+/**
+ * The food item a meal from this inventory consumes: `preferred` (a service's
+ * `itemRequired`, e.g. a home kitchen wants `food_raw`) when held, else the
+ * cheapest food held — bread or a prepared meal from the shop feeds you at home
+ * just as well. Items in `keep` (the eater's own production inputs: the
+ * baker's food_raw is tomorrow's bread) are eaten only when nothing else is.
+ */
+function pickFood(
+  inventory: readonly { itemId: string; quantity: number }[],
+  preferred: string | null,
+  keep: ReadonlySet<string> = new Set(),
+): string | null {
+  const foods = inventory.filter((i) => i.quantity > 0 && isFood(i.itemId));
+  const spare = foods.filter((i) => !keep.has(i.itemId));
+  const pool = spare.length > 0 ? spare : foods;
+  if (preferred && pool.some((i) => i.itemId === preferred)) return preferred;
+  pool.sort((a, b) => ITEM_REGISTRY[a.itemId].basePrice - ITEM_REGISTRY[b.itemId].basePrice);
+  return pool[0]?.itemId ?? null;
+}
+
+/** Items the agent's job consumes (a baker's food_raw), kept back from meals. */
+function productionInputs(job: string): ReadonlySet<string> {
+  return new Set(Object.keys(getRecipeForJob(job)?.inputs ?? {}));
+}
+
+type LocationRow = typeof locations.$inferSelect;
+type ServiceRow = NonNullable<LocationRow['services']>[number];
+
+/** A location's hunger service (the menu, at a vendor; the kitchen, at home). */
+export function hungerService(loc: Pick<LocationRow, 'services'>): ServiceRow | null {
+  return (loc.services ?? []).find((s) => s.needSatisfied === 'hunger') ?? null;
+}
+
+/**
+ * What a meal at this vendor would be right now: the food item it uses and the
+ * price. Null when the location sells no food or the kitchen is out.
+ *
+ * The item comes from the owner's stock — the items the vendor `sells` first,
+ * then any other food it holds as ingredients (a tavern restocks `food_raw` it
+ * never sold, E3). The price is the location's hunger-service `cost` (the menu
+ * price of a served meal), moved by the same season/supply/event factors as
+ * that item's market price; a vendor with no priced hunger service charges the
+ * item's market price. Reputation applies last, as for any purchase.
+ */
+export function quoteMeal(
+  loc: Pick<LocationRow, 'type' | 'services'>,
+  ownerEcon: Pick<EconRecord, 'inventory'>,
+  season: string,
+  buyerId: number,
+): { item: string; price: number } | null {
+  const rule = getTradeRuleForLocation(loc.type);
+  if (!rule) return null;
+  const inv = ownerEcon.inventory as { itemId: string; quantity: number }[];
+  const item = findMealItem(rule.sells, ownerEcon)
+    ?? pickFood(inv.filter((i) => rule.buys.includes(i.itemId)), null);
+  if (!item) return null;
+  const stock = getInventoryCount(inv as any[], item);
+  const market = getMarketPrice(item, season, stock);
+  const service = hungerService(loc);
+  const base = service && service.cost > 0
+    ? service.cost * (market / ITEM_REGISTRY[item].basePrice)
+    : market;
+  return { item, price: Math.max(1, Math.round(base * getReputationPriceModifier(buyerId))) };
+}
+
+/**
+ * Serve (or look up) the meal of an agent's current eating action. Idempotent
+ * per action; needs.ts calls it before deciding whether eating restores hunger,
+ * and economyTick calls it again (a restock or payday earlier in the tick can
+ * turn a "no meal yet" into a meal). Returns null — and records nothing, so the
+ * next tick retries — when there is nothing to eat: a vendor out of stock or
+ * unaffordable, no food held, and no pantry meal left.
+ *
+ * Order: a food vendor serves first (bought, or own stock for its owner); then
+ * the eater's own food, anywhere; then the pantry. A bought meal is eaten on the
+ * spot — it used to be dropped into the buyer's inventory and never eaten (E4).
+ */
+export function serveMeal(
+  world: typeof worldState.$inferSelect,
+  agent: { id: number; name: string; home: number | null; action_started: number },
+  location: LocationRow | null,
+  econByAgent: Map<number, EconRecord>,
+  opts: { hunger?: number; critical?: number; now?: number } = {},
+): Meal | null {
+  const actionKey = `eating:${agent.action_started}`;
+  const cached = mealThisAction.get(agent.id);
+  if (cached && cached.actionKey === actionKey) return cached.meal;
+
+  const eaterEcon = econByAgent.get(agent.id);
+  if (!eaterEcon) return null;
+  const now = opts.now ?? Date.now();
+  const season = world.time!.season as string;
+  const serve = (meal: Meal): Meal => {
+    mealThisAction.set(agent.id, { actionKey, meal });
+    return meal;
+  };
+
+  // 1. A food vendor — while it is open (someone lingering past closing time
+  // used to be served).
+  if (location?.owner != null && (location.owner === agent.id || isOpenAt(location.operating_hours, world.time!.hour))) {
+    const ownerEcon = econByAgent.get(location.owner);
+    const quote = ownerEcon ? quoteMeal(location, ownerEcon, season, agent.id) : null;
+    if (ownerEcon && quote) {
+      // The owner eating in their own shop used to "buy" from themselves:
+      // money went round in a circle minus tax, and the feed got a purchase
+      // line. They just eat one unit of their own stock — no sale, no tax,
+      // no ledger row, no feed line.
+      if (location.owner === agent.id) {
+        consumeItem(ownerEcon, quote.item);
+        return serve({ source: 'own_stock', locationId: location.id, item: quote.item });
+      }
+      if (eaterEcon.money >= quote.price) {
+        consumeItem(ownerEcon, quote.item);
+        recordSale(world, agent, eaterEcon, location.owner, ownerEcon, quote.price, {
+          reason: `purchase:${quote.item}`,
+          items: [{ itemId: quote.item, quantity: 1 }],
+          feedItem: quote.item,
+          memoryItem: quote.item,
+        }, location, now);
+        return serve({ source: 'bought', locationId: location.id, item: quote.item });
+      }
+    }
+  }
+
+  // 2. Own food — at home that is cooking your groceries; elsewhere a packed lunch.
+  const preferred = location ? hungerService(location)?.itemRequired ?? null : null;
+  const food = pickFood(eaterEcon.inventory as any[], preferred, productionInputs(eaterEcon.job));
+  if (food) {
+    consumeItem(eaterEcon, food);
+    return serve({ source: 'own_food', locationId: location?.id ?? null, item: food });
+  }
+
+  // 3. Prison rations. An arrested agent is held in the cell for up to 48 game
+  // hours and can reach neither a shop nor their pantry; unfed, a sentence was
+  // most of the 72-hour starvation clock.
+  if (location?.type === 'prison' && getAgentStates(agent.id).includes('arrested')) {
+    return serve({ source: 'ration', locationId: location.id, item: null });
+  }
+
+  // 4. The pantry safety net.
+  const day = world.time!.day;
+  if (location != null && location.id === agent.home
+    && pantryWouldServe(agent.id, eaterEcon.money, opts.hunger, day, opts.critical)) {
+    pantryMealDay.set(agent.id, day);
+    return serve({ source: 'pantry', locationId: location.id, item: null });
+  }
+
+  return null;
+}
+
+/**
+ * Would the pantry feed this agent today (at home)? Broke — can't afford the
+ * cheapest food — or starving, and not used yet this game day. `critical` is
+ * the agent's own threshold (needs.thresholds.critical), the same one the
+ * decision engine's hunger emergency uses, so "starving" means one thing.
+ */
+export function pantryWouldServe(
+  agentId: number,
+  money: number,
+  hunger: number | undefined,
+  day: number,
+  critical: number = CONFIG.NEEDS.THRESHOLDS.critical,
+): boolean {
+  if (pantryMealDay.get(agentId) === day) return false;
+  const broke = money < getCheapestFoodPrice();
+  const starving = hunger !== undefined && hunger < critical;
+  return broke || starving;
+}
+
+/**
+ * What one visit to this venue costs a patron: the tavern-style cover from
+ * TRADE_RULES, else the dearest priced non-food service it offers (the Dive's
+ * $3 fun, the pawnshop's $2, the clinic's $12 energy). Food is paid per meal
+ * (serveMeal). Zero for free places.
+ */
+export function visitFee(venue: Pick<LocationRow, 'type' | 'services'>): number {
+  const cover = getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0;
+  if (cover > 0) return cover;
+  let fee = 0;
+  for (const svc of venue.services ?? []) {
+    if (svc.needSatisfied !== 'hunger' && svc.cost > fee) fee = svc.cost;
+  }
+  return fee;
+}
+
+/**
+ * A visit fee at a venue nobody owns: paid to the town (tax pool), with the
+ * same ledger row and feed line as a sale, minus a seller.
+ */
+function chargeTownFee(
+  world: typeof worldState.$inferSelect,
+  patron: { id: number; name: string },
+  patronEcon: EconRecord,
+  fee: number,
+  venue: { id: number; name: string; type: string },
+  now: number,
+): void {
+  db.update(economy).set({ money: patronEcon.money - fee }).where(eq(economy.id, patronEcon.id)).run();
+  patronEcon.money -= fee;
+  db.update(worldState).set({ tax_pool: world.tax_pool + fee }).where(eq(worldState.id, world.id)).run();
+  world.tax_pool += fee;
+  db.insert(economyTransactions).values({
+    from_agent: patron.id,
+    to_agent: null,
+    amount: fee,
+    reason: `entertainment:${venue.type}`,
+    items_exchanged: null,
+    location_id: venue.id,
+    timestamp: now,
+  }).run();
+  logActivity({
+    type: 'purchase',
+    initiator: patron.id,
+    location: venue.id,
+    templateData: { agent: patron.name, item: `a visit to ${venue.name}`, amount: fee },
+  });
+  simEvents.emit('economy:purchase', { agentId: patron.id, item: `a visit to ${venue.name}`, price: fee, locationName: venue.name });
+  checkMilestone(patron.id, patronEcon.money);
+}
+
+function consumeItem(econ: EconRecord, item: string): void {
+  const inv = removeFromInventory(econ.inventory as any[], item, 1);
+  db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
+  econ.inventory = inv;
+}
+
+/**
+ * Has this agent paid to be at this venue on the current visit? Paid non-food
+ * services (the tavern's `fun`) only entertain patrons who paid the cover.
+ */
+export function hasPaidVisit(agentId: number, locationId: number): boolean {
+  return venueVisitPaid.get(agentId) === locationId;
+}
 
 // --- Tavern visits ---
 
@@ -85,7 +361,7 @@ export const WHOLESALE_MAX_CASH_FRACTION = 0.5;
 const SHOPPING_STOCK_TARGET = 2;
 
 /** First item in `sells` that is a meal per ITEM_REGISTRY and that the shop has in stock. */
-function findMealItem(sells: readonly string[], ownerEcon: typeof economy.$inferSelect): string | null {
+function findMealItem(sells: readonly string[], ownerEcon: Pick<typeof economy.$inferSelect, 'inventory'>): string | null {
   for (const item of sells) {
     if (ITEM_REGISTRY[item]?.satisfies?.need !== 'hunger') continue;
     if (getInventoryCount(ownerEcon.inventory as any[], item) > 0) return item;
@@ -157,8 +433,11 @@ function recordSale(
   location: { id: number; name: string },
   now: number,
 ): void {
-  const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
-  const sellerReceives = price - tax;
+  // To the cent, not the dollar: `Math.round(price * 0.05)` is 0 for every
+  // price under $10 — i.e. every sale in town — so no sales tax was ever
+  // collected (E2). Money and tax_pool are REAL columns.
+  const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier * 100) / 100;
+  const sellerReceives = Math.round((price - tax) * 100) / 100;
 
   db.update(economy).set({ money: ownerEcon.money + sellerReceives }).where(eq(economy.id, ownerEcon.id)).run();
   ownerEcon.money += sellerReceives;
@@ -190,6 +469,34 @@ function recordSale(
   });
   simEvents.emit('economy:purchase', { agentId: buyer.id, item: what.memoryItem, price, locationName: location.name });
   checkMilestone(buyer.id, buyerEcon.money);
+}
+
+/**
+ * TRADE_RULES entries in the order their shops restock: types whose owner turns
+ * food into more food (the baker: 1 food_raw → 2 bread) first, the rest in
+ * registry order. See the supply-chain step of economyTick.
+ */
+export function wholesaleBuyerOrder(
+  allLocations: readonly Pick<LocationRow, 'type' | 'owner'>[],
+  econByAgent: Map<number, Pick<EconRecord, 'job'>>,
+): [string, (typeof TRADE_RULES)[string]][] {
+  const processesFood = (locType: string) => allLocations.some((l) => {
+    if (l.type !== locType || l.owner == null) return false;
+    const recipe = getRecipeForJob(econByAgent.get(l.owner)?.job ?? '');
+    return !!recipe?.inputs && isFood(recipe.output);
+  });
+  return Object.entries(TRADE_RULES)
+    .sort(([a], [b]) => Number(processesFood(b)) - Number(processesFood(a)));
+}
+
+/**
+ * Whole units in an accumulated production total. Per-tick increments like
+ * 4/60 don't add up exactly in floating point (fifteen of them are 0.99999…),
+ * so a plain floor lost a unit every few hours — a third of a 4x baker's
+ * output in a 3-hour test. The epsilon absorbs that drift.
+ */
+function wholeUnitsOf(total: number): number {
+  return Math.floor(total + 1e-9);
 }
 
 // --- Main tick ---
@@ -240,34 +547,59 @@ export function economyTick(): void {
     if (!recipe) continue;
 
     if (recipe.inputs) {
-      // Processing job: convert inputs to outputs
-      let canProduce = true;
-      for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
-        if (getInventoryCount(econ.inventory as any[], inputItem) < inputQty) {
-          canProduce = false;
-          break;
+      // Processing job: convert inputs to outputs at `recipe.rate` batches per
+      // game hour, with the same fractional accumulator as raw production. It
+      // used to run one batch per TICK, ignoring the rate, so output depended on
+      // tick speed: a stocked baker could bake 60 batches a game hour at 1x but
+      // only 15 at 4x.
+      //
+      // And not past what the shop can hold: a bartender turned every food_raw
+      // the tavern restocked into drinks nobody bought (19 in stock after two
+      // soak days) and the tavern restocked more — once meals had to be real
+      // food (G2) that sink starved the town.
+      if (getInventoryCount(econ.inventory as any[], recipe.output) >= WHOLESALE_STOCK_TARGET) {
+        // Idle time is not banked: a full shelf doesn't earn a burst later.
+        if (econ.production_remainder !== 0) {
+          db.update(economy).set({ production_remainder: 0 }).where(eq(economy.id, econ.id)).run();
+          econ.production_remainder = 0;
         }
+        continue;
       }
-      if (!canProduce) continue;
+      const progress = recipe.rate * gameHoursElapsed + econ.production_remainder;
+      const whole = wholeUnitsOf(progress);
+      let batches = whole;
+      for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
+        batches = Math.min(batches, Math.floor(getInventoryCount(econ.inventory as any[], inputItem) / inputQty));
+      }
+      // Batches the inputs couldn't cover are dropped, not banked — only the
+      // fraction toward the next batch carries over (so no ingredients means no
+      // pent-up burst when a delivery arrives).
+      const remainder = Math.max(0, progress - whole);
+      if (remainder !== econ.production_remainder) {
+        db.update(economy).set({ production_remainder: remainder }).where(eq(economy.id, econ.id)).run();
+        econ.production_remainder = remainder;
+      }
+      if (batches <= 0) continue;
 
       let inv = econ.inventory as any[];
       for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
-        inv = removeFromInventory(inv, inputItem, inputQty);
+        inv = removeFromInventory(inv, inputItem, inputQty * batches);
       }
-      inv = addToInventory(inv, recipe.output, recipe.outputQuantity, now);
+      const made = recipe.outputQuantity * batches;
+      inv = addToInventory(inv, recipe.output, made, now);
       db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
       econ.inventory = inv;
 
       const prevProc = productionThisTick.get(agent.id) ?? { item: recipe.output, qty: 0 };
-      prevProc.qty += recipe.outputQuantity;
+      prevProc.qty += made;
       productionThisTick.set(agent.id, prevProc);
     } else {
       // Raw production: rate-based with seasonal modifier and remainder
       const seasonMult = recipe.seasonal ? (SEASON_PRODUCTION_MODIFIERS[season] ?? 1.0) : 1.0;
       const eventMult = getEventProductionMultiplier();
       const rawProduction = recipe.rate * gameHoursElapsed * seasonMult * eventMult + econ.production_remainder;
-      const wholeUnits = Math.floor(rawProduction);
-      const remainder = rawProduction - wholeUnits;
+      const wholeUnits = wholeUnitsOf(rawProduction);
+      const remainder = Math.max(0, rawProduction - wholeUnits);
 
       db.update(economy).set({ production_remainder: remainder }).where(eq(economy.id, econ.id)).run();
       econ.production_remainder = remainder;
@@ -291,7 +623,12 @@ export function economyTick(): void {
   // of diners a day never drew down. Now a shop only restocks an item up to
   // WHOLESALE_STOCK_TARGET, and never spends more than WHOLESALE_MAX_CASH_FRACTION
   // of the cash it had when this tick's restock began.
-  for (const [locType, rules] of Object.entries(TRADE_RULES)) {
+  //
+  // Food processors buy first. TRADE_RULES order let the shop take every unit
+  // of farm surplus, so the bakery — which turns 1 food_raw into 2 bread — sat
+  // idle from day 2 of every soak once meals had to be real food (G2): the same
+  // harvest fed half as many people.
+  for (const [locType, rules] of wholesaleBuyerOrder(allLocations, econByAgent)) {
     if (rules.buys.length === 0) continue;
 
     for (const loc of allLocations) {
@@ -448,58 +785,20 @@ export function economyTick(): void {
     const action = agent.current_action as any;
     if (!action) continue;
 
-    // Auto-purchase food when eating at a shop or tavern
-    if (action.type === 'eating' && agent.current_location != null) {
-      const handled = purchasesFor(agent.id, `eating:${agent.action_started}`);
-      if (handled.has(MEAL)) continue;
-
-      let eatLocation = locationCache.get(agent.current_location);
-      if (!eatLocation) {
-        const loc = db.select().from(locations).where(eq(locations.id, agent.current_location)).get();
-        if (loc) {
-          eatLocation = loc;
-          locationCache.set(agent.current_location, loc);
-        }
+    // A meal not served yet (vendor restocked by wholesale this tick, payday
+    // landed mid-meal): needs.ts already asked this tick; ask again now.
+    // A meal is whatever the item data says feeds you: `satisfies.need ===
+    // 'hunger'` (food_raw, food_prepared, bread). There used to be a fallback to
+    // "any item the shop sells", which charged someone eating at the clinic for
+    // medicine and a tavern diner for a drink when the kitchen was out.
+    if (action.type === 'eating') {
+      let eatLocation: typeof locations.$inferSelect | null = null;
+      if (agent.current_location != null) {
+        eatLocation = locationCache.get(agent.current_location)
+          ?? allLocations.find((l) => l.id === agent.current_location) ?? null;
+        if (eatLocation) locationCache.set(eatLocation.id, eatLocation);
       }
-      if (eatLocation) {
-        const tradeRule = getTradeRuleForLocation(eatLocation.type);
-        if (tradeRule && eatLocation.owner) {
-          const buyerEcon = econByAgent.get(agent.id);
-          if (!buyerEcon) { continue; }
-
-          const ownerEcon = econByAgent.get(eatLocation.owner);
-          if (!ownerEcon) { continue; }
-
-          // A meal is whatever the item data says feeds you: `satisfies.need ===
-          // 'hunger'` (food_raw, food_prepared, bread). There used to be a
-          // fallback to "any item the shop sells", which charged someone eating at
-          // the clinic for medicine and a tavern diner for a drink when the kitchen
-          // was out — a drink satisfies `fun`, not hunger, so it isn't a meal.
-          const itemToBuy = findMealItem(tradeRule.sells, ownerEcon);
-          // No meal in stock, or unaffordable: leave the meal unpaid for now and
-          // retry next tick — restocking (wholesale) or payday can land mid-meal.
-          if (!itemToBuy) { continue; }
-
-          // The owner eating in their own shop used to "buy" from themselves:
-          // money went round in a circle minus tax, and the feed got a purchase
-          // line. They just eat one unit of their own stock — no sale, no tax,
-          // no ledger row, no feed line.
-          if (eatLocation.owner === agent.id) {
-            const newInv = removeFromInventory(ownerEcon.inventory as any[], itemToBuy, 1);
-            db.update(economy).set({ inventory: newInv }).where(eq(economy.id, ownerEcon.id)).run();
-            ownerEcon.inventory = newInv;
-            handled.add(MEAL);
-            continue;
-          }
-
-          const shopStock = getInventoryCount(ownerEcon.inventory as any[], itemToBuy);
-          const price = Math.round(getMarketPrice(itemToBuy, season, shopStock) * getReputationPriceModifier(agent.id));
-          if (buyerEcon.money < price) { continue; }
-
-          sellOneItem(world, agent, buyerEcon, eatLocation.owner, ownerEcon, itemToBuy, price, eatLocation, now);
-          handled.add(MEAL);
-        }
-      }
+      serveMeal(world, agent, eatLocation, econByAgent, { now });
       continue;
     }
 
@@ -554,12 +853,19 @@ export function economyTick(): void {
     }
   }
 
-  // ========== 3b. TAVERN VISITS: cover charge ==========
+  // ========== 3b. VENUE VISITS: cover charge / service fee ==========
   // Taverns had no patron income once eating stopped passing drinks off as meals
   // (no recipe makes the food_prepared a tavern sells). Their TRADE_RULES
   // `entertainmentCost` was defined but never charged; it is now the cover, paid
   // once per visit by patrons (not the owner, not staff whose workplace it is).
   // A drink in stock is poured as part of it, consumed from the owner's stock.
+  //
+  // Every other venue with a priced non-food service charges that price the
+  // same way, once per visit (visitFee): needs.ts only lets a priced service
+  // work on someone who paid (or the owner, or off-shift staff). Before this,
+  // the Dive, the pawnshop and the clinic's paid services worked on nobody.
+  // An ownerless venue (nobody in town works the Dive) is run by the town: the
+  // fee goes to the tax pool.
   for (const agent of activeAgents) {
     const at = agent.current_location;
     const paidAt = venueVisitPaid.get(agent.id);
@@ -572,17 +878,25 @@ export function economyTick(): void {
     const venue = locationCache.get(at) ?? allLocations.find((l) => l.id === at);
     if (!venue) continue;
     locationCache.set(at, venue);
-    const fee = getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0;
-    if (fee <= 0 || !venue.owner) continue;
+    const fee = visitFee(venue);
+    if (fee <= 0 || !isOpenAt(venue.operating_hours, currentHour)) continue;
     if (venue.owner === agent.id || agent.workplace === at) continue;
 
     const patronEcon = econByAgent.get(agent.id);
-    const ownerEcon = econByAgent.get(venue.owner);
-    if (!patronEcon || !ownerEcon) continue;
+    if (!patronEcon) continue;
     // Can't pay: not charged yet, retried next tick (payday can land mid-visit).
     if (patronEcon.money < fee) continue;
 
-    const pours = getInventoryCount(ownerEcon.inventory as any[], 'drink') > 0;
+    if (venue.owner == null) {
+      chargeTownFee(world, agent, patronEcon, fee, venue, now);
+      venueVisitPaid.set(agent.id, at);
+      continue;
+    }
+    const ownerEcon = econByAgent.get(venue.owner);
+    if (!ownerEcon) continue;
+
+    const isCover = (getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0) > 0;
+    const pours = isCover && getInventoryCount(ownerEcon.inventory as any[], 'drink') > 0;
     if (pours) {
       const newInv = removeFromInventory(ownerEcon.inventory as any[], 'drink', 1);
       db.update(economy).set({ inventory: newInv }).where(eq(economy.id, ownerEcon.id)).run();
@@ -591,8 +905,8 @@ export function economyTick(): void {
     recordSale(world, agent, patronEcon, venue.owner, ownerEcon, fee, {
       reason: `entertainment:${venue.type}`,
       items: pours ? [{ itemId: 'drink', quantity: 1 }] : null,
-      feedItem: pours ? `a drink at ${venue.name}` : `a night out at ${venue.name}`,
-      memoryItem: pours ? 'a drink' : 'a night out',
+      feedItem: pours ? `a drink at ${venue.name}` : isCover ? `a night out at ${venue.name}` : `a visit to ${venue.name}`,
+      memoryItem: pours ? 'a drink' : isCover ? 'a night out' : `a visit to ${venue.name}`,
     }, venue, now);
     venueVisitPaid.set(agent.id, at);
   }
@@ -744,6 +1058,12 @@ export function economyTick(): void {
     }
     for (const id of purchasesThisAction.keys()) {
       if (!activeIds.has(id)) purchasesThisAction.delete(id);
+    }
+    for (const id of mealThisAction.keys()) {
+      if (!activeIds.has(id)) mealThisAction.delete(id);
+    }
+    for (const id of pantryMealDay.keys()) {
+      if (!activeIds.has(id)) pantryMealDay.delete(id);
     }
   }
 

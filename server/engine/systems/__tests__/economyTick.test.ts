@@ -7,8 +7,10 @@ import {
   clearPurchaseTracking,
   WHOLESALE_STOCK_TARGET,
   WHOLESALE_MAX_CASH_FRACTION,
+  wholesaleBuyerOrder,
 } from '../economy';
 import { TRADE_RULES } from '../../../data/economyData';
+import { simEvents } from '../../../lib/simEvents';
 
 /**
  * Playtest bug: eating at a shop bought one item EVERY tick of the meal, and a
@@ -461,5 +463,104 @@ describe('tavern visits', () => {
     ticks(3);
     expect(coversBy(buyer)).toHaveLength(0);
     expect(econ(buyer).money).toBe(COVER - 1);
+  });
+});
+
+/**
+ * Once meals had to be real food (G2) the soak town ran out of it: the tavern
+ * brewed every food_raw it restocked into drinks nobody bought, and the shop
+ * took all farm surplus before the bakery (1 food_raw → 2 bread) got any.
+ */
+describe('food supply', () => {
+  beforeAll(() => ensureWorld(8, 10, 0));
+
+  it('a processor stops making output once the shop holds a full stock of it', () => {
+    n++;
+    const home = insertLocation(`brew home ${n}`, 'home', null);
+    const barkeep = insertAgent(`Barkeep ${n}`, home);
+    const tavern = insertLocation(`brew tavern ${n}`, 'tavern', barkeep);
+    insertEconomy(barkeep, 0, stock({ drink: WHOLESALE_STOCK_TARGET, food_raw: 4 }));
+    db.update(economy).set({ job: 'bartender' }).where(eq(economy.agent_id, barkeep)).run();
+    db.update(agents).set({ workplace: tavern }).where(eq(agents.id, barkeep)).run();
+    setAction(barkeep, { type: 'working' }, 100, tavern);
+
+    // Watch production itself: wholesale may sell the drink surplus to other
+    // files' taverns and restock food_raw, which would mask the counts.
+    const made: string[] = [];
+    const onMade = (p: { agentId: number; item: string }) => { if (p.agentId === barkeep) made.push(p.item); };
+    simEvents.on('economy:production', onMade);
+    try {
+      ticks(1);
+    } finally {
+      simEvents.off('economy:production', onMade);
+    }
+
+    expect(made).toEqual([]);
+  });
+
+  /** Processing ran one batch per tick, ignoring recipe.rate: output tracked tick speed. */
+  it.each([1, 4])('a baker bakes by rate per game hour, the same at %ix', (speed) => {
+    n++;
+    const home = insertLocation(`bake home ${n}`, 'home', null);
+    const baker = insertAgent(`Baker ${n}`, home);
+    const bakery = insertLocation(`bake bakery ${n}`, 'bakery', baker);
+    insertEconomy(baker, 0, stock({ food_raw: 20 }));
+    db.update(economy).set({ job: 'baker' }).where(eq(economy.agent_id, baker)).run();
+    db.update(agents).set({ workplace: bakery }).where(eq(agents.id, baker)).run();
+    setAction(baker, { type: 'working' }, 100, bakery);
+    db.update(worldState).set({ tick_speed: speed }).run();
+
+    // Count production events: wholesale may sell the bread on to other files' shops.
+    let bread = 0;
+    const onMade = (p: { agentId: number; item: string; quantity: number }) => {
+      if (p.agentId === baker) bread += p.quantity;
+    };
+    simEvents.on('economy:production', onMade);
+    try {
+      ticks((3 * 60) / speed); // three game hours
+    } finally {
+      simEvents.off('economy:production', onMade);
+      db.update(worldState).set({ tick_speed: 1 }).run();
+    }
+
+    // Baker recipe: rate 1.0 batch/h, 1 food_raw -> 2 bread.
+    expect(bread).toBe(6);
+  });
+
+  it('the bakery restocks farm surplus before the shop and the tavern', () => {
+    const locs = [
+      { type: 'shop', owner: 1 },
+      { type: 'tavern', owner: 2 },
+      { type: 'bakery', owner: 3 },
+    ];
+    const jobs = new Map([[1, { job: 'shopkeeper' }], [2, { job: 'bartender' }], [3, { job: 'baker' }]]);
+    const order = wholesaleBuyerOrder(locs, jobs).map(([type]) => type);
+    expect(order[0]).toBe('bakery');
+    // A drink is not food: the bartender's recipe earns the tavern no priority.
+    expect(order.indexOf('shop')).toBeLessThan(order.indexOf('tavern'));
+  });
+});
+
+/** E2: tax was `Math.round(price * 0.05)` — $0 for every sale under $10. */
+describe('sales tax', () => {
+  beforeAll(() => {
+    ensureWorld(9, 10, 0);
+    // Earlier scenes left diners and patrons mid-action; their sales would be
+    // taxed into the same pool this tick.
+    db.update(agents).set({ current_action: { type: 'idle' }, current_location: null }).run();
+  });
+  beforeEach(() => clearPurchaseTracking());
+
+  it('taxes a small sale to the cent', () => {
+    const { buyer, shop } = scene(stock({ food_raw: 50 }));
+    const pool0 = db.select().from(worldState).get()!.tax_pool;
+    setAction(buyer, { type: 'eating', locationId: shop }, 100, shop);
+    ticks(1);
+
+    const [sale] = purchasesBy(buyer);
+    expect(sale.amount).toBeLessThan(10);
+    const tax = Math.round(sale.amount * 0.05 * 100) / 100;
+    expect(tax).toBeGreaterThan(0);
+    expect(db.select().from(worldState).get()!.tax_pool).toBeCloseTo(pool0 + tax, 2);
   });
 });
