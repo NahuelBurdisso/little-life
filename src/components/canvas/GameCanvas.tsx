@@ -83,6 +83,14 @@ interface GameCanvasProps {
   selectedAgentId: string | null;
   /** Bumped on every explicit focus request, so re-picking the same agent re-centers. */
   focusNonce?: number;
+  /**
+   * A request from outside the canvas (cast bar double-click, the F key) to lock
+   * the camera on / release it from the selected agent. `nonce` makes each
+   * request distinct; `start` locks, `toggle` flips the current lock. A new
+   * selection clears the lock first, so send the request with — or after — the
+   * selection change it belongs to.
+   */
+  followRequest?: { nonce: number; mode: 'start' | 'toggle' } | null;
 }
 
 export const GameCanvas = React.memo(function GameCanvas({
@@ -99,6 +107,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   selectedLocationId,
   selectedAgentId,
   focusNonce,
+  followRequest,
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
   const activity = useCanvasActivity();
@@ -827,6 +836,18 @@ export const GameCanvas = React.memo(function GameCanvas({
   useEffect(() => {
     setFollow(false);
   }, [selectedAgentId, setFollow]);
+
+  // Follow requests from the UI. Declared after the reset above on purpose: when a
+  // request rides along with a new selection, both effects run in the same commit
+  // and the request has to win. Only a new nonce counts, so a re-render (or the
+  // selection changing later) never replays an old request.
+  const handledFollowNonceRef = useRef(followRequest?.nonce ?? 0);
+  useEffect(() => {
+    if (!followRequest || followRequest.nonce === handledFollowNonceRef.current) return;
+    handledFollowNonceRef.current = followRequest.nonce;
+    if (!selectedAgentId) return;
+    setFollow(followRequest.mode === 'start' ? true : !followingRef.current);
+  }, [followRequest, selectedAgentId, setFollow]);
 
   // An agent can drop out of the roster (death, deactivation) while locked. The
   // Follow button unmounts with it, so the lock would be stuck on with no way to
