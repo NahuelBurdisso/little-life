@@ -303,16 +303,16 @@ export function getAgentStatesRowVersion(): number {
 
 // ─── Write counters for other per-agent tables ────────────────────────────
 // The same TEMP-trigger counter, for tables a phase used to re-read once per
-// agent: `needs` in the states phase, `goals` in the goals phase. A snapshot
-// scoped to one phase call (lib/rowsByAgentSnapshot.ts) reads the table once
-// and again only when the counter moved — a write by the phase itself or by a
+// agent: `needs` and `economy` in the states phase, `goals` in the goals phase.
+// A snapshot scoped to one phase call (lib/rowsByAgentSnapshot.ts) reads the
+// table once and again only when the counter moved — a write by the phase itself or by a
 // simEvents listener it fired (the cascade engine changes moods and creates
 // goals from inside other phases' events). Same ROLLBACK blind spot as above,
 // which is why those snapshots never outlive the phase that built them.
 
-export type CountedTable = 'needs' | 'goals';
-const COUNTED_TABLES: readonly CountedTable[] = ['needs', 'goals'];
-const tableWriteVersions: Record<CountedTable, number> = { needs: 0, goals: 0 };
+export type CountedTable = 'needs' | 'goals' | 'economy';
+const COUNTED_TABLES: readonly CountedTable[] = ['needs', 'goals', 'economy'];
+const tableWriteVersions: Record<CountedTable, number> = { needs: 0, goals: 0, economy: 0 };
 const tableHooksInstalled = new Set<CountedTable>();
 sqlite.function('ll_table_written', { deterministic: false }, (table: unknown) => {
   tableWriteVersions[table as CountedTable]++;

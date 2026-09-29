@@ -60,6 +60,7 @@ interface CascadeEntry {
 
 type AgentRow = typeof agents.$inferSelect;
 type NeedsRow = typeof needsTable.$inferSelect;
+type EconomyRow = typeof economyTable.$inferSelect;
 
 /**
  * Reads the states phase used to repeat per agent (and per step), answered from
@@ -75,6 +76,12 @@ interface StatesTickContext {
    * snapshot still sees a mood a cascade rule or a side effect just changed.
    */
   needsOf(agentId: number): NeedsRow | undefined;
+  /**
+   * The agent's economy row, from a snapshot re-read only after a write to
+   * `economy`. The debt trigger read money and pantry per agent every tick;
+   * gifts, gambling and theft write it mid-phase, and the snapshot sees them.
+   */
+  economyOf(agentId: number): EconomyRow | undefined;
   /**
    * economy.job per agent. No tick code changes a job (the setup wizard and
    * nudges create economy rows; nothing updates `job`), so one read serves the
@@ -95,9 +102,16 @@ function createStatesTickContext(): StatesTickContext {
     () => db.select().from(needsTable).all(),
     (row) => row.agent_id,
   );
+  // idx_economy_agent_id is UNIQUE too.
+  const economy = new RowsByAgentSnapshot<EconomyRow>(
+    () => getTableWriteVersion('economy'),
+    () => db.select().from(economyTable).all(),
+    (row) => row.agent_id,
+  );
   return {
     states: new AgentStateRowsSnapshot(),
     needsOf: (agentId) => needs.forAgent(agentId)[0],
+    economyOf: (agentId) => economy.forAgent(agentId)[0],
     jobOf(agentId) {
       jobs ??= new Map(
         db.select({ agent_id: economyTable.agent_id, job: economyTable.job }).from(economyTable).all()
@@ -257,7 +271,7 @@ export function statesTick() {
 
     // 1b. Check conditional exits (stressed, lonely, depressed, infatuated)
     const agentNeeds = ctx.needsOf(agent.id);
-    checkConditionalExits(ctx.states.forAgent(agent.id), agentNeeds, agent, nowMinutes, world.tick_speed);
+    checkConditionalExits(ctx.states.forAgent(agent.id), agentNeeds, agent, nowMinutes, world.tick_speed, ctx);
 
     // 1c. Evaluate triggers for new states
     const activeTypes = new Set(ctx.states.forAgent(agent.id).map((s) => s.type));
@@ -612,8 +626,7 @@ function evaluateTriggers(
 
   // ── In Debt ──────────────────────────────────────────────────────────────
   if (!activeTypes.has('in_debt')) {
-    const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
-      .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+    const eco = ctx.economyOf(agent.id);
     // `<= 0`, not `=== 0`: sale tax splits leave fractional balances and
     // disasters can push money negative, and both are more broke than zero.
     if (eco && eco.money <= 0) {
@@ -1178,6 +1191,7 @@ function checkConditionalExits(
   nowMinutes: number,
   /** Game minutes per tick, for windows over wall-clock-stamped tables. */
   tickSpeed: number,
+  ctx: StatesTickContext,
 ) {
   for (const state of stateRows) {
     if (!STATE_DEFINITIONS[state.type as StateType]?.conditionalExit) continue;
@@ -1300,8 +1314,7 @@ function checkConditionalExits(
           break;
         }
         // Recovery path 2: rock bottom (money = 0, no food)
-        const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
-          .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        const eco = ctx.economyOf(agent.id);
         if (eco && eco.money <= 0) {
           const hasFood = foodCount(eco.inventory) > 0;
           if (!hasFood && Math.random() < chancePerTick(0.01, tickSpeed)) { // 1% per game minute
@@ -1359,8 +1372,7 @@ function checkConditionalExits(
       }
 
       case 'in_debt': {
-        const eco = db.select({ money: economyTable.money })
-          .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+        const eco = ctx.economyOf(agent.id);
         shouldExit = eco != null && eco.money > 20;
         if (shouldExit) brokeSince.delete(agent.id);
         break;
@@ -2153,7 +2165,7 @@ function processStateEffects(
       // Zone gate: healer must be at clinic:exam_room
       const healerZone = zoneOccupancy.findAgentZone(agent.id);
       const inClinicExamRoom = healerZone?.building === 'clinic' && healerZone.zone === 'exam_room';
-      const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
+      const healerEcon = ctx.economyOf(agent.id);
       const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
         (i: any) => i.itemId === 'medicine' && i.quantity > 0
       );
