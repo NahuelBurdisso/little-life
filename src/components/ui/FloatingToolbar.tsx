@@ -60,7 +60,7 @@ function ToolButton({
 
 /**
  * The player's secondary tools as one warm-palette strip instead of four
- * unrelated grey buttons. Toggles (Auto-Cut, Autoplay) light up in gold and
+ * unrelated grey buttons. Toggles (Director, Autoplay) light up in gold and
  * say on/off in words, so state never hangs on colour alone.
  */
 export function FloatingToolbar({
@@ -101,8 +101,8 @@ export function FloatingToolbar({
       />
       <ToolButton
         icon="🎬"
-        label="Auto-Cut"
-        title="Jump the camera to whoever the next dramatic event is about"
+        label="Director"
+        title="Let the camera pick the best scene and caption it (C toggles captions; moving the map pauses it)"
         onClick={onToggleAutoCut}
         active={autoCut}
         pressed={autoCut}

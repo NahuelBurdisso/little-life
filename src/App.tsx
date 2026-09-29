@@ -10,6 +10,9 @@ import { ResizeHandle } from "./components/ui/ResizeHandle";
 import { GameCanvas } from "./components/canvas/GameCanvas";
 import { AgentTooltip } from "./components/overlays/AgentTooltip";
 import { DramaAlerts } from "./components/overlays/DramaAlerts";
+import { DirectorCaption, DirectorChip } from "./components/overlays/DirectorCaption";
+import { useDirector } from "./hooks/useDirector";
+import { pushToast } from "./lib/toast";
 import { Inbox } from "./components/ui/Inbox";
 import { useDramaAlerts } from "./hooks/useDramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
@@ -209,17 +212,60 @@ export default function App() {
   const openPair = useCallback((a: string, b: string) => setPairDossier({ a: Number(a), b: Number(b) }), []);
 
   // Select an agent AND re-center on them, even if they were already selected.
-  const focusAgent = useCallback((agentId: string) => {
+  // The `Raw` pair is what the Director uses for its own cuts; the player-facing
+  // `focusAgent` / `followAgent` below also tell the Director the player has the
+  // camera, or every one of its cuts would pause itself.
+  const focusAgentRaw = useCallback((agentId: string) => {
     setSelectedAgentId(agentId);
     setFocusNonce(n => n + 1);
   }, []);
 
   // Focus plus lock the camera on them (GameCanvas applies the lock after the
   // selection change it would otherwise clear).
-  const followAgent = useCallback((agentId: string) => {
-    focusAgent(agentId);
+  const followAgentRaw = useCallback((agentId: string) => {
+    focusAgentRaw(agentId);
     setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "start" }));
-  }, [focusAgent]);
+  }, [focusAgentRaw]);
+
+  // Director mode (toolbar 🎬): scores the town every few seconds and cuts the
+  // camera to the best scene; captions the conversation on screen.
+  const director = useDirector({
+    enabled: autoCut,
+    agents,
+    conversations: conversations ?? [],
+    locations: locations ?? [],
+    events: events ?? [],
+    alerts: drama.alerts,
+    favorites,
+    followAgent: followAgentRaw,
+  });
+  const noteDirectorInput = director.notePlayerInput;
+
+  const focusAgent = useCallback((agentId: string) => {
+    noteDirectorInput();
+    focusAgentRaw(agentId);
+  }, [noteDirectorInput, focusAgentRaw]);
+
+  const followAgent = useCallback((agentId: string) => {
+    noteDirectorInput();
+    followAgentRaw(agentId);
+  }, [noteDirectorInput, followAgentRaw]);
+
+  // Clicking a resident on the map selects and re-centers them: camera input too.
+  const handleCanvasAgentSelect = useCallback((agentId: string) => {
+    noteDirectorInput();
+    setSelectedAgentId(agentId);
+  }, [noteDirectorInput]);
+
+  const toggleCaptions = director.toggleCaptions;
+  const handleToggleCaptions = useCallback(() => {
+    const on = toggleCaptions();
+    pushToast(
+      on ? (autoCut ? "Captions on" : "Captions on (they show while the Director is on)") : "Captions off",
+      "info",
+      "💬",
+    );
+  }, [toggleCaptions, autoCut]);
   // First-run guide (Meet the town -> coach marks), once per world seed, and the "?" help.
   const guide = useFirstRunGuide({
     worldKey: worldSeedKey(world?.setup_config),
@@ -239,8 +285,11 @@ export default function App() {
       if (next) focusAgent(next);
     },
     onToggleFollow: () => {
-      if (selectedAgentId) setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
+      if (!selectedAgentId) return;
+      noteDirectorInput();
+      setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
     },
+    onToggleCaptions: handleToggleCaptions,
     agentKeysEnabled: !(
       contextMenuAgent || showEventMenu || showGazette || showInbox || showTownStats || showNewAgent ||
       showRelGraph || pairDossier || showConvoHistory || showTimeline || showAutoplay || guide.tourOpen || guide.helpOpen
@@ -337,23 +386,29 @@ export default function App() {
           <ConversationPanel onSelectAgent={focusAgent} />
         </div>
         <ResizeHandle direction="horizontal" onResize={handleLeftResize} />
-        {/* PixiJS game canvas */}
-        <GameCanvas
-          agents={agents}
-          world={world}
-          events={events}
-          conversations={conversations ?? []}
-          locations={locations ?? []}
-          relationships={allRelationships ?? []}
-          onAgentSelect={setSelectedAgentId}
-          onAgentContextMenu={handleAgentContextMenu}
-          onAgentHover={handleAgentHover}
-          onLocationSelect={setSelectedLocationId}
-          selectedLocationId={selectedLocationId}
-          selectedAgentId={selectedAgentId}
-          focusNonce={focusNonce}
-          followRequest={followRequest}
-        />
+        {/* PixiJS game canvas, with the Director's overlays layered on top of it
+            (inside this box, so they follow the map when the side panels resize) */}
+        <div className="flex-1 min-w-0 h-full relative flex">
+          <GameCanvas
+            agents={agents}
+            world={world}
+            events={events}
+            conversations={conversations ?? []}
+            locations={locations ?? []}
+            relationships={allRelationships ?? []}
+            onAgentSelect={handleCanvasAgentSelect}
+            onAgentContextMenu={handleAgentContextMenu}
+            onAgentHover={handleAgentHover}
+            onLocationSelect={setSelectedLocationId}
+            selectedLocationId={selectedLocationId}
+            selectedAgentId={selectedAgentId}
+            focusNonce={focusNonce}
+            followRequest={followRequest}
+            onUserCameraInput={noteDirectorInput}
+          />
+          <DirectorCaption caption={director.caption} cut={director.cut} />
+          <DirectorChip paused={director.paused} onResume={director.resume} />
+        </div>
         {/* AgentPanel sidebar */}
         {selectedAgentId && (
           <>
@@ -406,8 +461,8 @@ export default function App() {
       {/* Acknowledgements for player actions (lib/toast.ts) */}
       <Toasts />
 
-      {/* Drama alerts + optional camera auto-cut */}
-      <DramaAlerts alerts={drama.alerts} dismiss={drama.dismiss} autoFollow={autoCut} onFocusAgent={focusAgent} />
+      {/* Drama alerts (the Director decides which of them the camera cuts to) */}
+      <DramaAlerts alerts={drama.alerts} dismiss={drama.dismiss} onFocusAgent={focusAgent} />
       <Inbox
         isOpen={showInbox}
         onClose={() => setShowInbox(false)}

@@ -1,6 +1,6 @@
 /**
  * What the "?" help overlay lists. HOTKEYS mirrors src/hooks/useKeyboardControls.ts
- * (Space, 1-4, Tab, F) plus the two owned by App (Esc, ?); the speeds are the ones the hook
+ * (Space, 1-4, Tab, F, C) plus the two owned by App (Esc, ?); the speeds are the ones the hook
  * sends, so a change there should show up here too.
  */
 export interface HelpEntry {
@@ -16,6 +16,7 @@ export const HOTKEYS: HelpEntry[] = [
   { keys: ['4'], what: 'Speed 4×' },
   { keys: ['Tab', 'Shift+Tab'], what: 'Select the next / previous resident (favourites first)' },
   { keys: ['F'], what: 'Follow the selected resident with the camera' },
+  { keys: ['C'], what: 'Show or hide the Director\'s captions (who is saying what)' },
   { keys: ['Esc'], what: 'Close the topmost panel, menu or overlay' },
   { keys: ['?'], what: 'Show or hide this help' },
 ];
@@ -38,6 +39,10 @@ export const VERBS: VerbEntry[] = [
   { icon: '✋', how: 'Drag and scroll the map', what: 'Pan and zoom.' },
   { icon: '⚡', how: 'Events button (top right)', what: 'Trigger a town event or set the weather.' },
   { icon: '📰', how: 'Paper button (top right)', what: 'The Town Crier: one edition per day of what happened.' },
-  { icon: '🎬', how: 'Toolbar: Auto-Cut', what: 'Let the camera follow the next dramatic moment.' },
+  {
+    icon: '🎬',
+    how: 'Toolbar: Director',
+    what: 'Let the camera pick the best scene, hold it, and caption what is said. Moving the map yourself pauses it for 20 seconds.',
+  },
   { icon: '🏘️', how: 'Toolbar: Meet the Town', what: 'Reopen the residents overview.' },
 ];
