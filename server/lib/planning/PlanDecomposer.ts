@@ -9,6 +9,7 @@ import { buildDecompositionPrompt, type PlanPrompt } from './planPrompts';
 import { parseDecomposedActions, isUnparsedDecomposition } from './planParser';
 import type { DailyPlan, PlanBlock } from './types';
 import { reportPlanningBug, type PlanLLMGate } from './PlanLLMGate';
+import { decomposeDeterministically, type DeterministicContext } from './deterministicDecompose';
 
 // ---------------------------------------------------------------------------
 // Structural interfaces for the injected singletons
@@ -45,6 +46,9 @@ function decomposeKey(blockId: string): string {
 // ---------------------------------------------------------------------------
 
 export class PlanDecomposer {
+  /** Blocks `decomposeDeterministically` declined; see `decomposeWithoutLLM`. */
+  private readonly needsLLM = new WeakSet<PlanBlock>();
+
   constructor(
     private readonly cache: IPlanCache,
     private readonly queue: IPlanLLMQueue,
@@ -62,6 +66,12 @@ export class PlanDecomposer {
    */
   queueDecomposition(agentId: number, blockId: string, gameMinute: number): boolean {
     if (this.queue.isPending(agentId, decomposeKey(blockId))) return false;
+    // Sleep, a shift at one's own workplace and a meal at home need no model
+    // (see deterministicDecompose). Tried before the gate on purpose: no LLM
+    // is involved, so neither this agent's backoff nor an outage breaker that
+    // is open for everyone else has any reason to hold these blocks back —
+    // during an outage the routine part of the day keeps running.
+    if (this.decomposeWithoutLLM(agentId, blockId)) return false;
     const ticket = this.gate.tryAcquire(agentId, gameMinute);
     if (!ticket) return false;
     const accepted = this.queue.enqueue(
@@ -82,6 +92,61 @@ export class PlanDecomposer {
   /** Whether a decomposition of `blockId` is queued or running. */
   isPending(agentId: number, blockId: string): boolean {
     return this.queue.isPending(agentId, decomposeKey(blockId));
+  }
+
+  // ── Private: deterministic path ────────────────────────────────────────────
+
+  /**
+   * Fill `blockId` with actions computed from the block itself, synchronously.
+   * True when the block now has actions (nothing left to ask the LLM); false
+   * when it needs the model, which includes any failure here — this path is an
+   * optimisation and must never be the reason a block goes undecomposed.
+   */
+  private decomposeWithoutLLM(agentId: number, blockId: string): boolean {
+    const plan = this.cache.get(agentId);
+    const block = plan?.blocks.find((b) => b.id === blockId);
+    if (!plan || !block) return false;
+    if (block.decomposed_actions && block.decomposed_actions.length > 0) return false;
+    // The executor re-asks on every decision pass while a block has no actions;
+    // remember the blocks that need the LLM so those passes cost a set lookup,
+    // not four DB reads. Keyed on the block object: a replan or a new day
+    // brings new objects, and so a fresh look.
+    if (this.needsLLM.has(block)) return false;
+
+    try {
+      const actions = decomposeDeterministically(block, this.loadDeterministicContext(agentId));
+      if (!actions) {
+        this.needsLLM.add(block);
+        return false;
+      }
+      block.decomposed_actions = actions;
+      this.cache.set(agentId, plan);
+      return true;
+    } catch (err) {
+      // Not remembered: a transient DB error should not pin the block to the LLM path.
+      console.warn(`[PlanDecomposer] deterministic decomposition for agent ${agentId} failed, using the LLM:`, err);
+      return false;
+    }
+  }
+
+  private loadDeterministicContext(agentId: number): DeterministicContext {
+    const row = db
+      .select({ home: agents.home, workplace: agents.workplace, schedule: agents.schedule })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .get();
+    if (!row) throw new Error(`agent ${agentId} not found`);
+    const schedule = row.schedule as { workStart?: number; workEnd?: number } | null;
+    return {
+      homeId: row.home ?? null,
+      workplaceId: row.workplace ?? null,
+      locations: db.select({ id: locations.id, name: locations.name }).from(locations).all(),
+      otherAgentNames: db.select({ id: agents.id, name: agents.name }).from(agents).all()
+        .filter((a) => a.id !== agentId)
+        .map((a) => a.name),
+      workStart: schedule?.workStart,
+      workEnd: schedule?.workEnd,
+    };
   }
 
   // ── Private: decompose ─────────────────────────────────────────────────────
