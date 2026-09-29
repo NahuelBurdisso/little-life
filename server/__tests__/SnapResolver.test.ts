@@ -102,3 +102,11 @@ describe('SnapResolver.buildSnapPrompt', () => {
     expect(prompt).toContain('none');
   });
 });
+
+describe('parseSnapResponse — spelling variants', () => {
+  it('reads "lash out" and "self-destruct" as their action names', () => {
+    expect(parseSnapResponse('Lash out')).toBe('lash_out');
+    expect(parseSnapResponse('self-destruct')).toBe('self_destruct');
+    expect(parseSnapResponse('{"action":"plot"}')).toBe('plot');
+  });
+});

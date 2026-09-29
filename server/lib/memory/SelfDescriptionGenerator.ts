@@ -58,28 +58,32 @@ export class SelfDescriptionGenerator {
 
     const personalityDesc = buildPersonalityDescription(personality, traits);
 
-    const system = `You are summarizing ${agent.name}'s current self-concept based on their recent experiences.
+    // The description is pasted into every conversation prompt as "About you",
+    // so its register becomes the agent's register. Playtest summaries read like
+    // therapy notes ("an intentionally curated connector whose self-worth…"),
+    // and dialogue drifted into the same jargon.
+    const system = `You describe how a townsperson currently sees themselves.
 
-${agent.name} is a ${agent.age}-year-old. ${personalityDesc}
+${agent.name}, ${agent.age}. ${personalityDesc}
 ${econ?.job_title ? `Works as: ${econ.job_title}` : 'Currently unemployed'}
-${stateList ? `Current emotional state: ${stateList}` : ''}
+${stateList ? `Current state: ${stateList}` : ''}
 
-Their recent memories and reflections:
-${allMemories.map((m, i) => `${i + 1}. ${m}`).join('\n')}
+Their recent memories and thoughts:
+${allMemories.map((m) => `- ${m}`).join('\n')}
 
-Write a 2-3 sentence summary of how ${agent.name} currently sees themselves — their identity, what matters to them right now, and how they feel about their life. Write in third person. Be specific and grounded in the memories above, not generic.`;
+In 2 short sentences, third person, plain everyday words: who ${firstNameOf(agent.name)} is, what they care about right now, and what is weighing on them or delighting them. Mention the concrete people and things from the memories. No psychology jargon, no markdown, no preamble.`;
 
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
         purpose: 'self_description',
         system,
-        messages: [{ role: 'user', content: `Summarize ${agent.name}'s current self-concept.` }],
+        messages: [{ role: 'user', content: `Describe ${agent.name}.` }],
         priority: 'low',
-        options: { temperature: 0.7, num_predict: 200 },
+        options: { temperature: 0.7, num_predict: 160 },
       });
 
-      const description = response.text.trim();
+      const description = cleanSelfDescription(response.text, agent.name);
       if (description.length > 10) {
         db.update(agents).set({ self_description: description }).where(eq(agents.id, agentId)).run();
         console.log(`[SelfDescription] Updated ${agent.name} (day ${currentDay}): ${description.substring(0, 60)}...`);
@@ -92,4 +96,25 @@ Write a 2-3 sentence summary of how ${agent.name} currently sees themselves — 
   clear(): void {
     this.lastGenerated.clear();
   }
+}
+
+function firstNameOf(name: string): string {
+  return name.replace(/^(Dr|Mr|Mrs|Ms)\.?\s+/i, '').split(/\s+/)[0];
+}
+
+/**
+ * Strip what must not reach "About you:" in a conversation prompt: markdown
+ * emphasis, a preamble line ("Here's a summary:"), wrapping quotes, and a cut
+ * trailing sentence when the token cap stopped the model.
+ */
+export function cleanSelfDescription(raw: string, name: string): string {
+  let text = raw.replace(/[*_`#]+/g, '').replace(/\r/g, '').trim();
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length > 1 && /^(here|sure|okay|of course|summary|based on)\b/i.test(lines[0]) && !lines[0].includes(firstNameOf(name))) {
+    lines.shift();
+  }
+  text = lines.join(' ').replace(/\s+/g, ' ').replace(/^["“]|["”]$/g, '').trim();
+  const lastStop = Math.max(text.lastIndexOf('.'), text.lastIndexOf('!'), text.lastIndexOf('?'));
+  if (lastStop > 0 && lastStop < text.length - 1) text = text.slice(0, lastStop + 1);
+  return text;
 }

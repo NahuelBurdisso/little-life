@@ -253,3 +253,18 @@ describe('parseInsights', () => {
     expect(result[0].text).toBe('Alice loves the town');
   });
 });
+
+describe('structured (JSON) replies', () => {
+  it('reads three questions and strips markdown', () => {
+    const raw = JSON.stringify({ questions: ['Why does **Marco** avoid me?', 'Is the bakery worth it?', 'Should I call Rosa?'] });
+    expect(parseQuestions(raw)).toEqual(['Why does Marco avoid me?', 'Is the bakery worth it?', 'Should I call Rosa?']);
+  });
+
+  it('reads insights with their citations, deduplicated', () => {
+    const raw = JSON.stringify({ insights: [
+      { insight: 'I trust *Rosa* more than I admit.', because: [2, 5, 2] },
+      { insight: 'ok', because: [1] },
+    ] });
+    expect(parseInsights(raw)).toEqual([{ text: 'I trust Rosa more than I admit.', citations: [2, 5] }]);
+  });
+});

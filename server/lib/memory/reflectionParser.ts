@@ -35,8 +35,34 @@ function splitAndClean(raw: string): string[] {
     .filter((l) => l.length > 0);
 }
 
+/** The object of a structured-output reply, or null for the older line format. */
+function jsonObject(raw: string): Record<string, unknown> | null {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const v = JSON.parse(raw.slice(start, end + 1));
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Markdown the model adds for emphasis; the text is stored as a thought. */
+function plain(text: string): string {
+  return text.replace(/[*_`#]+/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export function parseQuestions(raw: string): string[] {
   if (!raw.trim()) return [];
+  const json = jsonObject(raw);
+  if (json && Array.isArray(json.questions)) {
+    return json.questions
+      .filter((q): q is string => typeof q === 'string')
+      .map(plain)
+      .filter((q) => q.length > 0)
+      .slice(0, 3);
+  }
   const lines = splitAndClean(raw);
   return lines.slice(0, 3);
 }
@@ -101,6 +127,18 @@ function extractCitations(line: string): { text: string; citations: number[] } {
 
 export function parseInsights(raw: string): Array<{ text: string; citations: number[] }> {
   if (!raw.trim()) return [];
+
+  const json = jsonObject(raw);
+  if (json && Array.isArray(json.insights)) {
+    return (json.insights as Array<Record<string, unknown>>)
+      .map((i) => ({
+        text: typeof i?.insight === 'string' ? plain(i.insight) : '',
+        citations: Array.isArray(i?.because)
+          ? [...new Set(i.because.filter((n): n is number => Number.isInteger(n)))]
+          : [],
+      }))
+      .filter((entry) => entry.text.length >= 5);
+  }
 
   const lines = splitAndClean(raw);
 

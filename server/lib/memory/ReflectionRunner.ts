@@ -106,7 +106,7 @@ export class ReflectionRunner {
       .all();
 
     // 3. Build question prompt
-    const { system: qSystem, user: qUser } = buildQuestionPrompt({
+    const { system: qSystem, user: qUser, format: qFormat } = buildQuestionPrompt({
       name,
       age,
       traits,
@@ -123,6 +123,7 @@ export class ReflectionRunner {
       system: qSystem,
       messages: [{ role: 'user', content: qUser }],
       priority: 'normal',
+      format: qFormat,
       options: { temperature: 0.7, num_predict: 256 },
     });
 
@@ -165,7 +166,7 @@ export class ReflectionRunner {
       description: result.memory.description,
     }));
 
-    const { system: sSystem, user: sUser } = buildSynthesisPrompt({
+    const { system: sSystem, user: sUser, format: sFormat } = buildSynthesisPrompt({
       name,
       personality,
       traits,
@@ -180,6 +181,7 @@ export class ReflectionRunner {
       system: sSystem,
       messages: [{ role: 'user', content: sUser }],
       priority: 'normal',
+      format: sFormat,
       options: { temperature: 0.7, num_predict: 512 },
     });
 

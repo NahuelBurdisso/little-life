@@ -33,7 +33,9 @@ const VALID_ACTIONS: SnapAction[] = [
 ];
 
 export function parseSnapResponse(response: string): SnapAction {
-  const normalized = response.toLowerCase().trim();
+  // "lash out" / "self-destruct" (space or hyphen) used to miss the
+  // underscore names and silently become 'breakdown'.
+  const normalized = response.toLowerCase().trim().replace(/[\s-]+/g, '_');
 
   for (const action of VALID_ACTIONS) {
     if (normalized.includes(action)) {
@@ -69,7 +71,7 @@ export class SnapResolver {
       '- lash_out: take your anger out on whoever is nearby (not the cause)',
       '- self_destruct: engage in self-destructive behavior (drinking, gambling, quitting job)',
       '',
-      'Respond with ONLY the action word. Nothing else.',
+      'Reply with JSON: {"action":"<one of the words above>"}',
     ].join('\n');
   }
 
@@ -80,14 +82,23 @@ export class SnapResolver {
       const response = await callOllamaChat({
         model: CONFIG.AI.CHAT_MODEL,
         purpose: 'snap',
-        system: 'You are roleplaying as a town resident who has reached their emotional breaking point. Respond with exactly one word from the provided list.',
+        system: 'You are roleplaying as a town resident who has reached their emotional breaking point. Choose the action that fits who you are.',
         messages: [{ role: 'user', content: prompt }],
-        priority: 'critical',
+        // Not 'critical': nobody is waiting on this line the way they wait on
+        // dialogue, and critical callers may take the slot reserved for it.
+        priority: 'normal',
+        // The grammar can only produce one of the six actions. The old
+        // one-word answer with stop tokens came back empty whenever the model
+        // opened with a newline, which also defaulted to 'breakdown'.
+        format: {
+          type: 'object',
+          properties: { action: { type: 'string', enum: VALID_ACTIONS } },
+          required: ['action'],
+        },
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,
-          num_predict: 10,
-          stop: ['\n', '.', ',', '!', '?'],
+          num_predict: 20,
         },
       });
 
