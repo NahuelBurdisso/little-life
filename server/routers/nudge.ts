@@ -11,7 +11,7 @@ import {
   economyTransactions,
 } from '../db/schema';
 import { logActivity } from '../lib/activityLogger';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
@@ -29,6 +29,7 @@ import {
   whisperThought,
 } from '../lib/godPowers';
 import { rumorReachedSubject } from '../lib/gossip';
+import { workplaceForJob } from '../lib/jobWorkplace';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -422,25 +423,8 @@ export const nudgeRouter = router({
             return { success: false, reason: 'No available housing' };
           }
 
-          // Find workplace
-          const workplaces = db
-            .select()
-            .from(locations)
-            .where(
-              and(
-                ne(locations.type, 'home'),
-                ne(locations.type, 'park'),
-                ne(locations.type, 'plaza')
-              )
-            )
-            .all();
-
-          const workplace =
-            workplaces.find(
-              (w) =>
-                w.type.toLowerCase().includes(job.toLowerCase()) ||
-                w.name.toLowerCase().includes(job.toLowerCase())
-            ) ?? workplaces[0] ?? null;
+          // Find workplace by the job's building type (null when jobless).
+          const workplace = workplaceForJob(job, db.select().from(locations).all());
 
           const homeEntry = availableHome.entry_point as { x: number; y: number };
 
