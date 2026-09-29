@@ -97,6 +97,17 @@ export class MemoryService {
     this.batcher.clear();
   }
 
+  /**
+   * Forget cached vectors so they are reloaded from the DB — after the
+   * embedding backfill rewrote them. Unlike clear(), pending writes stay.
+   */
+  invalidateEmbeddings(): void {
+    this.loadedAgents.clear();
+    this.cache.clear();
+    this.queryCache.clear();
+    this.batcher.clearReadCache();
+  }
+
   // ── Write ──────────────────────────────────────────────────────────────────
 
   /**
@@ -475,6 +486,6 @@ function bufferToFloat32Array(buffer: Buffer): Float32Array {
   return new Float32Array(uint8.buffer, uint8.byteOffset, uint8.byteLength / 4);
 }
 
-function float32ArrayToBuffer(arr: Float32Array): Buffer {
+export function float32ArrayToBuffer(arr: Float32Array): Buffer {
   return Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength);
 }

@@ -86,6 +86,10 @@ function migrateSchema() {
     created_at INTEGER NOT NULL
   )`);
 
+  // Small key/value store for facts about the DB itself (which embedding model
+  // made the stored vectors — see lib/memory/embeddingBackfill.ts).
+  sqlite.exec('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+
   // Goals table extensions
   addColumnIfMissing('goals', 'description', 'TEXT');
   addColumnIfMissing('goals', 'strategy', 'TEXT');

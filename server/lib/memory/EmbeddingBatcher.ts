@@ -111,6 +111,11 @@ export class EmbeddingBatcher implements EmbeddingProvider {
     return promise;
   }
 
+  /** Drop cached query vectors only (the embedding model or its vectors changed). */
+  clearReadCache(): void {
+    this.textCache.clear();
+  }
+
   clear(): void {
     this.textCache.clear();
     this.inFlight.clear();

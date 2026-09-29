@@ -6,6 +6,7 @@ import { applyWSSHandler } from '@trpc/server/adapters/ws';
 import { appRouter } from './router';
 import { startTickLoop, stopTickLoop } from './engine/tick';
 import { warmUpModels } from './ai/warmup';
+import { runEmbeddingBackfill } from './lib/memory/embeddingBackfill';
 import { endOrphanedLLMConversations } from './engine/systems/conversations';
 import { taskRunner } from './ai/taskRunner';
 import { sqlite } from './db';
@@ -129,7 +130,9 @@ const handler = applyWSSHandler({
 });
 
 // Load the models in the background so the first turns don't pay for it.
-void warmUpModels();
+// Then give every memory a vector from the current embedding model (seeded
+// backstory has none; a model change invalidates the old ones).
+void warmUpModels().then(() => runEmbeddingBackfill(() => memoryService.invalidateEmbeddings()));
 
 // Start tick loop
 startTickLoop();

@@ -18,7 +18,8 @@ import { cascadeTick } from '../lib/cascade';
 import { CONFIG } from '../lib/constants';
 import { crossedBoundary, gameMinutes, hourChanged } from '../lib/gameClock';
 import { cacheAllAgentStates, clearAgentStatesCache, invalidateAgentStatesCache } from '../lib/states';
-import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
+import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator, memoryService } from '../lib/memory/instance';
+import { runEmbeddingBackfill } from '../lib/memory/embeddingBackfill';
 import { writeIssue } from '../lib/gazette';
 import { perceptionSystem } from '../lib/perception/instance';
 import { refreshAllReputations } from '../lib/reputationEngine';
@@ -351,6 +352,8 @@ export async function gameTick(): Promise<void> {
         void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
       }
     });
+    // Memories written without a vector (a new world's seeded backstory).
+    runGuarded('embeddingBackfill', () => { void runEmbeddingBackfill(() => memoryService.invalidateEmbeddings()); });
     // The Town Crier: yesterday's edition (async LLM call, low priority).
     if (CONFIG.AI.GAZETTE) runGuarded('gazette', () => { void writeIssue(); });
     // Refresh community reputation scores from accumulated facts
