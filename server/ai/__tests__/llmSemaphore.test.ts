@@ -68,13 +68,13 @@ describe('chat and embedding pools', () => {
 
     expect(getLLMStats().active).toBe(0);
 
-    // All 8 chat slots are still granted immediately.
+    // Every chat slot (LLM_PARALLEL, default 4) is still granted immediately.
     const chat = await Promise.race([
-      Promise.all(Array.from({ length: 8 }, () => acquireLLMSlot('critical'))),
+      Promise.all(Array.from({ length: 4 }, () => acquireLLMSlot('critical'))),
       new Promise<'blocked'>((r) => setTimeout(() => r('blocked'), 50)),
     ]);
     expect(chat).not.toBe('blocked');
-    expect(getLLMStats()).toMatchObject({ active: 8, waiting: 0 });
+    expect(getLLMStats()).toMatchObject({ active: 4, waiting: 0 });
     expect(queuedEmbed).toBe(false);
 
     // Freeing chat slots does not wake embedding waiters, and vice versa.
@@ -85,5 +85,47 @@ describe('chat and embedding pools', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(queuedEmbed).toBe(true);
+  });
+});
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+describe('PrioritySemaphore — slots reserved for critical callers', () => {
+  it('keeps the reserved slot free of normal/low work', async () => {
+    const sem = new PrioritySemaphore(3, 1);
+    const held = await fill(sem, 2);
+    let lowGot = false;
+    void sem.acquire('low').then(() => { lowGot = true; });
+    await flush();
+    expect(lowGot).toBe(false);
+    expect(sem.stats().active).toBe(2);
+
+    // A critical caller still gets in immediately.
+    const crit = await sem.acquire('critical');
+    expect(sem.stats().active).toBe(3);
+
+    // Freeing the critical slot does not hand it to the waiting low caller…
+    crit();
+    await flush();
+    expect(lowGot).toBe(false);
+    // …freeing a normal one does.
+    held[0]();
+    await flush();
+    expect(lowGot).toBe(true);
+  });
+
+  it('serves a critical waiter first when the pool is full', async () => {
+    const sem = new PrioritySemaphore(2, 1);
+    const [n] = await fill(sem, 1);
+    const c = await sem.acquire('critical');
+    const order: string[] = [];
+    void sem.acquire('normal').then(() => order.push('normal'));
+    void sem.acquire('critical').then(() => order.push('critical'));
+    c();
+    await flush();
+    expect(order).toEqual(['critical']);
+    n();
+    await flush();
+    expect(order).toEqual(['critical', 'normal']);
   });
 });

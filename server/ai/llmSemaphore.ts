@@ -9,7 +9,7 @@
  * by bulk operations like goal reviews.
  *
  * There are two independent pools:
- *  - chat (`acquireLLMSlot`, 8 slots) for every chat/completion request;
+ *  - chat (`acquireLLMSlot`, LLM_PARALLEL slots, default 4) for every chat/completion request;
  *  - embeddings (`acquireEmbeddingSlot`, 3 slots) for every embedding request.
  * Embeddings deliberately do not share the chat slots. A conversation turn
  * embeds its memory query and then chats, and the whole turn's latency counts
@@ -35,9 +35,17 @@ const PRIORITY_ORDER: Record<LLMPriority, number> = {
 /**
  * A counting semaphore with strict priority: a freed slot goes to the
  * highest-priority waiter, FIFO among equals.
+ *
+ * `reservedForCritical` slots can only ever be taken by `critical` callers.
+ * Priority alone cannot protect a conversation turn once every slot is busy:
+ * with the default (no reservation) a daily-plan burst at dawn fills the pool
+ * with 20–30 s generations and the next dialogue line waits for one of them to
+ * finish — playtest turns sat ~15 s in the queue for a 0.3 s reply.
  */
 export class PrioritySemaphore {
   private active = 0;
+  /** Slots held by non-critical callers (bounded by max - reserved). */
+  private activeNonCritical = 0;
   private readonly waiting: QueueEntry[] = [];
 
   // Stats for diagnostics
@@ -46,24 +54,41 @@ export class PrioritySemaphore {
   private peakActive = 0;
   private peakQueue = 0;
 
-  constructor(private readonly maxConcurrent: number) {}
+  constructor(
+    private readonly maxConcurrent: number,
+    private readonly reservedForCritical = 0,
+  ) {}
 
-  private releaseSlot(): void {
+  private canTake(priority: LLMPriority): boolean {
+    if (this.active >= this.maxConcurrent) return false;
+    if (priority === 'critical') return true;
+    return this.activeNonCritical < this.maxConcurrent - this.reservedForCritical;
+  }
+
+  private take(priority: LLMPriority): void {
+    this.active++;
+    if (priority !== 'critical') this.activeNonCritical++;
+    if (this.active > this.peakActive) this.peakActive = this.active;
+  }
+
+  private releaseSlot(priority: LLMPriority): void {
     this.active--;
+    if (priority !== 'critical') this.activeNonCritical--;
 
-    if (this.waiting.length === 0) return;
-
-    // Pick highest-priority waiter (stable sort by priority then FIFO)
-    let bestIdx = 0;
-    for (let i = 1; i < this.waiting.length; i++) {
-      if (PRIORITY_ORDER[this.waiting[i].priority] < PRIORITY_ORDER[this.waiting[bestIdx].priority]) {
+    // Highest-priority waiter that may take a slot now (FIFO among equals). A
+    // non-critical waiter can be skipped while only reserved slots are free.
+    let bestIdx = -1;
+    for (let i = 0; i < this.waiting.length; i++) {
+      const w = this.waiting[i];
+      if (!this.canTake(w.priority)) continue;
+      if (bestIdx < 0 || PRIORITY_ORDER[w.priority] < PRIORITY_ORDER[this.waiting[bestIdx].priority]) {
         bestIdx = i;
       }
     }
+    if (bestIdx < 0) return;
 
     const next = this.waiting.splice(bestIdx, 1)[0];
-    this.active++;
-    if (this.active > this.peakActive) this.peakActive = this.active;
+    this.take(next.priority);
     next.resolve();
   }
 
@@ -78,16 +103,15 @@ export class PrioritySemaphore {
     const release = (): void => {
       if (released) return;
       released = true;
-      this.releaseSlot();
+      this.releaseSlot(priority);
     };
 
-    if (this.active < this.maxConcurrent) {
-      this.active++;
-      if (this.active > this.peakActive) this.peakActive = this.active;
+    if (this.canTake(priority)) {
+      this.take(priority);
       return release;
     }
 
-    // Wait for a slot
+    // Wait for a slot (take() is done by releaseSlot before resolving)
     this.totalWaited++;
     await new Promise<void>((resolve) => {
       this.waiting.push({ priority, resolve, enqueued: Date.now() });
@@ -115,14 +139,20 @@ export class PrioritySemaphore {
   }
 }
 
-// Empirically tuned for an RTX 3090 24GB: deep enough to keep Ollama's internal
-// batching fed without pushing per-request latency past the conversation timeout.
-//
-// This deliberately does NOT assume any particular OLLAMA_NUM_PARALLEL — nothing
-// in this repo sets it, so whatever the server was started with applies. If you
-// run Ollama with a low NUM_PARALLEL, requests above it simply queue inside
-// Ollama instead of here; this limit only bounds how many we hand it at once.
-const MAX_CONCURRENT = 8;
+// Must match the server's parallelism (OLLAMA_NUM_PARALLEL, llama-server
+// --parallel). Handing the server more requests than it runs at once does not
+// make anything faster — the extra ones wait in the SERVER's FIFO queue, where
+// this module's priorities no longer apply, so a conversation turn queued
+// there behind four daily plans. Keeping the excess queued here means the next
+// free slot always goes to the most important caller.
+const MAX_CONCURRENT = Math.max(1, Number(process.env.LLM_PARALLEL ?? 4));
+
+/**
+ * Slots only conversation turns and snap reactions (priority `critical`) may
+ * use — what the player is watching never waits behind background planning.
+ * One of four: planning keeps 3/4 of the throughput.
+ */
+const RESERVED_FOR_CRITICAL = MAX_CONCURRENT > 1 ? 1 : 0;
 
 /**
  * Embedding requests are short, and a write batch carries up to 20 texts in
@@ -131,7 +161,7 @@ const MAX_CONCURRENT = 8;
  */
 const EMBEDDING_MAX_CONCURRENT = 3;
 
-const chatSemaphore = new PrioritySemaphore(MAX_CONCURRENT);
+const chatSemaphore = new PrioritySemaphore(MAX_CONCURRENT, RESERVED_FOR_CRITICAL);
 const embeddingSemaphore = new PrioritySemaphore(EMBEDDING_MAX_CONCURRENT);
 
 /**
