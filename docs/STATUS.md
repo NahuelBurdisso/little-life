@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 252 files / 2845 tests passing (autonomous improvement session, waves 1–6 merged).
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 255 files / 2870 tests passing (autonomous improvement session, waves 1–6 + playtest #3 merged).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -267,6 +267,19 @@ Player-facing:
   30–70% residents invisible some days, a serial-arrest loop on seduction facts (`decisions.ts:~2343`,
   `gossip.ts:~319`). Template chats emit no drama beats (`conversations.ts` `processTimedOutEntry`).
   A story-health pass is in progress. Tick p95 433 ms at 32 residents (interval 1000 ms).
+- **Playtest #3** (real LLM, day 3 → 6 of a save, 1x then 4x + night skips): turn p50 0.8 s (1x) /
+  2.0 s (4x), template share 20–28% (was ~50%), "how are you" openers 2.2% (was 9%), 0 truncations, 0
+  embedding failures, 0 path fallbacks (was 278), no stuck/frozen/overlapping conversations, 0
+  anachronisms in 323 lines. Spotlight: on-screen chats 68% LLM. Fixed live: drunk facts never
+  spread (`known_by` [X, X]), watched perception chats get spotlight priority, first-name farewells,
+  goal lines as prose, production memories deduped. Open (being fixed): first meetings make
+  neighbours introduce themselves (`prompts.ts:~365`), topic monotony (34/57 "offering help"),
+  speaker confusion / invented tenure, endearments above the romance level, template scripts ignore
+  the trigger, G8 plans late at 4x (9/13 after 07:00), 106 queue timeouts (10 game min = 2.5 s at 4x),
+  plan.decompose only −10%, world events repeat (Bountiful Catch ×3 in 2 days) and flood memory,
+  client polls getActive/getGraph/getAgentSummary ~4.6/s, recap card covers the Director caption, no
+  couple reaches `partners` (needs romance > 70 both ways) so weddings never happen live.
+  Trace: `.claude/worktrees/agent-aa6fc8b18da87e992/data/trace/pt3.jsonl`.
 - Open from wave 5: long bells can starve other voices under stress (`synth.ts:27`); Priya's back-view
   head reads as skin (`agent-sheets.lua:170`); cap bills don't point forward in profile; in-flight
   embedding requests not aborted on world swap (`EmbeddingBatcher.ts:217`); home names start with a
