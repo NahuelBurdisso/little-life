@@ -286,11 +286,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   // Gift given — giver remembers
-  simEvents.on('gift:given', ({ giverId, receiverId }: { giverId: number; receiverId: number; item?: string; amount?: number }) => {
-    const receiverName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, receiverId)).get()?.name ?? 'someone';
-    memoryService.record(giverId, 'observation',
-      `I gave a gift to ${receiverName}. It felt good to be generous.`,
-      { subtype: 'social', related_agents: [receiverId] }, 0.4, 5);
+  simEvents.on('gift:given', (payload: GiftGivenPayload) => {
+    const receiverName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, payload.receiverId)).get()?.name ?? 'someone';
+    memoryService.record(payload.giverId, 'observation',
+      describeGiftForGiver(receiverName, payload),
+      { subtype: 'social', related_agents: [payload.receiverId] }, 0.4, 5);
   });
 
   // Agent birthday — self-memory
@@ -299,4 +299,30 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       `Today is my birthday! I turned ${age}. Another year gone by.`,
       { subtype: 'life_event' }, 0.5, 7);
   });
+}
+
+/** Payload of `gift:given`. `reason` is set by state-driven (impulsive) gifts. */
+export interface GiftGivenPayload {
+  giverId: number;
+  receiverId: number;
+  item?: string;
+  amount?: number;
+  reason?: 'drunk_gift' | 'euphoric_gift';
+}
+
+/**
+ * The giver's memory of a gift. Drunk and euphoric gifts are impulses, not
+ * considered generosity — remembering "it felt good to be generous" after a
+ * drunk evening's handout would feed reflection the wrong self-image.
+ */
+export function describeGiftForGiver(receiverName: string, p: GiftGivenPayload): string {
+  const what = p.amount != null ? `$${p.amount}` : (p.item ?? 'a gift');
+  switch (p.reason) {
+    case 'drunk_gift':
+      return `I'd had a few too many and pressed ${what} on ${receiverName}. I hope I don't regret that tomorrow.`;
+    case 'euphoric_gift':
+      return `I was in such a great mood that I gave ${receiverName} ${what}, just because.`;
+    default:
+      return `I gave a gift to ${receiverName}. It felt good to be generous.`;
+  }
 }

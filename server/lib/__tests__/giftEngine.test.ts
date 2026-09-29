@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../db';
 import {
   activityLog,
@@ -7,6 +7,7 @@ import {
   economy,
   economyTransactions,
   locations,
+  relationships,
   worldState,
 } from '../../db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
@@ -20,6 +21,7 @@ import {
 import { statesTick } from '../../engine/systems/states';
 import { simEvents } from '../simEvents';
 import { setEffectivePersonality } from '../states';
+import { initMemoryObserver, describeGiftForGiver } from '../memory/MemoryObserver';
 
 /**
  * Playtest bug: `drunk` / `euphoric` rolled a $5-15 cash gift at 30% EVERY tick
@@ -319,5 +321,67 @@ describe('conversation gift cooldown', () => {
     setClock(clock + GIFT_COOLDOWN_MINUTES);
     talk(giver, receiver);
     expect(conversationGiftsFrom(giver)).toHaveLength(2);
+  });
+});
+
+/**
+ * Impulsive gifts were remembered as "It felt good to be generous" — the wrong
+ * self-image for a drunk handout. `gift:given` now carries the reason.
+ */
+describe('impulsive gift memories and reactions', () => {
+  const record = vi.fn();
+  beforeAll(() => initMemoryObserver({ record } as any));
+  beforeEach(() => {
+    clearGiftTracking();
+    record.mockClear();
+    clock += 10_000;
+    setClock(clock);
+  });
+
+  const giverMemory = (giver: number) =>
+    record.mock.calls.find((c) => c[0] === giver && String(c[2]).includes('$'))?.[2] as string | undefined;
+
+  it('a drunk gift is remembered as a drunk gift', () => {
+    const { giver, receiver } = pair(200);
+    const amount = gift(giver, receiver, insertState(giver, 'drunk', clock), 10)!;
+    expect(giverMemory(giver)).toBe(
+      `I'd had a few too many and pressed $${amount} on Receiver ${n}. I hope I don't regret that tomorrow.`,
+    );
+  });
+
+  it('a euphoric gift is remembered as high spirits', () => {
+    const { giver, receiver } = pair(200);
+    const g = db.select().from(agents).where(eq(agents.id, giver)).get()!;
+    const r = db.select().from(agents).where(eq(agents.id, receiver)).get()!;
+    giveImpulsiveGift({ giver: g, receiver: r, reason: 'euphoric_gift', stateId: insertState(giver, 'euphoric', clock), desiredAmount: 8 });
+    expect(giverMemory(giver)).toContain('great mood');
+  });
+
+  it('a conversation gift keeps the generosity memory', () => {
+    expect(describeGiftForGiver('Ana', { giverId: 1, receiverId: 2, item: 'bread' }))
+      .toBe('I gave a gift to Ana. It felt good to be generous.');
+  });
+
+  it('still makes a co-located admirer of the giver jealous', () => {
+    const { loc, giver, receiver } = pair(200);
+    const admirer = insertAgent(`Admirer ${n}`, loc);
+    const [a, b] = admirer < giver ? [admirer, giver] : [giver, admirer];
+    const admirerIsA = a === admirer;
+    db.insert(relationships).values({
+      agent_a: a, agent_b: b,
+      friendship_ab: 20, friendship_ba: 20,
+      romance_ab: admirerIsA ? 70 : 0, romance_ba: admirerIsA ? 0 : 70,
+      trust_ab: 20, trust_ba: 20, familiarity: 50, interaction_count: 5,
+      last_interaction: 0, average_interaction_sentiment: 0.5, tags: [],
+      status: 'acquaintance', created_at: 0, last_updated: 0,
+    }).run();
+
+    expect(gift(giver, receiver, insertState(giver, 'drunk', clock))).not.toBeNull();
+
+    const jealous = db.select().from(agentStates).where(and(
+      eq(agentStates.agent_id, admirer),
+      eq(agentStates.type, 'jealous'),
+    )).get();
+    expect(jealous?.target_agent_id).toBe(giver);
   });
 });

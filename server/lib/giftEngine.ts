@@ -137,7 +137,9 @@ export function giveImpulsiveGift(params: {
     },
   });
 
-  simEvents.emit('gift:given', { giverId: giver.id, receiverId: receiver.id, amount });
+  // `reason` lets memory tell an impulse from considered generosity; jealousy
+  // and favors react to it like any other gift.
+  simEvents.emit('gift:given', { giverId: giver.id, receiverId: receiver.id, amount, reason });
   return amount;
 }
 
