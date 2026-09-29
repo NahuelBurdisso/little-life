@@ -1,4 +1,4 @@
-import { db } from '../../db';
+import { db, getTableWriteVersion } from '../../db';
 import {
   agents,
   goals,
@@ -8,7 +8,8 @@ import {
   relationships,
   worldState,
 } from '../../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gte, or } from 'drizzle-orm';
+import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { GOAL_REGISTRY, GOAL_TRIGGER_REGISTRY } from '../../data/goalRegistry';
 import { MAX_GOALS_PER_AGENT } from '../../lib/interactionConstants';
 import { AgentStateRowsSnapshot, getEffectivePersonality, type AgentStateRow } from '../../lib/states';
@@ -26,6 +27,14 @@ import { gameMinutes } from '../../lib/gameClock';
 // the registry's `minutes_elapsed` rules and the pivot/stale thresholds. They were
 // ticks, so at 4x every "12 hours" or "3 days" in here took four times as long.
 const MINUTES_PER_DAY = 1440;
+
+/**
+ * How long a finished goal still blocks its trigger from creating the same goal
+ * again. 12 game hours — prevents goal→abandon spam for persistent triggers.
+ */
+const RECREATE_COOLDOWN_MINUTES = 720;
+
+type GoalRow = typeof goals.$inferSelect;
 
 /**
  * Roll an abandonment rule's `chance`, which the registry authors as a
@@ -149,20 +158,20 @@ function evaluateTriggers(
   cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
   cachedRelationships: (typeof relationships.$inferSelect)[],
   stateRows: AgentStateRowsSnapshot,
+  goalRows: RowsByAgentSnapshot<GoalRow>,
 ): void {
   const personality = getEffectivePersonality(agent.id);
-  // One read of the agent's goals serves both lists below (it was two queries,
-  // the second a superset of the first). Read here, not reused from the top of
-  // the agent's loop: abandonment and passive progress just changed statuses.
-  const agentGoalRows = db.select().from(goals).where(eq(goals.agent_id, agent.id)).all();
+  // One read of the agent's goals serves both lists below (it was two queries
+  // per agent, the second a superset of the first). The snapshot re-reads after
+  // any goals write, so this sees what abandonment and passive progress just did.
+  const agentGoalRows = goalRows.forAgent(agent.id);
   const activeGoals = agentGoalRows.filter(g => g.status === 'active');
 
   // Also load recently abandoned/completed goals to prevent create→abandon spam.
   // Without this, a persistent trigger (e.g., infatuated state) creates a goal every tick
   // that gets immediately abandoned, flooding the activity log.
-  const COOLDOWN_MINUTES = 720; // 12 game hours — prevents goal→abandon spam for persistent triggers
   const recentGoals = agentGoalRows
-    .filter(g => g.status !== 'active' && (nowMinutes - g.created_at) < COOLDOWN_MINUTES);
+    .filter(g => g.status !== 'active' && (nowMinutes - g.created_at) < RECREATE_COOLDOWN_MINUTES);
 
   for (const trigger of GOAL_TRIGGER_REGISTRY) {
     if (activeGoals.length >= MAX_GOALS_PER_AGENT) break;
@@ -414,11 +423,26 @@ export function goalsTick(): void {
   // began; `all()` returns the array of this read, which later refreshes of the
   // snapshot replace rather than mutate.
   const allAgentStates = stateRows.all();
+  // Every goal this phase can look at — the active ones and those recent
+  // enough to block a re-trigger — re-read only after a goals write (a cascade
+  // rule creates goals from inside this phase's events). Two queries per agent
+  // before. Filtered in SQL because finished goals are never deleted and the
+  // table only grows; `>=` keeps it a superset of evaluateTriggers' `<` window.
+  const goalRows = new RowsByAgentSnapshot<GoalRow>(
+    () => getTableWriteVersion('goals'),
+    () => db.select().from(goals)
+      .where(or(eq(goals.status, 'active'), gte(goals.created_at, nowMinutes - RECREATE_COOLDOWN_MINUTES)))
+      .orderBy(goals.id)
+      .all(),
+    (row) => row.agent_id,
+  );
 
   for (const agent of activeAgents) {
-    const agentGoals = db.select().from(goals)
-      .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
-      .all();
+    // Copies: abandonment writes the new status onto the goal object, and the
+    // snapshot's rows are shared. Rowid order, as idx_goals_agent_status gave.
+    const agentGoals = goalRows.forAgent(agent.id)
+      .filter(g => g.status === 'active')
+      .map(g => ({ ...g }));
 
     // 1. Morning LLM review (on day change only, async fire-and-forget)
     if (isDayChange) {
@@ -438,7 +462,7 @@ export function goalsTick(): void {
     }
 
     // 4. Check reactive triggers for new goals
-    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships, stateRows);
+    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships, stateRows, goalRows);
 
     // 5. Pivot evaluation (async fire-and-forget)
     void pivotEvaluator.evaluate(agent.id, nowMinutes);
