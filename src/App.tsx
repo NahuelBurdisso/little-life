@@ -32,6 +32,11 @@ import { Toasts } from "./components/ui/Toasts";
 import { LoadingScreen } from "./components/ui/LoadingScreen";
 import { FloatingToolbar } from "./components/ui/FloatingToolbar";
 import { AutoplayPanel } from "./components/ui/AutoplayPanel";
+import { MeetTheTown } from "./components/ui/MeetTheTown";
+import { CoachMarks } from "./components/ui/CoachMarks";
+import { HelpOverlay } from "./components/ui/HelpOverlay";
+import { useFirstRunGuide } from "./hooks/useFirstRunGuide";
+import { worldSeedKey } from "./lib/firstRun";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -184,6 +189,11 @@ export default function App() {
     focusAgent(agentId);
     setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "start" }));
   }, [focusAgent]);
+  // First-run guide (Meet the town -> coach marks), once per world seed, and the "?" help.
+  const guide = useFirstRunGuide({
+    worldKey: worldSeedKey(world?.setup_config),
+    ready: Boolean(world) && !worldLoading && !(isNewSimulation && !setupComplete) && agents.length > 0,
+  });
 
   // Keyboard controls
   useKeyboardControls({
@@ -202,8 +212,9 @@ export default function App() {
     },
     agentKeysEnabled: !(
       contextMenuAgent || showEventMenu || showGazette || showTownStats || showNewAgent ||
-      showRelGraph || showConvoHistory || showAutoplay
+      showRelGraph || showConvoHistory || showAutoplay || guide.tourOpen || guide.helpOpen
     ),
+    onToggleHelp: guide.toggleHelp,
   });
 
   // Canvas callbacks
@@ -335,6 +346,8 @@ export default function App() {
         onShowAutoplay={() => setShowAutoplay(true)}
         autoCut={autoCut}
         onToggleAutoCut={() => setAutoCut(v => !v)}
+        onMeetTheTown={guide.openTour}
+        onShowHelp={guide.openHelp}
         rightOffset={selectedAgentId ? rightWidth + 16 : 16}
       />
 
@@ -417,6 +430,17 @@ export default function App() {
         }}
       />
       <AutoplayPanel isOpen={showAutoplay} onClose={() => setShowAutoplay(false)} />
+
+      {/* First-run guide + help: they take Escape themselves (useEscapeClose). */}
+      <MeetTheTown
+        isOpen={guide.tourOpen}
+        replay={guide.tourIsReplay}
+        onClose={guide.closeTour}
+        agents={agents}
+        onSelectAgent={focusAgent}
+      />
+      <CoachMarks isOpen={guide.coachOpen} onClose={guide.closeCoach} />
+      <HelpOverlay isOpen={guide.helpOpen} onClose={guide.closeHelp} onMeetTheTown={guide.openTour} />
 
       {/* Attribution */}
       <div className="fixed bottom-1 left-1 z-10 text-[8px] text-ui-muted opacity-40 pointer-events-none">

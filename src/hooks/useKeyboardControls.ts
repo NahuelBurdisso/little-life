@@ -25,6 +25,8 @@ export function useKeyboardControls(callbacks: {
    * dialog (and F is not for the map behind it), so the resident keys stand down.
    */
   agentKeysEnabled: boolean;
+  /** "?" opens the help overlay (src/lib/helpContent.ts lists every key). */
+  onToggleHelp?: () => void;
 }) {
   // Callers pass a fresh object literal every render, and the app re-renders on
   // every subscription push — several times a second. Read the callbacks through
@@ -61,6 +63,11 @@ export function useKeyboardControls(callbacks: {
       }
       // Ctrl/Cmd+1 switches browser tabs, Alt+digit is a browser shortcut too.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // By character, not code: "?" sits on a different physical key per layout.
+      if (e.key === "?") {
+        cbRef.current.onToggleHelp?.();
+        return;
+      }
       switch (e.code) {
         case "Space": {
           // Pause wins over button activation: clicking any button leaves it

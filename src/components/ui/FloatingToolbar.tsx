@@ -7,6 +7,9 @@ interface FloatingToolbarProps {
   onShowAutoplay: () => void;
   autoCut: boolean;
   onToggleAutoCut: () => void;
+  /** First-run guide: the residents overview and the "?" help. */
+  onMeetTheTown?: () => void;
+  onShowHelp?: () => void;
   /** Distance from the right edge in px: clears the agent panel while one is open. */
   rightOffset?: number;
 }
@@ -65,6 +68,8 @@ export function FloatingToolbar({
   onShowAutoplay,
   autoCut,
   onToggleAutoCut,
+  onMeetTheTown,
+  onShowHelp,
   rightOffset = 16,
 }: FloatingToolbarProps) {
   // Same query key as the panel: a toggle there invalidates it, so this stays
@@ -98,6 +103,12 @@ export function FloatingToolbar({
         active={autoCut}
         pressed={autoCut}
       />
+      {onMeetTheTown && (
+        <ToolButton icon="🏘️" label="Meet the Town" title="Who lives here: ties, rivals, secrets, stories" onClick={onMeetTheTown} />
+      )}
+      {onShowHelp && (
+        <ToolButton icon="❓" label="Help (?)" title="How to play and every hotkey" onClick={onShowHelp} />
+      )}
     </div>
   );
 }

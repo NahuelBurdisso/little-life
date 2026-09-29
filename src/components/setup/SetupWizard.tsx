@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { AgentConfig, RelationshipConfig, SliderConfig, WorldGenConfig } from './types';
-import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } from './types';
+import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET, PRESETS } from './types';
 import { WorldLayout } from './WorldLayout';
 import { AgentEditor } from './AgentEditor';
 import { RelationshipEditor } from './RelationshipEditor';
@@ -88,6 +88,8 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
     setSliders(presetSliders);
   };
 
+  const presetLabel = PRESETS.find(p => p.id === selectedPreset)?.label ?? 'your custom mix';
+
   const goNext = () => {
     if (stepIndex < STEPS.length - 1) setStep(STEPS[stepIndex + 1].id);
   };
@@ -128,6 +130,29 @@ export function SetupWizard({ onStart }: SetupWizardProps) {
           {step === 'scenario' && (
             <div className="space-y-6">
               <h2 className="text-lg font-semibold text-ui-text">Choose Your Drama</h2>
+              {/* The other steps only tune defaults Start already has, so a first-time
+                  player can skip them: same handleStart as the last step's button. */}
+              <div className="flex items-center gap-4 border border-ui-line-accent bg-ui-gold/5 px-4 py-3 rounded-lg">
+                <button
+                  onClick={handleStart}
+                  disabled={starting || agents.length < 2 || !!worldgenError}
+                  className="px-5 py-2 text-sm bg-ui-gold text-ui-deep font-semibold hover:brightness-110 rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                >
+                  {starting ? 'Starting...' : 'Quick Start'}
+                </button>
+                <div className="text-xs text-ui-dim">
+                  Start now with <span className="text-ui-text">{presetLabel}</span>, the default cast and a town
+                  generated for you. Or press Next to tune the cast, layout and rules first.
+                  {worldgenError && (
+                    <span className="block mt-1 text-red-400">Fix the World Layout step first: {worldgenError}</span>
+                  )}
+                  {initMutation.error && !starting && (
+                    <span className="block mt-1 text-red-400 break-words">
+                      Could not start: {initMutation.error.message}
+                    </span>
+                  )}
+                </div>
+              </div>
               <PresetSelector selectedId={selectedPreset} onSelect={handlePresetSelect} />
               <div className="border-t border-ui-line pt-4">
                 <DramaSliders values={sliders} onChange={(s) => { setSliders(s); setSelectedPreset(null); }} />
