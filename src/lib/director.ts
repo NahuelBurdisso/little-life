@@ -83,6 +83,8 @@ export interface DirectorAgent {
 export interface DirectorLocation {
   id: number;
   name?: string;
+  /** Location kind from the server (`home`, `tavern`, …). */
+  type?: string;
 }
 
 export interface DirectorConversation {
@@ -365,7 +367,10 @@ export function pickRoamStop(
     if (a.current_location == null || !isAwake(a)) continue;
     counts.set(a.current_location, (counts.get(a.current_location) ?? 0) + 1);
   }
-  const busy = locations.filter((l) => (counts.get(l.id) ?? 0) > 0);
+  // Private homes are skipped: a roam is the camera "strolling through town",
+  // and cutting into a bedroom reads as snooping — at night it is also the only
+  // busy place, so the roam would park on sleepers instead of going idle.
+  const busy = locations.filter((l) => l.type !== 'home' && (counts.get(l.id) ?? 0) > 0);
   if (busy.length === 0) return null;
   const avoid = new Set(trail.slice(-DIRECTOR.ROAM_MEMORY));
   const unvisited = busy.filter((l) => !avoid.has(l.id));

@@ -202,6 +202,17 @@ describe('roam', () => {
     expect(pickRoamStop(WORLD.locations, WORLD.agents, [10, 11, 12])?.id).toBe(10);
   });
 
+  it('never roams into a private home', () => {
+    const locations = [{ id: 20, name: 'Home 2', type: 'home' }, { id: 21, name: 'Well', type: 'plaza' }];
+    const agents = [
+      { id: 1, current_location: 20 },
+      { id: 2, current_location: 20 },
+      { id: 3, current_location: 21 },
+    ];
+    expect(pickRoamStop(locations, agents, [])?.id).toBe(21);
+    expect(pickRoamStop(locations.slice(0, 1), agents, [])).toBeNull();
+  });
+
   it('has nowhere to go in an empty town', () => {
     expect(pickRoamStop(WORLD.locations, [], [])).toBeNull();
   });
