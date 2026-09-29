@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useNudge, FEELING_ICONS, type StirFeeling } from "../../hooks/useNudge";
 import { trpc } from "../../lib/trpc";
-import { locationIcon } from "../../lib/locationInfo";
+import { displayPlaceName, locationIcon } from "../../lib/locationInfo";
 import { MiniPortrait } from "../ui/MiniPortrait";
 import { W } from "../ui/warmClasses";
 
@@ -538,7 +538,7 @@ export function NudgeMenu({
               disabled={asleep}
               onClick={() => fire(() => suggestGoTo(agentId, String(loc.id), loc.name))}
             >
-              <span className="truncate">{loc.name}</span>
+              <span className="truncate">{displayPlaceName(loc.name, { sentenceStart: true })}</span>
             </Item>
           ))}
         </div>

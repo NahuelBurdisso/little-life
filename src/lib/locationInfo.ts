@@ -63,6 +63,20 @@ export function prettyLocationType(type: string): string {
   return type.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
+/**
+ * A place name for display. Homes are stored as "the Fernandez house" (`homeNames.ts`)
+ * because the prompts and action text embed them mid-sentence ("I'll pop over to the
+ * Fernandez house"), so the stored string must stay lowercase. But a map label, panel
+ * title or menu row starts with the name, where a lowercase "the" reads as a typo.
+ * Pass `sentenceStart` there; mid-sentence uses ("Sleeping at …", toasts) keep the
+ * raw name. Only the first letter changes — "Marco Rivera's house" and shop names are
+ * returned as they are.
+ */
+export function displayPlaceName(name: string, opts: { sentenceStart?: boolean } = {}): string {
+  if (!opts.sentenceStart || !name) return name;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 const hh = (h: number) => `${String(Math.floor(h) % 24).padStart(2, '0')}:00`;
 
 /**

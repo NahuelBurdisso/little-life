@@ -1,4 +1,5 @@
 import { audio, type AudioGraph, type BusName } from './engine';
+import { VoiceAllocator, type VoiceClass } from './voices';
 import { chimeAllowed, createChimeGate, type ChimeTier, type GodCue, type StoryCue } from './soundscape';
 
 /**
@@ -15,8 +16,10 @@ import { chimeAllowed, createChimeGate, type ChimeTier, type GodCue, type StoryC
  *   buffer, pitched down, is the funeral knell; pitched up, the UI chime and the god-power
  *   glitter. Same for the forge clink (coins, the jail door), the fist thump and the drip.
  *   Karplus-Strong lute notes are rendered once per pitch and cached.
- * - **Voice cap.** Every one-shot reserves voices up front and gives them back on `ended`;
- *   past MAX_VOICES new sounds are simply dropped (the ear never misses the 33rd bird).
+ * - **Voice cap** (`voices.ts`). Every one-shot reserves voices up front and gives them back on
+ *   `ended`; past 32 new sounds are simply dropped (the ear never misses the 33rd bird). Bells and
+ *   story/UI effects share only 24 of them, so the ambience layers can never be starved, and
+ *   tower bells are counted by the time they ring (at most six at once), not from scheduling.
  * - **Nothing per frame.** The caller services beds and pacers ~10×/s; one-shots allocate
  *   their handful of nodes only when they actually sound.
  *
@@ -24,10 +27,19 @@ import { chimeAllowed, createChimeGate, type ChimeTier, type GodCue, type StoryC
  * few dB of the ambience beds (the engine's limiter is a seatbelt, not the mix).
  */
 
-const MAX_VOICES = 32;
-
 /** D major pentatonic, D3..D5: every random lute phrase lands on a pleasant note. */
 export const PENTA = [146.83, 164.81, 185.0, 220.0, 246.94, 293.66, 329.63, 369.99, 440.0, 493.88, 587.33];
+
+/**
+ * Bell rates from here up are hand-bells, not tower bells: they ring 2 s or less, so they are
+ * ordinary counted voices instead of interval-counted ones.
+ */
+const HAND_BELL_RATE = 2.2;
+/**
+ * How long a peal strike is allowed to ring. The round runs 0.3 s apart, so 1.7 s keeps six in
+ * the air at the most (the allocator's bell cap) instead of letting eight ring for 2.5–5 s.
+ */
+const PEAL_RING = 1.7;
 
 const rand = (a: number, b: number): number => a + Math.random() * (b - a);
 const pick = <T>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)];
@@ -268,7 +280,7 @@ export interface BedLevels {
 
 export class Synth {
   private readonly ctx: AudioContext;
-  private voices = 0;
+  private readonly voices = new VoiceAllocator();
   private readonly bell: AudioBuffer;
   private readonly clink: AudioBuffer;
   private readonly thumpBuf: AudioBuffer;
@@ -375,7 +387,7 @@ export class Synth {
 
   /** Voices in flight (for probes and tests of the cap). */
   get activeVoices(): number {
-    return this.voices;
+    return this.voices.active(this.ctx.currentTime);
   }
 
   /** Beds with a running source. */
@@ -431,10 +443,8 @@ export class Synth {
 
   // ── Voice plumbing ─────────────────────────────────────────────────────────────────────────
 
-  private reserve(n: number): boolean {
-    if (this.voices + n > MAX_VOICES) return false;
-    this.voices += n;
-    return true;
+  private reserve(n: number, cls: VoiceClass = 'fx'): boolean {
+    return this.voices.reserve(cls, n, this.ctx.currentTime);
   }
 
   /** Gain (+ pan) into a destination; disconnected when `src` ends, which frees the voice. */
@@ -452,16 +462,22 @@ export class Synth {
     return gn;
   }
 
-  private release(src: AudioScheduledSourceNode, ...nodes: AudioNode[]): void {
+  /** `cls` is the class the voice was reserved under; `null` for a tower bell (interval-counted). */
+  private release(cls: VoiceClass | null, src: AudioScheduledSourceNode, ...nodes: AudioNode[]): void {
     src.onended = () => {
-      this.voices = Math.max(0, this.voices - 1);
+      if (cls) this.voices.release(cls);
       src.disconnect();
       for (const n of nodes) n.disconnect();
     };
   }
 
   /** One play of a rendered buffer at `when`, pitched by `rate`, into `dest` through `gain`. */
-  private playBuf(buf: AudioBuffer, when: number, rate: number, dest: AudioNode, gain: number, pan = 0, lowpass = 0): void {
+  private playBuf(
+    buf: AudioBuffer, when: number, rate: number, dest: AudioNode, gain: number, pan = 0, lowpass = 0,
+    cls: VoiceClass | null = 'fx',
+    /** Cut the sound off after this many seconds with a short fade (tower bells in a peal). */
+    ring = 0,
+  ): void {
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = rate;
@@ -470,12 +486,19 @@ export class Synth {
       const f = this.filter('lowpass', lowpass, 0.5);
       src.connect(f);
       f.connect(o);
-      this.release(src, f, o);
+      this.release(cls, src, f, o);
     } else {
       src.connect(o);
-      this.release(src, o);
+      this.release(cls, src, o);
     }
     src.start(when);
+    // After start(): stop() on a source that hasn't been started throws InvalidStateError.
+    if (ring > 0 && ring < buf.duration / rate) {
+      const fade = Math.min(0.5, ring * 0.4);
+      o.gain.setValueAtTime(gain, when + ring - fade);
+      o.gain.linearRampToValueAtTime(0, when + ring);
+      src.stop(when + ring + 0.02);
+    }
   }
 
   private bus(name: BusName): GainNode {
@@ -489,7 +512,7 @@ export class Synth {
    * whose envelope plays a short pattern. Three song shapes, randomly pitched and paced.
    */
   bird(level: number, pan: number): void {
-    if (!this.reserve(2)) return;
+    if (!this.reserve(2, 'ambience')) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + 0.02;
     const f0 = rand(2300, 4000);
@@ -540,8 +563,8 @@ export class Synth {
     mod.start(t);
     car.stop(at + 0.05);
     mod.stop(at + 0.05);
-    this.release(car, env, o);
-    this.release(mod, modGain);
+    this.release('ambience', car, env, o);
+    this.release('ambience', mod, modGain);
   }
 
   /**
@@ -549,7 +572,7 @@ export class Synth {
    * cricket keeps its own pitch and tempo for the whole train; the next one differs.
    */
   cricket(level: number, pan: number): void {
-    if (!this.reserve(1)) return;
+    if (!this.reserve(1, 'ambience')) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + 0.02;
     const osc = ctx.createOscillator();
@@ -577,13 +600,13 @@ export class Synth {
     }
     osc.start(t);
     osc.stop(at + 0.05);
-    this.release(osc, env, o);
+    this.release('ambience', osc, env, o);
   }
 
   /** A drop off the eaves. */
   drip(level: number): void {
-    if (!this.reserve(1)) return;
-    this.playBuf(this.drop, this.ctx.currentTime + 0.01, rand(0.6, 1.5), this.bus('ambience'), 0.05 * level * rand(0.4, 1), rand(-0.7, 0.7), 3500);
+    if (!this.reserve(1, 'ambience')) return;
+    this.playBuf(this.drop, this.ctx.currentTime + 0.01, rand(0.6, 1.5), this.bus('ambience'), 0.05 * level * rand(0.4, 1), rand(-0.7, 0.7), 3500, 'ambience');
   }
 
   /**
@@ -591,7 +614,7 @@ export class Synth {
    * strike, the later, softer and duller the roll). A close one opens with a crack.
    */
   thunder(delay: number, strength: number): void {
-    if (!this.reserve(2)) return;
+    if (!this.reserve(2, 'ambience')) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + delay;
     const near = Math.max(0, 1 - delay / 3);
@@ -612,9 +635,9 @@ export class Synth {
       lp.connect(env);
       src.start(t, Math.random() * 3);
       src.stop(t + 1);
-      this.release(src, lp, env);
+      this.release('ambience', src, lp, env);
     } else {
-      this.voices--;
+      this.voices.release('ambience');
     }
 
     // Roll: brown noise, rising and settling in two or three uneven swells.
@@ -637,7 +660,7 @@ export class Synth {
     lp.connect(env);
     src.start(t, Math.random() * 3);
     src.stop(at + 6);
-    this.release(src, lp, env);
+    this.release('ambience', src, lp, env);
   }
 
   // ── Town ───────────────────────────────────────────────────────────────────────────────────
@@ -646,9 +669,20 @@ export class Synth {
    * One bell strike. `rate` 1 is the town-hall bell (≈A3); below 1 the funeral knell; above,
    * hand-bells. `distant` puts it across town: duller and quieter.
    */
-  bellStrike(when: number, rate: number, gain: number, pan = 0, distant = true, bus: BusName = 'ambience'): void {
-    if (!this.reserve(1)) return;
-    this.playBuf(this.bell, when, rate, this.bus(bus), gain, pan, distant ? 1500 : 5000);
+  bellStrike(when: number, rate: number, gain: number, pan = 0, distant = true, bus: BusName = 'ambience', ring = 0): void {
+    const lowpass = distant ? 1500 : 5000;
+    const ringTime = Math.min(ring > 0 ? ring : Infinity, this.bell.duration / rate);
+    if (rate >= HAND_BELL_RATE) {
+      // Hand-bells (UI chime, god sparkle, the engagement bell) ring for a second or two: an
+      // ordinary counted effect voice.
+      if (!this.reserve(1)) return;
+      this.playBuf(this.bell, when, rate, this.bus(bus), gain, pan, lowpass);
+      return;
+    }
+    // Tower bells (peal, knell, tolls, alarm) ring for seconds: counted over the interval they
+    // sound, so a whole peal scheduled at once doesn't hold the pool while it waits its turn.
+    if (!this.voices.reserveBell(this.ctx.currentTime, when, when + ringTime)) return;
+    this.playBuf(this.bell, when, rate, this.bus(bus), gain, pan, lowpass, null, ring);
   }
 
   /** `count` slow tolls of the town-hall bell. */
@@ -660,14 +694,14 @@ export class Synth {
   /** A burst of two to four hammer blows on the anvil. */
   forge(level: number, pan: number): void {
     const n = 2 + Math.floor(Math.random() * 3);
-    if (!this.reserve(n)) return;
+    if (!this.reserve(n, 'ambience')) return;
     const t = this.ctx.currentTime + 0.03;
     const spacing = rand(0.36, 0.5);
     const rate = rand(0.9, 1.1);
     for (let i = 0; i < n; i++) {
       // The last blow of a burst is often the lighter tap that sets the piece.
       const g = (i === n - 1 && Math.random() < 0.5 ? 0.55 : 1) * 0.16 * level;
-      this.playBuf(this.clink, t + i * spacing + rand(-0.02, 0.02), rate * rand(0.98, 1.02), this.bus('ambience'), g, pan, 4200);
+      this.playBuf(this.clink, t + i * spacing + rand(-0.02, 0.02), rate * rand(0.98, 1.02), this.bus('ambience'), g, pan, 4200, 'ambience');
     }
   }
 
@@ -683,9 +717,12 @@ export class Synth {
 
   /** One lute note. */
   pluck(freq: number, when: number, gain: number, pan = 0, bus: BusName = 'music', lowpass = 2600): void {
-    if (!this.reserve(1)) return;
+    // The tavern lute (music bus) is a background layer; the same note as a story or god cue
+    // (effects bus) is an effect.
+    const cls: VoiceClass = bus === 'music' ? 'ambience' : 'fx';
+    if (!this.reserve(1, cls)) return;
     const p = this.pluckBuf(freq);
-    this.playBuf(p.buf, when, p.rate, this.bus(bus), gain, pan, lowpass);
+    this.playBuf(p.buf, when, p.rate, this.bus(bus), gain, pan, lowpass, cls);
   }
 
   /**
@@ -734,7 +771,7 @@ export class Synth {
         // A descending major round on the tower bells, rung twice, the second a touch softer.
         const scale = [2, 1.875, 5 / 3, 1.5, 4 / 3, 1.25, 1.125, 1];
         for (let round = 0; round < 2; round++) {
-          scale.forEach((r, k) => this.bellStrike(t + round * 2.8 + k * 0.3 + rand(-0.02, 0.02), r, (round ? 0.08 : 0.1) * gain, pan, true, fx));
+          scale.forEach((r, k) => this.bellStrike(t + round * 2.8 + k * 0.3 + rand(-0.02, 0.02), r, (round ? 0.08 : 0.1) * gain, pan, true, fx, PEAL_RING));
         }
         break;
       }
@@ -786,7 +823,7 @@ export class Synth {
     bp.connect(env);
     src.start(when, Math.random() * 3);
     src.stop(when + dur + 0.05);
-    this.release(src, bp, env);
+    this.release('fx', src, bp, env);
   }
 
   // ── The player's hand ──────────────────────────────────────────────────────────────────────

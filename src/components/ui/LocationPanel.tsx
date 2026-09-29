@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useNudge } from "../../hooks/useNudge";
 import { eventBlurb, eventIcon, formatTimeLeft } from "../../lib/eventUi";
-import { hoursSummary, locationIcon, prettyLocationType, type LocationLike } from "../../lib/locationInfo";
+import { displayPlaceName, hoursSummary, locationIcon, prettyLocationType, type LocationLike } from "../../lib/locationInfo";
 import { eventMinutesLeft } from "../../../server/lib/gameClock";
 import { MiniPortrait } from "./MiniPortrait";
 import { W } from "./warmClasses";
@@ -20,6 +21,14 @@ interface LocationPanelProps {
   /** Left offset in px, so the card clears the conversations sidebar. */
   left: number;
 }
+
+/**
+ * Below this window width the card opens folded to its header. It floats over the map
+ * right of the left sidebar, and at 1024 px a fixed 270 px card covered about half of
+ * the ~540 px of map that is left. Same reasoning as App's narrower starting sidebars
+ * (< 1200): the player can still unfold it with the chevron.
+ */
+const START_FOLDED_BELOW = 1200;
 
 function actionType(agent: any): string {
   const a = agent?.current_action;
@@ -45,6 +54,8 @@ export function LocationPanel({
   left,
 }: LocationPanelProps) {
   const { suggestGoTo } = useNudge();
+  // Read once on mount: a window resized later keeps whatever the player chose.
+  const [folded, setFolded] = useState(() => typeof window !== "undefined" && window.innerWidth < START_FOLDED_BELOW);
 
   const occupants = agents
     .filter((a) => a.current_location === location.id)
@@ -63,25 +74,37 @@ export function LocationPanel({
 
   return (
     <div
-      className="fixed top-[92px] z-30 w-[270px] max-h-[55vh] flex flex-col overflow-hidden bg-[var(--ui-bg-panel)] border border-[var(--ui-border-accent)] shadow-2xl text-[var(--ui-text-primary)]"
-      style={{ left }}
+      className="fixed top-[92px] z-30 max-h-[55vh] flex flex-col overflow-hidden bg-[var(--ui-bg-panel)] border border-[var(--ui-border-accent)] shadow-2xl text-[var(--ui-text-primary)]"
+      // 22vw: 225 px at 1024, the old 270 px from ~1230 px up.
+      style={{ left, width: "clamp(200px, 22vw, 270px)" }}
       role="dialog"
-      aria-label={location.name}
+      aria-label={displayPlaceName(location.name, { sentenceStart: true })}
     >
       <div className={W.modalHeader}>
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-lg leading-none">{locationIcon(location.type)}</span>
           <div className="min-w-0">
-            <div className={`${W.title} truncate`}>{location.name}</div>
+            <div className={`${W.title} truncate`}>{displayPlaceName(location.name, { sentenceStart: true })}</div>
             {/* Derived outdoor spots are named after their type ("Town Hall"): don't say it twice. */}
             {kind !== location.name && <div className={`text-[10px] ${W.muted}`}>{kind}</div>}
           </div>
         </div>
-        <button onClick={onClose} className={W.close} aria-label="Close">
-          &times;
-        </button>
+        <div className="flex items-center shrink-0">
+          <button
+            onClick={() => setFolded((f) => !f)}
+            className={`${W.close} text-xs`}
+            aria-label={folded ? "Expand details" : "Collapse details"}
+            aria-expanded={!folded}
+          >
+            {folded ? "▸" : "▾"}
+          </button>
+          <button onClick={onClose} className={W.close} aria-label="Close">
+            &times;
+          </button>
+        </div>
       </div>
 
+      {!folded && (
       <div className="overflow-y-auto">
         {location.description && (
           <p className={`px-4 pt-2.5 text-[11px] leading-snug ${W.muted}`}>{location.description}</p>
@@ -160,8 +183,9 @@ export function LocationPanel({
           )}
         </div>
       </div>
+      )}
 
-      {selected && (
+      {!folded && selected && (
         <div className="px-4 py-2.5 border-t border-[var(--ui-border)] bg-[var(--ui-bg-raised)]">
           <button
             disabled={sendBlock !== null}
