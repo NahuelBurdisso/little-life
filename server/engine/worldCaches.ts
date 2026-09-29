@@ -43,6 +43,7 @@ import { resetChronicleCache } from '../lib/chronicle';
 import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
+import { resetConversationPacing } from '../lib/conversationPacing';
 
 export function clearPerWorldCaches(): void {
   // Tick-valued trackers
@@ -91,6 +92,9 @@ export function clearPerWorldCaches(): void {
   // replace abandons the work in flight.
   clearAllConversationCaches();
   clearConfrontationCooldowns();
+  // Turn-latency samples and the probe stamp are game-minute stamped; a new
+  // world's clock can start earlier, and old samples belong to a different town.
+  resetConversationPacing();
 
   // Wall-clock memos over the whole town. Without a reset the first seconds of a
   // new world showed the previous world's story arcs and cliques.

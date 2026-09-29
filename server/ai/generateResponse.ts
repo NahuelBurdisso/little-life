@@ -9,6 +9,9 @@ import {
   markConversationEnded,
 } from '../helpers/conversationHelpers';
 import { CONFIG } from '../lib/constants';
+import { gameMinutes } from '../lib/gameClock';
+import { recordTurnLatency } from '../lib/conversationPacing';
+import { LLMAbortedError } from './llmErrors';
 import { autoPlayer } from '../autoplay';
 
 export interface GenerateResponseResult {
@@ -20,7 +23,10 @@ export interface GenerateResponseResult {
 export async function generateResponse(
   conversationId: number,
   speakerId: number,
+  /** Aborted when the conversation is closed mid-turn (taskRunner.abortConversation). */
+  signal?: AbortSignal,
 ): Promise<GenerateResponseResult | null> {
+  const turnStart = performance.now();
   // 1. Read all context
   const context = await getConversationContext(conversationId, speakerId);
 
@@ -117,6 +123,7 @@ export async function generateResponse(
         system,
         messages: promptMessages,
         priority: 'critical',
+        signal,
         options: {
           temperature: CONFIG.AI.CHAT_TEMPERATURE,
           top_p: CONFIG.AI.CHAT_TOP_P,
@@ -140,6 +147,9 @@ export async function generateResponse(
       autoPlayer.recordLlmResponse(performance.now() - llmStart, true);
       break;
     } catch (error) {
+      // The conversation was closed under this turn: no retry, no fallback line,
+      // no latency sample (Step A books a censored one for the abandoned turn).
+      if (error instanceof LLMAbortedError || signal?.aborted) return null;
       const msg = error instanceof Error ? error.message : String(error);
       const timedOut = msg.includes('timeout') || msg.includes('aborted');
       if (CONFIG.AUTOPLAY.ENABLED) {
@@ -196,6 +206,7 @@ export async function generateResponse(
             { role: 'user' as const, content: `Please respond in character as ${speaker.name}. Say something natural in 1-2 sentences — only the words you say aloud, no actions or parentheses.` },
           ],
           priority: 'critical',
+          signal,
           options: {
             temperature: CONFIG.AI.CHAT_TEMPERATURE + 0.1,
             top_p: CONFIG.AI.CHAT_TOP_P,
@@ -227,6 +238,14 @@ export async function generateResponse(
       autoPlayer.recordLlmResponse(nudgeDurationMs, nudgeSucceeded);
     }
   }
+
+  if (signal?.aborted) return null;
+
+  // The LLM work for this turn is done — time it NOW, before addMessage. It used
+  // to be timed by the task runner only when the line was accepted, so a turn so
+  // slow that its conversation had already been closed never counted: the
+  // slowest turns were exactly the ones the latency estimate never saw.
+  if (world?.time) recordTurnLatency(performance.now() - turnStart, gameMinutes(world.time));
 
   // 4. Fallback if LLM failed
   let isFallback = false;

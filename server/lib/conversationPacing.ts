@@ -10,9 +10,8 @@
  * are now game minutes, and the turn count is sized to what the model can
  * actually deliver inside them at the current `tick_speed`.
  *
- * Pure apart from the in-memory latency window, which is about the model, not
- * the world, so it is deliberately NOT a per-world cache: a world replace does
- * not make the LLM faster.
+ * The latency window and probe stamp are game-minute stamped, so they are reset
+ * with the other per-world caches (engine/worldCaches.ts).
  */
 
 import { CONFIG } from './constants';
@@ -37,52 +36,135 @@ export function turnGameMinutes(latencyMs: number, tickSpeed: number): number {
   return (latencyMs / CONFIG.TICK_INTERVAL_MS) * speed;
 }
 
+export interface ConversationPlan {
+  /** 'template': not even one exchange fits — have it as a template chat. */
+  tier: 'llm' | 'template';
+  maxTurns: number;
+  budgetGameMin: number;
+  /** How long an in-flight turn may still land once the conversation wraps up. */
+  graceGameMin: number;
+  /** An ordinary conversation run anyway, to re-measure a model the town gave up on. */
+  probe: boolean;
+}
+
 /**
- * How many turns fit in `budgetGameMin` when a turn takes `latencyMs` of real
- * time at `tickSpeed`. No latency observed yet → no cap (Infinity): with no
- * evidence the model is slow, a conversation keeps its tier's full length and
- * the budget itself is the backstop.
+ * Size one LLM conversation before it is dispatched.
+ *
+ * - The budget is the tier's (turns × GAME_MINUTES_PER_TURN).
+ * - The turn count is capped by how many expected turns fit in it. At 1x and
+ *   below only MEASURED latency may cap it — that is the speed the old
+ *   wall-clock budget was tuned for, and a guess must not shorten conversations
+ *   there. Above 1x an unmeasured model is assumed to take TURN_LATENCY_PRIOR_MS.
+ * - When not even MIN_LLM_TURNS fit, an ordinary conversation becomes a template
+ *   chat — unless a probe is due. Protected ones (player-requested, comfort
+ *   visits) and probes keep the LLM with MIN_LLM_TURNS and a budget stretched to
+ *   fit them, up to EXTENDED_BUDGET_CAP_GAME_MINUTES, so both sides get a line.
+ * - Grace is one expected turn, at least WRAP_UP_GRACE_GAME_MINUTES and at most
+ *   MAX_WRAP_UP_GRACE_GAME_MINUTES.
  */
-export function affordableTurns(
-  budgetGameMin: number,
-  latencyMs: number | null,
-  tickSpeed: number,
-): number {
-  if (latencyMs == null || latencyMs <= 0) return Infinity;
-  return Math.floor(budgetGameMin / turnGameMinutes(latencyMs, tickSpeed));
+export function planConversation(p: {
+  tierMaxTurns: number;
+  tickSpeed: number;
+  isProtected: boolean;
+  /** Median of recent measured turns, or null. */
+  observedLatencyMs: number | null;
+  probeDue: boolean;
+}): ConversationPlan {
+  const C = CONFIG.CONVERSATIONS;
+  const speed = p.tickSpeed > 0 ? p.tickSpeed : 1;
+  const tierBudget = conversationBudgetGameMinutes(p.tierMaxTurns);
+  const latencyMs = p.observedLatencyMs ?? (speed > 1 ? C.TURN_LATENCY_PRIOR_MS : null);
+  const turnMin = latencyMs != null && latencyMs > 0 ? turnGameMinutes(latencyMs, speed) : null;
+  const affordable = turnMin != null ? Math.floor(tierBudget / turnMin) : Infinity;
+  const graceGameMin = Math.min(
+    C.MAX_WRAP_UP_GRACE_GAME_MINUTES,
+    Math.max(C.WRAP_UP_GRACE_GAME_MINUTES, Math.ceil(turnMin ?? 0)),
+  );
+
+  if (affordable >= C.MIN_LLM_TURNS) {
+    return {
+      tier: 'llm',
+      maxTurns: Math.min(p.tierMaxTurns, affordable),
+      budgetGameMin: tierBudget,
+      graceGameMin,
+      probe: false,
+    };
+  }
+  if (!p.isProtected && !p.probeDue) {
+    return { tier: 'template', maxTurns: 0, budgetGameMin: 0, graceGameMin, probe: false };
+  }
+  const budgetGameMin = Math.min(
+    C.EXTENDED_BUDGET_CAP_GAME_MINUTES,
+    Math.max(tierBudget, Math.ceil(C.MIN_LLM_TURNS * (turnMin ?? 0))),
+  );
+  return {
+    tier: 'llm',
+    maxTurns: Math.min(p.tierMaxTurns, C.MIN_LLM_TURNS),
+    budgetGameMin,
+    graceGameMin,
+    probe: !p.isProtected,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Rolling turn latency
+// Turn latency window
 // ---------------------------------------------------------------------------
 
-const latencySamples: Array<{ ms: number; at: number }> = [];
+const latencySamples: Array<{ ms: number; gameMin: number }> = [];
+let lastProbeGameMin: number | null = null;
 
-/** Record the wall-clock duration of one completed LLM conversation turn. */
-export function recordTurnLatency(ms: number, at: number = Date.now()): void {
+/**
+ * Record how long one conversation turn's LLM work took (wall ms), stamped with
+ * the game minute. Also called with a CENSORED sample — how long an abandoned
+ * turn had been running when its conversation was closed — so a model too slow
+ * to ever finish a turn still registers as slow instead of leaving no trace.
+ */
+export function recordTurnLatency(ms: number, gameMin: number): void {
   if (!Number.isFinite(ms) || ms < 0) return;
-  latencySamples.push({ ms, at });
+  latencySamples.push({ ms, gameMin });
   while (latencySamples.length > CONFIG.CONVERSATIONS.TURN_LATENCY_WINDOW) latencySamples.shift();
 }
 
-/**
- * Mean of the recent turn latencies in ms, or null when there is no recent
- * evidence. Samples expire: once a slow model has pushed every conversation onto
- * the template tier, no LLM turn is ever timed again, and without expiry the
- * town would stay on templates for good even after the model (or the speed)
- * recovered. With no fresh samples the next conversation runs uncapped and
- * re-measures.
- */
-export function averageTurnLatencyMs(now: number = Date.now()): number | null {
-  const maxAge = CONFIG.CONVERSATIONS.TURN_LATENCY_MAX_AGE_MS;
-  while (latencySamples.length > 0 && now - latencySamples[0].at > maxAge) latencySamples.shift();
-  if (latencySamples.length === 0) return null;
-  return latencySamples.reduce((s, v) => s + v.ms, 0) / latencySamples.length;
+function isFresh(stampGameMin: number, nowGameMin: number): boolean {
+  const age = nowGameMin - stampGameMin;
+  // Negative age: stamped under a clock that was ahead of this one.
+  return age >= 0 && age <= CONFIG.CONVERSATIONS.TURN_LATENCY_MAX_AGE_GAME_MINUTES;
 }
 
-/** Test hook: forget every sample. */
-export function resetTurnLatency(): void {
+/**
+ * Median of the fresh samples in ms, or null when there are none. A median, not
+ * a mean: one stalled call (a model reload, a retry storm) must not flip every
+ * conversation onto templates.
+ */
+export function turnLatencyEstimateMs(nowGameMin: number): number | null {
+  const fresh = latencySamples
+    .filter((s) => isFresh(s.gameMin, nowGameMin))
+    .map((s) => s.ms)
+    .sort((a, b) => a - b);
+  if (fresh.length === 0) return null;
+  const mid = Math.floor(fresh.length / 2);
+  return fresh.length % 2 ? fresh[mid] : (fresh[mid - 1] + fresh[mid]) / 2;
+}
+
+/**
+ * May an ordinary conversation run as a latency probe now? Only when nothing
+ * has been measured recently (otherwise the estimate is trusted) and no probe
+ * ran in the last TURN_LATENCY_MAX_AGE_GAME_MINUTES. Without probes, a town the
+ * estimate pushed onto templates would never time an LLM turn again.
+ */
+export function latencyProbeDue(nowGameMin: number): boolean {
+  if (turnLatencyEstimateMs(nowGameMin) != null) return false;
+  return lastProbeGameMin == null || !isFresh(lastProbeGameMin, nowGameMin);
+}
+
+export function markLatencyProbe(nowGameMin: number): void {
+  lastProbeGameMin = nowGameMin;
+}
+
+/** Forget every sample and the probe stamp (world replace, tests). */
+export function resetConversationPacing(): void {
   latencySamples.length = 0;
+  lastProbeGameMin = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,20 +178,23 @@ interface SleepSchedule {
   sleepTime: number;
 }
 
+type Chronotype = Pick<PersonalityProfile, 'impulsiveness' | 'sensuality' | 'morality' | 'neuroticism'>;
+
 /**
- * Is `hour` inside the agent's personality-shifted sleep window?
+ * The agent's personality-shifted sleep window, in whole hours: asleep from
+ * `sleepHour` until `wakeHour` (wrapping midnight when sleepHour > wakeHour).
  *
  * MIRRORS `checkSchedule` in engine/systems/decisions.ts (the "Sleep time:
- * personality-adjusted chronotype" block) — the same shift, clamps and window,
- * so a conversation ends exactly when decisions would otherwise send the agent
- * to bed. Duplicated rather than extracted because decisions.ts is mid-rework
- * elsewhere; if you change one, change both.
+ * personality-adjusted chronotype" block) — same shift, clamps and window, so a
+ * conversation ends exactly when decisions would otherwise send the agent to
+ * bed. decisions.ts exports nothing to compare against and is being reworked
+ * elsewhere, so the block is copied here for now.
+ * TODO(decisions): have checkSchedule call this instead of its inline copy.
  */
-export function isPastBedtime(
+export function effectiveSleepWindow(
   schedule: SleepSchedule,
-  personality: Pick<PersonalityProfile, 'impulsiveness' | 'sensuality' | 'morality' | 'neuroticism'> | null,
-  hour: number,
-): boolean {
+  personality: Chronotype | null,
+): { sleepHour: number; wakeHour: number } {
   let sleepShift = 0;
   if (personality) {
     sleepShift += (personality.impulsiveness - 50) * 0.02;
@@ -119,12 +204,17 @@ export function isPastBedtime(
     sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
   }
   const baseSleepTime = schedule.sleepTime === 0 ? 24 : schedule.sleepTime;
-  const effectiveSleepTime = Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24;
-  const effectiveWakeTime = Math.max(4, Math.min(12, schedule.wakeTime + sleepShift));
-  if (effectiveSleepTime > effectiveWakeTime) {
-    return hour >= effectiveSleepTime || hour < effectiveWakeTime;
-  }
-  return hour >= effectiveSleepTime && hour < effectiveWakeTime;
+  return {
+    sleepHour: Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24,
+    wakeHour: Math.max(4, Math.min(12, schedule.wakeTime + sleepShift)),
+  };
+}
+
+/** Is `hour` inside the agent's sleep window (see `effectiveSleepWindow`)? */
+export function isPastBedtime(schedule: SleepSchedule, personality: Chronotype | null, hour: number): boolean {
+  const { sleepHour, wakeHour } = effectiveSleepWindow(schedule, personality);
+  if (sleepHour > wakeHour) return hour >= sleepHour || hour < wakeHour;
+  return hour >= sleepHour && hour < wakeHour;
 }
 
 /**
@@ -157,18 +247,13 @@ export function queueMaxWait(gameMinutes: number): number {
 }
 
 /**
- * The game minute a queue entry times out, derived from its wall-clock queue
- * stamp and its 1x-equivalent `max_wait`. The time it has already waited is
- * converted at the current speed — exact for an entry queued a tick ago, which
- * is when the scheduler first sees (and then stores) it.
+ * The game minute a queue entry times out, for an entry no producer stamped:
+ * from now, by its 1x-equivalent `max_wait`. Deliberately NOT backdated by its
+ * wall-clock age — an entry queued before (or during) a pause would otherwise
+ * expire the moment play resumes, having waited no game time at all. The
+ * scheduler first sees an entry the tick after it is queued, so at most one
+ * tick of extra wait.
  */
-export function queueDeadlineGameMin(
-  entry: { queued_at: number; max_wait: number },
-  nowMs: number,
-  nowGameMin: number,
-  tickSpeed: number,
-): number {
-  const waitedGameMin = turnGameMinutes(Math.max(0, nowMs - entry.queued_at), tickSpeed);
-  // Rounded, not floored: a few ms of real age must not cost a whole minute.
-  return Math.round(nowGameMin - waitedGameMin + entry.max_wait / CONFIG.TICK_INTERVAL_MS);
+export function queueDeadlineGameMin(entry: { max_wait: number }, nowGameMin: number): number {
+  return Math.round(nowGameMin + entry.max_wait / CONFIG.TICK_INTERVAL_MS);
 }

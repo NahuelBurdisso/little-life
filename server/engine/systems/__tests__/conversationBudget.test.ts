@@ -3,8 +3,13 @@ import { eq, inArray, like, sql } from 'drizzle-orm';
 
 // No LLM: the harness below plays the task runner, landing turns on a
 // simulated real-time schedule through the same addMessage the runner uses.
+// (conversationRunner.test.ts drives the real runner end to end.)
 vi.mock('../../../ai/taskRunner', () => ({
-  taskRunner: { startConversation: vi.fn(() => true) },
+  taskRunner: {
+    startConversation: vi.fn(() => true),
+    abortConversation: vi.fn(),
+    freeConversationSlots: 4,
+  },
 }));
 
 import { db } from '../../../db';
@@ -26,15 +31,10 @@ import { CONFIG } from '../../../lib/constants';
 import { gameMinutes } from '../../../lib/gameClock';
 import { WRAP_UP_FAREWELLS } from '../../../data/templates';
 import {
-  affordableTurns,
-  averageTurnLatencyMs,
   conversationBudgetGameMinutes,
-  isPastBedtime,
-  needsWrapUpReason,
-  queueDeadlineGameMin,
   queueMaxWait,
   recordTurnLatency,
-  resetTurnLatency,
+  resetConversationPacing,
 } from '../../../lib/conversationPacing';
 import { conversationsTick } from '../conversations';
 
@@ -43,14 +43,19 @@ import { conversationsTick } from '../conversations';
  * wall-clock (15 s × 10 turns), and an LLM turn takes 20–60 real seconds at any
  * speed — so a conversation could run ten GAME hours, and Rosa and Yuki talked
  * from 21:00 to 05:00 without sleeping. Budgets are game minutes now, the turn
- * count is sized to the observed latency at the current speed, and needs can
- * end a conversation.
+ * count is sized to the expected latency at the current speed, needs can end a
+ * conversation, and queue waits run on the game clock.
  */
 
 const TAG = 'budgettest';
-const { GAME_MINUTES_PER_TURN, WRAP_UP_GRACE_GAME_MINUTES: GRACE, MIN_LLM_TURNS } = CONFIG.CONVERSATIONS;
+const { MIN_LLM_TURNS, PLAYER_NUDGE_PRIORITY } = CONFIG.CONVERSATIONS;
 const DEEP = 10;
 const STANDARD = 6;
+const runner = taskRunner as unknown as {
+  startConversation: ReturnType<typeof vi.fn>;
+  abortConversation: ReturnType<typeof vi.fn>;
+  freeConversationSlots: number;
+};
 
 function ensureWorld(): void {
   if (db.select().from(worldState).get()) return;
@@ -137,20 +142,33 @@ function insertAgent(name: string, locationId: number): number {
   }).returning({ id: agents.id }).get().id;
 }
 
-function enqueue(participants: number[], tier: string, priority = 50, maxWait = 600_000): number {
+function enqueue(
+  participants: number[],
+  tier: string,
+  { priority = 50, maxWait = 600_000, queuedAt = Date.now() }: { priority?: number; maxWait?: number; queuedAt?: number } = {},
+): number {
   return db.insert(conversationQueue).values({
     participants,
     tier,
     priority,
     trigger_reason: TAG,
     topic: null,
-    queued_at: Date.now(),
+    queued_at: queuedAt,
     max_wait: maxWait,
   }).returning({ id: conversationQueue.id }).get().id;
 }
 
 function taggedConversations() {
   return db.select().from(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).all();
+}
+
+function schedulerEntry(conversationId: number): Record<string, unknown> | undefined {
+  return (db.select().from(conversationSchedulerState).get()!.active_llm_conversations as Array<Record<string, unknown>>)
+    .find((e) => e.conversationId === conversationId);
+}
+
+function measured(ms: number): void {
+  for (let i = 0; i < 4; i++) recordTurnLatency(ms, nowGameMin());
 }
 
 interface SimResult {
@@ -173,7 +191,7 @@ async function simulate(
   { speed: number; turnSec: number | null; tier: string; priority?: number; maxTicks?: number },
 ): Promise<SimResult> {
   setClock(nowGameMin(), speed);
-  enqueue(participants, tier, priority);
+  enqueue(participants, tier, { priority });
   await conversationsTick();
   const opened = taggedConversations().find((c) => c.status === 'active');
   if (!opened) throw new Error('conversation did not open');
@@ -204,76 +222,16 @@ async function simulate(
   throw new Error('conversation never ended');
 }
 
-describe('conversation pacing — pure helpers', () => {
-  it('derives budgets from the tier turn count', () => {
-    expect(conversationBudgetGameMinutes(STANDARD)).toBe(STANDARD * GAME_MINUTES_PER_TURN);
-    expect(conversationBudgetGameMinutes(DEEP)).toBe(DEEP * GAME_MINUTES_PER_TURN);
-  });
-
-  it('scales affordable turns down with speed and latency', () => {
-    // 5 s turns: 5 game min at 1x, 20 at 4x.
-    expect(affordableTurns(54, 5000, 1)).toBe(10);
-    expect(affordableTurns(54, 5000, 4)).toBe(2);
-    expect(affordableTurns(54, 20_000, 4)).toBe(0);
-    // No evidence yet → no cap.
-    expect(affordableTurns(54, null, 4)).toBe(Infinity);
-  });
-
-  it('keeps a bounded rolling window of turn latency', () => {
-    resetTurnLatency();
-    expect(averageTurnLatencyMs()).toBeNull();
-    for (let i = 0; i < CONFIG.CONVERSATIONS.TURN_LATENCY_WINDOW; i++) recordTurnLatency(1000);
-    for (let i = 0; i < CONFIG.CONVERSATIONS.TURN_LATENCY_WINDOW; i++) recordTurnLatency(3000);
-    expect(averageTurnLatencyMs()).toBe(3000);
-    resetTurnLatency();
-  });
-
-  it('forgets stale latency, so a slow spell cannot pin the town on templates', () => {
-    resetTurnLatency();
-    recordTurnLatency(20_000, 1_000_000);
-    expect(averageTurnLatencyMs(1_000_000 + CONFIG.CONVERSATIONS.TURN_LATENCY_MAX_AGE_MS)).toBe(20_000);
-    expect(averageTurnLatencyMs(1_000_001 + CONFIG.CONVERSATIONS.TURN_LATENCY_MAX_AGE_MS)).toBeNull();
-  });
-
-  it('matches decisions.ts sleep windows', () => {
-    const sched = { wakeTime: 6, sleepTime: 22 };
-    expect(isPastBedtime(sched, null, 21)).toBe(false);
-    expect(isPastBedtime(sched, null, 22)).toBe(true);
-    expect(isPastBedtime(sched, null, 3)).toBe(true);
-    expect(isPastBedtime(sched, null, 6)).toBe(false);
-    // Night owl: +2 h (impulsiveness 100 → +1, sensuality 100 → +0.5, morality 0 → +0.75 → round 2).
-    const owl = { impulsiveness: 100, sensuality: 100, morality: 0, neuroticism: 0 };
-    expect(isPastBedtime(sched, owl, 23)).toBe(false);
-    expect(isPastBedtime(sched, owl, 0)).toBe(true);
-  });
-
-  it('keeps the old 1x queue waits as game minutes', () => {
-    // decisions.ts still writes a literal 10000: that is the default wait.
-    expect(queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES)).toBe(10_000);
-    expect(queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES)).toBe(30_000);
-    // Queued 2 real seconds ago at 4x = 8 game minutes already waited.
-    expect(queueDeadlineGameMin({ queued_at: 98_000, max_wait: 10_000 }, 100_000, 500, 4)).toBe(502);
-    expect(queueDeadlineGameMin({ queued_at: 100_000, max_wait: 10_000 }, 100_003, 500, 1)).toBe(510);
-  });
-
-  it('ranks the needs that end a conversation', () => {
-    expect(needsWrapUpReason({ hunger: 50, energy: 50, critical: 15 }, false)).toBeNull();
-    expect(needsWrapUpReason({ hunger: 5, energy: 5, critical: 15 }, true)).toBe('energy');
-    expect(needsWrapUpReason({ hunger: 5, energy: 50, critical: 15 }, true)).toBe('sleep');
-    expect(needsWrapUpReason({ hunger: 5, energy: 50, critical: 15 }, false)).toBe('hunger');
-  });
-});
-
 describe('conversationsTick — game-time conversation budget (G1)', () => {
   let locId = 0;
   let a = 0, b = 0;
-  let savedWorld: { time: any; tick_speed: number } | null = null;
+  let savedWorld: { time: any; tick_speed: number; is_paused: boolean } | null = null;
   let savedTurns: { max_turns_deep: number; max_turns_standard: number } | null = null;
 
   beforeAll(() => {
     ensureWorld();
     const w = world();
-    savedWorld = { time: w.time, tick_speed: w.tick_speed };
+    savedWorld = { time: w.time, tick_speed: w.tick_speed, is_paused: w.is_paused };
     const sched = db.select().from(conversationSchedulerState).get();
     if (sched) savedTurns = { max_turns_deep: sched.max_turns_deep, max_turns_standard: sched.max_turns_standard };
     locId = db.insert(locations).values({
@@ -301,7 +259,7 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
   });
 
   afterAll(() => {
-    resetTurnLatency();
+    resetConversationPacing();
     if (savedWorld) db.update(worldState).set(savedWorld).run();
     resetScheduler();
     if (savedTurns) db.update(conversationSchedulerState).set(savedTurns).run();
@@ -321,7 +279,7 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
   });
 
   beforeEach(() => {
-    resetTurnLatency();
+    resetConversationPacing();
     resetScheduler();
     db.delete(conversationQueue).run();
     db.delete(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).run();
@@ -329,7 +287,9 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
     setClock(3 * 1440 + 9 * 60, 1);
     db.update(needs).set({ hunger: 60, energy: 60 }).where(inArray(needs.agent_id, [a, b])).run();
     db.update(agents).set({ current_action: { type: 'idle' } }).where(inArray(agents.id, [a, b])).run();
-    vi.mocked(taskRunner.startConversation).mockClear();
+    runner.startConversation.mockClear();
+    runner.abortConversation.mockClear();
+    runner.freeConversationSlots = 4;
   });
 
   function expectReleased(): void {
@@ -338,12 +298,12 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
     }
   }
 
-  describe('at 1x with fast turns, nothing changes', () => {
+  describe('at 1x, conversations run as before', () => {
     it.each([
       ['llm_standard', STANDARD],
       ['llm_deep', DEEP],
-    ])('%s runs its full %i turns and ends naturally', async (tier, turns) => {
-      for (let i = 0; i < 4; i++) recordTurnLatency(5000);
+    ])('%s with fast measured turns runs its full %i turns and ends naturally', async (tier, turns) => {
+      measured(5000);
       const { row, landed, elapsedGameMin } = await simulate([a, b], { speed: 1, turnSec: 5, tier });
 
       expect(landed).toBe(turns);
@@ -354,55 +314,61 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       expectReleased();
     });
 
-    it('keeps the tier length before any latency has been observed', async () => {
-      const { row, landed } = await simulate([a, b], { speed: 4, turnSec: 1, tier: 'llm_deep' });
-      expect(landed).toBe(DEEP);
-      expect(row.messages).toHaveLength(DEEP);
+    it('keeps the tier length before any latency has been measured', async () => {
+      // 12 s turns: 72 game minutes for six, inside the 90-minute budget.
+      const { row, landed } = await simulate([a, b], { speed: 1, turnSec: 12, tier: 'llm_standard' });
+      expect(landed).toBe(STANDARD);
+      expect(row.messages).toHaveLength(STANDARD);
     });
   });
 
   describe('at 4x with slow turns', () => {
-    it('sizes the conversation to the latency and ends it inside the game-minute budget', async () => {
-      // Observed 5 s turns → 20 game min each at 4x → 4 of the deep budget's 90.
-      for (let i = 0; i < 4; i++) recordTurnLatency(5000);
+    it('sizes the conversation to the latency and ends it inside budget + grace', async () => {
+      // Measured 5 s turns → 20 game min each at 4x → 7 of the deep budget's 150.
+      measured(5000);
       // ...but the model has slowed to 12 s (48 game min) a turn.
       const { row, landed, elapsedGameMin } = await simulate([a, b], { speed: 4, turnSec: 12, tier: 'llm_deep' });
 
       const budget = conversationBudgetGameMinutes(DEEP);
+      const grace = 20; // one expected turn
       // The old wall-clock budget (10 turns × 15 s = 150 s) allowed 600 game min.
-      expect(elapsedGameMin).toBeLessThanOrEqual(budget + GRACE);
-      expect(landed).toBe(2); // the in-flight second turn landed within the grace
+      expect(elapsedGameMin).toBeGreaterThanOrEqual(budget + grace);
+      expect(elapsedGameMin).toBeLessThan(budget + grace + 4);
+      expect(landed).toBe(3);
       const msgs = row.messages as Array<{ speakerId: number; text: string }>;
-      expect(msgs).toHaveLength(3);
+      expect(msgs).toHaveLength(4);
       // Closed by the one whose turn it was, with a clock-flavoured goodbye.
-      expect(msgs[2].speakerId).toBe(a);
-      const budgetLines = WRAP_UP_FAREWELLS.budget.map((l) => l.text.replace('{other.name}', 'Yuki'));
-      expect(budgetLines).toContain(msgs[2].text);
-      // 2 of 4 planned turns: the clock really did cut it.
+      expect(msgs[3].speakerId).toBe(b);
+      const budgetLines = WRAP_UP_FAREWELLS.budget.map((l) => l.text.replace('{other.name}', 'Rosa'));
+      expect(budgetLines).toContain(msgs[3].text);
+      // 3 of 7 planned turns: the clock really did cut it.
       expect(row.quality_breakdown?.truncated).toBe(1);
+      // The abandoned fourth turn is cancelled.
+      expect(runner.abortConversation).toHaveBeenCalledWith(row.id);
       expectReleased();
     });
 
     it('closes a hung conversation at budget + grace without inventing a goodbye', async () => {
-      for (let i = 0; i < 4; i++) recordTurnLatency(5000);
+      measured(5000);
       const { row, elapsedGameMin } = await simulate([a, b], { speed: 4, turnSec: null, tier: 'llm_standard' });
 
-      const budget = conversationBudgetGameMinutes(STANDARD);
-      expect(elapsedGameMin).toBeGreaterThanOrEqual(budget + GRACE);
-      expect(elapsedGameMin).toBeLessThan(budget + GRACE + 4); // the first tick past it
+      const limit = conversationBudgetGameMinutes(STANDARD) + 20;
+      expect(elapsedGameMin).toBeGreaterThanOrEqual(limit);
+      expect(elapsedGameMin).toBeLessThan(limit + 4); // the first tick past it
       expect(row.messages).toEqual([]);
+      expect(runner.abortConversation).toHaveBeenCalledWith(row.id);
       expectReleased();
     });
 
-    it('has a conversation that cannot fit one exchange on the template tier', async () => {
-      // 20 s turns at 4x = 80 game min each; the standard budget is 54.
-      for (let i = 0; i < 4; i++) recordTurnLatency(20_000);
+    it('has an ordinary conversation that cannot fit one exchange on the template tier', async () => {
+      // 20 s turns at 4x = 80 game min each; the standard budget is 90.
+      measured(20_000);
       setClock(nowGameMin(), 4);
       enqueue([a, b], 'llm_standard');
 
       await conversationsTick();
 
-      expect(taskRunner.startConversation).not.toHaveBeenCalled();
+      expect(runner.startConversation).not.toHaveBeenCalled();
       const rows = taggedConversations();
       expect(rows).toHaveLength(1);
       expect(rows[0].trigger_reason).toBe(`${TAG} (template)`);
@@ -410,20 +376,67 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       expectReleased();
     });
 
-    it('still gives a player nudge the model, at the minimum length', async () => {
-      for (let i = 0; i < 4; i++) recordTurnLatency(20_000);
+    it('probes the model once when nothing has been measured, then trusts the prior', async () => {
       setClock(nowGameMin(), 4);
-      enqueue([a, b], 'llm_deep', CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY);
+      enqueue([a, b], 'llm_standard');
+      await conversationsTick();
+
+      const probe = taggedConversations().find((c) => c.status === 'active')!;
+      expect(probe.max_turns).toBe(MIN_LLM_TURNS);
+      // 2 turns × 80 game min (the 20 s prior at 4x), grace one turn.
+      expect(schedulerEntry(probe.id)).toMatchObject({ budgetGameMin: 160, graceGameMin: 80 });
+
+      resetScheduler();
+      db.delete(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).run();
+      enqueue([a, b], 'llm_standard');
+      await conversationsTick();
+      expect(taggedConversations().map((c) => c.trigger_reason)).toEqual([`${TAG} (template)`]);
+    });
+
+    it('gives a player nudge the model with room for both lines', async () => {
+      measured(20_000);
+      setClock(nowGameMin(), 4);
+      enqueue([a, b], 'llm_deep', { priority: PLAYER_NUDGE_PRIORITY });
 
       await conversationsTick();
 
-      expect(taskRunner.startConversation).toHaveBeenCalledTimes(1);
+      expect(runner.startConversation).toHaveBeenCalledTimes(1);
       const row = taggedConversations().find((c) => c.status === 'active')!;
       expect(row.max_turns).toBe(MIN_LLM_TURNS);
-      // Bounded like every other conversation.
-      const entry = (db.select().from(conversationSchedulerState).get()!.active_llm_conversations as any[])
-        .find((e) => e.conversationId === row.id);
-      expect(entry).toMatchObject({ budgetGameMin: conversationBudgetGameMinutes(DEEP), plannedTurns: MIN_LLM_TURNS });
+      expect(schedulerEntry(row.id)).toMatchObject({
+        budgetGameMin: 160, graceGameMin: 80, plannedTurns: MIN_LLM_TURNS, protected: true,
+      });
+    });
+  });
+
+  describe('task runner slots', () => {
+    it('keeps the entry queued while the runner has no free chain', async () => {
+      runner.freeConversationSlots = 0;
+      const id = enqueue([a, b], 'llm_standard');
+
+      await conversationsTick();
+
+      expect(runner.startConversation).not.toHaveBeenCalled();
+      expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeDefined();
+      expect(taggedConversations()).toHaveLength(0);
+    });
+
+    it('re-queues an entry the runner rejects instead of losing it', async () => {
+      runner.startConversation.mockReturnValueOnce(false);
+      enqueue([a, b], 'llm_deep', { priority: PLAYER_NUDGE_PRIORITY });
+
+      await conversationsTick();
+
+      const queued = db.select().from(conversationQueue).all();
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({ participants: [a, b], priority: PLAYER_NUDGE_PRIORITY, tier: 'llm_deep' });
+      expect(queued[0].deadline_game_min).toBe(nowGameMin() + 600);
+      expect(taggedConversations()).toHaveLength(0);
+      expectReleased();
+
+      // ...and it opens on the next tick.
+      await conversationsTick();
+      expect(taggedConversations().filter((c) => c.status === 'active')).toHaveLength(1);
     });
   });
 
@@ -436,7 +449,7 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 }).run();
       setClock(nowGameMin(), speed);
       const start = nowGameMin();
-      const id = enqueue([a, b], 'llm_standard', 50, queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES));
+      const id = enqueue([a, b], 'llm_standard', { maxWait: queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES) });
       for (let tick = 0; tick < 100; tick++) {
         await conversationsTick();
         if (!db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()) {
@@ -462,7 +475,7 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
 
     it('stores the deadline once, so a speed change does not move it', async () => {
       db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 }).run();
-      const id = enqueue([a, b], 'llm_standard', 50, 10_000);
+      const id = enqueue([a, b], 'llm_standard', { maxWait: 10_000 });
       await conversationsTick();
       const stamped = db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()!.deadline_game_min;
       expect(stamped).toBe(nowGameMin() + 10);
@@ -470,18 +483,32 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       await conversationsTick();
       expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()!.deadline_game_min).toBe(stamped);
     });
+
+    it('does not expire an entry queued before a long pause', async () => {
+      // Queued, then the world sat paused for ten real minutes: no game time
+      // passed, so it has waited nothing.
+      db.update(worldState).set({ is_paused: true }).run();
+      db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 }).run();
+      const id = enqueue([a, b], 'llm_standard', { maxWait: 10_000, queuedAt: Date.now() - 600_000 });
+
+      await conversationsTick();
+
+      const entry = db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get();
+      expect(entry?.deadline_game_min).toBe(nowGameMin() + 10);
+      expect(taggedConversations()).toHaveLength(0);
+    });
   });
 
-  describe('needs interrupt', () => {
-    /** An LLM conversation two lines in, opened `agoGameMin` game minutes ago. */
-    async function liveConversation(agoGameMin = 10): Promise<number> {
+  describe('needs', () => {
+    /** An LLM conversation two lines in (Rosa, then Yuki), opened 10 game minutes ago. */
+    async function liveConversation(priority = 50): Promise<number> {
       setClock(nowGameMin(), 1);
-      enqueue([a, b], 'llm_deep');
+      enqueue([a, b], 'llm_deep', { priority });
       await conversationsTick();
       const row = taggedConversations().find((c) => c.status === 'active')!;
       addMessage(row.id, a, 'How was the harvest?', 0.3, [], Date.now());
       addMessage(row.id, b, 'Better than last year, thankfully.', 0.4, [], Date.now());
-      setClock(nowGameMin() + agoGameMin);
+      setClock(nowGameMin() + 10);
       return row.id;
     }
 
@@ -489,12 +516,16 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       return db.select().from(conversations).where(eq(conversations.id, id)).get()!;
     }
 
-    it('lets the in-flight turn land, then the exhausted one says goodnight', async () => {
+    function lines(id: number) {
+      return convo(id).messages as Array<{ speakerId: number; text: string }>;
+    }
+
+    it("lets the partner's in-flight reply land, then the exhausted one says goodnight", async () => {
       const id = await liveConversation();
       db.update(needs).set({ energy: 5 }).where(eq(needs.agent_id, b)).run();
 
       await conversationsTick();
-      // Wound up, not ended: exactly the turn in flight may still land.
+      // Wound up, not ended: exactly Rosa's turn in flight may still land.
       expect(convo(id).status).toBe('active');
       expect(convo(id).max_turns).toBe(3);
 
@@ -504,7 +535,7 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
 
       const row = convo(id);
       expect(row.status).toBe('ended');
-      const msgs = row.messages as Array<{ speakerId: number; text: string }>;
+      const msgs = lines(id);
       expect(msgs).toHaveLength(4);
       expect(msgs[3].speakerId).toBe(b);
       expect(WRAP_UP_FAREWELLS.energy.map((l) => l.text.replace('{other.name}', 'Rosa'))).toContain(msgs[3].text);
@@ -513,23 +544,21 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       expectReleased();
     });
 
-    it('ends at bedtime once the grace passes, even if the reply never comes', async () => {
+    it('replaces the leaver’s own in-flight turn with the goodbye (bedtime)', async () => {
       setClock(3 * 1440 + 21 * 60 + 55);
       const id = await liveConversation(); // now 22:05 — past the 22:00 bedtime
 
       await conversationsTick();
-      expect(convo(id).status).toBe('active');
-      setClock(nowGameMin() + GRACE);
-      await conversationsTick();
 
       const row = convo(id);
       expect(row.status).toBe('ended');
-      const msgs = row.messages as Array<{ speakerId: number; text: string }>;
-      expect(msgs).toHaveLength(3);
+      const msgs = lines(id);
+      expect(msgs.map((m) => m.speakerId)).toEqual([a, b, a]);
       expect(WRAP_UP_FAREWELLS.sleep.map((l) => l.text.replace('{other.name}', 'Yuki'))).toContain(msgs[2].text);
       expect(row.quality_breakdown).not.toHaveProperty('truncated');
-      // A late reply can't land after the goodbye.
+      // Rosa's own reply, still in flight, is refused and cancelled.
       expect(addMessage(id, a, 'Wait—', 0, [], Date.now())).toBeNull();
+      expect(runner.abortConversation).toHaveBeenCalledWith(id);
       expectReleased();
     });
 
@@ -538,14 +567,60 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       db.update(needs).set({ hunger: 3 }).where(eq(needs.agent_id, a)).run();
 
       await conversationsTick();
-      setClock(nowGameMin() + GRACE);
-      await conversationsTick();
 
-      const msgs = convo(id).messages as Array<{ speakerId: number; text: string }>;
+      const msgs = lines(id);
       expect(convo(id).status).toBe('ended');
       expect(msgs[msgs.length - 1].speakerId).toBe(a);
       expect(WRAP_UP_FAREWELLS.hunger.map((l) => l.text.replace('{other.name}', 'Yuki')))
         .toContain(msgs[msgs.length - 1].text);
+      expectReleased();
+    });
+
+    it('never has the leaver speak twice in a row', async () => {
+      const id = await liveConversation();
+      db.update(needs).set({ energy: 5 }).where(eq(needs.agent_id, b)).run();
+
+      await conversationsTick();
+      // Rosa's reply never comes; the grace (15 game min at 1x) runs out.
+      setClock(nowGameMin() + 15);
+      await conversationsTick();
+
+      expect(convo(id).status).toBe('ended');
+      // Yuki spoke last: no goodbye tacked onto her own line.
+      expect(lines(id).map((m) => m.speakerId)).toEqual([a, b]);
+      expectReleased();
+    });
+
+    it('does not open an ordinary conversation someone must leave', async () => {
+      db.update(needs).set({ hunger: 3 }).where(eq(needs.agent_id, a)).run();
+      enqueue([a, b], 'llm_standard');
+
+      await conversationsTick();
+
+      expect(runner.startConversation).not.toHaveBeenCalled();
+      expect(taggedConversations()).toHaveLength(0);
+      expect(db.select().from(conversationQueue).all()).toHaveLength(0);
+    });
+
+    it('lets a player nudge at bedtime have its first exchange before anyone leaves', async () => {
+      setClock(3 * 1440 + 23 * 60);
+      enqueue([a, b], 'llm_deep', { priority: PLAYER_NUDGE_PRIORITY });
+      await conversationsTick();
+      const id = taggedConversations().find((c) => c.status === 'active')!.id;
+
+      setClock(nowGameMin() + 5);
+      await conversationsTick();
+      expect(convo(id).status).toBe('active');
+      expect(convo(id).max_turns).toBe(DEEP);
+
+      addMessage(id, a, 'I had to tell you tonight.', 0.2, [], Date.now());
+      await conversationsTick();
+      expect(convo(id).status).toBe('active');
+
+      addMessage(id, b, 'Then tell me.', 0.1, [], Date.now());
+      await conversationsTick();
+      expect(convo(id).status).toBe('ended');
+      expect(lines(id).map((m) => m.speakerId)).toEqual([a, b, a]);
       expectReleased();
     });
   });

@@ -4,7 +4,7 @@ import { eq, inArray, like, sql } from 'drizzle-orm';
 // The LLM path must not actually run: accept every dispatch and do nothing, so
 // the conversation rows Step E creates stay `active` for the assertions.
 vi.mock('../../../ai/taskRunner', () => ({
-  taskRunner: { startConversation: vi.fn(() => true) },
+  taskRunner: { startConversation: vi.fn(() => true), abortConversation: vi.fn(), freeConversationSlots: 4 },
 }));
 // Pass-through, so a test can make one completion throw halfway.
 vi.mock('../../../lib/conversationEvaluator', async (importOriginal) => {
@@ -122,6 +122,10 @@ function enqueue(
     topic,
     queued_at: queuedAt,
     max_wait: 10000,
+    // Waits run on the game clock (1x here): an entry "queued a minute ago"
+    // has used a minute of game time, so its 10-minute deadline has passed.
+    deadline_game_min: gameMinutes(db.select().from(worldState).get()!.time)
+      + Math.round((queuedAt + 10_000 - Date.now()) / 1000),
   }).returning({ id: conversationQueue.id }).get().id;
 }
 

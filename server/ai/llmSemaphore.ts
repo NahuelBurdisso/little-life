@@ -12,9 +12,9 @@
  *  - chat (`acquireLLMSlot`, 8 slots) for every chat/completion request;
  *  - embeddings (`acquireEmbeddingSlot`, 3 slots) for every embedding request.
  * Embeddings deliberately do not share the chat slots. A conversation turn
- * embeds its memory query and then chats, all inside the 15 s wall-clock turn
- * budget (conversations.ts MS_PER_LLM_TURN); queueing twice on the same pool
- * force-ends more conversations. And EMBED_BASE_URL may point at a different
+ * embeds its memory query and then chats, and the whole turn's latency counts
+ * against the conversation's game-minute budget (lib/conversationPacing.ts);
+ * queueing twice on the same pool cuts more conversations short. And EMBED_BASE_URL may point at a different
  * server than chat, where gating on chat slots would protect nothing.
  */
 

@@ -35,9 +35,12 @@ import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate, greetingCategory } from '../../ai/templates';
 import { TEMPLATE_REPLY_FALLBACKS, ROLE_PLACEHOLDERS, WRAP_UP_FAREWELLS } from '../../data/templates';
 import {
-  affordableTurns,
-  averageTurnLatencyMs,
   conversationBudgetGameMinutes,
+  latencyProbeDue,
+  markLatencyProbe,
+  planConversation,
+  recordTurnLatency,
+  turnLatencyEstimateMs,
   isPastBedtime,
   needsWrapUpReason,
   queueDeadlineGameMin,
@@ -84,6 +87,13 @@ interface ActiveLLMEntry {
   budgetGameMin?: number;
   /** Turns it was dispatched with, before any wrap-up lowered `max_turns`. */
   plannedTurns?: number;
+  /** GAME MINUTES an in-flight turn may still land after a wrap-up begins. */
+  graceGameMin?: number;
+  /**
+   * Player-requested or comfort visit (see isProtectedEntry): needs don't cut
+   * in before the first exchange has landed.
+   */
+  protected?: boolean;
   /**
    * Set once the conversation has to end early. `max_turns` is lowered so the
    * task runner stops after the in-flight turn; it is closed with a farewell
@@ -219,7 +229,10 @@ function closeWrappedTranscript(
   plannedTurns: number,
 ): void {
   const messages = [...(conversation.messages as ConversationMessage[])];
-  if (messages.length > 0 && messages.length < plannedTurns) {
+  // Never two lines in a row from the leaver: if they spoke last (their
+  // partner's reply never came), the conversation ends on their own line.
+  const leaverSpokeLast = messages[messages.length - 1]?.speakerId === leaverId;
+  if (messages.length > 0 && messages.length < plannedTurns && !leaverSpokeLast) {
     const otherId = (conversation.participants as number[]).find((p) => p !== leaverId);
     const otherName = otherId != null
       ? db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name
@@ -265,6 +278,8 @@ export async function conversationsTick(): Promise<void> {
     speakerId: number;
     participantIds: number[];
     participantNames: string[];
+    /** The queue row it came from, restored if the task runner refuses it. */
+    entry: QueueRow;
   }> = [];
   // Completed LLM conversations to process asynchronously — OUTSIDE the transaction.
   // `truncated` marks conversations the game-minute budget cut before their
@@ -273,6 +288,9 @@ export async function conversationsTick(): Promise<void> {
   const completedConversations: Array<{ conversation: ConversationRow; world: WorldRow; truncated: boolean }> = [];
   // Timed-out queue entries needing template fallback — OUTSIDE the transaction
   const timedOutQueue: Array<{ entry: QueueRow; world: WorldRow }> = [];
+  // Conversations Step A closed this tick: any LLM turn still running for them
+  // is cancelled after the transaction, freeing its runner and LLM slots.
+  const closedIds: number[] = [];
 
   let changed = false;
   // Set when Step A puts an agent back to idle; the agent snapshot has to be
@@ -302,7 +320,6 @@ export async function conversationsTick(): Promise<void> {
     // Conversation budgets and queue waits are GAME minutes (see
     // conversationPacing.ts), so the conversation rate follows the game clock.
     const nowGameMin = gameMinutes(world.time);
-    const graceGameMin = CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES;
 
     // Who is tied up in a conversation this tick — see "Participant claims" below.
     // Built from the scheduler's OWN entries, not from every `active` row: a row
@@ -358,6 +375,7 @@ export async function conversationsTick(): Promise<void> {
       entry.startedGameMin ??= nowGameMin;
       entry.plannedTurns ??= conversation.max_turns;
       entry.budgetGameMin ??= conversationBudgetGameMinutes(entry.plannedTurns);
+      const graceGameMin = entry.graceGameMin ?? CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES;
       const deadlineGameMin = entry.startedGameMin + entry.budgetGameMin;
 
       // `truncated` = the CLOCK stopped it before its planned turns. Not set for
@@ -369,22 +387,32 @@ export async function conversationsTick(): Promise<void> {
         completion = { truncated: false };
       } else {
         if (!entry.wrapUp) {
+          // The turn the task runner is working on now (or would start next).
+          const inFlightSpeaker = nextSpeaker(conversation);
+          let target: number | null = null;
           // Budget first: it is measured from the deadline itself, so the grace
           // below runs from when the budget ran out, not from whichever tick
           // noticed — the hard stop is always start + budget + grace.
           if (nowGameMin >= deadlineGameMin) {
             entry.wrapUp = { reason: 'budget', sinceGameMin: deadlineGameMin };
-          } else {
+            // Let the turn in flight land and, if nobody has spoken yet, the
+            // reply to it too (so an exchange that is merely slow still happens);
+            // the runner starts nothing beyond that. Grace bounds both.
+            target = Math.max(messages.length + 1, CONFIG.CONVERSATIONS.MIN_LLM_TURNS);
+          } else if (!entry.protected || messages.length >= CONFIG.CONVERSATIONS.MIN_LLM_TURNS) {
+            // Needs can end a conversation — but one the player asked for gets
+            // its first exchange before anyone's stomach or bedtime cuts in.
             const needy = findNeedsInterrupt(conversation.participants as number[], world);
-            if (needy) entry.wrapUp = { reason: needy.reason, sinceGameMin: nowGameMin, leaverId: needy.agentId };
+            if (needy) {
+              entry.wrapUp = { reason: needy.reason, sinceGameMin: nowGameMin, leaverId: needy.agentId };
+              // The leaver's farewell must follow the OTHER person's line: when the
+              // turn in flight is the leaver's own, the farewell replaces it
+              // (closes now); otherwise the partner's reply may land first.
+              target = inFlightSpeaker === needy.agentId ? messages.length : messages.length + 1;
+            }
           }
-          if (entry.wrapUp) {
-            // Stop the task runner at the next turn boundary: the turn in flight
-            // may still land (at least one line from each side), none after it.
-            const target = Math.min(
-              conversation.max_turns,
-              Math.max(messages.length + 1, CONFIG.CONVERSATIONS.MIN_LLM_TURNS),
-            );
+          if (target != null) {
+            target = Math.min(conversation.max_turns, target);
             if (target !== conversation.max_turns) {
               db.update(conversations).set({ max_turns: target }).where(eq(conversations.id, conversation.id)).run();
               conversation.max_turns = target;
@@ -395,6 +423,13 @@ export async function conversationsTick(): Promise<void> {
         if (entry.wrapUp) {
           const landed = messages.length >= conversation.max_turns;
           if (landed || nowGameMin >= entry.wrapUp.sinceGameMin + graceGameMin) {
+            if (!landed) {
+              // The turn in flight never landed. Book how long it had been running
+              // as a (censored) latency sample: a model too slow to finish any
+              // turn would otherwise never be measured at all.
+              const lastAt = messages[messages.length - 1]?.timestamp ?? entry.startedAt;
+              recordTurnLatency(Math.max(0, now - lastAt), nowGameMin);
+            }
             closeWrappedTranscript(
               conversation,
               entry.wrapUp.leaverId ?? nextSpeaker(conversation),
@@ -423,6 +458,7 @@ export async function conversationsTick(): Promise<void> {
         // `conversation:ended` exactly once — for participants[0], with an empty
         // otherName — so every listener silently dropped participant #2.
         completedConversations.push({ conversation, world, truncated: completion.truncated });
+        closedIds.push(conversation.id);
         toRemove.add(entry.conversationId);
         llmTotal++;
         changed = true;
@@ -530,6 +566,7 @@ export async function conversationsTick(): Promise<void> {
       .all();
 
     let currentActive = updatedActiveLLM.length;
+    const runnerFreeSlots = taskRunner.freeConversationSlots;
     const fillEntries = [...updatedActiveLLM];
 
     for (const entry of queueEntries) {
@@ -538,7 +575,7 @@ export async function conversationsTick(): Promise<void> {
       // tracked real time. Producers write a 1x-equivalent `max_wait`; the
       // deadline is derived once and stored, so a later speed change can't move it.
       if (entry.deadline_game_min == null) {
-        entry.deadline_game_min = queueDeadlineGameMin(entry, now, nowGameMin, world.tick_speed);
+        entry.deadline_game_min = queueDeadlineGameMin(entry, nowGameMin);
         db.update(conversationQueue)
           .set({ deadline_game_min: entry.deadline_game_min })
           .where(eq(conversationQueue.id, entry.id))
@@ -592,7 +629,10 @@ export async function conversationsTick(): Promise<void> {
       // lower-priority template entries further down still get their turn — but
       // not for this pair: a same-pair template must not jump the queue just
       // because the slot this entry is waiting for isn't free yet.
-      if (currentActive >= schedulerState.max_concurrent_llm) {
+      // Also full when the task runner has no chain free: a closed conversation
+      // keeps its runner slot until its aborted turn unwinds, and a dispatch the
+      // runner rejects is only re-queued after this pass (see below).
+      if (currentActive >= schedulerState.max_concurrent_llm || dispatches.length >= runnerFreeSlots) {
         if (claimParticipants(entry, { peek: true }) === 'ok') {
           reservedPairs.add(conversationPairKey(entry.participants as number[]));
         }
@@ -620,22 +660,32 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
-      // Size the conversation to the game time it may take. A turn costs the
-      // model's real latency × tick_speed game minutes, so at 4x a 20 s turn is
-      // 80 game minutes: the tier's full length would eat the evening. Capped by
-      // what the recent turn latency says fits in the budget; unchanged while
-      // turns are fast enough (or before any turn has been timed).
-      const tierMaxTurns =
-        entry.tier === 'llm_deep'
-          ? schedulerState.max_turns_deep
-          : schedulerState.max_turns_standard;
-      const budgetGameMin = conversationBudgetGameMinutes(tierMaxTurns);
-      const affordable = affordableTurns(budgetGameMin, averageTurnLatencyMs(), world.tick_speed);
-      if (affordable < CONFIG.CONVERSATIONS.MIN_LLM_TURNS && !isProtectedEntry(entry)) {
+      const isProtected = isProtectedEntry(entry);
+
+      // Don't open a conversation someone is about to walk out of. An ordinary
+      // entry is dropped (decisions queues a new one once they have slept or
+      // eaten); a protected one — the player asked for it — goes ahead, and Step
+      // A lets its first exchange land before needs can end it.
+      if (!isProtected && findNeedsInterrupt(entry.participants as number[], world)) {
+        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+        changed = true;
+        continue;
+      }
+
+      // Size the conversation to the game time it may take (see
+      // planConversation): a turn costs the model's latency × tick_speed game
+      // minutes, so at 4x a 20 s turn is 80 game minutes and the tier's full
+      // length would eat the evening.
+      const plan = planConversation({
+        tierMaxTurns: entry.tier === 'llm_deep' ? schedulerState.max_turns_deep : schedulerState.max_turns_standard,
+        tickSpeed: world.tick_speed,
+        isProtected,
+        observedLatencyMs: turnLatencyEstimateMs(nowGameMin),
+        probeDue: latencyProbeDue(nowGameMin),
+      });
+      if (plan.tier === 'template') {
         // Not even one exchange fits: have it as a template chat now instead of
         // an LLM one the budget would cut before anyone finished a sentence.
-        // Player nudges and comfort visits still get the model — the player asked
-        // for that conversation; the budget and wrap-up bound them all the same.
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
         changed = true;
         if (!loadTemplatePair(entry.participants as number[])) continue;
@@ -644,10 +694,7 @@ export async function conversationsTick(): Promise<void> {
         templateTotal++;
         continue;
       }
-      const maxTurns = Math.min(
-        tierMaxTurns,
-        Math.max(CONFIG.CONVERSATIONS.MIN_LLM_TURNS, affordable),
-      );
+      const maxTurns = plan.maxTurns;
 
       // Verify both participants exist and are co-located
       const firstParticipant = db
@@ -734,7 +781,8 @@ export async function conversationsTick(): Promise<void> {
       }
 
       // Over by its budget plus the wrap-up grace at the latest.
-      claimParticipants(entry, { freeAt: nowGameMin + budgetGameMin + graceGameMin });
+      claimParticipants(entry, { freeAt: nowGameMin + plan.budgetGameMin + plan.graceGameMin });
+      if (plan.probe) markLatencyProbe(nowGameMin);
 
       // Create conversation record
       const result = db
@@ -783,14 +831,17 @@ export async function conversationsTick(): Promise<void> {
         speakerId: entry.participants[0],
         participantIds: entry.participants as number[],
         participantNames: [firstParticipant.name, secondParticipant.name],
+        entry,
       });
 
       fillEntries.push({
         conversationId,
         startedAt: now,
         startedGameMin: nowGameMin,
-        budgetGameMin,
+        budgetGameMin: plan.budgetGameMin,
         plannedTurns: maxTurns,
+        graceGameMin: plan.graceGameMin,
+        protected: isProtected,
       });
       currentActive++;
       changed = true;
@@ -806,9 +857,9 @@ export async function conversationsTick(): Promise<void> {
         stats: {
           llmConversationsTotal: llmTotal,
           templateConversationsTotal: templateTotal,
-          // Was never written (always 0); now the rolling turn latency the
+          // Was never written (always 0); now the median turn latency the
           // scheduler sizes conversations by, so diagnostics can see it.
-          averageResponseTimeMs: Math.round(averageTurnLatencyMs() ?? schedulerState.stats.averageResponseTimeMs),
+          averageResponseTimeMs: Math.round(turnLatencyEstimateMs(nowGameMin) ?? schedulerState.stats.averageResponseTimeMs),
           queueTimeoutsTotal: queueTimeouts,
         },
       })
@@ -817,6 +868,7 @@ export async function conversationsTick(): Promise<void> {
   });
 
   // ── Async part: dispatch LLM calls outside transaction ─────────────────────
+  for (const id of closedIds) taskRunner.abortConversation(id);
   for (const d of dispatches) {
     const accepted = taskRunner.startConversation(d.conversationId, d.speakerId);
     if (accepted) {
@@ -824,8 +876,13 @@ export async function conversationsTick(): Promise<void> {
       simEvents.emit('conversation:started', { agentId: d.participantIds[1], otherName: d.participantNames[0] });
     }
     if (!accepted) {
-      // Task runner slots full — remove the conversation record and reset agents to idle
+      // Task runner slots full — remove the conversation record, reset agents to
+      // idle and put the entry back: it used to be dropped here, silently losing
+      // player nudges whenever a closed conversation's turn still held a slot.
+      // Step A drops the scheduler entry once it finds the row gone.
       db.delete(conversations).where(eq(conversations.id, d.conversationId)).run();
+      const { id: _id, ...requeued } = d.entry;
+      db.insert(conversationQueue).values(requeued).run();
       for (const pid of d.participantIds) {
         db.update(agents)
           .set({ current_action: { type: 'idle' }, action_duration: null })
