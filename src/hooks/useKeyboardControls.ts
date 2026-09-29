@@ -16,6 +16,15 @@ export function useKeyboardControls(callbacks: {
   isPaused: boolean;
   onTogglePause: () => Ack;
   onChangeSpeed: (speed: number) => Ack;
+  /** Tab (+1) / Shift+Tab (-1): step through the cast. */
+  onCycleAgent: (direction: 1 | -1) => void;
+  /** F: lock or release the camera on the selected resident. */
+  onToggleFollow: () => void;
+  /**
+   * False while a modal or menu is open. Tab must keep moving focus inside a
+   * dialog (and F is not for the map behind it), so the resident keys stand down.
+   */
+  agentKeysEnabled: boolean;
 }) {
   // Callers pass a fresh object literal every render, and the app re-renders on
   // every subscription push — several times a second. Read the callbacks through
@@ -45,7 +54,8 @@ export function useKeyboardControls(callbacks: {
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement
+        e.target instanceof HTMLSelectElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
       ) {
         return;
       }
@@ -75,6 +85,17 @@ export function useKeyboardControls(callbacks: {
           break;
         case "Digit4":
           setSpeed(4);
+          break;
+        case "Tab":
+          // Shift+Tab goes back. Focus stays where it is: the map is the point,
+          // not the next button in DOM order.
+          if (!cbRef.current.agentKeysEnabled) break;
+          e.preventDefault();
+          cbRef.current.onCycleAgent(e.shiftKey ? -1 : 1);
+          break;
+        case "KeyF":
+          if (!cbRef.current.agentKeysEnabled) break;
+          cbRef.current.onToggleFollow();
           break;
         // Escape is owned by App's overlay handler, which closes only the topmost
         // layer. Deselecting here too would close the agent panel underneath it.
