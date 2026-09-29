@@ -324,8 +324,11 @@ export async function gameTick(): Promise<void> {
 
   // On day change: run memory archival (tiered retention + summaries)
   const dayChanged = transitions.some(t => t.type === 'day_changed');
+  // Memories and activity rows are stamped in ticks; their game-day retention is
+  // converted at this speed (TickClock in gameClock.ts).
+  const tickClock = { nowTicks: newTime.totalTicks, nowMinutes, tickSpeed: world.tick_speed };
   if (dayChanged) {
-    runGuarded('memoryConsolidation', () => memoryConsolidator.consolidate(newTime.day, newTime.totalTicks));
+    runGuarded('memoryConsolidation', () => memoryConsolidator.consolidate(tickClock));
     // Regenerate self-descriptions for all agents (async, non-blocking)
     // Active only: self-description regeneration is an LLM call, and the dead
     // never change. Unfiltered, every corpse cost one generation per game day
@@ -347,7 +350,7 @@ export async function gameTick(): Promise<void> {
     // Check for birthdays and handle aging
     runGuarded('aging', () => agingTick(newTime.day));
     // Enforce the activity log's declared retention tiers
-    runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks));
+    runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks, world.tick_speed));
     // Drop processed relationship events older than every reader's window
     runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents());
     // Cap the conversation archive (each row holds its full transcript)

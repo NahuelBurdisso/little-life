@@ -3,8 +3,13 @@ import { memories, agents } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import type { MemoryService } from './MemoryService';
 import type { MemoryStore } from './MemoryStore';
+import { gameDayOfTickStamp, gameDaysToTicks, type TickClock } from '../gameClock';
 
-const TICKS_PER_DAY = 1440;
+// CLOCK: `memories.created_at` is a TICK stamp (MemoryStore writes
+// `currentTick`). Retention is authored in GAME days, so it is converted to
+// ticks at the current speed, and day labels are estimated the same way (see
+// TickClock in gameClock.ts). As a flat 1440 ticks per "day", memories lasted
+// four times as many game days at 4x and summaries were labelled with tick/1440.
 const RETENTION = {
   routine: 5,    // importance 1-3: keep 5 days
   moderate: 15,  // importance 4-6: keep 15 days
@@ -37,13 +42,13 @@ export class MemoryConsolidator {
     private store: MemoryStore,
   ) {}
 
-  consolidate(currentDay: number, currentTick: number): void {
+  consolidate(clock: TickClock): void {
     const allAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
     let totalDeactivated = 0;
     let totalSummaries = 0;
 
     for (const agent of allAgents) {
-      const { deactivated, summaries } = this.consolidateAgent(agent.id, currentDay, currentTick);
+      const { deactivated, summaries } = this.consolidateAgent(agent.id, clock);
       totalDeactivated += deactivated;
       totalSummaries += summaries;
     }
@@ -53,11 +58,11 @@ export class MemoryConsolidator {
     }
   }
 
-  private consolidateAgent(agentId: number, _currentDay: number, currentTick: number): { deactivated: number; summaries: number } {
-    // Find candidates for deactivation
-    const routineCutoff = currentTick - RETENTION.routine * TICKS_PER_DAY;
-    const moderateCutoff = currentTick - RETENTION.moderate * TICKS_PER_DAY;
-    const planCutoff = currentTick - RETENTION.plan * TICKS_PER_DAY;
+  private consolidateAgent(agentId: number, clock: TickClock): { deactivated: number; summaries: number } {
+    // Find candidates for deactivation (tick cutoffs; see the CLOCK note above)
+    const routineCutoff = clock.nowTicks - gameDaysToTicks(RETENTION.routine, clock.tickSpeed);
+    const moderateCutoff = clock.nowTicks - gameDaysToTicks(RETENTION.moderate, clock.tickSpeed);
+    const planCutoff = clock.nowTicks - gameDaysToTicks(RETENTION.plan, clock.tickSpeed);
 
     // Query all active memories for this agent that might be candidates
     const allActive = db.select().from(memories)
@@ -85,7 +90,7 @@ export class MemoryConsolidator {
     if (candidates.length === 0) return { deactivated: 0, summaries: 0 };
 
     // Group by week + type
-    const groups = this.groupByWeekAndType(candidates, agentId);
+    const groups = this.groupByWeekAndType(candidates, agentId, clock);
 
     // Generate summaries for large groups
     let summaryCount = 0;
@@ -108,11 +113,13 @@ export class MemoryConsolidator {
     return { deactivated: ids.length, summaries: summaryCount };
   }
 
-  private groupByWeekAndType(candidates: MemoryCandidate[], agentId: number): GroupedMemories[] {
+  private groupByWeekAndType(candidates: MemoryCandidate[], agentId: number, clock: TickClock): GroupedMemories[] {
     const groupMap = new Map<string, GroupedMemories>();
 
     for (const m of candidates) {
-      const weekNumber = Math.floor(m.created_at / (TICKS_PER_DAY * 7));
+      // The game day number, as the clock shows it (world.time.day).
+      const day = gameDayOfTickStamp(m.created_at, clock);
+      const weekNumber = Math.floor(day / 7);
       const key = `${agentId}-${weekNumber}-${m.type}`;
 
       if (!groupMap.has(key)) {
@@ -121,14 +128,13 @@ export class MemoryConsolidator {
           weekNumber,
           type: m.type,
           memories: [],
-          startDay: Math.floor(m.created_at / TICKS_PER_DAY) + 1,
-          endDay: Math.floor(m.created_at / TICKS_PER_DAY) + 1,
+          startDay: day,
+          endDay: day,
         });
       }
 
       const group = groupMap.get(key)!;
       group.memories.push(m);
-      const day = Math.floor(m.created_at / TICKS_PER_DAY) + 1;
       group.startDay = Math.min(group.startDay, day);
       group.endDay = Math.max(group.endDay, day);
     }

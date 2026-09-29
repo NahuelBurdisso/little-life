@@ -85,6 +85,35 @@ export function chancePerTick(chancePerMinute: number, tickSpeed: number): numbe
   return 1 - Math.pow(1 - chancePerMinute, tickSpeed);
 }
 
+/**
+ * For tables still stamped in TICKS (`memories.created_at`,
+ * `activity_log.timestamp`): where the tick clock is and how fast it runs.
+ * Rebasing those stamps would be a schema-wide migration; instead, windows over
+ * them are converted at the current speed. Approximate: it assumes the current
+ * `tickSpeed` held across the window, which is exact for a world that never
+ * changed speed.
+ */
+export interface TickClock {
+  nowTicks: number;
+  nowMinutes: number;
+  tickSpeed: number;
+}
+
+/** Ticks the loop takes to live `days` game days at `tickSpeed` (see TickClock). */
+export function gameDaysToTicks(days: number, tickSpeed: number): number {
+  return (days * MINUTES_PER_DAY) / (tickSpeed > 0 ? tickSpeed : 1);
+}
+
+/**
+ * The game day a tick stamp most likely fell on (see TickClock): its age in
+ * ticks at the current speed, back from now. Never before day 0.
+ */
+export function gameDayOfTickStamp(stamp: number, clock: TickClock): number {
+  const speed = clock.tickSpeed > 0 ? clock.tickSpeed : 1;
+  const minute = clock.nowMinutes - (clock.nowTicks - stamp) * speed;
+  return Math.max(0, Math.floor(minute / MINUTES_PER_DAY));
+}
+
 type Transitions = ReadonlyArray<{ type?: unknown }> | null | undefined;
 
 /**

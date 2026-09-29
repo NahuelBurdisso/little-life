@@ -3,6 +3,7 @@ import { activityLog, worldState } from '../db/schema';
 import { and, inArray, lt } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
+import { gameDaysToTicks } from './gameClock';
 
 interface LogActivityParams {
   type: string;
@@ -53,8 +54,6 @@ export function logActivity(params: LogActivityParams): void {
 
 // ─── Retention ────────────────────────────────────────────────────────────────
 
-const TICKS_PER_DAY = 1440;
-
 /** How long each retention tier survives, in game days. */
 const RETENTION_DAYS: Record<string, number> = {
   short: 3,
@@ -79,15 +78,20 @@ const TYPES_BY_RETENTION = Object.entries(ACTIVITY_REGISTRY).reduce<Record<strin
  * Bounded by `timestamp` (ticks) so it rides `idx_activity_log_timestamp`, and
  * only ever removes types the registry marks as expendable: `permanent` rows,
  * and any type not in the registry, are never touched.
+ *
+ * CLOCK: the rows are TICK-stamped, the tiers are GAME days, so the window is
+ * converted at the current `tickSpeed` (approximate if the speed changed within
+ * it; see TickClock in gameClock.ts). A flat 1440 ticks per day kept rows four
+ * times as many game days at 4x.
  */
-export function pruneActivityLog(currentTick: number): number {
+export function pruneActivityLog(currentTick: number, tickSpeed: number): number {
   let deleted = 0;
 
   for (const [tier, days] of Object.entries(RETENTION_DAYS)) {
     const types = TYPES_BY_RETENTION[tier];
     if (!types?.length) continue;
 
-    const cutoff = currentTick - days * TICKS_PER_DAY;
+    const cutoff = currentTick - gameDaysToTicks(days, tickSpeed);
     if (cutoff <= 0) continue;
 
     deleted += db
