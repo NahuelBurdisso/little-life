@@ -144,7 +144,7 @@ export function buildGoalReviewPrompt(params: GoalReviewPromptParams): JSONPromp
     'Keep your ambition ("keep") unless recent events truly changed what you want.',
     activeGoals.length > 0 ? 'For each active goal decide: continue, adjust (give a new strategy) or abandon.' : '',
     openSlots > 0
-      ? `You may start up to ${openSlots} new goal${openSlots > 1 ? 's' : ''} — concrete things you want in the next few days, driven by your personality, ambition and what just happened. Use target_agent when a goal is about one person.`
+      ? `You may start up to ${openSlots} new goal${openSlots > 1 ? 's' : ''} — things you want over the next few days, driven by your personality, ambition and what just happened; not errands like eating, sleeping or a hangover cure. Use target_agent when a goal is about one person.`
       : 'You have no room for new goals today.',
     'Keep every text field to one short sentence.',
   ].filter(Boolean).join(' ');

@@ -132,7 +132,11 @@ export function parseInsights(raw: string): Array<{ text: string; citations: num
   if (json && Array.isArray(json.insights)) {
     return (json.insights as Array<Record<string, unknown>>)
       .map((i) => ({
-        text: typeof i?.insight === 'string' ? plain(i.insight) : '',
+        // The model sometimes repeats its citations inside the sentence
+        // ("…lost in my own head (15).") — they are in `because` already.
+        text: typeof i?.insight === 'string'
+          ? plain(i.insight).replace(/\s*\((?:\d+\s*,?\s*)+\)(?=[.!?]?$)/, '')
+          : '',
         citations: Array.isArray(i?.because)
           ? [...new Set(i.because.filter((n): n is number => Number.isInteger(n)))]
           : [],

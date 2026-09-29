@@ -268,3 +268,10 @@ describe('structured (JSON) replies', () => {
     expect(parseInsights(raw)).toEqual([{ text: 'I trust Rosa more than I admit.', citations: [2, 5] }]);
   });
 });
+
+describe('structured insights — inline citations', () => {
+  it('drops citation numbers repeated at the end of the sentence', () => {
+    const raw = JSON.stringify({ insights: [{ insight: 'I feel lost in my own head (11, 13).', because: [11, 13] }] });
+    expect(parseInsights(raw)[0].text).toBe('I feel lost in my own head.');
+  });
+});
