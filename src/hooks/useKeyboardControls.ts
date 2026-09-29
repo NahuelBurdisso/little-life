@@ -23,6 +23,11 @@ export function useKeyboardControls(callbacks: {
   /** C: show or hide the Director's lower-third captions. */
   onToggleCaptions?: () => void;
   /**
+   * M: mute or unmute the town's sound. Returns whether it is muted now, so the
+   * toast can say which way it went (the speaker button is easy to miss).
+   */
+  onToggleMute?: () => boolean;
+  /**
    * False while a modal or menu is open. Tab must keep moving focus inside a
    * dialog (and F is not for the map behind it), so the resident keys stand down.
    */
@@ -119,6 +124,13 @@ export function useKeyboardControls(callbacks: {
           if (!cbRef.current.agentKeysEnabled) break;
           cbRef.current.onToggleCaptions?.();
           break;
+        case "KeyM": {
+          // Same guard as F and C: with a dialog open the key belongs to the dialog.
+          if (!cbRef.current.agentKeysEnabled || !cbRef.current.onToggleMute) break;
+          const muted = cbRef.current.onToggleMute();
+          pushToast(muted ? "Sound off" : "Sound on", "info", muted ? "🔇" : "🔊");
+          break;
+        }
         case "KeyJ":
           if (!(cbRef.current.journalKeyEnabled ?? cbRef.current.agentKeysEnabled)) break;
           cbRef.current.onToggleJournal?.();

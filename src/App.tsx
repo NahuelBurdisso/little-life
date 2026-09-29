@@ -13,6 +13,7 @@ import { DramaAlerts } from "./components/overlays/DramaAlerts";
 import { DirectorCaption, DirectorChip } from "./components/overlays/DirectorCaption";
 import { useDirector } from "./hooks/useDirector";
 import { pushToast } from "./lib/toast";
+import { audio } from "./lib/audio/engine";
 import { useDramaAlerts } from "./hooks/useDramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
 import { EventMenu } from "./components/ui/EventMenu";
@@ -325,6 +326,10 @@ export default function App() {
       setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
     },
     onToggleCaptions: handleToggleCaptions,
+    onToggleMute: () => {
+      audio.toggleMute();
+      return audio.getSettings().muted;
+    },
     agentKeysEnabled: !otherOverlayOpen && journalTab == null,
     onToggleHelp: guide.toggleHelp,
     onToggleJournal: toggleJournal,

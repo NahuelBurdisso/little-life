@@ -19,6 +19,10 @@ describe('helpContent', () => {
     expect(VERBS.some((v) => /paper button/i.test(v.how))).toBe(false);
   });
 
+  it('lists the mute key', () => {
+    expect(HOTKEYS.some((h) => h.keys.includes('M') && /mute/i.test(h.what))).toBe(true);
+  });
+
   it('teaches right-click to meddle', () => {
     expect(VERBS.some((v) => /right-click/i.test(v.how))).toBe(true);
   });
