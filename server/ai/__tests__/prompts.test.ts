@@ -128,6 +128,7 @@ describe('buildConversationPrompt', () => {
   it('passes unknown topics through as a subject', () => {
     expect(topicIntent('the missing ledger', 'Rosa')).toContain('talk about the missing ledger');
     expect(topicIntent('gossip about Marco Rivera', 'Rosa')).toBe("You heard something about Marco Rivera and can't keep it to yourself.");
+    expect(topicIntent('Gossip about Marco  ', 'Rosa')).toBe("You heard something about Marco and can't keep it to yourself.");
   });
 
   it('uses "Respond to" for mid-conversation turns', () => {

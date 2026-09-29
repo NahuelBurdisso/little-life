@@ -229,3 +229,12 @@ describe('sanitizeDialogue — listener full name', () => {
     expect(sanitizeDialogue('See you at the clinic, Dr. Sofia Petrov.', opts)).toBe('See you at the clinic, Dr. Petrov.');
   });
 });
+
+describe('sanitizeDialogue — titled listeners', () => {
+  it('keeps the period only on abbreviations', () => {
+    const miss = { speakerName: 'Omar Hassan', listenerName: 'Miss Jane Doe', townNames: [] };
+    expect(sanitizeDialogue('Good evening, Miss Jane Doe.', miss)).toBe('Good evening, Miss Doe.');
+    const sir = { speakerName: 'Omar Hassan', listenerName: 'Sir John Smith', townNames: [] };
+    expect(sanitizeDialogue('Welcome, Sir John Smith.', sir)).toBe('Welcome, Sir John.');
+  });
+});

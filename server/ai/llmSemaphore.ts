@@ -27,7 +27,7 @@ interface QueueEntry {
 }
 
 const PRIORITY_ORDER: Record<LLMPriority, number> = {
-  critical: 0,  // conversations, snap resolution
+  critical: 0,  // conversation turns
   normal: 1,    // planning, reflections; memory-query embeddings (embedding pool)
   low: 2,       // goal reviews, pivots, self-descriptions; memory-write embeddings (embedding pool)
 };
@@ -36,7 +36,8 @@ const PRIORITY_ORDER: Record<LLMPriority, number> = {
  * A counting semaphore with strict priority: a freed slot goes to the
  * highest-priority waiter, FIFO among equals.
  *
- * `reservedForCritical` slots can only ever be taken by `critical` callers.
+ * `reserve` slots are kept for each side: `critical` callers can never hold
+ * more than `max - reserve`, and neither can everyone else together.
  * Priority alone cannot protect a conversation turn once every slot is busy:
  * with the default (no reservation) a daily-plan burst at dawn fills the pool
  * with 20–30 s generations and the next dialogue line waits for one of them to
@@ -44,7 +45,8 @@ const PRIORITY_ORDER: Record<LLMPriority, number> = {
  */
 export class PrioritySemaphore {
   private active = 0;
-  /** Slots held by non-critical callers (bounded by max - reserved). */
+  /** Slots held by critical / by all other callers, each capped at max - reserve. */
+  private activeCritical = 0;
   private activeNonCritical = 0;
   private readonly waiting: QueueEntry[] = [];
 
@@ -56,24 +58,32 @@ export class PrioritySemaphore {
 
   constructor(
     private readonly maxConcurrent: number,
-    private readonly reservedForCritical = 0,
+    /**
+     * Slots held back from each side. Dialogue must not wait behind a dawn
+     * burst of daily plans — and with up to four LLM conversations running,
+     * turn after turn would otherwise take every freed slot by strict priority
+     * and starve planning (agents idle while their decomposition waits).
+     */
+    private readonly reserve = 0,
   ) {}
 
   private canTake(priority: LLMPriority): boolean {
     if (this.active >= this.maxConcurrent) return false;
-    if (priority === 'critical') return true;
-    return this.activeNonCritical < this.maxConcurrent - this.reservedForCritical;
+    const held = priority === 'critical' ? this.activeCritical : this.activeNonCritical;
+    return held < this.maxConcurrent - this.reserve;
   }
 
   private take(priority: LLMPriority): void {
     this.active++;
-    if (priority !== 'critical') this.activeNonCritical++;
+    if (priority === 'critical') this.activeCritical++;
+    else this.activeNonCritical++;
     if (this.active > this.peakActive) this.peakActive = this.active;
   }
 
   private releaseSlot(priority: LLMPriority): void {
     this.active--;
-    if (priority !== 'critical') this.activeNonCritical--;
+    if (priority === 'critical') this.activeCritical--;
+    else this.activeNonCritical--;
 
     // Highest-priority waiter that may take a slot now (FIFO among equals). A
     // non-critical waiter can be skipped while only reserved slots are free.
@@ -145,14 +155,15 @@ export class PrioritySemaphore {
 // this module's priorities no longer apply, so a conversation turn queued
 // there behind four daily plans. Keeping the excess queued here means the next
 // free slot always goes to the most important caller.
-const MAX_CONCURRENT = Math.max(1, Number(process.env.LLM_PARALLEL ?? 4));
+const parsedParallel = parseInt(process.env.LLM_PARALLEL ?? '', 10);
+const MAX_CONCURRENT = Number.isFinite(parsedParallel) && parsedParallel >= 1 ? parsedParallel : 4;
 
 /**
- * Slots only conversation turns and snap reactions (priority `critical`) may
- * use — what the player is watching never waits behind background planning.
- * One of four: planning keeps 3/4 of the throughput.
+ * One slot held back for each side (see PrioritySemaphore): dialogue always has
+ * a slot planning can't take, and planning one dialogue can't. None with a
+ * single slot — a reserve there would lock one side out entirely.
  */
-const RESERVED_FOR_CRITICAL = MAX_CONCURRENT > 1 ? 1 : 0;
+const RESERVE_PER_SIDE = MAX_CONCURRENT > 1 ? 1 : 0;
 
 /**
  * Embedding requests are short, and a write batch carries up to 20 texts in
@@ -161,7 +172,7 @@ const RESERVED_FOR_CRITICAL = MAX_CONCURRENT > 1 ? 1 : 0;
  */
 const EMBEDDING_MAX_CONCURRENT = 3;
 
-const chatSemaphore = new PrioritySemaphore(MAX_CONCURRENT, RESERVED_FOR_CRITICAL);
+const chatSemaphore = new PrioritySemaphore(MAX_CONCURRENT, RESERVE_PER_SIDE);
 const embeddingSemaphore = new PrioritySemaphore(EMBEDDING_MAX_CONCURRENT);
 
 /**

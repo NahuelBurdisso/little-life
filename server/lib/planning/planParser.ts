@@ -237,7 +237,8 @@ export function parseDecomposedActions(
         target_location: fuzzyMatchLocation(location, validLocations),
         target_agent: findAgentMatch(description, validAgents),
         topic: actionType === 'socializing' ? extractTopic(description) : undefined,
-        duration_minutes: minutes == null ? 30 : Math.min(120, Math.max(5, minutes)),
+        // Same bound as the schema (planPrompts): a 4-hour shift can be one action.
+        duration_minutes: minutes == null ? 30 : Math.min(240, Math.max(5, minutes)),
       });
     }
     return actions.length === 0 ? [idleFallback] : actions;

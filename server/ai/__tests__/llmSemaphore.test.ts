@@ -68,9 +68,10 @@ describe('chat and embedding pools', () => {
 
     expect(getLLMStats().active).toBe(0);
 
-    // Every chat slot (LLM_PARALLEL, default 4) is still granted immediately.
+    // Every chat slot (LLM_PARALLEL, default 4) is still granted immediately —
+    // three to dialogue (its cap) and one to planning.
     const chat = await Promise.race([
-      Promise.all(Array.from({ length: 4 }, () => acquireLLMSlot('critical'))),
+      Promise.all([...Array.from({ length: 3 }, () => acquireLLMSlot('critical')), acquireLLMSlot('normal')]),
       new Promise<'blocked'>((r) => setTimeout(() => r('blocked'), 50)),
     ]);
     expect(chat).not.toBe('blocked');
@@ -127,5 +128,22 @@ describe('PrioritySemaphore — slots reserved for critical callers', () => {
     n();
     await flush();
     expect(order).toEqual(['critical', 'normal']);
+  });
+});
+
+describe('PrioritySemaphore — critical callers cannot starve the rest', () => {
+  it('leaves one slot to normal work however many turns queue', async () => {
+    const sem = new PrioritySemaphore(4, 1);
+    const turns = await Promise.all([sem.acquire('critical'), sem.acquire('critical'), sem.acquire('critical')]);
+    let fourth = false;
+    void sem.acquire('critical').then(() => { fourth = true; });
+    await flush();
+    expect(fourth).toBe(false);
+    const plan = await sem.acquire('normal');
+    expect(sem.stats().active).toBe(4);
+    plan();
+    turns[0]();
+    await flush();
+    expect(fourth).toBe(true);
   });
 });

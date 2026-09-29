@@ -358,7 +358,7 @@ describe('structured (JSON) replies', () => {
     const actions = parseDecomposedActions(raw, locs, ['Marco Rivera']);
     expect(actions).toHaveLength(2);
     expect(actions[0]).toMatchObject({ target_agent: 'Marco Rivera', action_type: 'socializing', topic: 'the harvest', duration_minutes: 30 });
-    expect(actions[1]).toMatchObject({ target_location: "Rosa's General Store", duration_minutes: 120 });
+    expect(actions[1]).toMatchObject({ target_location: "Rosa's General Store", duration_minutes: 240 });
     expect(isUnparsedDecomposition(actions)).toBe(false);
   });
 

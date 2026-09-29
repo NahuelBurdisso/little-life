@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 121 files / 1438 tests passing.
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 121 files / 1441 tests passing.
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -36,7 +36,7 @@ worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 - **Ollama 0.35** in `D:\Ollama`, started by `start-game.bat` with `OLLAMA_NUM_PARALLEL=4`,
   `FLASH_ATTENTION=1`, `KV_CACHE_TYPE=q8_0`, `MAX_LOADED_MODELS=2`. Without NUM_PARALLEL Ollama runs one
   request at a time. `LLM_PARALLEL` (.env, default 4) must match it: the chat semaphore holds excess
-  requests so priorities apply, with 1 slot reserved for `critical` (dialogue).
+  requests so priorities apply, with 1 slot held back for each side (dialogue can't starve planning or vice versa).
 - Every call pins `num_ctx` 8192 + `keep_alive` 30m (also embeddings); the server warms both models
   at start (`server/ai/warmup.ts`) and names a missing model.
 - **Structured output:** plans, replans, decompositions, goal review/pivot/ambition, reflection

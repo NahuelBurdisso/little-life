@@ -674,4 +674,18 @@ describe('PlanExecutor prefetch', () => {
     executor.getPlannedAction(agentId, 11, 0, 1, 10);
     expect(decomposer.queueDecomposition).not.toHaveBeenCalled();
   });
+
+  it('asks for the next block as soon as the current one ends early', () => {
+    const cache = makeCache();
+    const decomposer = { queueDecomposition: vi.fn(), isPending: vi.fn(() => false) };
+    const executor = new PlanExecutor(cache, decomposer as never);
+    const plan = planWith();
+    // A 30-minute action in a 3-hour block: the block completes at 9:30.
+    plan.blocks[0].decomposed_actions = [{ ...action, duration_minutes: 30 }];
+    cache.set(agentId, plan);
+    executor.getPlannedAction(agentId, 9, 0, 1, 0);
+    expect(decomposer.queueDecomposition).not.toHaveBeenCalled();
+    expect(executor.getPlannedAction(agentId, 9, 0, 1, 31)).toBeNull();
+    expect(decomposer.queueDecomposition).toHaveBeenCalledWith(agentId, 'b1', expect.any(Number));
+  });
 });

@@ -134,6 +134,7 @@ export class PlanExecutor {
       // All actions consumed — mark block completed
       block.status = 'completed';
       this.cache.set(agentId, plan);
+      this._prefetchNext(plan, block, agentId, gameMinute);
       return null;
     }
 
@@ -149,8 +150,11 @@ export class PlanExecutor {
       // Advance to next action
       const newIdx = idx + 1;
       if (newIdx >= actions.length) {
+        // Actions shorter than the block end it early; the next block's
+        // actions are then needed now, not in its last hour.
         block.status = 'completed';
         this.cache.set(agentId, plan);
+        this._prefetchNext(plan, block, agentId, gameMinute);
         return null;
       }
 
@@ -171,19 +175,6 @@ export class PlanExecutor {
   // ── Private helpers ────────────────────────────────────────────────────────
 
   /**
-   * The block has no concrete actions yet. (Re-)ask for them — a no-op while a
-   * job is out, while the agent backs off after an LLM failure, and while the
-   * outage breaker is open — then hold the agent in an idle only if the
-   * answer is actually on its way.
-   *
-   * This used to return the idle unconditionally. When the decomposition call
-   * failed, nothing ever asked again and the block sat 'active' with no
-   * actions, so the plan layer's idle (score 6000, above everything but
-   * emergencies) pinned the agent in place until the block's hours ran out —
-   * with Ollama down, that was most of the day. Returning null instead hands
-   * the agent to needs/schedule scoring until decomposition succeeds.
-   */
-  /**
    * Queue decomposition of the block that follows `block`, if it still needs
    * it. A no-op while that job is out or the agent is backing off (same gate
    * as a regular request), and the result is dropped if a replan replaces the
@@ -198,6 +189,19 @@ export class PlanExecutor {
     this.decomposer.queueDecomposition(agentId, next.id, gameMinute);
   }
 
+  /**
+   * The block has no concrete actions yet. (Re-)ask for them — a no-op while a
+   * job is out, while the agent backs off after an LLM failure, and while the
+   * outage breaker is open — then hold the agent in an idle only if the
+   * answer is actually on its way.
+   *
+   * This used to return the idle unconditionally. When the decomposition call
+   * failed, nothing ever asked again and the block sat 'active' with no
+   * actions, so the plan layer's idle (score 6000, above everything but
+   * emergencies) pinned the agent in place until the block's hours ran out —
+   * with Ollama down, that was most of the day. Returning null instead hands
+   * the agent to needs/schedule scoring until decomposition succeeds.
+   */
   private _awaitDecomposition(agentId: number, block: PlanBlock, gameMinute: number): ScoredAction | null {
     this.decomposer.queueDecomposition(agentId, block.id, gameMinute);
     return this.decomposer.isPending(agentId, block.id) ? this._idleAction(block) : null;

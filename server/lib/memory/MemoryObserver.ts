@@ -39,6 +39,7 @@ export function shouldRecordPerception(agentId: number, description: string, now
 
 export function clearPerceptionDedup(): void {
   lastPerceived.clear();
+  pendingSummaries.clear();
 }
 
 export function initMemoryObserver(memoryService: MemoryService): void {
@@ -99,9 +100,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
           const participants = [...new Set(spoken.map((l) => l.speaker))];
           pending = summarizeConversation(participants, spoken);
           pendingSummaries.set(conversationId, pending);
-          void pending.finally(() => setTimeout(() => pendingSummaries.delete(conversationId), 60_000));
+          // Every participant's handler runs in this same emit loop, so the
+          // entry is only needed until the call settles.
+          void pending.finally(() => pendingSummaries.delete(conversationId));
         }
-        void pending.then((takeaways) => {
+        pending.then((takeaways) => {
           const takeaway = takeaways?.get(me);
           // The world may have been replaced while the model answered, and
           // SQLite reuses ids: only record for the same person.
@@ -118,6 +121,10 @@ export function initMemoryObserver(memoryService: MemoryService): void {
             { subtype: 'conversation', summary, turns, takeaway: true },
             sentiment,
           );
+        }).catch((err) => {
+          // Runs detached from the tick: an escaping throw would be an
+          // unhandled rejection and take the server down.
+          console.warn('[MemoryObserver] conversation takeaway failed:', err);
         });
         return;
       }
@@ -296,9 +303,10 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   simEvents.on('perception:observed', ({ agentId, targetName, templateKey }: { agentId: number; targetName: string; templateKey: string }) => {
-    const description = describeEvent(templateKey, { target: targetName });
-    if (!shouldRecordPerception(agentId, description, gameMinutesNow())) return;
-    memoryService.record(agentId, 'observation', description, { subtype: 'perception', targetName });
+    // Keyed on what was seen, not the wording: describeEvent picks a random
+    // variant, so the same sighting could pass once per phrasing.
+    if (!shouldRecordPerception(agentId, `${templateKey}|${targetName}`, gameMinutesNow())) return;
+    memoryService.record(agentId, 'observation', describeEvent(templateKey, { target: targetName }), { subtype: 'perception', targetName });
   });
 
   // Goals

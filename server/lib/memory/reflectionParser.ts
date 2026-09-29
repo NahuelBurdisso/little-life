@@ -135,7 +135,7 @@ export function parseInsights(raw: string): Array<{ text: string; citations: num
         // The model sometimes repeats its citations inside the sentence
         // ("…lost in my own head (15).") — they are in `because` already.
         text: typeof i?.insight === 'string'
-          ? plain(i.insight).replace(/\s*\((?:\d+\s*,?\s*)+\)(?=[.!?]?$)/, '')
+          ? plain(i.insight).replace(/\s*\(\d+(?:\s*,\s*\d+)*\)(?=[.!?]?$)/, '')
           : '',
         citations: Array.isArray(i?.because)
           ? [...new Set(i.because.filter((n): n is number => Number.isInteger(n)))]

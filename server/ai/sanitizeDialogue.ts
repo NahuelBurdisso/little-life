@@ -336,9 +336,14 @@ function shortenListenerName(text: string, listenerFull: string): string {
   const bare = withoutHonorific(full);
   const parts = bare.split(/\s+/);
   if (parts.length < 2) return text;
-  const titled = bare !== full;
-  const title = titled ? full.split(/\s+/)[0].replace(/\.?$/, '.') : '';
-  const short = titled ? `${title} ${parts[parts.length - 1]}` : parts[0];
+  const rawTitle = bare !== full ? full.split(/\s+/)[0].replace(/\.$/, '') : '';
+  // "Dr. Petrov", "Mrs. Chen" — but "Miss Doe" has no period, and a knight
+  // is "Sir John", not "Sir Smith".
+  const short = !rawTitle
+    ? parts[0]
+    : /^sir$/i.test(rawTitle)
+      ? `${rawTitle} ${parts[0]}`
+      : `${rawTitle}${/^(dr|mr|mrs|ms|prof|rev)$/i.test(rawTitle) ? '.' : ''} ${parts[parts.length - 1]}`;
   let out = text;
   for (const variant of [...new Set([full, bare])].sort((a, b) => b.length - a.length)) {
     out = out.replace(new RegExp(`\\b${escapeRegExp(variant)}\\b`, 'g'), short);

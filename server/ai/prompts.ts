@@ -268,8 +268,8 @@ function buildRelationshipTag(
  */
 export function topicIntent(topic: string, other: string): string {
   const t = topic.trim().toLowerCase();
-  const gossip = t.match(/^gossip about (.+)$/);
-  if (gossip) return `You heard something about ${topic.slice(topic.length - gossip[1].length)} and can't keep it to yourself.`;
+  const gossip = topic.trim().match(/^gossip about (.+)$/i);
+  if (gossip) return `You heard something about ${gossip[1]} and can't keep it to yourself.`;
   if (t.startsWith('checking on')) return `You want to see how ${other} is really doing — mention something specific you know about them.`;
   const intents: Record<string, string> = {
     'flirting': `You're drawn to ${other}. Flirt a little: tease, compliment something specific, or hint at how you feel.`,
