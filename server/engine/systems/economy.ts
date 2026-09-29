@@ -361,8 +361,11 @@ function recordSale(
   location: { id: number; name: string },
   now: number,
 ): void {
-  const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
-  const sellerReceives = price - tax;
+  // To the cent, not the dollar: `Math.round(price * 0.05)` is 0 for every
+  // price under $10 — i.e. every sale in town — so no sales tax was ever
+  // collected (E2). Money and tax_pool are REAL columns.
+  const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier * 100) / 100;
+  const sellerReceives = Math.round((price - tax) * 100) / 100;
 
   db.update(economy).set({ money: ownerEcon.money + sellerReceives }).where(eq(economy.id, ownerEcon.id)).run();
   ownerEcon.money += sellerReceives;

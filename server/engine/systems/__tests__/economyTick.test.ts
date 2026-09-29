@@ -511,3 +511,27 @@ describe('food supply', () => {
     expect(order.indexOf('shop')).toBeLessThan(order.indexOf('tavern'));
   });
 });
+
+/** E2: tax was `Math.round(price * 0.05)` — $0 for every sale under $10. */
+describe('sales tax', () => {
+  beforeAll(() => {
+    ensureWorld(9, 10, 0);
+    // Earlier scenes left diners and patrons mid-action; their sales would be
+    // taxed into the same pool this tick.
+    db.update(agents).set({ current_action: { type: 'idle' }, current_location: null }).run();
+  });
+  beforeEach(() => clearPurchaseTracking());
+
+  it('taxes a small sale to the cent', () => {
+    const { buyer, shop } = scene(stock({ food_raw: 50 }));
+    const pool0 = db.select().from(worldState).get()!.tax_pool;
+    setAction(buyer, { type: 'eating', locationId: shop }, 100, shop);
+    ticks(1);
+
+    const [sale] = purchasesBy(buyer);
+    expect(sale.amount).toBeLessThan(10);
+    const tax = Math.round(sale.amount * 0.05 * 100) / 100;
+    expect(tax).toBeGreaterThan(0);
+    expect(db.select().from(worldState).get()!.tax_pool).toBeCloseTo(pool0 + tax, 2);
+  });
+});
