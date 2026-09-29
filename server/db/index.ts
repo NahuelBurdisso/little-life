@@ -11,6 +11,7 @@ import {
   backfillRelationshipEventGameMinutes,
   installRelationshipEventMinuteTrigger,
 } from './relationshipEventClock';
+import { backfillActivityLogGameMinutes } from './activityLogClock';
 import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { CONFIG } from '../lib/constants';
@@ -52,6 +53,8 @@ const PERF_INDEXES = [
   // Game-day retention (relationships.ts pruneRelationshipEvents) range-scans
   // this; the chronicle orders every pair's beats by it.
   'CREATE INDEX IF NOT EXISTS idx_relationship_events_game_minute ON relationship_events (game_minute)',
+  // The town timeline pages one game day at a time (activity.getTimeline).
+  'CREATE INDEX IF NOT EXISTS idx_activity_log_game_minute ON activity_log (game_minute)',
 ];
 
 function createPerfIndexes() {
@@ -131,6 +134,9 @@ function migrateSchema() {
 
   // Activity log extensions
   addColumnIfMissing('activity_log', 'metadata', 'TEXT');
+  // Timeline clock (game minutes; see schema.ts). Stamped by logActivity, old
+  // rows by backfillActivityLogGameMinutes.
+  addColumnIfMissing('activity_log', 'game_minute', 'INTEGER');
 
   // Conversation pacing on the game clock (see schema.ts)
   addColumnIfMissing('conversation_queue', 'deadline_game_min', 'INTEGER');
@@ -286,6 +292,8 @@ export function initSchema(): void {
     // After migrateSchema, which adds the column the trigger writes.
     () => installRelationshipEventMinuteTrigger(sqlite),
     () => backfillRelationshipEventGameMinutes(sqlite),
+    // activity_log.game_minute: logActivity stamps new rows, this heals old ones.
+    () => backfillActivityLogGameMinutes(sqlite),
   ]);
   // Again, for indexes on columns migrateSchema only just added: on an old file
   // the first pass above failed on idx_relationship_events_game_minute (and

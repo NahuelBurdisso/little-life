@@ -488,9 +488,18 @@ export const activityLog = sqliteTable(
     severity: real('severity'),
     metadata: text('metadata', { mode: 'json' }).$type<{ chainId?: string; chainDepth?: number; ruleId?: string } | null>(),
     timestamp: integer('timestamp').notNull(),
+    // GAME MINUTE the row was logged at (`gameMinutes(world.time)`) — what the
+    // town timeline groups into days. `timestamp` is a TICK count, and a tick is
+    // `tick_speed` game minutes, so bucketing it by 1440 drifted every time the
+    // speed changed (B13b). Stamped by logActivity, the only writer; nullable
+    // because it was added to existing worlds (startup backfills them from the
+    // tick age, db/activityLogClock.ts) and a row logged with no world row has
+    // no clock to copy.
+    game_minute: integer('game_minute'),
     real_timestamp: integer('real_timestamp').notNull(),
   },
   (table) => [
+    index('idx_activity_log_game_minute').on(table.game_minute),
     index('idx_activity_category_ts').on(table.category, table.timestamp),
     index('idx_activity_importance_ts').on(table.importance, table.timestamp),
     index('idx_activity_agent').on(table.initiator_id, table.timestamp),

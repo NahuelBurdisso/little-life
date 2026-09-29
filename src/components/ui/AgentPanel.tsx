@@ -13,10 +13,11 @@ import { Skeleton, SkeletonSection } from "./Skeleton";
 import { RelationshipList } from "./RelationshipList";
 import { PlanTimeline } from "./PlanTimeline";
 import { ThoughtsTab } from "./ThoughtsTab";
+import { StoryTab } from "./StoryTab";
 import type { PersonalityProfile } from "../../../server/lib/personality";
 import { gameMinutes } from "../../../server/lib/gameClock";
 
-type TabId = "profile" | "social" | "mind" | "thoughts";
+type TabId = "profile" | "social" | "mind" | "thoughts" | "story";
 
 interface AgentPanelProps {
   agentId: string;
@@ -148,6 +149,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent }: AgentPanelProps)
     { id: "social", label: "💬 Social" },
     { id: "mind", label: "🧠 Mind" },
     { id: "thoughts", label: "💭 Thoughts" },
+    { id: "story", label: "📖 Story" },
   ];
 
   return (
@@ -174,7 +176,9 @@ export function AgentPanel({ agentId, onClose, onSelectAgent }: AgentPanelProps)
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 min-w-0 px-1 py-2 text-[10px] whitespace-nowrap font-medium transition-colors ${
+            // No side padding and tighter tracking: with five tabs the 300px default
+            // panel gave each 60px, and "💭 Thoughts" was clipped by 7px.
+            className={`flex-1 min-w-0 px-0 py-2 text-[10px] tracking-tighter whitespace-nowrap font-medium transition-colors ${
               activeTab === tab.id
                 ? "text-ui-gold border-b-2 border-ui-gold bg-ui-raised/40"
                 : "text-ui-dim hover:text-ui-text"
@@ -372,6 +376,11 @@ export function AgentPanel({ agentId, onClose, onSelectAgent }: AgentPanelProps)
             isPaused={isPaused}
             nowMinutes={nowMinutes}
           />
+        )}
+
+        {/* ── Story Tab ── */}
+        {activeTab === "story" && (
+          <StoryTab agentId={Number(agentId)} agentName={agent.name} onSelectAgent={onSelectAgent} />
         )}
       </div>
     </div>
