@@ -8,6 +8,7 @@ import { cliqueIdOf } from './cliques';
 import { thatSentence, type FactSelf } from './factText';
 import { gameMinutesNow } from './worldClock';
 import { affairInvolvesMarriage, affairSensitivity } from './marriage';
+import { recordGoalOutcome } from './goals/goalProgress';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -555,6 +556,9 @@ export function spreadGossip(
     rumorReachedSubject(fact, _speakerId, listenerId);
 
     if (fact.sensitivity >= 2) {
+      // Same goal outcomes as the gossip phase's sharing (gossipEngine.ts).
+      recordGoalOutcome(_speakerId, fact.subject_id, 'rumor_spread');
+      recordGoalOutcome(listenerId, fact.subject_id, 'rumor_heard');
       const listener = getAgentSelf(listenerId);
       logActivity({
         type: 'drama',

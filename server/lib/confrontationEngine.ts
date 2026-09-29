@@ -5,6 +5,7 @@ import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
 import { adjustReputation } from './reputationEngine';
+import { recordGoalOutcome } from './goals/goalProgress';
 
 // ─── Confrontation Engine ─────────────────────────────────────────────────────
 // When agents with deep grudges (friendship < -40) encounter each other at the
@@ -106,6 +107,24 @@ export function confrontationCheck(_totalTicks: number): void {
   }
 }
 
+/**
+ * What a confrontation does for either side's goals (lib/goals/goalProgress.ts). Clearing the
+ * air serves a befriend goal on both sides. A row that stays a row has a winner — the one who
+ * brought more fight to it (effective aggression, ties to whoever started it) — and a grudge
+ * gets more out of winning it than out of merely having had it.
+ */
+function recordConfrontationGoals(aId: number, bId: number, resolved: boolean): void {
+  if (resolved) {
+    recordGoalOutcome(aId, bId, 'confrontation_resolved');
+    recordGoalOutcome(bId, aId, 'confrontation_resolved');
+    return;
+  }
+  const aggression = (id: number) => getEffectivePersonality(id)?.aggression ?? 50;
+  const [winner, loser] = aggression(bId) > aggression(aId) ? [bId, aId] : [aId, bId];
+  recordGoalOutcome(winner, loser, 'confrontation_won');
+  recordGoalOutcome(loser, winner, 'fought_target');
+}
+
 function resolveConfrontation(
   agentA: typeof agents.$inferSelect,
   agentB: typeof agents.$inferSelect,
@@ -205,6 +224,8 @@ function resolveConfrontation(
     adjustReputation(agentA.id, -8);
     adjustReputation(agentB.id, -8);
   }
+
+  recordConfrontationGoals(agentA.id, agentB.id, outcome < 0.3);
 
   // `agentId`/`perpetratorId`/`victimId` are the fields the cascade engine excludes
   // when picking a witness. Without them the combatants could be selected as

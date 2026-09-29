@@ -29,6 +29,7 @@ import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
 import { isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
 import { chancePerTick } from '../../lib/gameClock';
+import { recordGoalOutcome } from '../../lib/goals/goalProgress';
 
 interface AgentInfo {
   id: number;
@@ -157,6 +158,8 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
           if (Math.random() > chance) continue;
 
           addKnowers(fact, [eavesdropper.id]);
+          // An investigation into the subject is fed by exactly this.
+          if (fact.sensitivity >= 2) recordGoalOutcome(eavesdropper.id, fact.subject_id, 'rumor_heard');
 
           if (fact.sensitivity >= 2) {
             logActivity({
@@ -232,6 +235,12 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
       addKnowers(fact, [target.id]);
       // Telling someone a rumor about themselves: they know who said it.
       rumorReachedSubject(fact, agent.id, target.id);
+      // Dirt on a rival passed around is how a grudge gets paid back without a fight
+      // (revenge / undermine goals), and how an investigation learns something.
+      if (fact.sensitivity >= 2) {
+        recordGoalOutcome(agent.id, fact.subject_id, 'rumor_spread');
+        recordGoalOutcome(target.id, fact.subject_id, 'rumor_heard');
+      }
 
       if (fact.sensitivity >= 2) {
         logActivity({
@@ -267,6 +276,7 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
 
       const fact = discoverable[Math.floor(Math.random() * discoverable.length)];
       addKnowers(fact, [agent.id]);
+      recordGoalOutcome(agent.id, fact.subject_id, 'rumor_heard');
 
       logActivity({
         type: 'drama',
