@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, ConversationPromptParams } from '../prompts';
+import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, ConversationPromptParams, PROPOSAL_TOPIC } from '../prompts';
 import { clearVoiceDirectiveCache } from '../voiceDirective';
 
 const mockAgent = {
@@ -242,5 +242,31 @@ describe('buildConversationPrompt', () => {
     expect(last).toContain(`Don't repeat your question "How are you doing, really?"`);
     // Only the speaker's own lines count — Carlos's "Is it?" is not Ray's question.
     expect(last).not.toContain('Is it?"');
+  });
+
+  describe('proposal (lib/milestonesEngine.ts)', () => {
+    const proposal = (messages: Array<{ speakerId: number; text: string }>, tags: string[] = ['partner']) =>
+      buildConversationPrompt({
+        ...baseParams,
+        relationship: { ...baseParams.relationship!, romance_ab: 85, romance_ba: 80, tags },
+        conversation: { ...baseParams.conversation, topic: PROPOSAL_TOPIC, messages, max_turns: 6 },
+      }).messages;
+
+    it('has the proposer ask the question on the opening turn', () => {
+      const last = proposal([]).at(-1)!.content;
+      expect(last).toContain('ask Carlos Mendez to marry you');
+    });
+
+    it('asks the other for a plain yes or no on the second turn, without the flirt nudge', () => {
+      const last = proposal([{ speakerId: 2, text: 'Ray, will you marry me?' }]).at(-1)!.content;
+      expect(last).toContain('Carlos Mendez has just asked you to marry them');
+      expect(last).toContain('yes or no');
+      expect(last).not.toContain('Be flirty');
+    });
+
+    it('names an engagement or a marriage in the relationship line', () => {
+      expect(proposal([], ['engaged'])[0].content).toContain("You're engaged to be married.");
+      expect(proposal([], ['married'])[0].content).toContain("You're married to them.");
+    });
   });
 });

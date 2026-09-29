@@ -12,6 +12,13 @@ import { isFallbackMessage } from './sanitizeDialogue';
 import { firstName } from './names';
 import { TOWN_SETTING } from './setting';
 
+/**
+ * Conversation topic of a marriage proposal (queued by lib/milestonesEngine.ts,
+ * which also reads the answer back). Shared so the queue, the prompt and the
+ * outcome agree on one label.
+ */
+export const PROPOSAL_TOPIC = 'proposal';
+
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
 // ---------------------------------------------------------------------------
@@ -213,6 +220,9 @@ function buildRelationshipTag(
     drinking_buddy: 'You drink together.',
     antagonist: "They're your antagonist.",
     partner: "You're together.",
+    // Life milestones (lib/milestonesEngine.ts, lib/marriage.ts).
+    engaged: "You're engaged to be married.",
+    married: "You're married to them.",
   };
   for (const tag of relationship.tags) {
     const mapped = tagMap[tag];
@@ -303,6 +313,9 @@ export function topicIntent(topic: string, other: string): string {
     'inside joke': `Bring up a joke only the two of you would get.`,
     'friendly greeting': `Greet ${other} the way you would, and say one thing on your mind.`,
     'casual greeting': `Greet ${other} the way you would, and say one thing on your mind.`,
+    // Queued by lib/milestonesEngine.ts. The proposer always opens; the answer
+    // comes from the turn instruction below (PROPOSAL_TOPIC).
+    [PROPOSAL_TOPIC]: `You've made up your mind: ask ${other} to marry you, today. Do it your own way, in the manner of the time, and ask the question plainly.`,
   };
   if (intents[t]) return intents[t];
   const smallTalk = ['weather', 'daily life', 'food', 'work', 'weekend plans', 'memories', 'the farm'];
@@ -323,7 +336,19 @@ function buildTurnInstruction(
 ): string {
   const parts: string[] = [];
 
-  if (messageCount === 0) {
+  if (topic === PROPOSAL_TOPIC && messageCount > 0) {
+    // The proposal: whoever did not open is the one being asked. Their answer
+    // (the second line) is what lib/milestonesEngine.ts reads, so it has to be
+    // a clear yes or no, and the model has to feel free to say no — a romance
+    // that has soured, low trust or cold feet should show.
+    if (messageCount === 1) {
+      parts.push(`${otherName} has just asked you to marry them. Answer now, in your own words: say yes or no plainly, as your heart, your trust in them and your situation truly say.`);
+    } else if (messageCount >= maxTurns - 2) {
+      parts.push(`The question has been asked and answered. Close the moment the way you would.`);
+    } else {
+      parts.push(`Respond to ${otherName} about the proposal and its answer — stay in the moment, don't change the subject.`);
+    }
+  } else if (messageCount === 0) {
     // Opening turn
     if (isFirstMeeting) {
       const approach = friendship >= 0
@@ -359,8 +384,9 @@ function buildTurnInstruction(
     }
   }
 
-  // Date mode
-  if (romance && romance > 30 && messageCount > 0) {
+  // Date mode. Not during a proposal: "be flirty" on the answering turn leans
+  // the model toward yes, and the answer has to be free to be no.
+  if (romance && romance > 30 && messageCount > 0 && topic !== PROPOSAL_TOPIC) {
     parts.push('This is a romantic moment. Be flirty, vulnerable, or playful — whatever fits you.');
   }
 
