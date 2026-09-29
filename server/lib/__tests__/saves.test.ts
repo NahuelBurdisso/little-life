@@ -31,6 +31,7 @@ import {
   pruneAutosaves,
   saveWorld,
   SaveRejectedError,
+  sameWorld,
   setSavesDir,
 } from '../saves';
 
@@ -270,6 +271,51 @@ describe('saves', () => {
       expect(fs.existsSync(path.join(dir, `${a!.id}.json`))).toBe(false);
     }
     expect(await pruneAutosaves(3)).toEqual([]);
+  });
+
+  it('records the world in each save, rotates autosaves per world and lists this town first', async () => {
+    for (const s of listSaves()) await deleteSave(s.id);
+    const worldA = (sqlite.prepare('SELECT world_id FROM world_state').get() as { world_id: string | null }).world_id;
+    expect(worldA).toMatch(/^[0-9a-f-]{36}$/); // minted by replaceWorld
+
+    const autosA = [];
+    for (let day = 1; day <= 3; day++) autosA.push(await autosave(day));
+    expect(autosA.every((a) => a?.worldId === worldA)).toBe(true);
+    expect(listSaves().every((s) => s.currentWorld)).toBe(true);
+
+    // Another town takes over (a Restart mints a new id): its autosaves must
+    // not push town A's out, and A's saves are listed after B's, flagged.
+    sqlite.prepare("UPDATE world_state SET world_id = 'world-b'").run();
+    try {
+      for (let day = 1; day <= 4; day++) await autosave(day);
+      const saves = listSaves();
+      const mine = saves.filter((s) => s.worldId === 'world-b');
+      const theirs = saves.filter((s) => s.worldId === worldA);
+      expect(mine.map((s) => s.name)).toEqual(['Autosave — Day 4', 'Autosave — Day 3', 'Autosave — Day 2']);
+      expect(theirs).toHaveLength(3);
+      expect(mine.every((s) => s.currentWorld)).toBe(true);
+      expect(theirs.every((s) => !s.currentWorld)).toBe(true);
+      // This town's first, newest first within each group.
+      expect(saves.slice(0, 3).map((s) => s.worldId)).toEqual(['world-b', 'world-b', 'world-b']);
+    } finally {
+      sqlite.prepare('UPDATE world_state SET world_id = ?').run(worldA);
+    }
+
+    // A world from before ids gets one on its first save.
+    sqlite.prepare('UPDATE world_state SET world_id = NULL').run();
+    try {
+      const meta = await saveWorld('Legacy town');
+      expect(meta.worldId).toMatch(/^[0-9a-f-]{36}$/);
+      expect((sqlite.prepare('SELECT world_id FROM world_state').get() as { world_id: string }).world_id).toBe(meta.worldId);
+    } finally {
+      sqlite.prepare('UPDATE world_state SET world_id = ?').run(worldA);
+    }
+
+    // Saves from before ids match by seed; a save with an id never matches a world without one.
+    expect(sameWorld({ worldId: undefined, seed: 's1' }, { worldId: 'x', seed: 's1' })).toBe(true);
+    expect(sameWorld({ worldId: undefined, seed: 's1' }, { worldId: 'x', seed: 's2' })).toBe(false);
+    expect(sameWorld({ worldId: 'x', seed: 's1' }, { worldId: null, seed: 's1' })).toBe(false);
+    for (const s of listSaves()) await deleteSave(s.id);
   });
 
   it('router: saves and lists, validates ids, and hands refusals back as BAD_REQUEST', async () => {

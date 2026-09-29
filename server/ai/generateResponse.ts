@@ -14,6 +14,7 @@ import { gameMinutesNow } from '../lib/worldClock';
 import { recordTurnLatency } from '../lib/conversationPacing';
 import { LLMAbortedError } from './llmErrors';
 import { autoPlayer } from '../autoplay';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../lib/worldEpoch';
 
 export interface GenerateResponseResult {
   messageCount: number;
@@ -28,6 +29,10 @@ export async function generateResponse(
   signal?: AbortSignal,
 ): Promise<GenerateResponseResult | null> {
   const turnStart = performance.now();
+  // The world this turn belongs to. A swap aborts the model call through the
+  // world signal, but the check before the write below is what guarantees a
+  // late line never lands in a new world's conversation that reuses this id.
+  const worldEpoch = currentWorldEpoch();
   // Cancelled before it began (closed between turns): skip the context build,
   // which can itself wait on memory-retrieval embeddings.
   if (signal?.aborted) return null;
@@ -281,7 +286,7 @@ export async function generateResponse(
     }
   }
 
-  if (signal?.aborted) return null;
+  if (signal?.aborted || isStaleWorldEpoch(worldEpoch)) return null;
 
   // The LLM work for this turn is done — time it NOW, before addMessage. It used
   // to be timed by the task runner only when the line was accepted, so a turn so

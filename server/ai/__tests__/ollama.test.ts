@@ -4,6 +4,7 @@ import { LLMEmptyReplyError, LLMAbortedError } from '../llmErrors';
 import { getLLMStats } from '../llmSemaphore';
 import { getLLMMetrics, resetLLMMetrics } from '../llmMetrics';
 import { CONFIG } from '../../lib/constants';
+import { bumpWorldEpoch } from '../../lib/worldEpoch';
 
 // Pins how each backend reports a reply the token cap cut off — dialogue trims
 // the dangling half-sentence only when this flag says the cap was hit.
@@ -106,6 +107,41 @@ describe('callOllamaChat — caller cancellation', () => {
     controller.abort();
     await expect(pending).rejects.toBeInstanceOf(LLMAbortedError);
     expect(getLLMStats().active).toBe(0);
+  });
+});
+
+describe('callOllamaChat — world swap', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    ai.BACKEND = originalBackend;
+    resetLLMMetrics();
+  });
+
+  it('aborts a request in flight when the world is swapped, without booking it', async () => {
+    ai.BACKEND = 'ollama';
+    resetLLMMetrics();
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((r) => { fetchStarted = r; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      fetchStarted();
+      (init?.signal as AbortSignal).addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+    }));
+    // No caller signal at all: the world signal alone must cancel it.
+    const pending = callOllamaChat({ ...request, purpose: 'reflection.insights' });
+    await started;
+    bumpWorldEpoch();
+    await expect(pending).rejects.toBeInstanceOf(LLMAbortedError);
+    expect(getLLMStats().active).toBe(0);
+    expect(getLLMMetrics()).toEqual([]);
+  });
+
+  it('a request made after the swap belongs to the new world and runs', async () => {
+    ai.BACKEND = 'ollama';
+    bumpWorldEpoch();
+    mockFetch({ message: { content: 'Fresh.' }, done_reason: 'stop' });
+    await expect(callOllamaChat(request)).resolves.toEqual({ text: 'Fresh.', truncated: false });
   });
 });
 

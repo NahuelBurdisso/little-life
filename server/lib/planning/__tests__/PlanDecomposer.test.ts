@@ -206,6 +206,24 @@ describe('plan execution when block decomposition fails', () => {
     expect(act()).toBeNull();
   });
 
+  it("sends \"home\" to the agent's own house, not to another house with \"home\" in its name", async () => {
+    const vacant = db.insert(locations).values({
+      name: `${bakery} Home 7`, type: 'home', position: { x: 0, y: 0, width: 32, height: 32 },
+      entry_point: { x: 0, y: 0 }, capacity: 2, current_occupants: [], services: [], description: 'test',
+    }).returning({ id: locations.id }).get().id;
+    const ownHome = db.select({ home: agents.home }).from(agents).where(eq(agents.id, agentId)).get()!.home;
+    const { cache, queue, act } = setup();
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({
+      text: `Nap | home | 60 minutes\nKnead dough | ${bakery} | 60 minutes`,
+    }) as never);
+    act();
+    await settled(queue);
+    const actions = cache.get(agentId)!.blocks[0].decomposed_actions!;
+    expect(actions[0].resolved_location_id).toBe(ownHome);
+    expect(actions[0].resolved_location_id).not.toBe(vacant);
+    db.delete(locations).where(eq(locations.id, vacant)).run();
+  });
+
   it('yields without calling the LLM while the outage breaker is open', async () => {
     const { gate, act } = setup();
     // Other agents' failures trip the breaker.

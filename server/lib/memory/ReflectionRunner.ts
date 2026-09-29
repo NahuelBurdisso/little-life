@@ -8,6 +8,7 @@ import type { MemoryService } from './MemoryService';
 import type { RetrievalResult } from './types';
 import { buildQuestionPrompt, buildSynthesisPrompt } from './reflectionPrompts';
 import { parseQuestions, parseInsights } from './reflectionParser';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -24,7 +25,13 @@ const INTER_REFLECTION_DELAY_MS = 500;
 
 export class ReflectionRunner {
   private memoryService: MemoryService;
-  private queue: number[] = [];
+  /**
+   * Agent ids waiting to reflect, each with the world epoch it was queued in.
+   * The worker loop outlives a world swap (clearQueue only empties the list),
+   * so the reflection it is running when the swap lands must check its own
+   * epoch before recording insights — for an id that may now be a stranger.
+   */
+  private queue: Array<{ agentId: number; epoch: number }> = [];
   private running = false;
 
   constructor(memoryService: MemoryService) {
@@ -36,8 +43,8 @@ export class ReflectionRunner {
    * in the queue. Starts queue processing if not already running.
    */
   queueReflection(agentId: number): void {
-    if (this.queue.includes(agentId)) return;
-    this.queue.push(agentId);
+    if (this.queue.some((q) => q.agentId === agentId)) return;
+    this.queue.push({ agentId, epoch: currentWorldEpoch() });
     if (!this.running) {
       void this.processQueue();
     }
@@ -56,9 +63,10 @@ export class ReflectionRunner {
     this.running = true;
     try {
       while (this.queue.length > 0) {
-        const agentId = this.queue.shift()!;
+        const { agentId, epoch } = this.queue.shift()!;
+        if (isStaleWorldEpoch(epoch)) continue;
         try {
-          await this.runReflection(agentId);
+          await this.runReflection(agentId, epoch);
         } catch (err) {
           console.error(`[ReflectionRunner] Error reflecting for agent ${agentId}:`, err);
         }
@@ -71,7 +79,7 @@ export class ReflectionRunner {
     }
   }
 
-  private async runReflection(agentId: number): Promise<void> {
+  private async runReflection(agentId: number, epoch: number = currentWorldEpoch()): Promise<void> {
     // 1. Load agent from DB
     const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
     if (!agent) {
@@ -126,6 +134,8 @@ export class ReflectionRunner {
       format: qFormat,
       options: { temperature: 0.7, num_predict: 256 },
     });
+
+    if (isStaleWorldEpoch(epoch)) return;
 
     // 5. Parse questions; skip if empty
     const questions = parseQuestions(questionResponse.text);
@@ -184,6 +194,10 @@ export class ReflectionRunner {
       format: sFormat,
       options: { temperature: 0.7, num_predict: 512 },
     });
+
+    // World swapped while the model wrote: these insights (and the memory ids
+    // they cite) belong to a town that no longer exists.
+    if (isStaleWorldEpoch(epoch)) return;
 
     // 12. Parse insights; skip if empty
     const insights = parseInsights(synthesisResponse.text);

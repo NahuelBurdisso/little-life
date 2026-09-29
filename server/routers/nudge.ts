@@ -1,5 +1,5 @@
 import { router, publicProcedure } from '../trpc';
-import { db } from '../db';
+import { db, sqlite } from '../db';
 import {
   agents,
   needs,
@@ -32,6 +32,9 @@ import { rumorReachedSubject } from '../lib/gossip';
 import { nightSkip } from '../engine/nightSkip';
 import { workplaceForJob } from '../lib/jobWorkplace';
 import { jobSalary } from '../data/jobs';
+import { generateNewResident } from '../lib/newResident';
+import { perceptionSystem } from '../lib/perception/instance';
+import { nameHomes } from '../lib/homeNames';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -218,6 +221,10 @@ export const nudgeRouter = router({
             })
             .where(eq(agents.id, agentBId))
             .run();
+
+          // The player brought these two together: whatever perception was
+          // holding back between them (a flirt it considered a rerun) is stale.
+          perceptionSystem.forgetPair(agentAId, agentBId);
 
           logActivity({
             type: 'player_nudge',
@@ -454,19 +461,34 @@ export const nudgeRouter = router({
           }
 
           // Find workplace by the job's building type (null when jobless).
-          const workplace = workplaceForJob(job, db.select().from(locations).all());
+          const allLocations = db.select().from(locations).all();
+          const workplace = workplaceForJob(job, allLocations);
 
           const homeEntry = availableHome.entry_point as { x: number; y: number };
+
+          // Personality, gender, age, the job's real hours, free-time places
+          // that exist, a bio if the player left it blank, starting needs —
+          // seeded by the world and the name (lib/newResident.ts has why).
+          const worldSeed = (world.setup_config as { worldgen?: { seed?: unknown } } | null)?.worldgen?.seed;
+          const profile = generateNewResident({
+            name,
+            bio,
+            traits,
+            job,
+            worldSeed: typeof worldSeed === 'string' || typeof worldSeed === 'number' ? worldSeed : 'world',
+            availableLocationTypes: [...new Set(allLocations.map((l) => l.type))],
+          });
 
           // Create agent
           const result = db
             .insert(agents)
             .values({
               name,
-              bio,
-              traits,
-              age: 25,
-              gender: 'neutral',
+              bio: profile.bio,
+              traits: profile.traits,
+              personality: profile.personality,
+              age: profile.age,
+              gender: profile.gender,
               sprite_sheet: 'default',
               portrait_sprite: 'default',
               position: { x: homeEntry.x, y: homeEntry.y },
@@ -477,14 +499,7 @@ export const nudgeRouter = router({
               action_duration: null,
               action_queue: [],
               current_path: null,
-              schedule: {
-                wakeTime: 7,
-                sleepTime: 23,
-                workStart: 9,
-                workEnd: 17,
-                lunchTime: 12,
-                freeTimePreferences: ['socializing', 'shopping'],
-              },
+              schedule: profile.schedule,
               home: availableHome.id,
               workplace: workplace ? workplace.id : null,
               created_at: now,
@@ -493,6 +508,10 @@ export const nudgeRouter = router({
             .run();
 
           const agentId = Number(result.lastInsertRowid);
+
+          // The house is named after who lives there: a cottage of one becomes
+          // a family's house, and an empty `Home N` gets a name at last.
+          nameHomes(sqlite, { homeIds: [availableHome.id] });
 
           // Add agent to home occupants
           const occupants = availableHome.current_occupants as number[];
@@ -507,13 +526,7 @@ export const nudgeRouter = router({
           db.insert(needs)
             .values({
               agent_id: agentId,
-              hunger: 80,
-              energy: 80,
-              social: 80,
-              comfort: 80,
-              fun: 80,
-              mood: 80,
-              stress: 10,
+              ...profile.needs,
               decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
               thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
               mood_modifiers: [],
@@ -532,7 +545,8 @@ export const nudgeRouter = router({
             .values({
               agent_id: agentId,
               job,
-              job_title: job,
+              job_title: profile.jobTitle,
+              // One wage table for everyone (data/jobs.ts), newcomers included.
               salary: jobSalary(job),
               work_performance: 0.7,
               money: CONFIG.ECONOMY.STARTING_MONEY,
@@ -766,6 +780,9 @@ export const nudgeRouter = router({
         }
         case 'stir_feeling': {
           const result = stirFeeling(action.agentId, action.state, action.targetId ?? null);
+          // A feeling stirred toward someone is exactly "something changed":
+          // a fresh infatuation should be free to send them over at once.
+          if (result.success && action.targetId != null) perceptionSystem.forgetPair(action.agentId, action.targetId);
           emitter.flush();
           return result;
         }

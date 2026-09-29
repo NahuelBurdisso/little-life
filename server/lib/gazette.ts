@@ -21,6 +21,7 @@ import { renderMessage } from './activityMessage';
 import { detectStoryArcs } from './chronicle';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
+import { currentWorldEpoch, isStaleWorldEpoch } from './worldEpoch';
 
 export const GAZETTE_NAME = 'The Town Crier';
 
@@ -179,6 +180,7 @@ export function writeIssue(): Promise<number | null> {
 }
 
 async function doWrite(): Promise<number | null> {
+  const worldEpoch = currentWorldEpoch();
   const world = db.select({ time: worldState.time, weather: worldState.weather }).from(worldState).limit(1).get();
   if (!world) return null;
   const nowTick = world.time.totalTicks;
@@ -214,7 +216,9 @@ async function doWrite(): Promise<number | null> {
   if (!parsed) return null;
 
   // World replaced while the model wrote: this edition belongs to a town that
-  // no longer exists.
+  // no longer exists. The epoch catches every swap; the clock check stays for
+  // a world whose DB was rewound under the process some other way.
+  if (isStaleWorldEpoch(worldEpoch)) return null;
   const after = db.select({ time: worldState.time }).from(worldState).limit(1).get();
   if (!after || after.time.totalTicks < nowTick) return null;
 

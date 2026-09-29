@@ -13,6 +13,7 @@ import { getImportance } from './ImportanceScorer';
 import { goalClause } from '../goalText';
 import { itemPhrase, itemCountPhrase } from '../../data/economyData';
 import { endSentence } from '../factText';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
@@ -103,6 +104,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         .map((m) => ({ speaker: nameOf(m.speakerId) ?? 'Someone', text: m.text }));
       const me = nameOf(agentId);
       if (CONFIG.AI.CONVERSATION_SUMMARIES && conversationId != null && !truncated && me && spoken.length >= MIN_SUMMARY_LINES) {
+        const worldEpoch = currentWorldEpoch();
         let pending = pendingSummaries.get(conversationId);
         if (!pending) {
           const participants = [...new Set(spoken.map((l) => l.speaker))];
@@ -115,7 +117,10 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         pending.then((takeaways) => {
           const takeaway = takeaways?.get(me);
           // The world may have been replaced while the model answered, and
-          // SQLite reuses ids: only record for the same person.
+          // SQLite reuses ids. A name check alone missed it whenever the new
+          // world kept the default cast (same names, same ids): the epoch is
+          // what tells the worlds apart.
+          if (isStaleWorldEpoch(worldEpoch)) return;
           const current = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get()?.name;
           if (current !== me) return;
           if (!takeaway) {

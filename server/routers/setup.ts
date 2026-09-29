@@ -34,7 +34,9 @@ import { buildSocialEdges } from '../lib/worldgen/social';
 import { buildStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
 import { saveWorldCaches } from '../engine/worldCaches';
-import { resetWorldRuntime } from '../engine/worldRuntime';
+import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
+import { randomUUID } from 'crypto';
+import { nameHomes } from '../lib/homeNames';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -868,6 +870,8 @@ function seedWorld(
     road_tiles: genResult.roads,
     terrain_tiles: genResult.terrainTiles,
     setup_config: config as any,
+    // A new town, even from the same seed: its saves rotate on their own.
+    world_id: randomUUID(),
   }).run();
 
   // 10. Create conversationSchedulerState singleton
@@ -935,7 +939,7 @@ async function replaceWorld(
     taskRunner.drain(),
     new Promise(resolve => setTimeout(resolve, 10_000)),
   ]);
-  taskRunner.resetSlots();
+  retireOutgoingWorldTasks();
   // Checkpoint the outgoing world's in-memory state (never throws). On success
   // the rows are wiped with the world; on a rolled-back seed they come back
   // with it, and `restoreWorldCaches` below reloads them — so a failed replace
@@ -976,7 +980,11 @@ async function replaceWorld(
     return sqlite.transaction(() => {
       sqlite.exec('PRAGMA defer_foreign_keys = ON;');
       deleteAllRows();
-      return seedWorld(config, genResult, scenario);
+      const seeded = seedWorld(config, genResult, scenario);
+      // After the seed, which places people by the worldgen labels: name the
+      // houses after who lives in them (ids unchanged; lib/homeNames.ts).
+      nameHomes(sqlite);
+      return seeded;
     })();
   } finally {
     // Everything before `startTickLoop()` is wrapped so that nothing in here can
@@ -1122,7 +1130,7 @@ export const setupRouter = router({
       taskRunner.drain(),
       new Promise(resolve => setTimeout(resolve, 10_000)),
     ]);
-    taskRunner.resetSlots();
+    retireOutgoingWorldTasks();
     // As in `replaceWorld`: a rolled-back reset gets its state back below.
     saveWorldCaches();
 

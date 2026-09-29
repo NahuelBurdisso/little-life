@@ -1,5 +1,6 @@
 import { logActivity } from '../activityLogger';
 import { CONFIG } from '../constants';
+import { currentWorldEpoch } from '../worldEpoch';
 
 // Backoffs and cooldowns in the planning layer are measured in game minutes
 // (`gameMinutes` in lib/gameClock.ts) rather than `totalTicks` (one tick is
@@ -166,9 +167,15 @@ export class PlanLLMGate {
    * Bumped by `clear()`. A job that awaited the LLM across a world replace
    * compares it after the await and drops its result, instead of writing the
    * old world's plan onto a new agent that reuses the rowid.
+   *
+   * Also moves with the process-wide world epoch (lib/worldEpoch.ts): the swap
+   * bumps that one first and aborts the in-flight calls, and the aborted job's
+   * `catch` runs before `clear()` is reached. Seen through `_epoch` alone it
+   * would still look current and book the abort as an LLM outage. Both
+   * counters only grow, so their sum changes whenever either does.
    */
   get epoch(): number {
-    return this._epoch;
+    return this._epoch + currentWorldEpoch();
   }
 
   /**

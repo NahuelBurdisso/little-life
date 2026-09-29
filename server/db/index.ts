@@ -16,6 +16,7 @@ import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
 import { CONFIG } from '../lib/constants';
+import { nameHomes } from '../lib/homeNames';
 import path from 'path';
 import fs from 'fs';
 
@@ -158,6 +159,8 @@ function migrateSchema() {
   addColumnIfMissing('world_state', 'treasury_ramp_left', 'INTEGER');
   // Live rule overrides (Storyteller / world.setRules), see lib/worldRules.ts.
   addColumnIfMissing('world_state', 'rule_overrides', 'TEXT');
+  // Per-world identity for saves (schema.ts has why).
+  addColumnIfMissing('world_state', 'world_id', 'TEXT');
 
   // Backfills. Each runs independently — sharing one catch meant a failure on
   // the goals backfill skipped the aspirations one entirely. The first real
@@ -390,6 +393,9 @@ export function initSchema(): void {
     () => backfillActivityLogGameMinutes(sqlite),
     // Every start; matches only old-orientation rows, so a no-op once healed.
     () => repairLegacySightingFacts(sqlite),
+    // Every start and save load; renames only houses still called `Home N`
+    // after their residents, so a no-op once a world is named (homeNames.ts).
+    () => { nameHomes(sqlite, { onlyGeneric: true }); },
   ]);
   // Again, for indexes on columns migrateSchema only just added: on an old file
   // the first pass above failed on idx_relationship_events_game_minute (and

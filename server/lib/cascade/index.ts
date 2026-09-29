@@ -12,6 +12,7 @@ import { gameMinutes } from '../gameClock';
 import { snapThresholdScale } from '../worldRules';
 import { getAgentStates } from '../states';
 import type { SnapshotStore } from '../../engine/snapshotCodec';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 // ─── Singleton instances ────────────────────────────────────────────────────
 
@@ -240,7 +241,10 @@ export function cascadeTick(): void {
       if (p.morality > 60) traits.push('moral');
       if (p.loyalty > 60) traits.push('loyal');
 
-      // Queue async snap resolution (fire and forget)
+      // Queue async snap resolution (fire and forget). The action lands by
+      // agent id, so it is dropped if the world was swapped while the model
+      // chose (resolveSnap also answers 'breakdown' when its call is aborted).
+      const worldEpoch = currentWorldEpoch();
       void snapResolver.resolveSnap({
         agentName: agentRow?.name ?? `Agent#${agent.id}`,
         personalitySummary: traits.length > 0 ? traits.join(', ') : 'balanced',
@@ -248,6 +252,7 @@ export function cascadeTick(): void {
         activeStates,
         activeGoals: agentGoals.map(g => g.type),
       }).then(action => {
+        if (isStaleWorldEpoch(worldEpoch)) return;
         return snapResolver!.executeSnapAction(agent.id, action, tensionSources, {
           chainId: `snap_${agent.id}_${currentTick}`,
           currentTick,

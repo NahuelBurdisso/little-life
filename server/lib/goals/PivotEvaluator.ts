@@ -10,6 +10,7 @@ import { GoalMapper } from './GoalMapper';
 import { parsePivotResult } from './goalParser';
 import { buildPivotPrompt } from './goalPrompts';
 import { PIVOT_THRESHOLD_MINUTES, STALE_ABANDON_MINUTES } from './types';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 export function shouldPivot(progress: number, pivotCount: number, minutesElapsed: number): boolean {
   return progress === 0 && pivotCount === 0 && minutesElapsed >= PIVOT_THRESHOLD_MINUTES;
@@ -100,6 +101,10 @@ export class PivotEvaluator {
       daysActive, recentMemories: recentMems.map(m => m.description),
     });
 
+    // Goal ids restart after a world swap: a late answer (or the abort the swap
+    // causes, which lands in the catch) must not rewrite or abandon a new
+    // world's goal that reuses this id.
+    const worldEpoch = currentWorldEpoch();
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL, system: prompt.system,
@@ -110,6 +115,7 @@ export class PivotEvaluator {
         options: { temperature: 0.7, num_predict: 200 },
       });
 
+      if (isStaleWorldEpoch(worldEpoch)) return;
       const result = parsePivotResult(response.text);
       if (!result) {
         this.abandonGoal(goal, agent.id, 'could not find a new approach', nowMinutes);
@@ -130,6 +136,7 @@ export class PivotEvaluator {
         newStrategy: result.new_strategy,
       });
     } catch (error: any) {
+      if (isStaleWorldEpoch(worldEpoch)) return;
       const errMsg = error?.message ?? String(error);
       logActivity({ type: 'error', templateData: { system: 'goals', message: `Pivot LLM failed for ${agent.name}: ${errMsg}` } });
       this.abandonGoal(goal, agent.id, 'failed to find alternative approach', nowMinutes);

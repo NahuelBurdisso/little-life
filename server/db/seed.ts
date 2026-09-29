@@ -25,6 +25,7 @@ import { gameMinutes } from '../lib/gameClock';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 import { ALL_TABLES } from './worldTables';
+import { nameHomes } from '../lib/homeNames';
 
 // Shared with the world-replace and save-load paths so a table added there is
 // wiped here too (this copy used to miss goals, aspirations and interactions).
@@ -665,6 +666,9 @@ function seed() {
       luciaIsA ? { trust_ab: 35 } : { trust_ba: 35 }
     ).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
   }
+
+  // Houses after their residents, once everyone has moved in (lib/homeNames.ts).
+  nameHomes(sqlite);
 
   console.log('[seed] Seeding complete!');
 }

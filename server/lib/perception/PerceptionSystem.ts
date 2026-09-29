@@ -38,6 +38,7 @@ interface RelationshipData {
   friendship_ba: number;
   romance_ab: number;
   romance_ba: number;
+  status: string;
 }
 
 /**
@@ -109,14 +110,62 @@ export function isInfatuatedWith(observerStates: readonly StateData[], targetId:
 
 // ─── PerceptionSystem ─────────────────────────────────────────────────────────
 
-const GLOBAL_PAIR_COOLDOWN = 30; // minimum game minutes between ANY perception for the same observer→target pair
+/**
+ * Minimum game minutes between ANY perception for the same pair, in either
+ * direction. It was keyed observer→target, so the pair's two halves ran on
+ * separate clocks: A spotted B, fifteen minutes later B spotted A, and a
+ * couple sharing a room took turns walking over to each other.
+ */
+const GLOBAL_PAIR_COOLDOWN = 30;
 const MAX_RULE_COOLDOWN = 180; // longest cooldown in the perception registry, used for pruning
+
+/**
+ * Reactions that start a conversation of a kind that reads as a loop when the
+ * same two people repeat it: with only the 30-minute pair cooldown and a
+ * 20-minute `crush_spotted`, a pair in the same tavern re-flirted every half
+ * hour all evening. Keyed per pair and kind, both directions, and only set
+ * when the conversation was actually queued. A few game hours — the flirt can
+ * come back later the same day — unless something changed in between (see
+ * `kindCooldownLifted`). Player nudges don't go through perception at all, and
+ * `forgetPair` clears the pair's clocks when the player meddles with them.
+ */
+export const CONVERSATION_KIND_COOLDOWNS: Readonly<Record<string, { kind: string; minutes: number }>> = {
+  approach_flirt: { kind: 'flirt', minutes: 240 },
+  approach_partner: { kind: 'romance', minutes: 180 },
+};
+const MAX_KIND_COOLDOWN = Math.max(...Object.values(CONVERSATION_KIND_COOLDOWNS).map((c) => c.minutes));
+/** Romance (both directions summed) moving this far since the last one counts as "something changed". */
+export const KIND_COOLDOWN_ROMANCE_RESET = 10;
+
+/** Order-free key for a pair: the same for A→B and B→A. */
+export function pairKey(a: number, b: number): string {
+  return a < b ? `${a}-${b}` : `${b}-${a}`;
+}
+
+interface KindStamp {
+  at: number;
+  /** romance_ab + romance_ba when the conversation was queued. */
+  romance: number;
+  status: string | null;
+}
+
+/**
+ * A kind cooldown no longer applies when the pair's relationship moved since:
+ * they became partners (or broke up), or romance swung by
+ * KIND_COOLDOWN_ROMANCE_RESET — the flirt went somewhere and the next one is a
+ * new scene, not a rerun.
+ */
+export function kindCooldownLifted(stamp: KindStamp, romance: number, status: string | null): boolean {
+  return stamp.status !== status || Math.abs(romance - stamp.romance) >= KIND_COOLDOWN_ROMANCE_RESET;
+}
 
 export class PerceptionSystem {
   /** "agentId-targetId-ruleId" → game minute when this perception last fired */
   private cooldowns: Map<string, number> = new Map();
-  /** "agentId-targetId" → game minute when ANY perception last fired for this pair */
+  /** `pairKey(a, b)` → game minute when ANY perception last fired for this pair, either way */
   private pairCooldowns: Map<string, number> = new Map();
+  /** `${pairKey}|${kind}` → when that kind of conversation was last queued for the pair */
+  private kindCooldowns: Map<string, KindStamp> = new Map();
 
   /**
    * Remove expired cooldown entries to prevent unbounded Map growth.
@@ -131,6 +180,27 @@ export class PerceptionSystem {
       if (nowMinutes - lastFired >= GLOBAL_PAIR_COOLDOWN) {
         this.pairCooldowns.delete(key);
       }
+    }
+    for (const [key, stamp] of this.kindCooldowns) {
+      if (nowMinutes - stamp.at >= MAX_KIND_COOLDOWN) {
+        this.kindCooldowns.delete(key);
+      }
+    }
+  }
+
+  /**
+   * The player acted on this pair (a suggested talk, a stirred feeling): what
+   * perception remembered about them is no longer the latest news, so every
+   * clock between the two — pair, per-rule, per-kind — starts over.
+   */
+  forgetPair(a: number, b: number): void {
+    const key = pairKey(a, b);
+    this.pairCooldowns.delete(key);
+    for (const k of this.kindCooldowns.keys()) {
+      if (k.startsWith(`${key}|`)) this.kindCooldowns.delete(k);
+    }
+    for (const k of this.cooldowns.keys()) {
+      if (k.startsWith(`${a}-${b}-`) || k.startsWith(`${b}-${a}-`)) this.cooldowns.delete(k);
     }
   }
 
@@ -177,6 +247,7 @@ export class PerceptionSystem {
         friendship_ba: relationships.friendship_ba,
         romance_ab: relationships.romance_ab,
         romance_ba: relationships.romance_ba,
+        status: relationships.status,
       })
       .from(relationships)
       .all();
@@ -283,10 +354,13 @@ export class PerceptionSystem {
         }
 
         const observerRelation = { friendship, romance };
+        const pairRomance = rel ? rel.romance_ab + rel.romance_ba : 0;
+        const pairStatus = rel?.status ?? null;
 
-        // Global pair cooldown: skip if ANY perception fired recently for this pair
-        const pairKey = `${observer.id}-${target.id}`;
-        const lastPairFired = this.pairCooldowns.get(pairKey) ?? -Infinity;
+        // Global pair cooldown: skip if ANY perception fired recently for this
+        // pair, whichever of the two noticed the other.
+        const thisPair = pairKey(observer.id, target.id);
+        const lastPairFired = this.pairCooldowns.get(thisPair) ?? -Infinity;
         if (nowMinutes - lastPairFired < GLOBAL_PAIR_COOLDOWN) continue;
 
         // Evaluate all rules, collect matches with scores
@@ -298,6 +372,17 @@ export class PerceptionSystem {
           const cooldownKey = `${observer.id}-${target.id}-${rule.id}`;
           const lastFired = this.cooldowns.get(cooldownKey) ?? -Infinity;
           if (nowMinutes - lastFired < rule.cooldown) continue;
+
+          // Same kind of conversation between the same two, recently, and
+          // nothing changed since: let another rule (a wave, say) win instead.
+          const kindRule = CONVERSATION_KIND_COOLDOWNS[rule.reaction];
+          if (kindRule) {
+            const stamp = this.kindCooldowns.get(`${thisPair}|${kindRule.kind}`);
+            if (
+              stamp && nowMinutes - stamp.at >= 0 && nowMinutes - stamp.at < kindRule.minutes &&
+              !kindCooldownLifted(stamp, pairRomance, pairStatus)
+            ) continue;
+          }
 
           // Handle target_is_state_target separately (needs state records)
           if (rule.observes.target_is_state_target) {
@@ -325,7 +410,7 @@ export class PerceptionSystem {
         // Fire the best rule
         const cooldownKey = `${observer.id}-${target.id}-${bestRule.id}`;
         this.cooldowns.set(cooldownKey, nowMinutes);
-        this.pairCooldowns.set(pairKey, nowMinutes);
+        this.pairCooldowns.set(thisPair, nowMinutes);
 
         const reaction = REACTION_TYPES[bestRule.reaction];
         if (!reaction) continue;
@@ -361,6 +446,13 @@ export class PerceptionSystem {
 
             // Mark this pair as busy so subsequent perception pairs don't double-queue
             addBusy([observer.id, target.id]);
+
+            const kindRule = CONVERSATION_KIND_COOLDOWNS[bestRule.reaction];
+            if (kindRule) {
+              this.kindCooldowns.set(`${thisPair}|${kindRule.kind}`, {
+                at: nowMinutes, romance: pairRomance, status: pairStatus,
+              });
+            }
           }
         } else if (reaction.action === 'emote') {
           // A greeting in passing. No conversation row, no memory-bearing
@@ -421,5 +513,6 @@ export class PerceptionSystem {
   clear(): void {
     this.cooldowns.clear();
     this.pairCooldowns.clear();
+    this.kindCooldowns.clear();
   }
 }

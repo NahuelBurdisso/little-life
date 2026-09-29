@@ -64,8 +64,24 @@ function parseTimeRange(token: string): { start: number; end: number } | null {
   return { start, end };
 }
 
+/**
+ * "Home", "my home", "at home": the planner's word for the agent's OWN house,
+ * which the deterministic decomposer and PlanDecomposer resolve per agent.
+ * It must reach them as the word: substring matching sent it to the first
+ * location containing "home" — `Home 1` for everyone in a town of worldgen
+ * labels, a stranger's vacant `Home 7` once houses carry their residents'
+ * names (lib/homeNames.ts).
+ */
+const OWN_HOME_RE = /^(?:my |at |own |back )?(?:own )?home$/;
+
+export function isOwnHomeWord(hint: string): boolean {
+  return OWN_HOME_RE.test(hint.toLowerCase().trim());
+}
+
 function fuzzyMatchLocation(hint: string, validLocations: string[]): string {
   const lower = hint.toLowerCase().trim();
+
+  if (isOwnHomeWord(lower)) return 'Home';
 
   // 1. Exact match (case-insensitive)
   const exact = validLocations.find(loc => loc.toLowerCase() === lower);

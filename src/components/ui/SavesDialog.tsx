@@ -38,8 +38,10 @@ function sizeLabel(bytes: number): string {
 /**
  * Save slots: keep a town worth keeping, or branch one ("what if I reveal
  * this?") and come back. The server pauses the game while it copies, so a
- * save is always of whole ticks. Autosaves (one per game day, last three kept)
- * show up here too.
+ * save is always of whole ticks. Autosaves (one per game day, last three kept
+ * per town) show up here too. The running town's saves come first; the server
+ * flags the rest (`currentWorld: false`) and they get an "other town" badge,
+ * since loading one swaps the whole town, not just the day.
  */
 export function SavesDialog({ onClose, onLoaded, canSave, defaultName }: SavesDialogProps) {
   const [name, setName] = useState("");
@@ -183,6 +185,14 @@ export function SavesDialog({ onClose, onLoaded, canSave, defaultName }: SavesDi
                       {s.kind === "auto" && (
                         <span className="text-[9px] uppercase tracking-wider px-1 border border-ui-line text-ui-dim shrink-0">
                           auto
+                        </span>
+                      )}
+                      {!s.currentWorld && (
+                        <span
+                          className="text-[9px] uppercase tracking-wider px-1 border border-ui-gold/50 text-ui-gold shrink-0"
+                          title="A save of a different town. Loading it replaces the town you are running."
+                        >
+                          other town
                         </span>
                       )}
                     </div>
