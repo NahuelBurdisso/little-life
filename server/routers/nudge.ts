@@ -32,6 +32,7 @@ import { rumorReachedSubject } from '../lib/gossip';
 import { nightSkip } from '../engine/nightSkip';
 import { workplaceForJob } from '../lib/jobWorkplace';
 import { generateNewResident } from '../lib/newResident';
+import { perceptionSystem } from '../lib/perception/instance';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -218,6 +219,10 @@ export const nudgeRouter = router({
             })
             .where(eq(agents.id, agentBId))
             .run();
+
+          // The player brought these two together: whatever perception was
+          // holding back between them (a flirt it considered a rerun) is stale.
+          perceptionSystem.forgetPair(agentAId, agentBId);
 
           logActivity({
             type: 'player_nudge',
@@ -768,6 +773,9 @@ export const nudgeRouter = router({
         }
         case 'stir_feeling': {
           const result = stirFeeling(action.agentId, action.state, action.targetId ?? null);
+          // A feeling stirred toward someone is exactly "something changed":
+          // a fresh infatuation should be free to send them over at once.
+          if (result.success && action.targetId != null) perceptionSystem.forgetPair(action.agentId, action.targetId);
           emitter.flush();
           return result;
         }
