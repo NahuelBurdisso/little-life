@@ -75,6 +75,8 @@ export interface ActiveEmitter {
   profileId: string;
   anchorType: 'agent' | 'location' | 'world';
   anchorId: string;
+  /** `Number(anchorId)`, resolved once so per-frame location lookups compare numbers, not strings. */
+  anchorNum: number;
   spawnAccumulator: number; // fractional particles to spawn
   aliveCount: number;       // currently alive from this emitter
   burstDone: boolean;       // has initial burst fired?

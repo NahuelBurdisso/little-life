@@ -127,14 +127,14 @@ export function activityDotColor(agent: any): number {
     return 0x5a7ac8; // blue
   }
   // Conflict/stress — check active states first
-  const states: string[] = (agent.activeStates ?? []).map((s: any) =>
-    typeof s === 'string' ? s : s.type,
-  );
-  if (
-    states.includes('angry') || states.includes('stressed') ||
-    states.includes('conflict')
-  ) {
-    return 0xcc4444; // red
+  // A plain loop: this runs for every occupant on every data refresh.
+  const activeStates: any[] = agent.activeStates ?? [];
+  for (let i = 0; i < activeStates.length; i++) {
+    const s = activeStates[i];
+    const state: string = typeof s === 'string' ? s : s.type;
+    if (state === 'angry' || state === 'stressed' || state === 'conflict') {
+      return 0xcc4444; // red
+    }
   }
   // Active / working
   if (
@@ -148,11 +148,19 @@ export function activityDotColor(agent: any): number {
   return 0xe8c84a; // yellow
 }
 
+/** Dots drawn per building; further occupants still count as inside but get no dot. */
+const OCCUPANCY_MAX_DOTS = 5;
+
 export class TilemapRenderer {
   container: PIXI.Container;
 
   private labelContainer: PIXI.Container;
   private occupancyContainer: PIXI.Container;
+  /** Pooled dot Graphics (children of `occupancyContainer`), grown on demand, hidden when unused. */
+  private occupancyDots: PIXI.Graphics[] = [];
+  /** Fill colour each pooled dot currently shows, so a dot only redraws when its colour changes. */
+  private occupancyDotColors: number[] = [];
+  private occupantScratch: any[] = [];
   private terrainContainer: PIXI.Container;
   private roadContainer: PIXI.Container;
   private doorPathContainer: PIXI.Container;
@@ -770,26 +778,21 @@ export class TilemapRenderer {
   }
 
   updateOccupancy(agents: any[], locations: any[]): void {
-    // Detach first: `destroy()` splices the child out of `children`, so
-    // iterating the live array skips every second entry and leaks it.
-    for (const child of this.occupancyContainer.removeChildren()) child.destroy();
+    // Dots live in a pool that is repositioned, recoloured and shown/hidden in place: this runs on
+    // every data refresh (~1 Hz) and used to destroy and recreate every Graphics each time.
+    let used = 0;
 
     // Occupancy comes from the live agent list, not `loc.current_occupants`:
     // `locations.getAll` is fetched once and never invalidated, so that column
     // is a permanently empty snapshot and these dots never rendered at all.
-    const byLocation = new Map<number, any[]>();
-    for (const agent of agents) {
-      const locId = agent.current_location;
-      if (locId == null) continue;
-      const list = byLocation.get(locId);
-      if (list) list.push(agent);
-      else byLocation.set(locId, [agent]);
-    }
-
     for (const loc of locations) {
-      const occupants = byLocation.get(loc.id) ?? [];
-      if (occupants.length === 0) continue;
-      const dotCount = Math.min(occupants.length, 5);
+      // The first (up to) five agents inside, in roster order — collected without a per-location list.
+      let dotCount = 0;
+      const occupants = this.occupantScratch;
+      for (let a = 0; a < agents.length && dotCount < OCCUPANCY_MAX_DOTS; a++) {
+        if (agents[a].current_location === loc.id) occupants[dotCount++] = agents[a];
+      }
+      if (dotCount === 0) continue;
       const pos = loc.position ?? { x: 0, y: 0, width: 0, height: 0 };
       const centerX = pos.x + pos.width / 2;
       // Clear of the building name label, which BuildingRenderer anchors at
@@ -798,18 +801,29 @@ export class TilemapRenderer {
       const y = pos.y + pos.height + 20;
       const startX = centerX - (dotCount * 6) / 2;
       for (let i = 0; i < dotCount; i++) {
-        const agent = occupants[i];
         // Activity-colored dots (proposal-readability.md §3d):
         //   green = active/working, yellow = idle/socializing,
         //   blue = sleeping/resting, red = stressed/conflict
-        const color = activityDotColor(agent);
-        const dot = new PIXI.Graphics();
-        dot.circle(0, 0, 3).fill(color);
+        const color = activityDotColor(occupants[i]);
+        let dot = this.occupancyDots[used];
+        if (!dot) {
+          dot = new PIXI.Graphics();
+          this.occupancyDots.push(dot);
+          this.occupancyDotColors.push(-1);
+          this.occupancyContainer.addChild(dot);
+        }
+        if (this.occupancyDotColors[used] !== color) {
+          dot.clear().circle(0, 0, 3).fill(color);
+          this.occupancyDotColors[used] = color;
+        }
         dot.x = startX + i * 6;
         dot.y = y;
-        this.occupancyContainer.addChild(dot);
+        dot.visible = true;
+        used++;
       }
     }
+
+    for (let i = used; i < this.occupancyDots.length; i++) this.occupancyDots[i].visible = false;
   }
 
   destroy(): void {
