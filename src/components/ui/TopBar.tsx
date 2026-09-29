@@ -141,6 +141,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             onClick={onShowGazette}
             disabled={isResetting}
             title="The Town Crier — the town's daily paper"
+            data-coach="paper"
             className={`${BAR_BTN} relative`}
           >
             📰 Paper
@@ -153,6 +154,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           <button
             onClick={onShowEvents}
             disabled={isResetting}
+            data-coach="events"
             className={`${BAR_BTN} relative`}
           >
             ⚡ Events
