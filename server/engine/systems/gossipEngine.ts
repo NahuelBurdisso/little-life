@@ -27,6 +27,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
+import { isOwnSecret } from '../../lib/gossip';
 
 interface AgentInfo {
   id: number;
@@ -186,9 +187,8 @@ export function gossipTick(currentTick: number): void {
         if (knownBy.includes(target.id)) return false;
         // Nobody gossips about themselves. The subject always knows their own
         // secret, so without this Marco would "tell" the town that he is
-        // secretly in love with Carlos. Owning up is a separate, deliberate act
-        // (the confession path in conversations.ts), not idle gossip.
-        if (f.subject_id === agent.id) return false;
+        // secretly in love with Carlos (see isOwnSecret for pair facts).
+        if (isOwnSecret(f, agent.id)) return false;
         // Loyalty gate: loyal agents don't share shared_knowledge about friends
         if (loyalty > 60) {
           const rel = db.select({ friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })

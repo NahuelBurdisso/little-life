@@ -109,7 +109,32 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} and ${t ?? 'someone'} got into a public confrontation`,
   hoarding: (s) =>
     `${s} is hoarding supplies`,
+  // confrontation_witness_gossip creates this; without a generator the fact
+  // read "Marco Rivera: fight".
+  fight: (s, t) =>
+    `${s} got into a fight with ${t ?? 'someone'}`,
 };
+
+/**
+ * Fact types where the target took part as much as the subject: an affair,
+ * a plot, a fight. For these the target's own secret is at stake too, so the
+ * own-secret filter covers them — Carlos doesn't gossip about his own affair
+ * with Marco any more than Marco does.
+ */
+const PARTICIPANT_TARGET_TYPES = new Set(['affair', 'conspiracy', 'confrontation', 'fight']);
+
+/**
+ * Whether spreading this fact would be `agentId` gossiping about themselves.
+ * Owning up is a separate, deliberate act (the confession path in
+ * conversations.ts), not idle gossip.
+ */
+export function isOwnSecret(
+  fact: { subject_id: number; target_id: number | null; type: string },
+  agentId: number,
+): boolean {
+  if (fact.subject_id === agentId) return true;
+  return fact.target_id === agentId && PARTICIPANT_TARGET_TYPES.has(fact.type);
+}
 
 /**
  * What a jealous agent says about their rival. The jealousy trigger knows who
@@ -286,7 +311,7 @@ export function getShareableFacts(
     // A speaker's own secrets are not gossip. Offering them here fed them to the
     // LLM as "things you could gossip about" and let spreadGossip leak them the
     // moment the speaker said their own name. Confessing is a separate path.
-    if (fact.subject_id === speakerId) return false;
+    if (isOwnSecret(fact, speakerId)) return false;
 
     // Personality gates
     if (fact.sensitivity >= 2 && personality.honesty > 60) return false;

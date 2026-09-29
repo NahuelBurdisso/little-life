@@ -135,3 +135,27 @@ describe('generateFromSliders', () => {
     expect(low.trustDelta).toBeLessThan(0);
   });
 });
+
+describe('witness secrets', () => {
+  // A tiny deterministic LCG so each seed gives a different, repeatable town.
+  const seeded = (seed: number) => () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+
+  it('are about the person seen, known only to the onlooker', () => {
+    const sightings = [1, 2, 3, 4, 5, 6, 7, 8].flatMap((seed) =>
+      generateFromSliders({ drama: 9, romance: 5, crime: 5, trust: 5 }, mockAgents, seeded(seed)).secrets
+        .filter((s) => s.template_id.startsWith('witness_') && s.target_index !== null));
+    expect(sightings.length).toBeGreaterThan(0);
+
+    for (const s of sightings) {
+      const onlooker = s.target_index!;
+      // "{subject} saw {target}…" renders the onlooker first.
+      expect(s.content.startsWith(mockAgents[onlooker].name)).toBe(true);
+      expect(s.subject_index).not.toBe(onlooker);
+      expect(s.content).toContain(mockAgents[s.subject_index].name);
+      expect(s.known_by_indices).toEqual([onlooker]);
+    }
+  });
+});

@@ -150,16 +150,24 @@ export function generateFromSliders(
         .replace('{subject}', agents[subjectIdx].name)
         .replace('{target}', targetIdx !== null ? agents[targetIdx].name : '');
 
-      const knownBy = [subjectIdx];
-      if (targetIdx !== null) knownBy.push(targetIdx);
+      // In the pool, {subject} is always the person whose line it is. For
+      // "witness" secrets ("{subject} saw {target} sneaking out…") that is the
+      // onlooker, but the scandal is about {target}: the fact must be about
+      // them, known only to the witness. Stored the other way round, the
+      // own-secret gossip filter silenced the one person who could tell it,
+      // and the person seen was told they had been seen.
+      const isSighting = template.category === 'witness' && targetIdx !== null;
+      const factSubject = isSighting ? targetIdx! : subjectIdx;
+      const factTarget = isSighting ? subjectIdx : targetIdx;
+      const knownBy = isSighting ? [subjectIdx] : [subjectIdx, ...(targetIdx !== null ? [targetIdx] : [])];
 
       secrets.push({
         template_id: template.id,
         content,
         type: template.category,
         sensitivity: template.sensitivity,
-        subject_index: subjectIdx,
-        target_index: targetIdx,
+        subject_index: factSubject,
+        target_index: factTarget,
         known_by_indices: knownBy,
       });
     }
