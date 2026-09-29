@@ -1,11 +1,13 @@
 import * as PIXI from "pixi.js";
+import { bubbleText } from '../../lib/bubbleText';
 import type { SpritePool } from "./SpritePool";
 import { loadStrip } from "./stripAtlas";
 import {
   EMOTES_URL, EMOTE_FRAME_COUNT, EMOTE_CELL, EMOTE_EMOJI_FALLBACK, emoteFrameAt,
 } from "./emoteFrames";
 
-const BUBBLE_MAX_CHARS = 60;
+// Four lines of the 7 px monospace at wordWrapWidth 100 (~23 chars a line).
+const BUBBLE_MAX_CHARS = 84;
 /** px a head-anchored overlay must fall to stay with a fully lying-down body. */
 const LYING_HEAD_DROP = 15;
 const SPEECH_DURATION_MS = 4000;
@@ -152,7 +154,7 @@ export class BubbleSystem {
   showSpeechBubble(agentId: string, text: string, position: { x: number; y: number }, sentiment = 0, offsetX = 0) {
     this.removeBubble(agentId);
 
-    const truncated = text.length > BUBBLE_MAX_CHARS ? text.slice(0, BUBBLE_MAX_CHARS - 1) + "\u2026" : text;
+    const truncated = bubbleText(text, BUBBLE_MAX_CHARS);
 
     const bubbleContainer = new PIXI.Container();
 
@@ -244,7 +246,7 @@ export class BubbleSystem {
 
     this.removeBubble(agentId);
 
-    const truncated = text.length > 40 ? text.slice(0, 39) + '…' : text;
+    const truncated = bubbleText(text, 40);
 
     const bubbleContainer = new PIXI.Container();
 
