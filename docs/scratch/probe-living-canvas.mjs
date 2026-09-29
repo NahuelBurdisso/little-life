@@ -13,7 +13,8 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 const errors = [], atlases = new Set();
 page.on('console', m => { if (m.type() === 'error' || m.text().includes('[canvas systems]')) errors.push(m.text()); });
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-page.on('response', r => { if (r.url().includes('/sprites/fx/') || r.url().includes('/sprites/props/')) atlases.add(`${r.status()} ${r.url().split('/sprites/')[1]}`); });
+// Every fx atlas, plus any other sprite that failed to load.
+page.on('response', r => { if (r.url().includes('/sprites/') && (r.url().includes('/sprites/fx/') || r.status() >= 400)) atlases.add(`${r.status()} ${r.url().split('/sprites/')[1]}`); });
 await page.goto('http://localhost:5173/' + query);
 await page.waitForTimeout(9000);
 await page.getByRole('button', { name: '1x', exact: true }).click().catch(() => {});
