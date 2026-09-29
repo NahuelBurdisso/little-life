@@ -1,5 +1,7 @@
 import type { Stage, RoadsOutput, Zone } from '../types';
 import { ROAD_BUFFER, BORDER_BUFFER } from '../config';
+import { generateOrganicRoads } from './organicRoads';
+import { getTemplatesForAgentCount } from '../buildingTemplates';
 
 export interface RoadPositions {
   mainStreetY: number;
@@ -174,12 +176,28 @@ function generateRoadTiles(r: RoadPositions, width: number, height: number): Arr
   return tiles;
 }
 
+/**
+ * Footprints the organic network must leave room for: every building template
+ * the layout stage will place for this many agents (see `lotsStillFit` in
+ * organicRoads.ts for why all of them, not just the large ones).
+ */
+function templateLots(agentCount: number): Array<{ w: number; h: number }> {
+  return getTemplatesForAgentCount(agentCount).map((t) => ({ w: t.size.w, h: t.size.h }));
+}
+
 export const roadsStage: Stage<{ roads: RoadsOutput }> = {
   name: 'roads',
   dependsOn: ['dimensions'],
-  run(ctx) {
+  run(ctx, rng, cfg, agentCount) {
     if (!ctx.dimensions) throw new Error('roads: dimensions not populated');
     const { width, height } = ctx.dimensions;
+    // Organic is the only branch that draws from `rng` (the stage's own fork,
+    // so no other stage's stream moves). The grid below never has and must not
+    // start: it is what keeps `layoutStyle: 'grid'` byte-identical to worlds
+    // generated before the option existed, which restarts of saved worlds rely on.
+    if (cfg.layoutStyle === 'organic') {
+      return { roads: generateOrganicRoads(width, height, rng, templateLots(agentCount)) };
+    }
     const positions = computeRoadPositions(width, height);
     return {
       roads: {
