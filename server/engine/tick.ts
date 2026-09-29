@@ -30,6 +30,7 @@ import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { milestonesTick } from '../lib/milestonesEngine';
 import { populationFlowDaily, populationFlowTick } from '../lib/populationFlow';
+import { runChallengeChecks } from '../lib/challenges/evaluate';
 import { saveWorldCaches } from './worldCaches';
 import { tickHealth } from './tickHealth';
 import { refreshHealth } from '../lib/health';
@@ -354,6 +355,8 @@ export async function gameTick(): Promise<void> {
   if (hourChanged(transitions)) {
     runGuarded('loneliness', () => lonelinessCheck(nowMinutes));
     runGuarded('confrontation', () => confrontationCheck(totalTicks));
+    // The player's challenges, judged on the town's state (lib/challenges/evaluate.ts).
+    runGuarded('challenges', () => db.transaction(() => runChallengeChecks()));
   }
 
   // A tick longer than the loop interval slows the game clock itself (the next

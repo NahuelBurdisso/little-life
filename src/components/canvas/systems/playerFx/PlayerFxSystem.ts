@@ -17,6 +17,7 @@ import {
 const MAX_FX = 16;
 
 type Intervention = Extract<CanvasBusEvent, { type: "intervention" }>;
+type Celebrate = Extract<CanvasBusEvent, { type: "celebrate" }>;
 
 /**
  * The canvas's answer to what the player does. `useNudge` (and the event/weather menus) emit an
@@ -61,6 +62,7 @@ class PlayerFxSystem implements CanvasSystem {
 
     this.unsubscribe = onCanvasEvent(e => {
       if (e.type === "intervention") this.handle(e);
+      else if (e.type === "celebrate") this.celebrate(e);
     });
   }
 
@@ -152,6 +154,31 @@ class PlayerFxSystem implements CanvasSystem {
     }
     // Unknown kind, or a known one missing what it needs: the generic ping on each agent.
     for (const id of ids) this.add(null, () => new PingFx(env, id));
+  }
+
+  /**
+   * A challenge settled or an achievement unlocked. Reuses the feeling spiral: gold stars
+   * rising around the people it was about on a win, grey-blue sweat on a loss. A town-wide
+   * win (Guardian, Full house...) has nobody to stand on, so the screen flashes instead.
+   */
+  private celebrate(e: Celebrate): void {
+    try {
+      const env = this.env;
+      if (!env) {
+        if (e.success) this.fallbackEmote(e.agentIds);
+        return;
+      }
+      const feeling = e.success ? "confident" : "stressed";
+      let shown = 0;
+      for (const id of e.agentIds) {
+        if (!env.sprites.getSprite(String(id))) continue;
+        this.add(fxKey.feeling(id), () => new FeelingFx(env, id, feeling));
+        shown++;
+      }
+      if (shown === 0 && e.success) this.add(fxKey.flash, () => new FlashFx(env));
+    } catch (err) {
+      console.warn("[playerFx] celebrate failed:", err);
+    }
   }
 
   private location(id: number): any | null {

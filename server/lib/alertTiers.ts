@@ -4,7 +4,8 @@
  * Pure (no DB), so the rule is tested on its own and the client can share the
  * tier names. `activity.getAlerts` runs every new row through `alertTier`.
  *
- *   player — what the player's own meddling came to (lib/playerOutcomes.ts).
+ *   player — what the player's own meddling came to (lib/playerOutcomes.ts),
+ *            and their challenges completing or failing (lib/challenges/).
  *            Always shown: they asked for it.
  *   major  — the town's big moments: heavy drama, world events, a changed life
  *            ambition, and the relationship statuses that rewrite a pair
@@ -33,7 +34,7 @@ export interface AlertCandidate {
 const MAJOR_CATEGORIES = new Set(['drama', 'world_event', 'aspiration']);
 export const MAJOR_IMPORTANCE = 0.8;
 
-const PLAYER_TYPES = new Set(['player_outcome', 'player_nudge_expired']);
+const PLAYER_TYPES = new Set(['player_outcome', 'player_nudge_expired', 'challenge_completed', 'challenge_failed']);
 
 /** Status changes that rewrite a pair's story for everyone watching. */
 const MAJOR_STATUSES = new Set(['partners', 'enemies', 'estranged']);

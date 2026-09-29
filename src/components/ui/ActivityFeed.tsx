@@ -35,8 +35,8 @@ function getCategory(type: string): EventCategory {
   if (type === 'drama' || type === 'theft_caught' || type === 'affair_discovery' || type === 'interaction_resolved') return 'drama';
   if (type === 'confrontation' || type === 'tavern_drunk') return 'drama';
   if (type === 'gift' || type === 'secret_shared' || type === 'birthday' || type === 'tavern_tipsy' || type === 'hobby_levelup') return 'relationship';
-  if (type.startsWith('player_')) return 'player';
-  if (type === 'world_event') return 'world_event';
+  if (type.startsWith('player_') || type.startsWith('challenge_')) return 'player';
+  if (type === 'world_event' || type === 'season_survived') return 'world_event';
   if (type === 'goal_ambition_shifted' || type === 'goal_ambition_generated' || type.startsWith('aspiration')) return 'aspiration';
   if (type.startsWith('goal_')) return 'goal';
   if (type === 'plan_generated' || type === 'plan_changed') return 'planning';

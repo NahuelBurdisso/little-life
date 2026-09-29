@@ -4,14 +4,15 @@ import {
 } from '../journal';
 
 describe('journal tabs', () => {
-  it('has the six tabs in strip order', () => {
-    expect(JOURNAL_TABS.map((t) => t.key)).toEqual(['brewing', 'stories', 'timeline', 'paper', 'inbox', 'talks']);
+  it('has the seven tabs in strip order', () => {
+    expect(JOURNAL_TABS.map((t) => t.key)).toEqual(['brewing', 'stories', 'timeline', 'paper', 'inbox', 'talks', 'challenges']);
   });
 
   it('steps with the arrows and wraps at both ends', () => {
     expect(stepTab('brewing', 1)).toBe('stories');
-    expect(stepTab('talks', 1)).toBe('brewing');
-    expect(stepTab('brewing', -1)).toBe('talks');
+    expect(stepTab('talks', 1)).toBe('challenges');
+    expect(stepTab('challenges', 1)).toBe('brewing');
+    expect(stepTab('brewing', -1)).toBe('challenges');
     expect(stepTab('paper', -1)).toBe('timeline');
   });
 
@@ -19,7 +20,8 @@ describe('journal tabs', () => {
     expect(tabForDigit('1')).toBe('brewing');
     expect(tabForDigit('4')).toBe('paper');
     expect(tabForDigit('6')).toBe('talks');
-    expect(tabForDigit('7')).toBeNull();
+    expect(tabForDigit('7')).toBe('challenges');
+    expect(tabForDigit('8')).toBeNull();
     expect(tabForDigit('0')).toBeNull();
     expect(tabForDigit('a')).toBeNull();
     expect(tabForDigit('12')).toBeNull();
@@ -29,10 +31,10 @@ describe('journal tabs', () => {
 describe('journal badges', () => {
   it('puts each signal on its own tab', () => {
     expect(tabBadges({ unreadAlerts: 3, hasNewPaper: true, hotBrewing: 2 })).toEqual({
-      brewing: 2, stories: null, timeline: null, paper: 'new', inbox: 3, talks: null,
+      brewing: 2, stories: null, timeline: null, paper: 'new', inbox: 3, talks: null, challenges: null,
     });
     expect(tabBadges({ unreadAlerts: 0, hasNewPaper: false, hotBrewing: 0 })).toEqual({
-      brewing: null, stories: null, timeline: null, paper: null, inbox: null, talks: null,
+      brewing: null, stories: null, timeline: null, paper: null, inbox: null, talks: null, challenges: null,
     });
   });
 

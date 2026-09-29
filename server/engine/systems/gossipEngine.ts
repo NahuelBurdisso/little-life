@@ -298,6 +298,10 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
       severity: Math.min(1, 0.5 + fact.sensitivity * 0.15),
       templateData: {
         description: thatSentence('The whole town now knows', fact.content),
+        // A rumor the player planted (godPowers.startRumor marks it so) has
+        // reached the whole town: the client's achievement keys on this flag,
+        // since the sentence itself can't say whose rumor it was.
+        ...(fact.reliability === 'unverified' && fact.source === 'fabricated' ? { planted: 1 } : {}),
       },
     });
     if (!subject) continue;

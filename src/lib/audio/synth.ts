@@ -854,6 +854,14 @@ export class Synth {
         this.pluck(PENTA[8], t, 0.16 * gain, 0, fx);
         this.pluck(PENTA[10], t + 0.1, 0.1 * gain, 0, fx);
         break;
+      case 'fanfare':
+        // A bright climb up the pentatonic, the last note doubled, then a ringing bell on top:
+        // louder and longer than any god cue, because the player earned it.
+        [3, 5, 7, 8].forEach((i, k) => this.pluck(PENTA[i], t + k * 0.11, 0.18 * gain, 0, fx));
+        this.pluck(PENTA[10], t + 0.48, 0.2 * gain, -0.15, fx);
+        this.pluck(PENTA[10] / 2, t + 0.5, 0.14 * gain, 0.15, fx);
+        this.bellStrike(t + 0.55, 3.0, 0.1 * gain, 0, false, fx);
+        break;
     }
   }
 

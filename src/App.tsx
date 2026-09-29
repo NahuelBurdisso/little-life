@@ -14,7 +14,9 @@ import { DirectorCaption, DirectorChip } from "./components/overlays/DirectorCap
 import { useDirector } from "./hooks/useDirector";
 import { useSpotlight } from "./hooks/useSpotlight";
 import { pushToast } from "./lib/toast";
+import { audio } from "./lib/audio/engine";
 import { useDramaAlerts } from "./hooks/useDramaAlerts";
+import { useGoalWatcher } from "./hooks/useChallenges";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
 import { EventMenu } from "./components/ui/EventMenu";
 import { TownStats } from "./components/ui/TownStats";
@@ -149,6 +151,9 @@ export default function App() {
   // alert at a lower bar (server/lib/alertTiers.ts).
   const drama = useDramaAlerts(worldSeed, favorites);
   const resetAlerts = drama.reset;
+  // Challenge fanfares on the canvas and the cross-world achievements, from the
+  // activity rows the canvas already polls (hooks/useChallenges.ts).
+  useGoalWatcher(Boolean(world) && !isNewSimulation);
 
   // Deep link into the Journal. With no tab named (TopBar 📖, J) it opens where
   // the news is: unread alerts first, then a new paper, else the tab it was left on.
@@ -328,6 +333,10 @@ export default function App() {
       setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
     },
     onToggleCaptions: handleToggleCaptions,
+    onToggleMute: () => {
+      audio.toggleMute();
+      return audio.getSettings().muted;
+    },
     agentKeysEnabled: !otherOverlayOpen && journalTab == null,
     onToggleHelp: guide.toggleHelp,
     onToggleJournal: toggleJournal,
