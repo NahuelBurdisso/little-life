@@ -6,7 +6,9 @@ import { PlanExecutor } from './PlanExecutor';
 import { ReplanEvaluator } from './ReplanEvaluator';
 import { PlanLLMGate } from './PlanLLMGate';
 import { gameMinutesNow } from '../worldClock';
-import { memoryService } from '../memory/instance';
+import { memoryService, selfDescriptionGenerator } from '../memory/instance';
+import { NightPlanner, listNightPlannerAgents } from './nightPlanner';
+import { getAgentStates } from '../states';
 import { db } from '../../db';
 import { worldState } from '../../db/schema';
 
@@ -28,3 +30,14 @@ export const replanEvaluator = new ReplanEvaluator(
   () => worldTime()?.hour ?? 12,
   gameMinutesNow,
 );
+
+/** Tomorrow's plans and the self-descriptions, asked for overnight (nightPlanner.ts). */
+export const nightPlanner = new NightPlanner({
+  listAgents: () => listNightPlannerAgents((id) => getAgentStates(id).includes('arrested')),
+  hasPlanFor: (agentId, day) => {
+    const plan = planCache.get(agentId);
+    return !!plan && plan.day >= day && plan.source !== 'fallback';
+  },
+  queuePlan: (agentId, time) => planGenerator.queueGeneration(agentId, time),
+  refreshSelfDescription: (agentId, day) => { void selfDescriptionGenerator.maybeRegenerate(agentId, day); },
+});

@@ -48,6 +48,9 @@ interface IPlanLLMQueue {
   enqueue(agentId: number, job: () => Promise<void>, key?: string): boolean;
 }
 
+/** Energy a plan made before waking assumes (describeNeeds: 45+ reads "rested"). */
+const RESTED_ENERGY = 80;
+
 /** Dedupe key for daily-plan jobs in the per-agent LLM queue. */
 const GENERATE_KEY = 'generate';
 /** Dedupe key for replan jobs: one pending rewrite per agent is plenty. */
@@ -141,7 +144,7 @@ export class PlanGenerator {
       agentId,
       async () => {
         try {
-          await this.generate(agentId, time.day);
+          await this.generate(agentId, time.day, time.hour);
         } finally {
           this.gate.release(ticket);
         }
@@ -182,7 +185,7 @@ export class PlanGenerator {
 
   // ── Private: generate ──────────────────────────────────────────────────────
 
-  private async generate(agentId: number, currentDay: number): Promise<void> {
+  private async generate(agentId: number, currentDay: number, currentHour = 12): Promise<void> {
     // 0. Skip if a real plan already exists for today (dedup against a wake-up
     //    request racing the stale-plan one). A fallback plan does not count:
     //    replacing it is the whole point of retrying after the backoff.
@@ -193,6 +196,16 @@ export class PlanGenerator {
     if (!ctx) {
       console.warn(`[PlanGenerator] agent ${agentId} not found`);
       return;
+    }
+
+    // Planned ahead of waking (the night planner asks from 00:15): the prompt's
+    // "Right now" would read the half-slept energy of 1 a.m. and the model
+    // plans a day of recovering from exhaustion. The plan is for the morning,
+    // so describe the sleeper as they will wake — rested. Hunger, mood and the
+    // rest do not jump overnight and stay as they are.
+    const wakeTime = ctx.schedule?.wakeTime ?? 7;
+    if (currentHour < wakeTime && currentHour < 12) {
+      ctx.currentNeeds = { ...ctx.currentNeeds, energy: Math.max(ctx.currentNeeds.energy, RESTED_ENERGY) };
     }
 
     const epoch = this.gate.epoch;
