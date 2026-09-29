@@ -15,20 +15,13 @@ import { SYSTEM_FACTORIES } from "./systems";
 import { taskThought } from "./systems/activityFx/workText";
 import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
 import type { ViewRect } from "./systems/view";
+import { seasonDayOf } from "./crops";
+import { chimneyCap } from "./systems/placeLife/placeAnchors";
+import { ChimneySmokePlan } from "./systems/placeLife/chimneySmoke";
 import { useCanvasActivity } from "../../hooks/useCanvasActivity";
 import { onCanvasEvent } from "../../lib/canvasBus";
 import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { ParticleContext } from "./particles/types";
-
-// Day phases during which each building type's chimney smokes.
-// Mirrors CHIMNEY_TYPES in BuildingRenderer (tavern, bakery, workshop, divebar, home).
-const SMOKE_PHASES: Record<string, string[]> = {
-  home: ['evening', 'night'],
-  tavern: ['evening', 'night'],
-  divebar: ['evening', 'night'],
-  bakery: ['dawn', 'morning'],
-  workshop: ['morning', 'afternoon'],
-};
 
 // Held-pose emotes: action type -> looping emote key. Emotes only live ~1.5s,
 // so a pose that lasts minutes has to re-puff to stay legible.
@@ -40,18 +33,6 @@ const POSE_PUFF_INTERVAL_MS = 7000;
 
 /** Head height — where the conversation arc attaches, above the feet anchor. */
 const CONVO_LINK_LIFT = 14;
-
-// Chimney rect sizes from BuildingRenderer.drawChimney (cw, ch).
-// Writes into `out` instead of returning a point: the caller runs per frame.
-function chimneyAnchor(loc: any, out: { x: number; y: number }): boolean {
-  const pos = loc.position;
-  if (!pos?.width) return false;
-  const cw = loc.type === 'bakery' ? 6 : loc.type === 'workshop' ? 4 : 5;
-  const ch = loc.type === 'bakery' ? 10 : loc.type === 'workshop' ? 8 : 9;
-  out.x = pos.x + pos.width - cw - 4 + cw / 2; // chimney center (top-right, 4px inset)
-  out.y = pos.y - ch + 2;                      // chimney cap top
-  return true;
-}
 
 /**
  * FNV-1a over everything that actually changes the static tilemap layers.
@@ -158,6 +139,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   const posingRef = useRef<Set<string>>(new Set());
   const agentDataRef = useRef<ParticleContext['agents']>([]);
   const chimneyLocsRef = useRef<ParticleContext['locations']>([]);
+  const chimneySmokeRef = useRef(new ChimneySmokePlan());
   const particleCtxRef = useRef<ParticleContext>({
     agents: [], weather: 'sunny', dayPhase: 'morning', season: 'spring', locations: [],
   });
@@ -732,18 +714,27 @@ export const GameCanvas = React.memo(function GameCanvas({
 
         const dayPhase = (worldRef.current as any)?.day_phase ?? 'morning';
 
-        // Synthetic 'chimney' locations — smoke emitters at chimney caps,
-        // phase-gated per building type (bakery mornings, homes evenings, ...)
+        // The farm's crop rows follow the season and how far into it the town is; a
+        // no-op unless the growth stage changed.
+        const clock = (worldRef.current as any)?.time;
+        tilemapRef.current?.setCropSeason(clock?.season, seasonDayOf(clock));
+
+        // Synthetic 'chimney' locations — smoke emitters at chimney caps. Which
+        // chimneys smoke follows who is inside and what they are doing (a hearth
+        // with someone cooking, a busy tavern, the oven and the forge while they
+        // are worked), refreshed twice a second — see placeLife/placeState.
+        const smokePlan = chimneySmokeRef.current;
+        smokePlan.refresh(performance.now(), systemDataRef.current);
         const chimneyLocs = chimneyLocsRef.current;
         let chimneyCount = 0;
         for (const loc of locationsRef.current ?? []) {
-          if (!SMOKE_PHASES[loc.type]?.includes(dayPhase)) continue;
+          if (!smokePlan.smokes(loc.id)) continue;
           let entry = chimneyLocs[chimneyCount];
           if (!entry) {
             entry = { id: loc.id, type: 'chimney', x: 0, y: 0 };
             chimneyLocs[chimneyCount] = entry;
           }
-          if (!chimneyAnchor(loc, entry)) continue;
+          if (!chimneyCap(loc, entry)) continue;
           entry.id = loc.id;
           chimneyCount++;
         }

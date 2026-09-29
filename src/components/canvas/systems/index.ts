@@ -5,6 +5,7 @@ import { createHeldItemSystem } from "./held/HeldItemSystem";
 import { createBeatSystem } from "./beats/BeatSystem";
 import { createPlayerFxSystem } from "./playerFx/PlayerFxSystem";
 import { createActivityFxSystem } from "./activityFx/ActivityFxSystem";
+import { createPlaceLifeSystem } from "./placeLife/PlaceLifeSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -13,6 +14,7 @@ import { createActivityFxSystem } from "./activityFx/ActivityFxSystem";
 export const SYSTEM_FACTORIES: SystemFactory[] = [
   // Event decorations are set dressing: critters walk over them, beats play above both.
   createTownEventSystem,
+  createPlaceLifeSystem,
   createAmbientLifeSystem,
   createHeldItemSystem,
   createActivityFxSystem,
