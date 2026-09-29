@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeDialogue, isFallbackMessage, fallbackReply, type DialogueSanitizeOptions } from '../sanitizeDialogue';
+import {
+  sanitizeDialogue, isFallbackMessage, fallbackReply, stripGenericOpener, BANNED_OPENERS,
+  type DialogueSanitizeOptions,
+} from '../sanitizeDialogue';
 
 // Fixtures are real (or minimally completed) lines from a 104-line playtest
 // transcript; see the header of sanitizeDialogue.ts for the failure tally.
@@ -236,5 +239,34 @@ describe('sanitizeDialogue — titled listeners', () => {
     expect(sanitizeDialogue('Good evening, Miss Jane Doe.', miss)).toBe('Good evening, Miss Doe.');
     const sir = { speakerName: 'Omar Hassan', listenerName: 'Sir John Smith', townNames: [] };
     expect(sanitizeDialogue('Welcome, Sir John Smith.', sir)).toBe('Welcome, Sir John.');
+  });
+});
+
+describe('stripGenericOpener (G6)', () => {
+  const strip = (t: string) => stripGenericOpener(t, 'Yuki Tanaka');
+
+  it('drops pure-pleasantry sentences in front of the real line', () => {
+    expect(strip('Hey Yuki, how are you doing today? I heard the mill wheel cracked.')).toBe('I heard the mill wheel cracked.');
+    expect(strip("Good morning! How's your day going? Rosa's shop is closed again.")).toBe("Rosa's shop is closed again.");
+    expect(strip('Yuki! Good to see you. Did you hear about Diego?')).toBe('Did you hear about Diego?');
+    expect(strip("How have you been, Yuki? I've been meaning to ask about your garden.")).toBe("I've been meaning to ask about your garden.");
+  });
+
+  it('returns empty when the whole line is pleasantry', () => {
+    expect(strip('Good morning, Yuki! How are you doing today?')).toBe('');
+    expect(strip("What's new with you?")).toBe('');
+  });
+
+  it('keeps any sentence that carries something besides the pleasantry', () => {
+    expect(strip('Morning, Yuki — did you hear about the mill?')).toBe('Morning, Yuki — did you hear about the mill?');
+    expect(strip("Good day for fishing, isn't it?")).toBe("Good day for fishing, isn't it?");
+    expect(strip('How are the tomatoes coming along?')).toBe('How are the tomatoes coming along?');
+    expect(strip('Yuki. I need a word.')).toBe('Yuki. I need a word.');
+  });
+
+  it('knows every banned opener', () => {
+    for (const phrase of BANNED_OPENERS) {
+      expect(strip(`${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}? The bridge is out.`)).toBe('The bridge is out.');
+    }
   });
 });

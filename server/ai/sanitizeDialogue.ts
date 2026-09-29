@@ -351,6 +351,64 @@ function shortenListenerName(text: string, listenerFull: string): string {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Generic openers (G6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pleasantries that say nothing: the model's default opener whatever the
+ * prompt asked for. Playtest #2 still had openers like "Hey Yuki, how are you
+ * doing today?" on conversations whose topic was a rumor or a plan; a line
+ * like that gives the other side nothing to answer and the chronicle nothing
+ * to quote. Kept as data so the prompt's banned list and the check agree.
+ */
+export const BANNED_OPENERS: readonly string[] = [
+  'how are you doing today',
+  "how's your day going",
+  'how have you been',
+  "what's new with you",
+  'good to see you',
+  'fancy meeting you here',
+];
+
+const GREETING_WORD = String.raw`(?:hey(?:\s+there)?|hi(?:\s+there)?|hello(?:\s+there)?|howdy|greetings|well\s+met|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening|oh|ah|well)`;
+const SMALL_TALK_PHRASE = String.raw`(?:how\s+(?:are|have)\s+you(?:\s+(?:been|doing|feeling|keeping))?(?:\s+(?:today|lately|these\s+days|this\s+(?:fine\s+)?(?:morning|afternoon|evening)))?(?:\s+(?:then|anyway))?|how(?:'s|\s+is)\s+(?:it\s+going|everything|life|things|your\s+(?:day|morning|afternoon|evening))(?:\s+(?:going|been|treating\s+you))?(?:\s+(?:today|so\s+far))?|how\s+do\s+you\s+do|what's\s+new(?:\s+with\s+you)?|what's\s+been\s+happening|(?:it's\s+)?(?:so\s+)?(?:good|nice|lovely|great)\s+to\s+see\s+you(?:\s+(?:again|today))?|fancy\s+(?:meeting|seeing)\s+you\s+here)`;
+
+/**
+ * Drop leading sentences that are pure pleasantry ("Hey Yuki!", "How are you
+ * doing today?", "Good to see you.") from an OPENING line when something
+ * concrete follows. Returns '' when the whole line is pleasantry, so the
+ * caller can decide whether that is worth a regeneration. A sentence that
+ * carries anything else ("Morning, Yuki — did you hear about the mill?") is
+ * kept whole: only sentences made entirely of greeting, the listener's name
+ * and a stock how-are-you are generic.
+ *
+ * Pure and cheap (a regex per sentence), run once per conversation — on the
+ * opener only — so it adds no latency to ordinary turns.
+ */
+export function stripGenericOpener(text: string, listenerName: string): string {
+  const names = [...new Set([...nameVariants(listenerName), firstName(listenerName)])]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp);
+  const vocative = String.raw`(?:${[...names, 'friend', 'neighbou?r', 'my\\s+friend', 'dear'].join('|')})`;
+  const generic = new RegExp(
+    String.raw`^\s*(?:${GREETING_WORD}[,!.…]*\s*)?(?:${vocative}[,!.…]*\s*)?(?:${SMALL_TALK_PHRASE})?(?:,?\s*${vocative})?\s*[.!?…]+["']?\s*`,
+    'i',
+  );
+  const pleasantry = new RegExp(String.raw`\b(?:${GREETING_WORD}|${SMALL_TALK_PHRASE})\b`, 'i');
+
+  let out = text.trim();
+  while (out) {
+    const m = generic.exec(out);
+    // A name-only match is not a pleasantry ("Yuki. I need a word.").
+    if (!m || !pleasantry.test(m[0])) break;
+    out = out.slice(m[0].length).trim();
+  }
+  if (/^\p{Ll}/u.test(out)) out = out.charAt(0).toUpperCase() + out.slice(1);
+  return out;
+}
+
 export function sanitizeDialogue(raw: string, opts: DialogueSanitizeOptions): string {
   const speaker = firstName(opts.speakerName);
   const listener = firstName(opts.listenerName);
