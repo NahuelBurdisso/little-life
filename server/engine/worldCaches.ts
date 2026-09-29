@@ -20,6 +20,14 @@
  * Note: this does NOT reset the `initialized` flags that guard one-time
  * `simEvents.on(...)` registration in several of these modules. Those listeners
  * must stay registered exactly once for the lifetime of the process.
+ *
+ * The other half of the lifecycle lives here too: `PERSISTED_STORES` lists the
+ * caches that are gameplay state rather than derived data, and are checkpointed
+ * to `sim_snapshots` so they survive a server restart (see simSnapshots.ts).
+ * A store in that list must also be cleared on a world replace (here, or for
+ * tension by `resetCascade`), and `restoreWorldCaches` must run after every clear — it loads the rows of
+ * whichever world the DB now holds (none for a fresh world, the old world's on
+ * a rolled-back replace).
  */
 
 import { clearStatesTrackers } from './systems/states';
@@ -45,6 +53,67 @@ import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
 import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
+import { statesTrackersSnapshotStore } from './systems/states';
+import { hobbySnapshotStore } from '../lib/hobbyEngine';
+import { favorSnapshotStore } from '../lib/favorEngine';
+import { moodMomentumSnapshotStore } from '../lib/moodMomentum';
+import { personalityBaselineSnapshotStore } from '../lib/personalityDrift';
+import { hungerSnapshotStore } from '../lib/lifeEventsEngine';
+import { tensionSnapshotStore } from '../lib/cascade';
+import { loadSnapshots, saveSnapshots } from './simSnapshots';
+import type { SnapshotStore } from './snapshotCodec';
+
+/**
+ * In-memory stores that outlive a restart. What is in and what is out:
+ *
+ * In — slow, earned state a player would notice resetting: hobby skills (game
+ * weeks of practice), the favor ledger, tension toward a snap, mood momentum
+ * streaks, personality drift baselines (without them the ±15 drift cap
+ * re-anchors on every restart), the states-phase trackers (multi-day addiction
+ * and debt histories) and the starvation counters.
+ *
+ * Out, deliberately:
+ *   - LLM backoffs (`planLLMGate`, goal reviewer/pivot stamps): they describe
+ *     the previous process's LLM, and a restart is very often the fix for
+ *     whatever made it fail. Persisting them would keep agents off the LLM
+ *     after the problem is gone. They expire in game minutes anyway.
+ *   - Short cooldowns and dedupe sets (gifts, confrontations, loneliness,
+ *     taverns, critical-need edges, conversation caches, perception dedup,
+ *     ripple cooldowns, work streaks, milestones): hour-scale throttles whose
+ *     loss lets at most one extra event through right after a restart.
+ *   - Derived caches (reputation, chronicle, cliques, money balancer): rebuilt
+ *     from tables.
+ *   - Shared-secret bookkeeping and birthday stamps: the facts table already
+ *     dedupes a confided secret per pair, and a restart on a birthday is rare.
+ */
+const PERSISTED_STORES: readonly SnapshotStore[] = [
+  hobbySnapshotStore,
+  favorSnapshotStore,
+  tensionSnapshotStore,
+  moodMomentumSnapshotStore,
+  personalityBaselineSnapshotStore,
+  statesTrackersSnapshotStore,
+  hungerSnapshotStore,
+];
+
+/** Checkpoint every persisted store for the current world. Never throws. */
+export function saveWorldCaches(): number {
+  return saveSnapshots(PERSISTED_STORES);
+}
+
+/**
+ * Load every persisted store from the current world's checkpoint. Call it at
+ * boot, after `initCascade`, and right after every `clearPerWorldCaches`.
+ * Never throws.
+ */
+export function restoreWorldCaches(): number {
+  return loadSnapshots(PERSISTED_STORES);
+}
+
+/** Store keys, for tests (uniqueness, coverage). */
+export function persistedStoreKeys(): string[] {
+  return PERSISTED_STORES.map((s) => s.key);
+}
 
 export function clearPerWorldCaches(): void {
   // Game-minute stamps of recently stored perception lines (MemoryObserver).

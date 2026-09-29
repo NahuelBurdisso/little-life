@@ -29,6 +29,7 @@ import {
   aspirations,
   interactionCooldowns,
   gazetteIssues,
+  simSnapshots,
 } from '../db/schema';
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -54,7 +55,7 @@ import { startingNeeds } from '../lib/startingNeeds';
 import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
 import { resetCascade } from '../lib/cascade';
 import { invalidateCostMap, clearMovementState } from '../engine/systems/movement';
-import { clearPerWorldCaches } from '../engine/worldCaches';
+import { clearPerWorldCaches, restoreWorldCaches, saveWorldCaches } from '../engine/worldCaches';
 import { autoPlayer } from '../autoplay';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
@@ -218,6 +219,7 @@ const PlacementRelationshipSchema = RelationshipConfigSchema.pick({
 // ─── Table reset order (reverse-dependency) ───────────────────────────────────
 
 const ALL_TABLES = [
+  simSnapshots,
   gazetteIssues,
   interactionCooldowns,
   interactionParticipants,
@@ -998,6 +1000,11 @@ async function replaceWorld(
     new Promise(resolve => setTimeout(resolve, 10_000)),
   ]);
   taskRunner.resetSlots();
+  // Checkpoint the outgoing world's in-memory state (never throws). On success
+  // the rows are wiped with the world; on a rolled-back seed they come back
+  // with it, and `restoreWorldCaches` below reloads them — so a failed replace
+  // no longer costs the old world its hobbies, favors, tension and the rest.
+  saveWorldCaches();
 
   try {
     // Generate first: this is the throwing step, and the database is still
@@ -1071,6 +1078,9 @@ async function replaceWorld(
       // per-agent recalc/stuck timestamps would disable re-pathing in the new world.
       clearMovementState();
       clearPerWorldCaches();
+      // Whatever world the DB now holds: nothing for the fresh one, the
+      // checkpoint taken above if the seed rolled back.
+      restoreWorldCaches();
 
       // Reconstruct zone occupancy from the agent positions actually in the DB —
       // the freshly seeded ones on success, the rolled-back ones on failure.
@@ -1210,6 +1220,8 @@ export const setupRouter = router({
       new Promise(resolve => setTimeout(resolve, 10_000)),
     ]);
     taskRunner.resetSlots();
+    // As in `replaceWorld`: a rolled-back reset gets its state back below.
+    saveWorldCaches();
 
     try {
       // Same transaction protection as `replaceWorld`, for the same reason: left
@@ -1292,6 +1304,7 @@ export const setupRouter = router({
         invalidateCostMap();
         clearMovementState();
         clearPerWorldCaches();
+        restoreWorldCaches();
       } catch (err) {
         console.error('[setup] resetToWizard cache reset failed (client is still notified):', err);
       }
