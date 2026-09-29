@@ -65,7 +65,13 @@ export function useNightSkip() {
       seenSeq.current = stop?.seq ?? null;
       return;
     }
-    if (!stop || stop.seq === seenSeq.current) return;
+    if (!stop) {
+      // A server restart starts the counter over; forget the old sequence, or the
+      // first skip of the new process (seq 1) would look already announced.
+      seenSeq.current = null;
+      return;
+    }
+    if (stop.seq === seenSeq.current) return;
     seenSeq.current = stop.seq;
     if (stop.reason === 'cancelled' || stop.reason === 'world_replaced') return; // the player did that
     let text = describeSkipStop(stop.reason);
