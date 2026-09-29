@@ -160,3 +160,66 @@ export function buildStartingTies(
   ties.sort((t1, t2) => index.get(t1.a)! - index.get(t2.a)! || index.get(t1.b)! - index.get(t2.b)!);
   return ties;
 }
+
+/** The fields of a canonical (`agent_a < agent_b`) relationship row a tie writes. */
+export interface TieRow {
+  agent_a: number;
+  agent_b: number;
+  friendship_ab: number;
+  friendship_ba: number;
+  trust_ab: number;
+  trust_ba: number;
+  familiarity: number;
+  tags: string[];
+  status: string;
+}
+
+/**
+ * Fold ties into rows that are about to be inserted, the way `setup.initialize`
+ * stages them: an authored pair keeps its values and only gains the structural
+ * tags; any other row for the pair (a filler "strangers" row, as
+ * `getRelationshipSeeds` emits for every unordered pair) takes the tie's values;
+ * a pair with no row gets one from `makeRow`. Rows are edited in place and
+ * appended to, so the caller inserts each pair exactly once —
+ * `idx_relationships_pair` is unique.
+ *
+ * @param authoredKeys `${lo}:${hi}` of the pairs someone actually wrote.
+ * @returns how many rows took a tie's values (created or overwritten).
+ */
+export function foldStartingTies<T extends TieRow>(
+  rows: T[],
+  ties: ReadonlyArray<StartingTie>,
+  idOf: (name: string) => number | undefined,
+  authoredKeys: ReadonlySet<string>,
+  makeRow: (lo: number, hi: number) => T,
+): number {
+  const byKey = new Map(rows.map((r) => [`${r.agent_a}:${r.agent_b}`, r]));
+  let applied = 0;
+  for (const tie of ties) {
+    const aId = idOf(tie.a);
+    const bId = idOf(tie.b);
+    if (aId === undefined || bId === undefined || aId === bId) continue;
+    const [lo, hi] = aId < bId ? [aId, bId] : [bId, aId];
+    const key = `${lo}:${hi}`;
+    let row = byKey.get(key);
+    if (row && authoredKeys.has(key)) {
+      row.tags = [...new Set([...row.tags, ...tie.tags])];
+      continue;
+    }
+    if (!row) {
+      row = makeRow(lo, hi);
+      rows.push(row);
+      byKey.set(key, row);
+    }
+    const aIsLo = aId === lo;
+    row.friendship_ab = aIsLo ? tie.friendshipAB : tie.friendshipBA;
+    row.friendship_ba = aIsLo ? tie.friendshipBA : tie.friendshipAB;
+    row.trust_ab = aIsLo ? tie.trustAB : tie.trustBA;
+    row.trust_ba = aIsLo ? tie.trustBA : tie.trustAB;
+    row.familiarity = tie.familiarity;
+    row.status = tie.status;
+    row.tags = [...tie.tags];
+    applied++;
+  }
+  return applied;
+}

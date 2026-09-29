@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildStartingTies, STARTING_TIE_BASELINES } from '../startingTies';
+import { buildStartingTies, foldStartingTies, STARTING_TIE_BASELINES } from '../startingTies';
+import { getRelationshipSeeds } from '../../data/relationships';
 import { getDefaultAgents, getDefaultRelationships } from '../../../src/components/setup/defaults';
 import { AGENT_SEEDS } from '../../data/agents';
 
@@ -83,6 +84,60 @@ describe('buildStartingTies', () => {
     // Coworkers ditto.
     expect(has('Rosa Chen', 'Lucia Fernandez')).toBe(true);
     expect(has('Marco Rivera', 'Diego Santos')).toBe(true);
+  });
+});
+
+describe('foldStartingTies (db:seed path)', () => {
+  it('fills stranger rows, keeps authored values, and never duplicates a pair', () => {
+    const agentMap = new Map(AGENT_SEEDS.map((s, i) => [s.name, i + 1]));
+    const rows = getRelationshipSeeds(agentMap);
+    const before = new Map(rows.map((r) => [`${r.agent_a}:${r.agent_b}`, { ...r, tags: [...r.tags] }]));
+    // getRelationshipSeeds emits a filler row for every unordered pair, which is
+    // why inserting the ties beside it never ran (every pair looked "taken").
+    const n = AGENT_SEEDS.length;
+    expect(rows).toHaveLength((n * (n - 1)) / 2);
+
+    const authored = new Set<string>();
+    for (const s of AGENT_SEEDS) for (const r of s.initialRelationships) {
+      const x = agentMap.get(s.name)!, y = agentMap.get(r.otherName)!;
+      authored.add(`${Math.min(x, y)}:${Math.max(x, y)}`);
+    }
+    // Homes on a line, one tile apart per number: every household neighbours the next.
+    const doors = new Map(AGENT_SEEDS.map((s) => [s.homeName, { x: Number(s.homeName.replace(/\D/g, '')) * 10, y: 0 }]));
+    const ties = buildStartingTies(AGENT_SEEDS, doors);
+    const applied = foldStartingTies(rows, ties, (name) => agentMap.get(name), authored, () => {
+      throw new Error('every pair already has a row');
+    });
+
+    expect(applied).toBeGreaterThan(0);
+    expect(rows).toHaveLength((n * (n - 1)) / 2);
+    for (const tie of ties) {
+      const x = agentMap.get(tie.a)!, y = agentMap.get(tie.b)!;
+      const key = `${Math.min(x, y)}:${Math.max(x, y)}`;
+      const row = rows.find((r) => `${r.agent_a}:${r.agent_b}` === key)!;
+      const old = before.get(key)!;
+      for (const tag of tie.tags) expect(row.tags).toContain(tag);
+      if (authored.has(key)) {
+        expect(row.friendship_ab).toBe(old.friendship_ab);
+        expect(row.friendship_ba).toBe(old.friendship_ba);
+        expect(row.status).toBe(old.status);
+      } else {
+        expect(row.friendship_ab).toBeGreaterThan(10);
+        expect(row.status).toBe(tie.status);
+      }
+    }
+  });
+
+  it('creates a row for a pair that has none', () => {
+    const rows: any[] = [];
+    const ties = buildStartingTies([agent('Ann', 'Home 1'), agent('Bob', 'Home 1')]);
+    const ids = new Map([['Ann', 2], ['Bob', 1]]);
+    const applied = foldStartingTies(rows, ties, (n) => ids.get(n), new Set(), (lo, hi) => ({
+      agent_a: lo, agent_b: hi, friendship_ab: 0, friendship_ba: 0, trust_ab: 0, trust_ba: 0,
+      familiarity: 0, tags: [], status: 'strangers',
+    }));
+    expect(applied).toBe(1);
+    expect(rows).toMatchObject([{ agent_a: 1, agent_b: 2, status: 'friends', tags: ['housemate'] }]);
   });
 });
 
