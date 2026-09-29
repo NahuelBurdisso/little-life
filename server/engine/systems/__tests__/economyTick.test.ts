@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { db } from '../../../db';
 import { activityLog, agents, economy, economyTransactions, locations, worldState } from '../../../db/schema';
 import { and, eq, inArray, like } from 'drizzle-orm';
@@ -10,6 +10,7 @@ import {
   WHOLESALE_MAX_CASH_FRACTION,
   wholesaleBuyerOrder,
   settleTreasury,
+  ensureTreasuryLoopStarted,
   resetMoneySupplyState,
 } from '../economy';
 import { TRADE_RULES } from '../../../data/economyData';
@@ -28,9 +29,10 @@ function ensureWorld(day = 1, hour = 9, minute = 0): void {
   // otherwise move the buyer's money under the test.
   const totalTicks = day * 1440 + hour * 60 + minute;
   const time = { day, hour, minute, totalTicks, seasonDay: 1, season: 'spring' as const };
+  // treasury_ramp_left 0 = a world made with the treasury loop; the late-start ramp has its own tests.
   const existing = db.select().from(worldState).get();
   if (existing) {
-    db.update(worldState).set({ time, pending_transitions: [], tick_speed: 1 }).where(eq(worldState.id, existing.id)).run();
+    db.update(worldState).set({ time, pending_transitions: [], tick_speed: 1, treasury_ramp_left: 0 }).where(eq(worldState.id, existing.id)).run();
     return;
   }
   db.insert(worldState).values({
@@ -45,6 +47,7 @@ function ensureWorld(day = 1, hour = 9, minute = 0): void {
     tick_id: 'test',
     pending_transitions: [],
     tax_pool: 0,
+    treasury_ramp_left: 0,
     map_width: 40,
     map_height: 30,
     collision_grid: '',
@@ -784,5 +787,85 @@ describe('day change through economyTick', () => {
     } finally {
       db.update(worldState).set({ money_target_per_capita: null }).run();
     }
+  });
+});
+
+/**
+ * A save from before the treasury loop existed starts it late: it needs an opening reserve so wages
+ * don't push the pool negative before the first midnight, and its first nights' lifestyle upkeep
+ * is eased in (townTreasury.ts upkeepRamp) instead of taking up to 60% of savings at once.
+ */
+describe('a treasury loop that starts late', () => {
+  const world = () => db.select().from(worldState).get()!;
+  const upkeepOf = (id: number) => db.select().from(economyTransactions).where(and(
+    eq(economyTransactions.from_agent, id), eq(economyTransactions.reason, 'upkeep'),
+  )).all().map((r) => r.amount);
+
+  function oldSave(pool: number) {
+    resetMoneySupplyState();
+    ensureWorld(30, 9, 0);
+    db.update(agents).set({ is_active: false, current_action: { type: 'idle' }, current_location: null }).run();
+    db.update(worldState).set({ tax_pool: pool, money_target_per_capita: null, treasury_ramp_left: null }).run();
+    db.delete(economyTransactions).where(eq(economyTransactions.reason, 'upkeep')).run();
+    n++;
+    const home = insertLocation(`late home ${n}`, 'home', null);
+    const a = insertAgent(`Late A ${n}`, home);
+    const b = insertAgent(`Late B ${n}`, home);
+    insertEconomy(a, 220, []);
+    insertEconomy(b, 220, []);
+    return { a, b };
+  }
+
+  afterAll(() => { db.update(worldState).set({ treasury_ramp_left: 0 }).run(); });
+
+  it('opens with a reserve and a full ramp when the ledger has never seen an upkeep row', () => {
+    oldSave(-25);
+    expect(ensureTreasuryLoopStarted(world(), 2)).toBe(3);
+    expect(world().treasury_ramp_left).toBe(3);
+    expect(world().tax_pool).toBe(2 * CONFIG.ECONOMY.TREASURY_START_PER_CAPITA);
+    // Decided once: a restart (or the next tick) neither re-tops-up nor resets the ramp.
+    db.update(worldState).set({ tax_pool: 5, treasury_ramp_left: 2 }).run();
+    expect(ensureTreasuryLoopStarted(world(), 2)).toBe(2);
+    expect(world().tax_pool).toBe(5);
+  });
+
+  it('leaves a world made with the loop (stored target) or already settled alone', () => {
+    const { a } = oldSave(10);
+    db.update(worldState).set({ money_target_per_capita: 75 }).run();
+    expect(ensureTreasuryLoopStarted(world(), 2)).toBe(0);
+    expect(world().tax_pool).toBe(10);
+
+    oldSave(10);
+    db.insert(economyTransactions).values({
+      from_agent: a, to_agent: null, amount: 3, reason: 'upkeep', items_exchanged: null, location_id: null, timestamp: 0,
+    }).run();
+    expect(ensureTreasuryLoopStarted(world(), 2)).toBe(0);
+    expect(world().tax_pool).toBe(10);
+  });
+
+  it('the first three nights take a third, two thirds, then the full lifestyle share', () => {
+    const { a } = oldSave(0);
+    const allowance = 0.8 * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
+    const { BASE, LIFESTYLE_RATE } = CONFIG.ECONOMY.UPKEEP;
+    const nights: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      // Same cash every night so the shares are comparable, and the balancer reset so its
+      // multiplier is 1. ensureWorld() writes ramp 0 (a world made with the loop), so carry the
+      // ramp state across it: NULL on night 1 (the tick decides), then whatever the last night left.
+      db.update(economy).set({ money: 220 }).where(eq(economy.agent_id, a)).run();
+      const ramp = world().treasury_ramp_left;
+      resetMoneySupplyState();
+      ensureWorld(30 + i, 0, 0);
+      db.update(worldState).set({ pending_transitions: [{ type: 'day_changed' }], treasury_ramp_left: ramp }).run();
+      economyTick();
+      nights.push(upkeepOf(a)[i]);
+    }
+    const full = BASE + LIFESTYLE_RATE * (220 - allowance);
+    const rent = BASE;
+    expect(nights[0]).toBeCloseTo(rent + (full - rent) / 3, 1);
+    expect(nights[1]).toBeCloseTo(rent + (full - rent) * 2 / 3, 1);
+    expect(nights[2]).toBeCloseTo(full, 1);
+    expect(nights[3]).toBeCloseTo(full, 1);
+    expect(world().treasury_ramp_left).toBe(0);
   });
 });

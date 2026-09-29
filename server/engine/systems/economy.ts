@@ -13,7 +13,10 @@ import { getReputationPriceModifier } from '../../lib/reputationEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { gameMinutes, isOpenAt } from '../../lib/gameClock';
 import { getAgentStates } from '../../lib/states';
-import { dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, treasuryExcess, savingsAllowance } from '../../lib/townTreasury';
+import {
+  dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, treasuryExcess, savingsAllowance,
+  upkeepRamp, lateStartTreasury, UPKEEP_RAMP_NIGHTS,
+} from '../../lib/townTreasury';
 
 // --- Module-level state for batching and milestones ---
 
@@ -527,6 +530,37 @@ function wholeUnitsOf(total: number): number {
 // --- Treasury settlement ---
 
 /**
+ * Decide, once per world, whether the treasury loop is starting late. A world made with the loop
+ * (it stores a money target) needs nothing. An old save (no stored target) whose ledger has never
+ * seen an `upkeep` row gets two things: an opening reserve like a new town's, so wages don't
+ * drive the pool negative before the first midnight, and a few nights of eased-in lifestyle upkeep
+ * (`upkeepRamp`), so its first settlements don't take 60% of everyone's savings at once. The verdict
+ * is stored in `world_state.treasury_ramp_left` (NULL = not decided), so a restart doesn't redo it.
+ * Returns the ramp nights left.
+ */
+export function ensureTreasuryLoopStarted(
+  world: typeof worldState.$inferSelect,
+  residents: number,
+): number {
+  if (world.treasury_ramp_left != null) return world.treasury_ramp_left;
+  const ranBefore = world.money_target_per_capita != null
+    || db.select({ id: economyTransactions.id }).from(economyTransactions)
+      .where(eq(economyTransactions.reason, 'upkeep')).limit(1).get() != null;
+  const left = ranBefore ? 0 : UPKEEP_RAMP_NIGHTS;
+  const patch: Partial<typeof worldState.$inferInsert> = { treasury_ramp_left: left };
+  if (!ranBefore) {
+    const pool = lateStartTreasury(world.tax_pool, residents, CONFIG.ECONOMY.TREASURY_START_PER_CAPITA);
+    if (pool !== world.tax_pool) {
+      patch.tax_pool = Math.round(pool * 100) / 100;
+      world.tax_pool = patch.tax_pool;
+    }
+  }
+  db.update(worldState).set(patch).where(eq(worldState.id, world.id)).run();
+  world.treasury_ramp_left = left;
+  return left;
+}
+
+/**
  * The day-change half of the treasury loop (server/lib/townTreasury.ts):
  * every active resident pays upkeep into the treasury, then anyone left below
  * the stipend floor is topped up from it. Replaces the flat $9 living cost that
@@ -545,6 +579,8 @@ export function settleTreasury(
   const { UPKEEP, STIPEND_FLOOR } = CONFIG.ECONOMY;
   const allowance = savingsAllowance(worldMoneyTarget(world), UPKEEP.ALLOWANCE_OF_TARGET);
   let pool = world.tax_pool;
+  const rampLeft = world.treasury_ramp_left ?? 0;
+  const ramp = upkeepRamp(rampLeft);
   const ledger = (from: number | null, to: number | null, amount: number, reason: string) =>
     db.insert(economyTransactions).values({
       from_agent: from, to_agent: to, amount, reason, items_exchanged: null, location_id: null, timestamp: now,
@@ -555,7 +591,7 @@ export function settleTreasury(
     if (!econ) continue;
     const upkeep = dailyUpkeep(econ.money, {
       base: UPKEEP.BASE, allowance, rate: UPKEEP.LIFESTYLE_RATE,
-      multiplier: dailyUpkeepMultiplier,
+      multiplier: dailyUpkeepMultiplier, ramp,
     });
     econ.money = Math.round((econ.money - upkeep) * 100) / 100;
     pool += upkeep;
@@ -601,8 +637,11 @@ export function settleTreasury(
   }
 
   pool = Math.round(pool * 100) / 100;
-  db.update(worldState).set({ tax_pool: pool }).where(eq(worldState.id, world.id)).run();
+  const nextRamp = Math.max(0, rampLeft - 1);
+  db.update(worldState).set({ tax_pool: pool, ...(rampLeft > 0 ? { treasury_ramp_left: nextRamp } : {}) })
+    .where(eq(worldState.id, world.id)).run();
   world.tax_pool = pool;
+  world.treasury_ramp_left = rampLeft > 0 ? nextRamp : world.treasury_ramp_left;
 
   if (helped.length > 0) {
     const names = helped.length === 1 ? helped[0]
@@ -621,6 +660,8 @@ export function economyTick(): void {
   if (!world) return;
 
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
+  // Before the first wage of a late-starting loop is paid (it draws on the pool).
+  ensureTreasuryLoopStarted(world, activeAgents.length);
   const allEcon = db.select().from(economy).all();
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
   const allLocations = db.select().from(locations).all();

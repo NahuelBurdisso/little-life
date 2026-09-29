@@ -397,6 +397,10 @@ export const worldState = sqliteTable('world_state', {
   // stored at world creation from the starting cash. NULL on saves from before
   // it existed: CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY.
   money_target_per_capita: real('money_target_per_capita'),
+  // Nights of eased-in lifestyle upkeep still to come (townTreasury.ts upkeepRamp).
+  // NULL = not evaluated yet: the first economy tick sets it — 0 for a world made
+  // with the treasury loop, UPKEEP_RAMP_NIGHTS for an old save whose loop starts late.
+  treasury_ramp_left: integer('treasury_ramp_left'),
 });
 
 // ─── 13. worldEvents ──────────────────────────────────────────────────────────

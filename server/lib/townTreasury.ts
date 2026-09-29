@@ -32,8 +32,10 @@
  * The treasury is the only account that pays before it collects: wages go out
  * at each shift end, upkeep comes in at midnight. A new town therefore starts
  * with a reserve (`startingTreasury`, minted once like residents' starting
- * money) so the evening low stays above zero. It may still dip into debt
- * (a negative pool) in a save made before the treasury existed; that is
+ * money) so the evening low stays above zero. A save made before the treasury
+ * existed gets the same reserve when its loop first runs, and eases the
+ * lifestyle share in over its first nights (`upkeepRamp`, economy.ts
+ * ensureTreasuryLoopStarted). The pool may still dip into debt later; that is
  * allowed — wages are never withheld — and the lifestyle share refills it.
  *
  * The other direction is capped: money that enters from outside the loop
@@ -44,6 +46,7 @@
  */
 
 const cents = (n: number) => Math.round(n * 100) / 100;
+const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 /**
  * A new world's money target per resident: the mean starting cash, clamped.
@@ -68,6 +71,33 @@ export function startingTreasury(residents: number, perCapita: number): number {
   return Math.max(0, residents) * perCapita;
 }
 
+/**
+ * Nights over which the lifestyle share is eased in for a world whose treasury loop starts late
+ * (a save from before it existed).
+ */
+export const UPKEEP_RAMP_NIGHTS = 3;
+
+/**
+ * The share of the lifestyle upkeep to charge tonight, given how many ramp nights are left
+ * (3 left -> 1/3, 2 -> 2/3, 1 or none -> everything). Such a save loads with residents holding
+ * ~1.5x the money target, so the balancer's multiplier is at its cap and the first night took
+ * up to 60% of every resident's cash above the allowance in one go; spread over three nights the
+ * same town deflates without a night that reads as a robbery.
+ */
+export function upkeepRamp(nightsLeft: number, totalNights = UPKEEP_RAMP_NIGHTS): number {
+  if (!(nightsLeft > 1)) return 1;
+  return clamp01(1 - (Math.min(nightsLeft, totalNights) - 1) / totalNights);
+}
+
+/**
+ * The treasury a late-starting loop opens with: at least a new town's reserve. Wages leave at
+ * shift end and the first upkeep only arrives at midnight, so an old save's emptier (or
+ * negative) pool would sit in debt from the first shift until then.
+ */
+export function lateStartTreasury(pool: number, residents: number, perCapita: number): number {
+  return Math.max(pool, startingTreasury(residents, perCapita));
+}
+
 /** Treasury balance above the cap (per resident), retired at settlement. */
 export function treasuryExcess(pool: number, residents: number, capPerCapita: number): number {
   return cents(Math.max(0, pool - Math.max(1, residents) * capPerCapita));
@@ -82,6 +112,8 @@ export interface UpkeepParams {
   rate: number;
   /** Money-supply multiplier on the lifestyle share (1 at the target). */
   multiplier?: number;
+  /** 0-1 share of the lifestyle share to actually take tonight (`upkeepRamp`); default 1. */
+  ramp?: number;
 }
 
 /**
@@ -100,7 +132,9 @@ const MAX_LIFESTYLE_RATE = 0.6;
  */
 export function dailyUpkeep(cash: number, p: UpkeepParams): number {
   if (cash <= 0) return 0;
-  const rate = Math.min(MAX_LIFESTYLE_RATE, p.rate * (p.multiplier ?? 1));
+  // The ramp comes after the cap: it eases the first nights of a late-starting loop below
+  // even the capped rate, which is exactly the case the cap alone let through at 0.6.
+  const rate = Math.min(MAX_LIFESTYLE_RATE, p.rate * (p.multiplier ?? 1)) * clamp01(p.ramp ?? 1);
   const due = p.base + rate * Math.max(0, cash - p.allowance);
   return cents(Math.min(cash, Math.max(0, due)));
 }

@@ -155,6 +155,7 @@ function migrateSchema() {
   addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
   addColumnIfMissing('world_state', 'terrain_tiles', 'TEXT', "'[]'");
   addColumnIfMissing('world_state', 'money_target_per_capita', 'REAL');
+  addColumnIfMissing('world_state', 'treasury_ramp_left', 'INTEGER');
   // Live rule overrides (Storyteller / world.setRules), see lib/worldRules.ts.
   addColumnIfMissing('world_state', 'rule_overrides', 'TEXT');
 

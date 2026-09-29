@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, startingTreasury, treasuryExcess,
-  moneyTargetFor, savingsAllowance,
+  moneyTargetFor, savingsAllowance, upkeepRamp, lateStartTreasury, UPKEEP_RAMP_NIGHTS,
 } from '../townTreasury';
 import { CONFIG } from '../constants';
 
@@ -59,6 +59,36 @@ describe('dailyUpkeep', () => {
       cash -= dailyUpkeep(cash, params);
     }
     expect(cash).toBeGreaterThanOrEqual(20);
+  });
+});
+
+describe('late-start ramp', () => {
+  it('eases the lifestyle share in over the first nights, then charges it all', () => {
+    expect(UPKEEP_RAMP_NIGHTS).toBe(3);
+    expect(upkeepRamp(3)).toBeCloseTo(1 / 3, 5);
+    expect(upkeepRamp(2)).toBeCloseTo(2 / 3, 5);
+    expect(upkeepRamp(1)).toBe(1);
+    expect(upkeepRamp(0)).toBe(1);
+    expect(upkeepRamp(-1)).toBe(1);
+    expect(upkeepRamp(99)).toBeCloseTo(1 / 3, 5); // never below the first night's share
+  });
+
+  it('scales only the lifestyle share (rent is rent), after the rate cap', () => {
+    // Inflated save: multiplier at its cap, so the rate is the 0.6 ceiling on $160 over a $60 allowance.
+    const inflated = { ...P, multiplier: 4 };
+    expect(dailyUpkeep(160, inflated)).toBe(64);                        // 4 + 0.6 x 100
+    expect(dailyUpkeep(160, { ...inflated, ramp: upkeepRamp(3) })).toBe(24); // 4 + 0.2 x 100
+    expect(dailyUpkeep(160, { ...inflated, ramp: upkeepRamp(2) })).toBe(44); // 4 + 0.4 x 100
+    expect(dailyUpkeep(160, { ...inflated, ramp: upkeepRamp(1) })).toBe(64);
+    expect(dailyUpkeep(40, { ...inflated, ramp: upkeepRamp(3) })).toBe(4);   // under the allowance: rent only
+    expect(dailyUpkeep(160, { ...P, ramp: 5 })).toBe(dailyUpkeep(160, P));   // a ramp above 1 is ignored
+    expect(dailyUpkeep(160, { ...P, ramp: -1 })).toBe(4);                    // ...and below 0 is 0
+  });
+
+  it('a late start opens with at least a new town reserve, never less than what is there', () => {
+    expect(lateStartTreasury(-140, 13, 30)).toBe(390);
+    expect(lateStartTreasury(0, 13, 30)).toBe(390);
+    expect(lateStartTreasury(500, 13, 30)).toBe(500);
   });
 });
 
