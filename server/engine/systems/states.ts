@@ -28,6 +28,7 @@ import { createFact, deactivateStaleFacts, getAgentName, jealousRumorContext } f
 import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
+import { isDeathEnabled } from '../../lib/worldRules';
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
@@ -258,7 +259,11 @@ export function statesTick() {
   // Track agents who die this tick so Pass 3 (already run) didn't harm anything,
   // and we avoid processing the same agent twice.
   const diedThisTick = new Set<number>();
-  for (const agent of allAgents) {
+  // The wizard's "Death Enabled" rule (B20). Off means no one dies of anything
+  // here — starvation, illness, drink, age or accident; the causes' states
+  // (sick, alcoholic, ...) still run their course, they just aren't fatal.
+  const deathEnabled = isDeathEnabled();
+  for (const agent of deathEnabled ? allAgents : []) {
     const agentNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
     if (!agentNeeds) continue;
 

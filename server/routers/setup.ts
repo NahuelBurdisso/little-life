@@ -886,7 +886,9 @@ function seedWorld(
     }).run();
   }
 
-  // 9. Create worldState with rules embedded in time JSON
+  // 9. Create worldState. The rules are read back from `setup_config` (below),
+  // through lib/worldRules.ts: a copy in the clock JSON would not survive the
+  // first tick, which rebuilds `time` field by field.
   const startHour = config.world.startHour;
   const dayPhase = getDayPhase(startHour);
 
@@ -898,9 +900,7 @@ function seedWorld(
       totalTicks: 0,
       seasonDay: config.world.startDay,
       season: config.world.season,
-      // Rules embedded so the simulation engine can read them
-      rules: config.rules,
-    } as any,
+    },
     day_phase: dayPhase,
     weather: config.world.weather,
     weather_duration: 6,
