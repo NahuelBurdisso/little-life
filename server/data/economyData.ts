@@ -33,9 +33,14 @@ export interface Recipe {
   seasonal?: boolean;
 }
 
+// Farm rates are units per game hour at work. Doubled from 1.0/0.8 once meals
+// had to be real food (G2): a full spring shift then grew ~18 food_raw a day
+// against ~28 meals a day for 13 people, so the town could not be fed even on
+// paper. At 2.0/1.6 a full shift grows ~37 (summer ~31, autumn ~25; winter's
+// 0.4 is still a famine the pantry has to carry).
 export const RECIPE_REGISTRY: Recipe[] = [
-  { job: 'farmer',            inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 1.0, seasonal: true },
-  { job: 'farmhand',          inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 0.8, seasonal: true },
+  { job: 'farmer',           inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 2.0, seasonal: true },
+  { job: 'farmhand',          inputs: null,            output: 'food_raw',  outputQuantity: 1, rate: 1.6, seasonal: true },
   { job: 'baker',             inputs: { food_raw: 1 }, output: 'bread',     outputQuantity: 2, rate: 1.0 },
   { job: 'bartender',         inputs: { food_raw: 2 }, output: 'drink',     outputQuantity: 4, rate: 1.0 },
   { job: 'doctor',            inputs: null,            output: 'medicine',  outputQuantity: 1, rate: 0.5 },

@@ -396,6 +396,24 @@ function recordSale(
   checkMilestone(buyer.id, buyerEcon.money);
 }
 
+/**
+ * TRADE_RULES entries in the order their shops restock: types whose owner turns
+ * food into more food (the baker: 1 food_raw → 2 bread) first, the rest in
+ * registry order. See the supply-chain step of economyTick.
+ */
+export function wholesaleBuyerOrder(
+  allLocations: readonly Pick<LocationRow, 'type' | 'owner'>[],
+  econByAgent: Map<number, Pick<EconRecord, 'job'>>,
+): [string, (typeof TRADE_RULES)[string]][] {
+  const processesFood = (locType: string) => allLocations.some((l) => {
+    if (l.type !== locType || l.owner == null) return false;
+    const recipe = getRecipeForJob(econByAgent.get(l.owner)?.job ?? '');
+    return !!recipe?.inputs && isFood(recipe.output);
+  });
+  return Object.entries(TRADE_RULES)
+    .sort(([a], [b]) => Number(processesFood(b)) - Number(processesFood(a)));
+}
+
 // --- Main tick ---
 
 export function economyTick(): void {
@@ -444,7 +462,12 @@ export function economyTick(): void {
     if (!recipe) continue;
 
     if (recipe.inputs) {
-      // Processing job: convert inputs to outputs
+      // Processing job: convert inputs to outputs — but not past what the shop
+      // can hold. There is no rate here (one batch per tick), so a bartender
+      // turned every food_raw the tavern restocked into drinks nobody bought
+      // (19 in stock after two soak days) and the tavern restocked more: once
+      // meals had to be real food (G2) that sink starved the town.
+      if (getInventoryCount(econ.inventory as any[], recipe.output) >= WHOLESALE_STOCK_TARGET) continue;
       let canProduce = true;
       for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
         if (getInventoryCount(econ.inventory as any[], inputItem) < inputQty) {
@@ -495,7 +518,12 @@ export function economyTick(): void {
   // of diners a day never drew down. Now a shop only restocks an item up to
   // WHOLESALE_STOCK_TARGET, and never spends more than WHOLESALE_MAX_CASH_FRACTION
   // of the cash it had when this tick's restock began.
-  for (const [locType, rules] of Object.entries(TRADE_RULES)) {
+  //
+  // Food processors buy first. TRADE_RULES order let the shop take every unit
+  // of farm surplus, so the bakery — which turns 1 food_raw into 2 bread — sat
+  // idle from day 2 of every soak once meals had to be real food (G2): the same
+  // harvest fed half as many people.
+  for (const [locType, rules] of wholesaleBuyerOrder(allLocations, econByAgent)) {
     if (rules.buys.length === 0) continue;
 
     for (const loc of allLocations) {

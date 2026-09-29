@@ -7,8 +7,10 @@ import {
   clearPurchaseTracking,
   WHOLESALE_STOCK_TARGET,
   WHOLESALE_MAX_CASH_FRACTION,
+  wholesaleBuyerOrder,
 } from '../economy';
 import { TRADE_RULES } from '../../../data/economyData';
+import { simEvents } from '../../../lib/simEvents';
 
 /**
  * Playtest bug: eating at a shop bought one item EVERY tick of the meal, and a
@@ -461,5 +463,51 @@ describe('tavern visits', () => {
     ticks(3);
     expect(coversBy(buyer)).toHaveLength(0);
     expect(econ(buyer).money).toBe(COVER - 1);
+  });
+});
+
+/**
+ * Once meals had to be real food (G2) the soak town ran out of it: the tavern
+ * brewed every food_raw it restocked into drinks nobody bought, and the shop
+ * took all farm surplus before the bakery (1 food_raw → 2 bread) got any.
+ */
+describe('food supply', () => {
+  beforeAll(() => ensureWorld(8, 10, 0));
+
+  it('a processor stops making output once the shop holds a full stock of it', () => {
+    n++;
+    const home = insertLocation(`brew home ${n}`, 'home', null);
+    const barkeep = insertAgent(`Barkeep ${n}`, home);
+    const tavern = insertLocation(`brew tavern ${n}`, 'tavern', barkeep);
+    insertEconomy(barkeep, 0, stock({ drink: WHOLESALE_STOCK_TARGET, food_raw: 4 }));
+    db.update(economy).set({ job: 'bartender' }).where(eq(economy.agent_id, barkeep)).run();
+    db.update(agents).set({ workplace: tavern }).where(eq(agents.id, barkeep)).run();
+    setAction(barkeep, { type: 'working' }, 100, tavern);
+
+    // Watch production itself: wholesale may sell the drink surplus to other
+    // files' taverns and restock food_raw, which would mask the counts.
+    const made: string[] = [];
+    const onMade = (p: { agentId: number; item: string }) => { if (p.agentId === barkeep) made.push(p.item); };
+    simEvents.on('economy:production', onMade);
+    try {
+      ticks(1);
+    } finally {
+      simEvents.off('economy:production', onMade);
+    }
+
+    expect(made).toEqual([]);
+  });
+
+  it('the bakery restocks farm surplus before the shop and the tavern', () => {
+    const locs = [
+      { type: 'shop', owner: 1 },
+      { type: 'tavern', owner: 2 },
+      { type: 'bakery', owner: 3 },
+    ];
+    const jobs = new Map([[1, { job: 'shopkeeper' }], [2, { job: 'bartender' }], [3, { job: 'baker' }]]);
+    const order = wholesaleBuyerOrder(locs, jobs).map(([type]) => type);
+    expect(order[0]).toBe('bakery');
+    // A drink is not food: the bartender's recipe earns the tavern no priority.
+    expect(order.indexOf('shop')).toBeLessThan(order.indexOf('tavern'));
   });
 });
