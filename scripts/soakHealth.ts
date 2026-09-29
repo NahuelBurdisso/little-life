@@ -82,6 +82,14 @@ export interface DayHealth {
   statusMix: Record<string, number>;
   /** Mean of the residents' `needs.mood` over the day's ticks. */
   mood: number;
+  /**
+   * Standard deviation of the same readings (every resident, every tick): how far the town's
+   * moods spread. A town where everyone sits at 91 all day reads near 0 — the stagnation the
+   * mean alone can't show.
+   */
+  moodStd: number;
+  /** `arrest` beats today (also in `beats`; broken out because a serial-arrest loop is a failure mode). */
+  arrests: number;
   /** Whole-tick and per-phase wall time in ms. */
   tick: PhaseStat & { max: number; ticks: number };
   phases: Record<string, PhaseStat>;
@@ -149,7 +157,7 @@ const pad = (v: string | number, n: number) => String(v).padStart(n);
 
 /** The daily health table, one row per day. */
 export function formatHealthTable(days: readonly DayHealth[]): string[] {
-  const head = 'day | pop | beats new/kinds/all | story types | rel chg | facts/secr/public | goals ok/gave up | prop/eng/rej/wed | die/arr/dep | invisible | arcs (hot) | friends% | mood | tick p50/p95 ms';
+  const head = 'day | pop | beats new/kinds/all | story types | rel chg | facts/secr/public | goals ok/gave up | prop/eng/rej/wed | die/arr/dep | invisible | arcs (hot) | friends% | mood (sd) | arrests | tick p50/p95 ms';
   const rows = days.map((d) => [
     pad(d.day, 3),
     pad(d.population, 3),
@@ -163,7 +171,8 @@ export function formatHealthTable(days: readonly DayHealth[]): string[] {
     pad(`${d.invisible} (${d.invisibleStrict})`, 9),
     pad(`${d.arcs} (${d.arcsHot})`, 10),
     pad(`${(100 * d.friendShare).toFixed(0)}%`, 8),
-    pad(d.mood.toFixed(0), 4),
+    pad(`${d.mood.toFixed(0)} (${d.moodStd.toFixed(0)})`, 9),
+    pad(d.arrests, 7),
     pad(`${d.tick.p50.toFixed(0)}/${d.tick.p95.toFixed(0)}`, 14),
   ].join(' | '));
   return [head, head.replace(/[^|]/g, '-').replace(/\|/g, '+'), ...rows];
@@ -225,6 +234,7 @@ export function createHealthTracker(deps: TrackerDeps) {
   const runTotals: number[] = [];
   const runPhases: Record<string, number[]> = {};
   let moodSum = 0;
+  let moodSq = 0;
   let moodN = 0;
 
   return {
@@ -244,7 +254,7 @@ export function createHealthTracker(deps: TrackerDeps) {
     },
 
     /** Add one resident's mood reading (the soak already walks every resident's needs each tick). */
-    sampleMood(mood: number): void { moodSum += mood; moodN++; },
+    sampleMood(mood: number): void { moodSum += mood; moodSq += mood * mood; moodN++; },
 
     startPopulation: () => startPopulation,
     runPhaseSummary: () => summarizePhases(runPhases, runTotals),
@@ -379,6 +389,8 @@ export function createHealthTracker(deps: TrackerDeps) {
         pairsWithRow: friendRows.length,
         statusMix,
         mood: moodN ? moodSum / moodN : 0,
+        moodStd: moodN ? Math.sqrt(Math.max(0, moodSq / moodN - (moodSum / moodN) ** 2)) : 0,
+        arrests: beats.arrest ?? 0,
         tick: {
           p50: percentile(dayTotals, 50),
           p95: percentile(dayTotals, 95),
@@ -391,6 +403,7 @@ export function createHealthTracker(deps: TrackerDeps) {
       dayTotals = [];
       dayPhases = {};
       moodSum = 0;
+      moodSq = 0;
       moodN = 0;
       return health;
     },

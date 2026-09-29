@@ -13,7 +13,7 @@ function day(n: number, over: Partial<DayHealth> = {}): DayHealth {
     statusChanges: 1, statusFlows: {}, factsCreated: 3, secretsCreated: 1, secretsPublic: 0, goalsCompleted: 1,
     goalsAbandoned: 0, proposals: 0, engagements: 0, rejections: 0, weddings: 0, engagementsEnded: 0, deaths: 0,
     arrivals: 0, departures: 0, invisible: 1, invisibleNames: ['A'], invisibleStrict: 2, arcs: 3, arcsHot: 2, arcKinds: {},
-    friendShare: 0.2, meanFriendship: 30, pairsWithRow: 60, statusMix: {}, mood: 60,
+    friendShare: 0.2, meanFriendship: 30, pairsWithRow: 60, statusMix: {}, mood: 60, moodStd: 10, arrests: 0,
     tick: { p50: 50, p95: 80, mean: 55, max: 120, ticks: 360 }, phases: {},
     ...over,
   };
@@ -156,6 +156,7 @@ describe('createHealthTracker', () => {
     expect(d1.friendShare).toBeCloseTo(1 / 6, 5); // 1 of the 6 pairs of four residents is friends both ways
     expect(d1.pairsWithRow).toBe(2);
     expect(d1.mood).toBe(70);
+    expect(d1.moodStd).toBe(10); // readings 60 and 80
     expect(d1.tick).toMatchObject({ ticks: 2, max: 200 });
     // `other` is what the phases do not account for.
     expect(d1.phases.other.mean).toBeCloseTo((20 + 80) / 2, 5);
@@ -179,6 +180,7 @@ describe('createHealthTracker', () => {
     expect(d2.startPopulation).toBe(4);
     expect(d2.tick.ticks).toBe(0);
     expect(d2.mood).toBe(0);
+    expect(d2.moodStd).toBe(0);
   });
 
   it('counts a resident who left without dying as a departure, and reads the arcs the chronicle gives it', () => {
