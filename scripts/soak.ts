@@ -106,7 +106,7 @@ async function main(): Promise<void> {
   // Registers the gift / jealousy listeners the server gets from index.ts.
   await import('../server/lib/giftEngine');
 
-  const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations } = schema;
+  const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, needs } = schema;
 
   if (!SOURCE_DB) {
     const { AGENT_SEEDS } = await import('../server/data/agents');
@@ -157,6 +157,10 @@ async function main(): Promise<void> {
   out('');
   out('day | agents | $/capita | min$ | ratio | tax pool | salary | buys (n/$) | covers (n/$) | wholesale $ | gifts (n/$) | convos');
   out('----+--------+----------+------+-------+----------+--------+------------+--------------+-------------+-------------+-------');
+  // Second table, printed after the run: needs and meals per day. Needs are
+  // averaged over every agent-tick (time-weighted, not a daily snapshot), so a
+  // town pinned at 100 and one that dips at lunch read differently.
+  const needsRows: string[] = [];
 
   const anomalies: string[] = [];
   const t0 = performance.now();
@@ -164,9 +168,36 @@ async function main(): Promise<void> {
 
   for (let d = 0; d < DAYS; d++) {
     const dayStart = db.select().from(worldState).get()!.time;
+    const activeAtStart = new Set(db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all().map((a) => a.id));
+    const locTypeById = new Map(db.select({ id: locations.id, type: locations.type }).from(locations).all().map((l) => [l.id, l.type]));
+    const needSum = { hunger: 0, energy: 0, social: 0, fun: 0 };
+    let needSamples = 0;
+    let eatingSamples = 0;
+    let minHunger = 100;
+    const starving = new Set<number>(); // hunger < 15 at any tick of the day
+    // One eating action = one meal, keyed like economy.ts keys a meal.
+    const meals = new Map<string, 'home' | 'out' | 'other'>();
     for (let i = 0; i < ticksPerDay; i++) {
       await gameTick();
       ticks++;
+      const rows = db.select({
+        id: agents.id, home: agents.home, loc: agents.current_location,
+        action: agents.current_action, started: agents.action_started,
+      }).from(agents).where(eq(agents.is_active, true)).all();
+      const needByAgent = new Map(db.select().from(needs).all().map((n) => [n.agent_id, n]));
+      for (const r of rows) {
+        const n = needByAgent.get(r.id);
+        if (!n) continue;
+        needSum.hunger += n.hunger; needSum.energy += n.energy; needSum.social += n.social; needSum.fun += n.fun;
+        needSamples++;
+        minHunger = Math.min(minHunger, n.hunger);
+        if (n.hunger < 15) starving.add(r.id);
+        if ((r.action as any)?.type === 'eating' && r.loc != null) {
+          eatingSamples++;
+          const where = r.loc === r.home ? 'home' : TRADE_RULES[locTypeById.get(r.loc) ?? ''] ? 'out' : 'other';
+          meals.set(`${r.id}:${r.started}`, where);
+        }
+      }
       // Let rejected LLM promises and queued task-runner work settle between ticks.
       if (ticks % 20 === 0) await new Promise((r) => setImmediate(r));
     }
@@ -201,6 +232,18 @@ async function main(): Promise<void> {
     convoMark = maxId(conversations);
 
     const f = (n: number) => n.toFixed(0);
+    const avg = (k: keyof typeof needSum) => f(needSum[k] / Math.max(1, needSamples));
+    const mealCount = (w: string) => [...meals.values()].filter((v) => v === w).length;
+    const died = [...activeAtStart].filter((id) => !active.some((a) => a.id === id));
+    needsRows.push([
+      String(dayStart.day).padStart(3),
+      avg('hunger').padStart(6), avg('energy').padStart(6), avg('social').padStart(6), avg('fun').padStart(4),
+      f(minHunger).padStart(5),
+      String(starving.size).padStart(6),
+      `${(100 * eatingSamples / Math.max(1, needSamples)).toFixed(1)}%`.padStart(7),
+      `${mealCount('home')}/${mealCount('out')}/${mealCount('other')}`.padStart(15),
+      String(died.length).padStart(6) + (died.length ? ` (${died.map((id) => nameOf.get(id)).join(', ')})` : ''),
+    ].join(' | '));
     out([
       String(dayStart.day).padStart(3),
       String(active.length).padStart(6),
@@ -259,6 +302,10 @@ async function main(): Promise<void> {
   }
 
   const ms = performance.now() - t0;
+  out('');
+  out('day | hunger | energy | social | fun | min h | h<15 | eating | meals h/out/oth | deaths');
+  out('----+--------+--------+--------+-----+-------+------+---------+-----------------+-------');
+  for (const r of needsRows) out(r);
   out('');
   out(`${ticks} ticks in ${(ms / 1000).toFixed(1)} s (${(ms / ticks).toFixed(1)} ms/tick)`);
   out('');
