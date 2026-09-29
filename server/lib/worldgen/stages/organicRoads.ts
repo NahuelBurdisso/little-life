@@ -495,7 +495,9 @@ function fillSlivers(net: Network, width: number, height: number): void {
         }
         net.mask[y * width + x] = 1;
         // Half a step after the anchor: sorts between it and the tile that
-        // followed it. A tile paved off another paved tile nests the same way.
+        // followed it. A tile paved off another paved tile lands a whole step
+        // after the original anchor and, by the stable sort, just after the
+        // tile that followed it — a one-tile slip in lamp order, harmless.
         const k = anchor + 0.5;
         key.set(y * width + x, k);
         promoted.push({ tile: { x, y }, key: k });

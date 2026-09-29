@@ -563,3 +563,40 @@ describe('grid layout is unchanged by track C', () => {
     expect(parsed.layoutStyle).toBe('grid');
   });
 });
+
+describe('organic output is pinned', () => {
+  /**
+   * Organic worlds are saved in setup_config and rebuilt from their seed on
+   * restart, so an accidental change to lane growth, sliver paving or zone
+   * cutting silently reshapes every saved organic town. Recorded on the merge
+   * of track C. As with the grid goldens: recompute only for a deliberate
+   * change, and say so in the commit.
+   */
+  const ORGANIC_GOLDEN: Record<string, string> = {
+    'organic-1-auto': '7a18b9db99901421',
+    'organic-1-large': '52ee52f95bc3d06c',
+    'organic-1-custom': 'b98902477a9ff1c3',
+    'organic-5-auto': 'ee4aac5f42dd9460',
+    'organic-5-large': '7ba03f3dd016e5b4',
+    'organic-5-custom': '5a58d73c7ee55e1d',
+    'organic-13-auto': '40b1708d7d963978',
+    'organic-13-large': '7b1a01552d5446af',
+    'organic-13-custom': '4738f965d977093c',
+    'organic-30-auto': 'e781815e2d424656',
+    'organic-30-large': '21d086b729a3eaf1',
+    'organic-30-custom': '2fb7ce0a35eca0df',
+  };
+  const hash = (r: GenResult) => createHash('sha256').update(JSON.stringify(r)).digest('hex').slice(0, 16);
+
+  it('matches the recorded organic worlds', () => {
+    const got = Object.fromEntries(Object.keys(ORGANIC_GOLDEN).map((key) => {
+      const [, n, tier] = key.split('-');
+      const cfg: WorldGenConfig = {
+        sizeTier: tier as WorldGenConfig['sizeTier'], overrides: {}, seed: key, layoutStyle: 'organic',
+      };
+      if (tier === 'custom') cfg.customDimensions = { width: 70, height: 52 };
+      return [key, hash(generateWorld(cfg, Number(n)))];
+    }));
+    expect(got).toEqual(ORGANIC_GOLDEN);
+  });
+});

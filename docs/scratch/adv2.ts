@@ -1,5 +1,6 @@
 import { generateWorld } from '../../server/lib/worldgen/pipeline';
-import { computeRoadPositions, deriveZones, buildRoadDistance } from '../../server/lib/worldgen/stages/roads';
+import { computeRoadPositions, deriveZones } from '../../server/lib/worldgen/stages/roads';
+import { buildRoadDistance } from '../../server/lib/worldgen/stages/roadDistance';
 import { TILE, MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT } from '../../server/lib/worldgen/config';
 import { DERIVED_LOCATION_TYPES } from '../../server/lib/worldgen/buildingTemplates';
 

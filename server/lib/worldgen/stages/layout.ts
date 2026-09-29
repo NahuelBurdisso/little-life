@@ -676,7 +676,9 @@ export const layoutStage: Stage<{
     const usedAreaByZone = new Map<string, number>();
 
     // Normaliser for the centrality term. See `scoreZone`. Fallback zones are
-    // not candidates for a centrality ranking, so they don't set the scale.
+    // left out defensively: the organic one is centred on the map centre, so it
+    // never sets the max today, but a fallback shouldn't be able to rescale
+    // every real zone's centrality if its shape ever changes.
     const maxZoneDist = zones.filter((z) => !z.fallback).reduce(
       (m, z) =>
         Math.max(
@@ -723,22 +725,22 @@ export const layoutStage: Stage<{
       // matters when `remainingFraction` drives several zones to exactly 0. It is
       // kept because removing it would change the RNG draw count and reshuffle
       // every existing seed, not because it breaks ties in practice.
-      const sortedZones = rng.shuffle(scoredZones);
-      sortedZones.sort((a, b) => b.score - a.score);
+      const ranked = rng.shuffle(scoredZones);
+      ranked.sort((a, b) => b.score - a.score);
       // Fallback zones go strictly last. Sorting alone did not guarantee it: a
       // real zone whose `remainingFraction` hit 0 scores exactly 0 too, and the
       // shuffle could put the fallback ahead of it. Partitioning keeps the
       // relative order within each group, and with no fallback zone (the grid)
       // this is the identity — no RNG draw moves either way.
-      const shuffled = [
-        ...sortedZones.filter((z) => !z.zone.fallback),
-        ...sortedZones.filter((z) => z.zone.fallback),
+      const tryOrder = [
+        ...ranked.filter((z) => !z.zone.fallback),
+        ...ranked.filter((z) => z.zone.fallback),
       ];
 
       let placed = false;
 
       // c. Try each zone in score order
-      for (const { zone } of shuffled) {
+      for (const { zone } of tryOrder) {
         const slots = generateSlots(zone, w, h);
         if (slots.length === 0) continue;
 
