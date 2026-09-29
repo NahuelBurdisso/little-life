@@ -788,47 +788,48 @@ export const layoutStage: Stage<{
         // 5→20, 6→4). Anchoring at minD makes the pool monotone in bucketSize
         // and makes the paragraph above actually true.
         const minD = centrality > 0 ? Math.min(...shuffledSlots.map(dist)) : 0;
-        const keyed = shuffledSlots.map((s, i) => ({
-          s,
-          i,
-          f: Math.floor(Math.min(frontage(s), ROAD_FRONTAGE_CAP) / ROAD_FRONTAGE_BUCKET),
-          k: centrality > 0 ? Math.floor((dist(s) - minD) / bucketSize) : 0,
-        }));
-        // Array.prototype.sort is stable in ES2019+, so equal buckets keep the
-        // shuffled order; `i` is a belt-and-braces tiebreak.
-        keyed.sort((a, b) => a.f - b.f || a.k - b.k || a.i - b.i);
-        shuffledSlots.length = 0;
-        for (const e of keyed) shuffledSlots.push(e.s);
 
-        for (const slot of shuffledSlots) {
-          if (fits(slot.x, slot.y, w, h, blocked)) {
-            // Place!
-            markPlaced(slot.x, slot.y, w, h, blocked);
-
-            // Update used area. See `scoreZone` for what this is charged
-            // against; `chargedArea` explains the two adjustments.
-            const prev = usedAreaByZone.get(zone.id) ?? 0;
-            usedAreaByZone.set(zone.id, prev + chargedArea(template));
-
-            // Convert to LocationSeed
-            locationSeeds.push(
-              templateToLocationSeed(template, slot.x, slot.y),
-            );
-
-            placedBuildings.push({
-              type: template.type,
-              tileX: slot.x,
-              tileY: slot.y,
-              w,
-              h,
-            });
-
-            placed = true;
-            break;
-          }
+        // The first fitting slot in (f, k, shuffled index) order, found in one
+        // pass instead of by sorting every slot and walking the sorted list: the
+        // same slot, since the shuffled index breaks every tie exactly as the
+        // stable sort did. The sort allocated and ordered every slot of every
+        // zone asked — hundreds per zone — only to use the first one that fits.
+        // `fits` runs only on a slot that would beat the best found so far.
+        let slot: { x: number; y: number } | null = null;
+        let bf = 0, bk = 0;
+        for (const s of shuffledSlots) {
+          const f = Math.floor(Math.min(frontage(s), ROAD_FRONTAGE_CAP) / ROAD_FRONTAGE_BUCKET);
+          const k = centrality > 0 ? Math.floor((dist(s) - minD) / bucketSize) : 0;
+          if (slot && (f > bf || (f === bf && k >= bk))) continue;
+          if (!fits(s.x, s.y, w, h, blocked)) continue;
+          slot = s; bf = f; bk = k;
         }
 
-        if (placed) break;
+        if (slot) {
+          // Place!
+          markPlaced(slot.x, slot.y, w, h, blocked);
+
+          // Update used area. See `scoreZone` for what this is charged
+          // against; `chargedArea` explains the two adjustments.
+          const prev = usedAreaByZone.get(zone.id) ?? 0;
+          usedAreaByZone.set(zone.id, prev + chargedArea(template));
+
+          // Convert to LocationSeed
+          locationSeeds.push(
+            templateToLocationSeed(template, slot.x, slot.y),
+          );
+
+          placedBuildings.push({
+            type: template.type,
+            tileX: slot.x,
+            tileY: slot.y,
+            w,
+            h,
+          });
+
+          placed = true;
+          break;
+        }
       }
 
       if (!placed) {
