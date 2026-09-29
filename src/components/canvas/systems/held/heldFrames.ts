@@ -7,14 +7,17 @@
  *   0 hammer   1 hammer (raised)   2 rolling pin   3 clipboard   4 ledger
  *   5 mug      6 quill             7 keys          8 hoe         9 plate
  *   10 basket  11 fishing rod      12 watering can 13 lute       14 book
+ *   15 tea cup 16 shopping bag     17 gruel bowl   18 frying pan 19 protest sign
+ *   20 megaphone
  */
 export const HELD_URL = '/sprites/fx/held.png';
 export const HELD_FRAME_SIZE = 16;
-export const HELD_FRAME_COUNT = 15;
+export const HELD_FRAME_COUNT = 21;
 
 export type HeldItemId =
   | 'hammer' | 'rolling_pin' | 'clipboard' | 'ledger' | 'mug' | 'quill' | 'keys' | 'hoe'
-  | 'plate' | 'basket' | 'rod' | 'watering_can' | 'lute' | 'book';
+  | 'plate' | 'basket' | 'rod' | 'watering_can' | 'lute' | 'book'
+  | 'cup' | 'bag' | 'bowl' | 'pan' | 'sign' | 'megaphone';
 
 /**
  * How an item moves in the hand:
@@ -62,5 +65,12 @@ export const HELD_ITEMS: Record<HeldItemId, HeldItemDef> = {
   watering_can: { frame: 12, altFrame: null, grip: { x: 2,  y: 8 },  motion: 'sip',   baseRot: 0,    amp: 0.65, rate: 9, visibleFromBehind: true },
   lute:         { frame: 13, altFrame: null, grip: { x: 10, y: 6 },  motion: 'bob',   baseRot: -0.2, amp: 0.07, rate: 7, visibleFromBehind: true },
   book:         { frame: 14, altFrame: null, grip: { x: 8,  y: 12 }, motion: 'none',  baseRot: 0,    amp: 0,   rate: 0, visibleFromBehind: false },
+  cup:          { frame: 15, altFrame: null, grip: { x: 7,  y: 11 }, motion: 'sip',   baseRot: 0,    amp: 0.5, rate: 8, visibleFromBehind: false },
+  bag:          { frame: 16, altFrame: null, grip: { x: 8,  y: 2 },  motion: 'bob',   baseRot: 0,    amp: 0.06, rate: 2.2, visibleFromBehind: true },
+  bowl:         { frame: 17, altFrame: null, grip: { x: 8,  y: 10 }, motion: 'none',  baseRot: 0,    amp: 0,   rate: 0, visibleFromBehind: false },
+  pan:          { frame: 18, altFrame: null, grip: { x: 3,  y: 9 },  motion: 'bob',   baseRot: -0.12, amp: 0.13, rate: 5.5, visibleFromBehind: true },
+  sign:         { frame: 19, altFrame: null, grip: { x: 8,  y: 12 }, motion: 'bob',   baseRot: 0.05, amp: 0.07, rate: 3, visibleFromBehind: true },
+  // The loudhailer rests low and is lifted (negative amp = bell up) to the mouth every few seconds.
+  megaphone:    { frame: 20, altFrame: null, grip: { x: 5,  y: 11 }, motion: 'sip',   baseRot: -0.2, amp: -0.45, rate: 6, visibleFromBehind: true },
 };
 // The hammer's raised variant is frame 1 (see `altFrame` above).

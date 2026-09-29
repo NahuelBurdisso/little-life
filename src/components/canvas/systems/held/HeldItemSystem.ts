@@ -7,7 +7,9 @@ import { inView } from "../view";
 import type { CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
 import { HELD_FRAME_COUNT, HELD_FRAME_SIZE, HELD_ITEMS, HELD_URL } from "./heldFrames";
 import type { HeldItemId } from "./heldFrames";
-import { heldItemFor, heldPose } from "./heldItem";
+import { bagDeadline, heldItemFor, heldPose } from "./heldItem";
+import { isShoppingTrip } from "../activityFx/activity";
+import { agentPhase } from "../activityFx/emitters";
 import type { HeldPose } from "./heldItem";
 
 /** Below this `lyingBlend` the body is still upright enough to hold something in front. */
@@ -25,6 +27,10 @@ interface Entry {
   shown: HeldItemId | null;
   /** onData generation that last saw this agent — older entries belong to gone agents. */
   seen: number;
+  /** Was on a shopping trip (shopping, browsing) at the last poll. */
+  onTrip: boolean;
+  /** performance.now() until which the shopping bag stays in hand (0 = none). */
+  bagUntil: number;
 }
 
 /**
@@ -63,12 +69,12 @@ class HeldItemSystem implements CanvasSystem {
       const id = String(agent.id);
       let e = this.entries.get(id);
       if (!e) {
-        e = { id, phase: (Number(agent.id) * 1.618) % 10 || 0, item: null, agent: null, sprite: null, shown: null, seen: 0 };
+        e = { id, phase: agentPhase(agent.id), item: null, agent: null, sprite: null, shown: null, seen: 0, onTrip: false, bagUntil: 0 };
         this.entries.set(id, e);
         added = true;
       }
       e.seen = this.generation;
-      e.item = this.itemFor(agent);
+      e.item = this.itemFor(agent, e);
       const body = this.sprites.getSprite(id) ?? null;
       if (body !== e.agent) {
         // The pool rebuilt this agent's sprite (world replace...); its old hand died with it.
@@ -140,7 +146,8 @@ class HeldItemSystem implements CanvasSystem {
       e.shown = item;
     }
 
-    const p = heldPose(def, frame.seconds, body.workStroke, e.phase, this.pose);
+    // Absolute time: `frame.seconds` is the frame's delta, which froze every sway and sip.
+    const p = heldPose(def, frame.now / 1000, body.workStroke, e.phase, this.pose);
     const tex = textures[p.alt && def.altFrame !== null ? def.altFrame : def.frame];
     if (sprite.texture !== tex) sprite.texture = tex;
     sprite.rotation = p.rot;
@@ -148,12 +155,17 @@ class HeldItemSystem implements CanvasSystem {
     sprite.visible = true;
   }
 
-  private itemFor(agent: AgentData): HeldItemId | null {
+  private itemFor(agent: AgentData, e: Entry): HeldItemId | null {
     const raw = agent.current_action;
     const zone = typeof raw === "object" && raw ? (raw as { zoneActivity?: string }).zoneActivity : undefined;
     const here = agent.current_location ?? null;
+    const type = actionTypeOf(agent);
+    const trip = isShoppingTrip(type, zone ?? null);
+    e.bagUntil = bagDeadline(e.onTrip, trip, performance.now(), e.bagUntil);
+    e.onTrip = trip;
     return heldItemFor({
-      actionType: actionTypeOf(agent),
+      actionType: type,
+      bag: e.bagUntil > 0,
       zoneActivity: zone ?? null,
       locationType: here != null ? this.locationTypes.get(here) ?? null : null,
       atWorkplace: agent.workplace != null && here === agent.workplace,

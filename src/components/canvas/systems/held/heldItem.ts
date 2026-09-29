@@ -15,6 +15,8 @@ export interface HeldContext {
   atWorkplace: boolean;
   /** `type` of the agent's workplace. */
   workplaceType: string | null;
+  /** Just finished a shopping trip and is still carrying the goods home. */
+  bag?: boolean;
 }
 
 const WORK_TOOL: Record<string, HeldItemId> = {
@@ -38,6 +40,17 @@ const ZONE_TOOL: Record<string, HeldItemId> = {
   perform: 'lute',
   contemplate: 'book',
   rest: 'book',
+  // A cup of tea on the park bench, a pan at the stove, a loudhailer at the podium...
+  comfort: 'cup',
+  cook: 'pan',
+  speech: 'megaphone',
+  announce: 'megaphone',
+  protest: 'sign',
+  plant: 'hoe',
+  harvest: 'basket',
+  pick_flowers: 'basket',
+  collect_eggs: 'basket',
+  feed_animals: 'basket',
 };
 
 const DRINKING_PLACES = new Set(['tavern', 'divebar']);
@@ -48,17 +61,35 @@ export function heldItemFor(c: HeldContext): HeldItemId | null {
       // A tool only makes sense at the bench; commuting to work is empty-handed.
       return c.atWorkplace && c.workplaceType ? WORK_TOOL[c.workplaceType] ?? null : null;
     case 'eating':
-      return 'plate';
+      // No china behind bars: prison food comes in a bowl.
+      return c.locationType === 'prison' ? 'bowl' : 'plate';
     case 'shopping':
       return 'basket';
     case 'socializing':
       return c.locationType && DRINKING_PLACES.has(c.locationType) ? 'mug' : null;
     case 'idle':
-    case 'comfort':
-      return c.zoneActivity ? ZONE_TOOL[c.zoneActivity] ?? null : null;
+    case 'comfort': {
+      const tool = c.zoneActivity ? ZONE_TOOL[c.zoneActivity] ?? null : c.actionType === 'comfort' ? 'cup' : null;
+      return tool ?? (c.bag ? 'bag' : null);
+    }
+    case 'walking':
+      return c.bag ? 'bag' : null;
     default:
       return null;
   }
+}
+
+/** How long the bag stays in hand after the trip, in ms — about the walk home. */
+export const BAG_CARRY_MS = 45_000;
+
+/**
+ * When the bag should be put down: a shopping trip ending (`wasTrip` -> not `isTrip`) starts the
+ * clock, a new trip or the end of the carry clears it. Returns the deadline in ms (0 = no bag).
+ */
+export function bagDeadline(wasTrip: boolean, isTrip: boolean, now: number, deadline: number): number {
+  if (isTrip) return 0; // still shopping: the basket is the prop
+  if (wasTrip) return now + BAG_CARRY_MS;
+  return deadline > now ? deadline : 0;
 }
 
 /** Per-frame result of {@link heldPose}; reused by the caller to avoid allocating. */

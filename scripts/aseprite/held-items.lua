@@ -11,6 +11,8 @@
 --   4 ledger (8,12)            5 mug (8,10)               6 quill (6,11)        7 keys (8,3)
 --   8 hoe (8,12)               9 plate (8,10)            10 basket (8,3)       11 fishing rod (4,13)
 --  12 watering can (2,8)      13 lute (10,6)             14 book (8,12)
+--  15 tea cup (7,11)          16 shopping bag (8,3)      17 gruel bowl (8,10)  18 frying pan (3,9)
+--  19 protest sign (8,12)     20 megaphone (5,11)
 --
 -- Every item is a chunky silhouette meant to read at ~10 px on screen: flat 2-3 tone fills lit from
 -- the upper left, a 1px #1a1510 outline generated from the fill (like the furniture), no drop
@@ -273,6 +275,79 @@ D.book = function()
   vline(11, 12, 3, P.RED_MD)                                     -- ribbon
 end
 
+-- ── Feedback-pass additions (cells 15-20) ─────────────────────────────────────────────────
+
+-- Porcelain cup on a saucer, tea in it (comfort on a park bench).
+D.cup = function()
+  rect(4, 8, 7, 4, P.WHITE_LT)
+  vline(9, 8, 4, P.CREAM); hline(5, 11, 5, P.CREAM)             -- shaded side and base
+  hline(5, 8, 5, P.MID_WOOD); px(6, 8, P.LIGHT_WOOD)            -- the tea, seen from just above the rim
+  px(11, 9, P.WHITE_LT); px(12, 10, P.CREAM); px(11, 11, P.CREAM) -- handle
+  hline(3, 12, 9, P.STONE_LT); hline(4, 13, 7, P.STONE_MD)       -- saucer
+end
+
+-- Paper bag with a loaf and a leek poking out, carried by the handle (after shopping).
+D.bag = function()
+  rect(4, 6, 9, 8, P.TAN)
+  hline(4, 6, 9, P.LINEN); vline(4, 7, 7, P.LINEN)               -- lit rim and edge
+  vline(12, 7, 7, P.LIGHT_WOOD); hline(5, 13, 7, P.LIGHT_WOOD)   -- shaded side and base
+  hline(4, 9, 9, P.LIGHT_WOOD); rect(7, 8, 3, 2, P.RED_MD)       -- fold and a red label
+  rect(5, 3, 3, 3, P.LIGHT_WOOD); px(5, 3, P.TAN); px(6, 3, P.TAN) -- loaf
+  hline(6, 4, 1, P.MID_WOOD)
+  vline(10, 2, 4, P.GREEN_MD); px(11, 2, P.GREEN_MD); px(10, 2, P.GREEN_DK) -- leek
+  px(8, 1, P.MID_WOOD); px(7, 2, P.MID_WOOD); px(9, 2, P.MID_WOOD)          -- carrying loop
+end
+
+-- Prison gruel in a dented bowl with a spoon (eating behind bars: no plate, no roll).
+D.bowl = function()
+  ellipse(7.5, 8.5, 5.5, 2.4, function(dx, dy)
+    if dx * dx + dy * dy > 0.55 then return P.STONE_LT end        -- rim
+    return dy < 0 and 0xa89a68 or 0x8a7a50                         -- grey-brown gruel
+  end)
+  rect(3, 9, 10, 3, P.STONE_MD)
+  hline(4, 12, 8, P.STONE_DK); hline(3, 9, 10, P.STONE_LT)
+  vline(3, 9, 3, P.STONE_LT); px(12, 11, P.STONE_DK)
+  line(10, 8, 14, 3, function(i) return i < 2 and P.IRON_LT or P.STEEL end)  -- spoon
+  px(14, 2, P.STEEL); px(13, 2, P.STEEL)
+end
+
+-- Frying pan with a fried egg; the handle is the grip (cook).
+D.pan = function()
+  hline(1, 9, 5, P.DARK_WOOD); hline(1, 8, 5, P.MID_WOOD)        -- handle
+  ellipse(10, 8.8, 5.2, 3, function(dx, dy)
+    if dx * dx + dy * dy > 0.66 then return dy < 0 and P.IRON_LT or P.IRON_MD end -- rim
+    return P.STONE_DK
+  end)
+  ellipse(10, 8.5, 2.6, 1.4, function() return P.WHITE_LT end)    -- egg white
+  px(9, 8, P.GOLD_LT); px(10, 8, P.GOLD_LT); px(10, 9, P.GOLD)    -- yolk
+end
+
+-- Hand-lettered placard on a stick (protest).
+D.sign = function()
+  vline(8, 8, 7, P.MID_WOOD); vline(9, 8, 7, P.DARK_WOOD)        -- stick
+  rect(2, 1, 13, 8, P.LINEN)
+  hline(2, 1, 13, P.WHITE_LT); hline(2, 8, 13, P.LIGHT_WOOD)
+  vline(2, 1, 8, P.WHITE_LT); vline(14, 1, 8, P.LIGHT_WOOD)
+  hline(4, 3, 9, P.RED_MD); hline(4, 5, 6, P.RED_MD); px(12, 5, P.RED_MD) -- scrawl
+  px(11, 6, P.RED_MD); px(4, 6, P.RED_DK)
+end
+
+-- Brass-and-red loudhailer (speech, announcement); the mouthpiece is the small end.
+D.megaphone = function()
+  for x = 3, 14 do
+    local half = 1 + math.floor((x - 3) * 0.42)
+    for y = 8 - half, 8 + half do
+      local c = P.RED_MD
+      if y == 8 - half then c = 0xa03a3a elseif y == 8 + half then c = P.RED_DK end
+      if x == 9 then c = P.WHITE_LT end                            -- stripe
+      px(x, y, c)
+    end
+  end
+  rect(1, 7, 3, 3, P.IRON_MD); hline(1, 7, 3, P.IRON_LT)          -- mouthpiece
+  vline(5, 10, 4, P.DARK_WOOD); vline(6, 10, 4, P.MID_WOOD)       -- handle
+  vline(14, 3, 11, P.GOLD)                                        -- flared rim
+end
+
 -- ── Frames ─────────────────────────────────────────────────────────────────────────────────
 
 -- Order is the atlas layout; `raised` marks the hammer's second frame.
@@ -280,6 +355,7 @@ local ORDER = {
   { "hammer" }, { "hammer", raised = true }, { "rolling_pin" }, { "clipboard" }, { "ledger" },
   { "mug" }, { "quill" }, { "keys" }, { "hoe" }, { "plate" }, { "basket" }, { "rod" },
   { "watering_can" }, { "lute" }, { "book" },
+  { "cup" }, { "bag" }, { "bowl" }, { "pan" }, { "sign" }, { "megaphone" },
 }
 
 local cells = {}
