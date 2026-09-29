@@ -45,6 +45,8 @@ import { useFirstRunGuide } from "./hooks/useFirstRunGuide";
 import { worldSeedKey } from "./lib/firstRun";
 import { useToolbarCollapsed } from "./hooks/useToolbarCollapsed";
 import { toolbarClearance } from "./lib/toolbarLayout";
+import { useRecap } from "./hooks/useRecap";
+import { RecapCard } from "./components/ui/RecapCard";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -184,6 +186,16 @@ export default function App() {
     if (totalTicks != null) lastTotalTicksRef.current = totalTicks;
   }, [totalTicks, utils, handleWorldReplaced]);
 
+  // "Previously on…" after a gap of 6+ game hours or when a night skip ends
+  // (useRecap decides when, RecapCard shows it).
+  const recap = useRecap({
+    worldKey: worldSeedKey(world?.setup_config),
+    nowMinute: world?.time ? gameMinutes(world.time) : null,
+    ready: Boolean(world) && !worldLoading && !(isNewSimulation && !setupComplete) && agents.length > 0,
+  });
+  const recapOpen = recap.request != null;
+  const dismissRecap = recap.dismiss;
+
   // Close modals on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -208,6 +220,9 @@ export default function App() {
           setJournalTab(null);
         } else if (showRelGraph) {
           setShowRelGraph(false);
+        } else if (recapOpen) {
+          // A card on the map: under every modal, over the side panels' content.
+          dismissRecap();
         } else if (selectedLocationId != null) {
           // The location card floats over the map, so it is above the agent panel.
           setSelectedLocationId(null);
@@ -218,7 +233,7 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [pairDossier, contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, journalTab, showAutoplay, selectedLocationId, selectedAgentId]);
+  }, [pairDossier, contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, journalTab, recapOpen, dismissRecap, showAutoplay, selectedLocationId, selectedAgentId]);
 
   const cast = useMemo(() => orderCast(agents, favorites), [agents, favorites]);
 
@@ -428,6 +443,17 @@ export default function App() {
           <DirectorChip paused={director.paused} onResume={director.resume} />
           {/* Drama alerts (the Director decides which of them the camera cuts to) */}
           <DramaAlerts alerts={drama.alerts} dismiss={drama.dismiss} onFocusAgent={focusAgent} />
+          {/* "Previously on…" / "Overnight…" (bottom-left, clear of the tools strip) */}
+          <RecapCard
+            request={recap.request}
+            agents={agents}
+            onFocusAgent={focusAgent}
+            onOpenJournal={() => {
+              dismissRecap();
+              openJournal("timeline");
+            }}
+            onDismiss={dismissRecap}
+          />
           {/* Tools strip: bottom-right of the map, folds into an icon rail */}
           <FloatingToolbar
             onNewAgent={() => setShowNewAgent(true)}
