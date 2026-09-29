@@ -151,6 +151,12 @@ describe('template catalog', () => {
     }
   });
 
+  it('never frames a location as the whole world ("my favorite person in Home 4")', () => {
+    for (const t of CONVERSATION_TEMPLATES) {
+      for (const v of t.variants) expect(v.text).not.toMatch(/\bin \{location\.name\}/);
+    }
+  });
+
   it('keeps fog talk to foggy weather', () => {
     for (const t of CONVERSATION_TEMPLATES) {
       if (!t.variants.some((v) => /fog/i.test(v.text))) continue;
@@ -312,11 +318,6 @@ describe('template conversations', () => {
     function setMood(agentId: number, mood: number): void {
       db.update(needs).set({ mood }).where(eq(needs.agent_id, agentId)).run();
     }
-    function coolDown(...categories: string[]): void {
-      for (const category of categories) {
-        db.insert(templateUsage).values({ template_category: category, agent_a: a, agent_b: b, used_at: Date.now() }).run();
-      }
-    }
     const lines = (category: string) =>
       CONVERSATION_TEMPLATES.filter((t) => t.category === category).flatMap((t) => t.variants.map((v) => v.text));
     const render = (text: string, otherName: string) =>
@@ -328,33 +329,28 @@ describe('template conversations', () => {
       setMood(b, 55);
     });
 
-    it('uses the replier\'s own friendship: a warm opener can get a cold reply', async () => {
+    it("uses the replier's own friendship: a warm opener gets a cold reply from someone who dislikes them", async () => {
       setFeelings(60, -50);
       setMood(a, 55);
       setMood(b, 55);
-      // Leave only greetings on the table for both turns.
-      coolDown('small_talk_weather', 'small_talk_work', 'excited_event');
 
       const messages = (await runTemplateConversation()).messages as Array<{ text: string }>;
 
-      expect(lines('greeting_friendly').map((t) => render(t, 'Omar Haddad'))).toContain(messages[0].text);
-      expect(lines('greeting_cold').map((t) => render(t, 'Priya Sharma'))).toContain(messages[1].text);
+      // Omar (friendship -50, mood 55) answers from the cold list; at that
+      // friendship and mood only tense_encounter matches.
+      expect(lines('tense_encounter').map((t) => render(t, 'Priya Sharma'))).toContain(messages[1].text);
     });
 
     it("uses the replier's own mood: a cheerful opener doesn't make a miserable partner cheerful", async () => {
       setFeelings(60, 60);
       setMood(a, 85);
       setMood(b, 10);
-      coolDown('small_talk_weather');
 
       const messages = (await runTemplateConversation()).messages as Array<{ text: string }>;
 
-      // Opener (mood 85) is excited; the reply is small talk about work, picked
-      // for the replier's mood 10 — the "rough day" set, not the upbeat one.
-      const rough = CONVERSATION_TEMPLATES
-        .filter((t) => t.category === 'small_talk_work' && t.conditions.maxMood != null)
-        .flatMap((t) => t.variants.map((v) => v.text));
-      expect(rough).toContain(messages[1].text);
+      // Priya (mood 85) opens excited; Omar (mood 10) answers from his own mood.
+      expect(lines('excited_event').map((t) => render(t, 'Omar Haddad'))).toContain(messages[0].text);
+      expect(lines('complaint_mood').map((t) => render(t, 'Priya Sharma'))).toContain(messages[1].text);
     });
   });
 });

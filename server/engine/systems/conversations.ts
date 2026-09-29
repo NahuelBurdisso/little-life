@@ -1766,10 +1766,23 @@ async function processTimedOutEntry(
     opener ?? { text: `*nods at ${agentList[1].name}*`, sentiment: 0 },
   ];
 
+  // The reply comes from the replier's own state too: a sour opener OR a
+  // replier who dislikes the opener (friendship < -20, the cold greeting band)
+  // answers coldly — a warm "hello!" to someone who can't stand you doesn't get
+  // small talk back. Otherwise the replier's own mood and needs come first.
+  const replier = speakerState[1];
   const replyCategories =
-    turns[0].sentiment <= -0.2
+    turns[0].sentiment <= -0.2 || replier.friendship < -20
       ? ['snide_remark', 'passive_aggressive', 'tense_encounter', 'greeting_cold']
-      : ['small_talk_weather', 'small_talk_work', 'excited_event', greetingCategory(speakerState[1].friendship)];
+      : [
+          ...(replier.mood < 30 ? ['complaint_mood'] : []),
+          ...(replier.hunger < 35 ? ['hungry'] : []),
+          ...(replier.energy < 35 ? ['tired'] : []),
+          'small_talk_weather',
+          'small_talk_work',
+          'excited_event',
+          greetingCategory(replier.friendship),
+        ];
   // When every reply category is on its per-pair cooldown (pairs that keep
   // bumping into each other exhaust them fast) the exchange used to stop at the
   // opener. Fall back to a stock acknowledgement so both people always speak.

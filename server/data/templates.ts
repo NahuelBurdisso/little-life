@@ -85,7 +85,7 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
     variants: [
       { text: "Hey {other.name}! So good to see you!", sentiment: 0.7 },
       { text: "{other.name}! Just the person I wanted to run into.", sentiment: 0.6 },
-      { text: "Well if it isn't my favorite person in {location.name}!", sentiment: 0.8 },
+      { text: "Well if it isn't my favorite person in town!", sentiment: 0.8 },
       { text: "{other.name}, you're looking great today!", sentiment: 0.6 },
     ],
     cooldownPerPair: 4,
