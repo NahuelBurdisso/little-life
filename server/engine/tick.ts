@@ -138,11 +138,18 @@ const SYSTEM_PHASES: Array<{
 /**
  * Run one system phase, logging (not propagating) any throw. Returns false when
  * the phase failed. Exported for tests.
+ *
+ * `onSuccess` runs after a successful phase — inside its transaction for the
+ * synchronous phases, so bookkeeping written there (gameTick's
+ * `current_tick_phase`) commits with the phase instead of as a commit of its
+ * own: that was eleven extra WAL commits a tick, the tick's largest single
+ * block of SQLite time after the phases themselves.
  */
 export async function runSystemPhase(
   phase: { name: string; run: (world: WorldRow) => void | Promise<void> },
   world: WorldRow,
   phaseNumber: number,
+  onSuccess?: () => void,
 ): Promise<boolean> {
   try {
     // Run phase. conversationsTick is async (dispatches LLM tasks) so we
@@ -151,10 +158,12 @@ export async function runSystemPhase(
     if (phase.name === 'conversations') {
       // Async phase: conversationsTick queues LLM tasks outside the transaction
       await phase.run(world);
+      onSuccess?.();
     } else {
       // Synchronous phases: wrap in a transaction for atomicity
       db.transaction(() => {
         phase.run(world);
+        onSuccess?.();
       });
     }
     return true;
@@ -271,10 +280,20 @@ export async function gameTick(): Promise<void> {
     const phaseNumber = i + 1;
     const phaseStart = performance.now();
 
+    // Record the phase as done — with the phase's own commit when it succeeds,
+    // and on its own after a failure (which rolled the phase back), as before.
+    const markPhaseDone = () => {
+      db.update(worldState)
+        .set({ current_tick_phase: phaseNumber })
+        .where(eq(worldState.id, world.id))
+        .run();
+    };
+
     phaseProbe?.(phase.name);
-    await runSystemPhase(phase, worldWithNewTime, phaseNumber);
+    const ok = await runSystemPhase(phase, worldWithNewTime, phaseNumber, markPhaseDone);
     phaseMs.push([phase.name, performance.now() - phaseStart]);
     phaseProbe?.('overhead');
+    if (!ok) markPhaseDone();
 
     // Only the autoplay analyzer drains these samples, and it only runs when
     // AUTOPLAY is enabled — recording unconditionally accumulated ~950k phase
@@ -282,12 +301,6 @@ export async function gameTick(): Promise<void> {
     if (CONFIG.AUTOPLAY.ENABLED) {
       autoPlayer.perf.recordPhase(phase.name, performance.now() - phaseStart);
     }
-
-    // Update current_tick_phase after each successful phase
-    db.update(worldState)
-      .set({ current_tick_phase: phaseNumber })
-      .where(eq(worldState.id, world.id))
-      .run();
   }
 
   phaseProbe?.('post');
