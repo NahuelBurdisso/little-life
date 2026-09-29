@@ -1,5 +1,5 @@
 /**
- * Parametric 32×32 resident bodies and their 11-frame walk/idle sheet.
+ * Parametric 32×32 resident bodies and their 16-frame walk/idle sheet.
  *
  * The hand-drawn residents share one body template (dump any `public/sprites/agents/<name>.png`
  * as text and the rows line up): an 8-px face at x 12..19 with the eyes on row 9, a 10-px torso
@@ -11,7 +11,8 @@
  * The animation is then derived exactly as `scripts/aseprite/agent-sheets.lua` derives the
  * hand-drawn sheets (lift a leg, bob the torso, swing an arm, close the eyes), so a generated
  * resident moves like everyone else. Because we drew the body we know its anatomy, and the
- * script's heuristics (`analyse`, `backView`) become constants and a drawn back view.
+ * script's heuristics (`analyse`, `backView`) become constants and a drawn back view. The side
+ * view is the one derivation ported whole (`sideFrames`), run on the drawn front.
  *
  * Frame order is `SHEET_FRAMES` in src/components/canvas/agentFrames.ts.
  */
@@ -288,8 +289,8 @@ export function drawFront(look: ResidentLook): PixelImage {
 /**
  * Back to camera. Drawn rather than guessed: the head interior becomes hair (a skin crown for a
  * receding hairline), the nape shows under it, and the torso loses its collar, tie and apron —
- * only the apron strings tied at the waist show from behind (the thing C12 notes the Lua
- * `backView` can't do for Priya).
+ * only the apron strings tied at the waist show from behind (the Lua `backView` gets there by
+ * flattening front-only colours, see `frontOnlyColours`).
  */
 export function drawBack(look: ResidentLook): PixelImage {
   const img = createImage(S, S);
@@ -381,12 +382,292 @@ function walkCycle(base: PixelImage, legTop: number, bottom: number): PixelImage
   ];
 }
 
-/** The 11 frames, in `SHEET_FRAMES` order. */
+// ── Side view (port of agent-sheets.lua `sideFrames`) ───────────────────────────────────────
+// Facing right; the client mirrors the rig for a walk to the left. Unlike the back view this is
+// derived from the drawn front exactly as the script derives it from a hand-drawn one — same
+// profile, same torso compression, same stride — so a generated resident walking beside Carlos
+// turns the same way he does. Only the script's guesses become knowledge: the anatomy is
+// `FRONT`, and "is this pixel hair" is palette membership instead of a colour-distance test.
+
+/** Where `drawFront` puts things, i.e. what the script's `analyse` finds on a base sprite. */
+const FRONT = { eye: ANATOMY.eyeRow, neck: 14, armLeftX: 9, armRightX: 22, armBottom: ANATOMY.armBottom } as const;
+
+/** Profile head, palette slots from x = PROFILE_X, by row offset from the eye row (see the Lua). */
+const PROFILE_X = 11;
+export const SIDE_PROFILE: Record<number, string> = {
+  [-1]: "O1221kkkk.",
+  0: "O122skwek.",
+  1: "O121sklkkk",
+  2: ".O1sklllk.",
+  3: "..Oskklkp.",
+  4: "...OskkkO.",
+};
+
+const alpha = (p: RGBA) => p & 255;
+const isInk = (p: RGBA) => p === OUTLINE;
+const roundHalfUp = (v: number) => Math.floor(v + 0.5);
+
+function tally<T>(counts: Map<T, number>, k: T): void {
+  counts.set(k, (counts.get(k) ?? 0) + 1);
+}
+
+function modeOf<T>(counts: Map<T, number>): T | undefined {
+  let best: T | undefined;
+  let bestN = 0;
+  for (const [k, n] of counts) if (n > bestN) [best, bestN] = [k, n];
+  return best;
+}
+
+/** The opaque run through the centre columns of row `y` (the script's `a.minX/maxX`). */
+function centreRun(img: PixelImage, y: number): { x0: number; x1: number } | null {
+  const cx = alpha(getPixel(img, ANATOMY.mid - 1, y)) > 0 ? ANATOMY.mid - 1
+    : alpha(getPixel(img, ANATOMY.mid, y)) > 0 ? ANATOMY.mid : null;
+  if (cx === null) return null;
+  let x0 = cx;
+  let x1 = cx;
+  while (x0 > 0 && alpha(getPixel(img, x0 - 1, y)) > 0) x0--;
+  while (x1 < S - 1 && alpha(getPixel(img, x1 + 1, y)) > 0) x1++;
+  return { x0, x1 };
+}
+
+/** Colours only on the torso's front — never on its side columns or the arms (`frontOnlyColours`). */
+export function frontOnlyColours(img: PixelImage, legTop: number): Set<RGBA> {
+  const l = FRONT.armLeftX + 3;
+  const r = FRONT.armRightX - 3;
+  const seen = new Set<RGBA>();
+  const allRound = new Set<RGBA>();
+  for (let y = FRONT.neck + 1; y < legTop; y++) {
+    for (let x = l; x <= r; x++) {
+      const p = getPixel(img, x, y);
+      if (alpha(p) === 255 && !isInk(p)) seen.add(p);
+    }
+    for (const x of [l, r, FRONT.armLeftX + 1, FRONT.armRightX - 1]) {
+      const p = getPixel(img, x, y);
+      if (alpha(p) === 255 && !isInk(p)) allRound.add(p);
+    }
+  }
+  return new Set([...seen].filter((p) => !allRound.has(p)));
+}
+
+/** Each torso row's colour from the side (`torsoSides`): the dress under an apron, not the apron. */
+function torsoSides(img: PixelImage, legTop: number, frontOnly: Set<RGBA>): Map<number, RGBA> {
+  const l = FRONT.armLeftX + 3;
+  const r = FRONT.armRightX - 3;
+  const sides = new Map<number, RGBA>();
+  const overall = new Map<RGBA, number>();
+  const missing: number[] = [];
+  for (let y = FRONT.neck + 1; y < legTop; y++) {
+    const counts = new Map<RGBA, number>();
+    for (const x of [l, l + 1, l + 2, r - 2, r - 1, r]) {
+      const p = getPixel(img, x, y);
+      if (alpha(p) === 255 && !isInk(p) && !frontOnly.has(p)) tally(counts, p);
+    }
+    const side = modeOf(counts);
+    if (side === undefined) missing.push(y);
+    else {
+      sides.set(y, side);
+      tally(overall, side);
+    }
+  }
+  const fill = modeOf(overall);
+  if (fill !== undefined) for (const y of missing) sides.set(y, fill);
+  return sides;
+}
+
+/** First row of the legs proper (`sideLegTop`): only the two legs, a dark seam, at most six rows. */
+export function sideLegTop(img: PixelImage, bottom: number): number {
+  let top = bottom;
+  for (let y = bottom; y >= 0; y--) {
+    let ok = true;
+    for (let x = 0; x < S; x++) if ((x < 12 || x > 19) && alpha(getPixel(img, x, y)) === 255) ok = false;
+    for (const x of [ANATOMY.mid - 1, ANATOMY.mid]) {
+      const p = getPixel(img, x, y);
+      if (alpha(p) === 255 && luma(p) > 34) ok = false;
+    }
+    if (!ok) break;
+    top = y;
+  }
+  return Math.max(top, bottom - 5);
+}
+
+/** Crown, profile, hanging hair, neck, narrowed torso and shadow: everything but arm and legs. */
+function sideBody(front: PixelImage, look: ResidentLook, frontOnly: Set<RGBA>, sides: Map<number, RGBA>, legTop: number, bottom: number): PixelImage {
+  const out = createImage(S, S);
+  const { eye, neck } = FRONT;
+  const hairColours = new Set([look.hair.dark, look.hair.mid, look.hair.light]);
+  for (let y = 0; y <= eye - 2; y++) for (let x = 0; x < S; x++) setPixel(out, x, y, getPixel(front, x, y));
+  for (let y = eye - 1; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const p = getPixel(front, x, y);
+      if ((alpha(p) > 0 && alpha(p) < 255) || (y > bottom && alpha(p) > 0)) setPixel(out, x, y, p);
+    }
+  }
+
+  // Hair hanging below the ears (long, bob): outside the face columns on the front.
+  const hung = new Map<RGBA, number>();
+  let hb = -1;
+  for (let y = eye + 1; y <= neck; y++) {
+    for (let x = 0; x < S; x++) {
+      if (x >= 12 && x <= 19) continue;
+      const p = getPixel(front, x, y);
+      if (hairColours.has(p)) {
+        tally(hung, p);
+        hb = y;
+      }
+    }
+  }
+  const long = modeOf(hung);
+  if (long !== undefined) {
+    for (let y = eye + 1; y <= hb; y++) {
+      setPixel(out, 10, y, OUTLINE);
+      setPixel(out, 11, y, long);
+      setPixel(out, 12, y, shade(long, 0.8));
+    }
+    if (hb < neck) {
+      setPixel(out, 11, hb + 1, OUTLINE);
+      setPixel(out, 12, hb + 1, OUTLINE);
+    }
+  }
+
+  const slots: Record<string, RGBA> = {
+    O: OUTLINE, "1": look.hair.dark, "2": look.hair.mid,
+    s: look.skin.shade, k: look.skin.mid, l: look.skin.light,
+    w: EYE_WHITE, e: PUPIL, p: look.skin.lipDark,
+  };
+  // Beard rows: three or more hair pixels on the jaw (a mustache counts on its one row).
+  const beard = new Set<number>();
+  const beardC = new Map<RGBA, number>();
+  for (let y = eye + 2; y <= eye + 4; y++) {
+    let n = 0;
+    for (let x = 13; x <= 18; x++) {
+      const p = getPixel(front, x, y);
+      if (hairColours.has(p)) {
+        n++;
+        tally(beardC, p);
+      }
+    }
+    if (n >= 3) beard.add(y);
+  }
+  const beardColour = modeOf(beardC);
+  for (let dy = -1; dy <= 4; dy++) {
+    const row = SIDE_PROFILE[dy];
+    const y = eye + dy;
+    for (let i = 0; i < row.length; i++) {
+      const c = row[i];
+      if (c === ".") continue;
+      const x = PROFILE_X + i;
+      const skinSlot = c === "s" || c === "k" || c === "l";
+      setPixel(out, x, y, beard.has(y) && beardColour !== undefined && x >= 15 && skinSlot ? beardColour : slots[c]);
+    }
+  }
+  const neckRun = centreRun(front, neck);
+  if (neckRun) for (let x = neckRun.x0; x <= neckRun.x1; x++) setPixel(out, x, neck, getPixel(front, x, neck));
+
+  // Torso without its two centre columns; front-only garments keep the two front columns.
+  for (let y = neck + 1; y < legTop; y++) {
+    const run = centreRun(front, y);
+    if (!run || run.x0 >= ANATOMY.mid - 1 || run.x1 <= ANATOMY.mid) continue;
+    let { x0, x1 } = run;
+    let l = x0;
+    let r = x1;
+    for (let x = ANATOMY.mid - 2; x >= x0; x--) if (isInk(getPixel(front, x, y))) { l = x; break; }
+    for (let x = ANATOMY.mid + 1; x <= x1; x++) if (isInk(getPixel(front, x, y))) { r = x; break; }
+    if (r - l >= 5) [x0, x1] = [l, r];
+    const band = y >= FRONT.armBottom - 4 && y <= FRONT.armBottom + 1;
+    if (band) [x0, x1] = [Math.max(x0, FRONT.armLeftX + 2), Math.min(x1, FRONT.armRightX - 2)];
+    for (let x = x0; x <= ANATOMY.mid - 2; x++) setPixel(out, x + 1, y, getPixel(front, x, y));
+    for (let x = ANATOMY.mid + 1; x <= x1; x++) setPixel(out, x - 1, y, getPixel(front, x, y));
+    if (band) {
+      setPixel(out, x0 + 1, y, OUTLINE);
+      setPixel(out, x1 - 1, y, OUTLINE);
+    }
+    const side = sides.get(y);
+    if (side !== undefined) {
+      for (let x = x0 + 2; x <= x1 - 4; x++) if (frontOnly.has(getPixel(out, x, y))) setPixel(out, x, y, side);
+    }
+  }
+  return out;
+}
+
+/** The near arm swung `swing` px at the hand (+ = forward), coloured from the front's arm. */
+function sideArm(out: PixelImage, front: PixelImage, look: ResidentLook, sides: Map<number, RGBA>, swing: number): void {
+  const bottom = FRONT.armBottom;
+  const top = bottom - 3;
+  const armColour = (y: number, fallback: RGBA) => {
+    for (const x of [FRONT.armLeftX + 1, FRONT.armRightX - 1]) {
+      const p = getPixel(front, x, y);
+      if (alpha(p) === 255 && !isInk(p)) return p;
+    }
+    return fallback;
+  };
+  for (let y = top; y <= bottom; y++) {
+    const x = 15 + roundHalfUp((swing * (y - top + 1)) / (bottom - top + 1));
+    const c = y === bottom ? armColour(y, look.skin.mid) : armColour(y, sides.get(y) ?? look.skin.mid);
+    setPixel(out, x - 1, y, OUTLINE);
+    setPixel(out, x, y, c);
+    setPixel(out, x + 1, y, shade(c, 0.8));
+    if (y === bottom) setPixel(out, x + 2, y, OUTLINE);
+  }
+  setPixel(out, 15 + swing, bottom + 1, OUTLINE);
+  setPixel(out, 16 + swing, bottom + 1, OUTLINE);
+}
+
+/** One leg from the front's left-leg strip, foot `foot` px forward, raised `lift`, toe forward. */
+function sideLeg(out: PixelImage, front: PixelImage, top: number, bottom: number, foot: number, lift: number, far: boolean): void {
+  const n = Math.max(1, bottom - top);
+  const dim = (p: RGBA) => (far && !isInk(p) ? shade(p, 0.7) : p);
+  for (let y = top; y <= bottom; y++) {
+    const sy = y + lift;
+    if (sy > bottom) continue;
+    const x = 14 + roundHalfUp((foot * (y - top)) / n);
+    for (let i = 0; i < 4; i++) {
+      const p = getPixel(front, 12 + i, sy);
+      if (alpha(p) === 255) setPixel(out, x + i, y, dim(p));
+    }
+    if (sy === bottom - 1) {
+      setPixel(out, x + 3, y, dim(getPixel(front, 14, sy)));
+      setPixel(out, x + 4, y, OUTLINE);
+    } else if (sy === bottom) {
+      setPixel(out, x + 4, y, OUTLINE);
+    }
+  }
+}
+
+/** idle, then contact · passing · contact · passing — the Lua `SIDE_POSES`. */
+export const SIDE_POSES: ReadonlyArray<{ far: number; farLift?: number; near: number; nearLift?: number; arm: number; bob: number }> = [
+  { far: -1, near: 0, arm: 0, bob: 0 },
+  { far: -2, near: 2, arm: -2, bob: 1 },
+  { far: 1, farLift: 1, near: -1, arm: 0, bob: 0 },
+  { far: 2, near: -2, arm: 2, bob: 1 },
+  { far: -1, near: 1, nearLift: 1, arm: 0, bob: 0 },
+];
+
+/** The idle side frame followed by the four side walk frames, facing right. */
+export function sideFrames(look: ResidentLook, front = drawFront(look)): PixelImage[] {
+  const rows = legRows(look);
+  const frontOnly = frontOnlyColours(front, rows.legTop);
+  const sides = torsoSides(front, rows.legTop, frontOnly);
+  const legTop = sideLegTop(front, rows.bottom);
+  const body = sideBody(front, look, frontOnly, sides, legTop, rows.bottom);
+  return SIDE_POSES.map((pose) => {
+    const f = cloneImage(body);
+    sideLeg(f, front, legTop, rows.bottom, pose.far, pose.farLift ?? 0, true);
+    sideLeg(f, front, legTop, rows.bottom, pose.near, pose.nearLift ?? 0, false);
+    sideArm(f, front, look, sides, pose.arm);
+    return pose.bob > 0 ? bob(f, legTop, pose.bob) : f;
+  });
+}
+
+/** The 16 frames, in `SHEET_FRAMES` order. */
 export function bodyFrames(look: ResidentLook): PixelImage[] {
   const { legTop, bottom } = legRows(look);
   const front = drawFront(look);
   const back = drawBack(look);
-  return [front, blink(front, look), ...walkCycle(front, legTop, bottom), back, ...walkCycle(back, legTop, bottom)];
+  return [
+    front, blink(front, look), ...walkCycle(front, legTop, bottom),
+    back, ...walkCycle(back, legTop, bottom),
+    ...sideFrames(look, front),
+  ];
 }
 
 /** A horizontal strip, the same layout as `<name>_sheet.png`. */

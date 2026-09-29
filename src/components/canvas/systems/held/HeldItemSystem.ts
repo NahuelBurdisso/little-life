@@ -122,11 +122,12 @@ class HeldItemSystem implements CanvasSystem {
     }
     const def = HELD_ITEMS[item];
     // Back to the camera: held-out tools still show at the body's side, but a plate or
-    // book held at the chest would only be seen through the torso. Lying: nothing to hold.
+    // book held at the chest would only be seen through the torso. Side-on it is held out in
+    // front of the chest, so everything shows. Lying: nothing to hold.
     const show =
       inView(frame.view, body.x, body.y) &&
       body.lyingBlend < LYING_HIDE_ABOVE &&
-      (body.viewFacing === "down" || def.visibleFromBehind);
+      (body.viewFacing !== "up" || def.visibleFromBehind);
     if (!show) {
       if (e.sprite && !e.sprite.destroyed) e.sprite.visible = false;
       return;

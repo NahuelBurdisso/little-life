@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SHEET_FRAMES, SHEET_FRAME_COUNT, SHEET_FRAME_SIZE } from "../../components/canvas/agentFrames";
 import {
-  ANATOMY, OUTLINE, bob, bodyFrames, buildBodySheet, drawBack, drawFront, legRows, liftLeg, swingArm,
+  ANATOMY, OUTLINE, bob, bodyFrames, buildBodySheet, drawBack, drawFront, legRows, liftLeg, sideFrames, swingArm,
 } from "../residentArt/bodySheet";
 import { residentLook, type ResidentLook } from "../residentArt/look";
 import { createImage, getPixel, hex, setPixel, type PixelImage } from "../residentArt/pixels";
@@ -118,5 +118,67 @@ describe("frame derivations (agent-sheets.lua ports)", () => {
     const out = swingArm(marked(), "right");
     expect(getPixel(out, 21, ANATOMY.armBottom + 1)).toBe(getPixel(marked(), 21, ANATOMY.armBottom));
     expect(getPixel(out, 16, ANATOMY.armBottom + 1)).toBe(getPixel(marked(), 16, ANATOMY.armBottom + 1));
+  });
+});
+
+describe("side view (agent-sheets.lua sideFrames port)", () => {
+  const APRON = hex("e8e4d8");
+  const sideOf = (look: ResidentLook) => bodyFrames(look).slice(SHEET_FRAMES.idleSide);
+
+  it("appends an idle profile and a four-frame side walk after the back view", () => {
+    expect(SHEET_FRAMES.idleSide).toBe(SHEET_FRAMES.walkUp[3] + 1);
+    expect(sideOf(LOOKS[0])).toHaveLength(1 + SHEET_FRAMES.walkSide.length);
+    expect(sideFrames(LOOKS[0])).toHaveLength(1 + SHEET_FRAMES.walkSide.length);
+  });
+
+  it("faces right: one eye near the brow, the nose one pixel past the face", () => {
+    for (const look of LOOKS.slice(0, 12)) {
+      const idle = sideOf(look)[0];
+      const eye = ANATOMY.eyeRow;
+      expect(getPixel(idle, 17, eye)).toBe(EYE_WHITE);
+      expect([14, 15, 16].filter((x) => getPixel(idle, x, eye) === EYE_WHITE)).toEqual([]);
+      expect(getPixel(idle, 20, eye + 1)).toBe(look.skin.mid);
+      expect(getPixel(idle, 11, eye + 1)).toBe(OUTLINE); // back of the head
+    }
+  });
+
+  it("stays inside the hand-drawn footprint so anchors and held items line up", () => {
+    for (const look of LOOKS) {
+      for (const f of sideOf(look)) {
+        const b = bounds(f);
+        expect(b.minX).toBeGreaterThanOrEqual(9);
+        expect(b.maxX).toBeLessThanOrEqual(22);
+        expect(b.maxY).toBe(31);
+      }
+    }
+  });
+
+  it("strides: every walk frame differs from idle and the two contacts differ", () => {
+    for (const look of LOOKS.slice(0, 6)) {
+      const frames = sideOf(look);
+      const [idle, contactA, passA, contactB] = frames;
+      for (const f of frames.slice(1)) expect(rowDiff(idle, f).size).toBeGreaterThan(0);
+      expect(contactA.data).not.toEqual(contactB.data);
+      expect(passA.data).not.toEqual(contactA.data);
+    }
+  });
+
+  it("shows an apron only on the front edge from the side, and not at all from behind", () => {
+    const aproned = LOOKS.filter((l) => l.apron);
+    expect(aproned.length).toBeGreaterThan(0);
+    const xs = [...Array(SHEET_FRAME_SIZE).keys()];
+    for (const look of aproned) {
+      const side = sideOf(look)[0];
+      const back = bodyFrames(look)[SHEET_FRAMES.idleUp];
+      // The bib (x 14..17) is too narrow to reach the side; the skirt (x 13..18) shows as the
+      // front column or two (the hips are narrower than the chest, so "front" starts at 16).
+      for (let y = 16; y <= 23; y++) {
+        const cols = xs.filter((x) => getPixel(side, x, y) === APRON);
+        expect(cols.length).toBeLessThanOrEqual(2);
+        expect(cols.every((x) => x >= 16)).toBe(true);
+        if (y === 21 || y === 22) expect(cols.length).toBeGreaterThan(0);
+        if (y <= 19) expect(xs.some((x) => getPixel(back, x, y) === APRON)).toBe(false);
+      }
+    }
   });
 });
