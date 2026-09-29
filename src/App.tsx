@@ -160,6 +160,7 @@ export default function App() {
   const handleAgentHover = useCallback(
     (agentId: string | null, pos?: { x: number; y: number }) => {
       if (!agentId || !pos) {
+    isPaused: Boolean(world?.is_paused),
         setHoveredAgent(null);
         setHoverPos(null);
         return;
