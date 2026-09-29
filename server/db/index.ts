@@ -2,6 +2,7 @@ import 'dotenv/config';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
+import { rebaseTickStampsToGameMinutes } from './clockMigration';
 import path from 'path';
 import fs from 'fs';
 
@@ -211,6 +212,10 @@ export function initSchema(): void {
   installAgentStatesWriteHook();
   try {
     migrateSchema();
+    // After the column migrations; a missing table lands in the catch below and
+    // the rebase retries on the next initSchema() (it only marks itself done
+    // once it has run).
+    rebaseTickStampsToGameMinutes(sqlite);
   } catch (err) {
     // A missing table on a fresh DB is expected; anything else (a locked DB
     // skipping the aspirations/goals backfill, say) used to vanish here and
