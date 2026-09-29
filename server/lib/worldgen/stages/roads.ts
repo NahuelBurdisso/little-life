@@ -1,5 +1,7 @@
 import type { Stage, RoadsOutput, Zone } from '../types';
 import { ROAD_BUFFER, BORDER_BUFFER } from '../config';
+import { generateOrganicRoads } from './organicRoads';
+import { getTemplatesForAgentCount } from '../buildingTemplates';
 
 export interface RoadPositions {
   mainStreetY: number;
@@ -110,45 +112,6 @@ export function deriveZones(r: RoadPositions, width: number, height: number): Zo
   return zones;
 }
 
-/**
- * Manhattan distance from every tile to the nearest road tile, by multi-source
- * BFS. Obstacles are deliberately ignored: this measures how close a doorway is
- * to the street network, not how far an agent would have to walk around a
- * building to reach it.
- *
- * Lives here rather than in a stage because both `layout` and `homes` order their
- * candidate positions by it, and two copies would be free to drift.
- *
- * Tiles unreachable from any road (only possible when `roadTiles` is empty) keep
- * the initial sentinel, which sorts last.
- */
-export function buildRoadDistance(
-  width: number,
-  height: number,
-  roadTiles: Array<{ x: number; y: number }>,
-): Int32Array {
-  const dist = new Int32Array(width * height).fill(0x7fffffff);
-  const queue = new Int32Array(width * height);
-  let head = 0, tail = 0;
-  for (const t of roadTiles) {
-    if (t.x < 0 || t.y < 0 || t.x >= width || t.y >= height) continue;
-    const i = t.y * width + t.x;
-    if (dist[i] === 0) continue;
-    dist[i] = 0;
-    queue[tail++] = i;
-  }
-  while (head < tail) {
-    const i = queue[head++];
-    const x = i % width, y = (i - x) / width;
-    const d = dist[i] + 1;
-    if (x > 0 && dist[i - 1] > d) { dist[i - 1] = d; queue[tail++] = i - 1; }
-    if (x < width - 1 && dist[i + 1] > d) { dist[i + 1] = d; queue[tail++] = i + 1; }
-    if (y > 0 && dist[i - width] > d) { dist[i - width] = d; queue[tail++] = i - width; }
-    if (y < height - 1 && dist[i + width] > d) { dist[i + width] = d; queue[tail++] = i + width; }
-  }
-  return dist;
-}
-
 function generateRoadTiles(r: RoadPositions, width: number, height: number): Array<{ x: number; y: number }> {
   const tiles: Array<{ x: number; y: number }> = [];
   // Horizontal: main street (2 tiles wide)
@@ -174,12 +137,28 @@ function generateRoadTiles(r: RoadPositions, width: number, height: number): Arr
   return tiles;
 }
 
+/**
+ * Footprints the organic network must leave room for: every building template
+ * the layout stage will place for this many agents (see `lotsStillFit` in
+ * organicRoads.ts for why all of them, not just the large ones).
+ */
+function templateLots(agentCount: number): Array<{ w: number; h: number }> {
+  return getTemplatesForAgentCount(agentCount).map((t) => ({ w: t.size.w, h: t.size.h }));
+}
+
 export const roadsStage: Stage<{ roads: RoadsOutput }> = {
   name: 'roads',
   dependsOn: ['dimensions'],
-  run(ctx) {
+  run(ctx, rng, cfg, agentCount) {
     if (!ctx.dimensions) throw new Error('roads: dimensions not populated');
     const { width, height } = ctx.dimensions;
+    // Organic is the only branch that draws from `rng` (the stage's own fork,
+    // so no other stage's stream moves). The grid below never has and must not
+    // start: it is what keeps `layoutStyle: 'grid'` byte-identical to worlds
+    // generated before the option existed, which restarts of saved worlds rely on.
+    if (cfg.layoutStyle === 'organic') {
+      return { roads: generateOrganicRoads(width, height, rng, templateLots(agentCount)) };
+    }
     const positions = computeRoadPositions(width, height);
     return {
       roads: {

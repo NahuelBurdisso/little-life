@@ -7,7 +7,7 @@ import { FitError, type Stage, type Zone } from '../types';
 import type { LocationSeed } from '../types';
 // RNG type used implicitly via stage interface
 import { TILE, BUILDING_GAP, ROAD_BUFFER, BORDER_BUFFER } from '../config';
-import { buildRoadDistance } from './roads';
+import { buildRoadDistance } from './roadDistance';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -222,7 +222,12 @@ function generateSlots(
 
 function deriveMainstreet(
   roadTiles: Array<{ x: number; y: number }>,
+  known?: { x: number; y: number; width: number; height: number },
 ): LocationSeed | null {
+  // A road generator that knows where its main street is says so. The organic
+  // layout's lanes put road tiles on the main street's rows outside the street
+  // itself, so the inference below would be guessing.
+  if (known) return mainstreetSeed(known.x, known.y, known.width, known.height);
   if (roadTiles.length === 0) return null;
 
   // Find the main street row: the y value that appears most in road tiles.
@@ -241,29 +246,35 @@ function deriveMainstreet(
     }
   }
 
-  // Find x range for this y
-  let minX = Infinity;
-  let maxX = -Infinity;
-  for (const t of roadTiles) {
-    if (t.y === bestY) {
-      if (t.x < minX) minX = t.x;
-      if (t.x > maxX) maxX = t.x;
-    }
+  // The longest contiguous run on that row, leftmost on a tie. This used to span
+  // min..max x of *every* tile on the row, which is only the street when the row
+  // holds one unbroken run: two unrelated stretches of road on the same row
+  // would have produced one rect covering the ground (and any buildings)
+  // between them. On the grid the row is a single full-width run, so this picks
+  // exactly the span it always did.
+  const xs = [...new Set(roadTiles.filter((t) => t.y === bestY).map((t) => t.x))].sort((a, b) => a - b);
+  let minX = xs[0], maxX = xs[0];
+  for (let i = 0, runStart = xs[0]; i < xs.length; i++) {
+    if (i > 0 && xs[i] !== xs[i - 1] + 1) runStart = xs[i];
+    if (xs[i] - runStart > maxX - minX) { minX = runStart; maxX = xs[i]; }
   }
 
-  const midX = Math.floor((minX + maxX) / 2);
-  const streetLen = maxX - minX + 1;
+  return mainstreetSeed(minX, bestY, maxX - minX + 1, 2);
+}
 
+/** The `mainstreet` location for a street occupying the given tile rect. */
+function mainstreetSeed(minX: number, y: number, streetLen: number, rows: number): LocationSeed {
+  const midX = Math.floor((minX + minX + streetLen - 1) / 2);
   return {
     name: 'Main Street',
     type: 'mainstreet',
     position: {
       x: minX * TILE,
-      y: bestY * TILE,
+      y: y * TILE,
       width: streetLen * TILE,
-      height: 2 * TILE,
+      height: rows * TILE,
     },
-    entry_point: { x: midX * TILE, y: bestY * TILE },
+    entry_point: { x: midX * TILE, y: y * TILE },
     capacity: Math.max(20, streetLen),
     current_occupants: [],
     operating_hours: null,
@@ -664,8 +675,9 @@ export const layoutStage: Stage<{
     // Track used area per zone for remaining-area scoring
     const usedAreaByZone = new Map<string, number>();
 
-    // Normaliser for the centrality term. See `scoreZone`.
-    const maxZoneDist = zones.reduce(
+    // Normaliser for the centrality term. See `scoreZone`. Fallback zones are
+    // not candidates for a centrality ranking, so they don't set the scale.
+    const maxZoneDist = zones.filter((z) => !z.fallback).reduce(
       (m, z) =>
         Math.max(
           m,
@@ -711,8 +723,17 @@ export const layoutStage: Stage<{
       // matters when `remainingFraction` drives several zones to exactly 0. It is
       // kept because removing it would change the RNG draw count and reshuffle
       // every existing seed, not because it breaks ties in practice.
-      const shuffled = rng.shuffle(scoredZones);
-      shuffled.sort((a, b) => b.score - a.score);
+      const sortedZones = rng.shuffle(scoredZones);
+      sortedZones.sort((a, b) => b.score - a.score);
+      // Fallback zones go strictly last. Sorting alone did not guarantee it: a
+      // real zone whose `remainingFraction` hit 0 scores exactly 0 too, and the
+      // shuffle could put the fallback ahead of it. Partitioning keeps the
+      // relative order within each group, and with no fallback zone (the grid)
+      // this is the identity — no RNG draw moves either way.
+      const shuffled = [
+        ...sortedZones.filter((z) => !z.zone.fallback),
+        ...sortedZones.filter((z) => z.zone.fallback),
+      ];
 
       let placed = false;
 
@@ -817,7 +838,7 @@ export const layoutStage: Stage<{
     }
 
     // 5. Derive outdoor locations
-    const mainstreet = deriveMainstreet(roadTiles);
+    const mainstreet = deriveMainstreet(roadTiles, ctx.roads.mainStreet);
     if (mainstreet) locationSeeds.push(mainstreet);
 
     // Each derived plot is marked before deriving the next, or two of them can

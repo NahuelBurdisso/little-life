@@ -1,7 +1,7 @@
 import type { LocationSeed } from '../types';
 import { FitError, type Stage, type StageExtras } from '../types';
 import { TILE, BORDER_BUFFER, ROAD_BUFFER, BUILDING_GAP, type WorldGenConfig } from '../config';
-import { buildRoadDistance } from './roads';
+import { buildRoadDistance } from './roadDistance';
 import { SOCIAL_WEIGHTS, assignHomeLabels, edgesToLabelPairs } from '../social';
 /** Derived plots that are circulation space rather than a destination, and so
  *  are exempt from PUBLIC_BUFFER. Deliberately narrower than

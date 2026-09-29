@@ -152,6 +152,10 @@ const SetupConfigSchema = z.object({
     sizeTier: 'auto',
     overrides: {},
     socialPlacement: true,
+    // Spelled out because an outer `.default()` does not run the inner schema's
+    // defaults — without it a config posted with no `worldgen` would carry no
+    // `layoutStyle` at all. Grid, like every world saved before the option.
+    layoutStyle: 'grid',
   }),
 });
 

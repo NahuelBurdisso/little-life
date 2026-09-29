@@ -410,3 +410,63 @@ describe('scenario seeding', () => {
     expect(new Set(money).size).toBeGreaterThan(1);
   });
 });
+
+/**
+ * `layoutStyle` travels with the saved config, and a config saved before the
+ * option existed restarts as the grid it was generated as. Here rather than in
+ * its own file for the same reason as `scenario seeding`: `initialize` clears
+ * every table, and files run in parallel.
+ */
+describe('layout style through initialize and restart', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
+  const base = (worldgen: object) => ({
+    agents: MINIMAL_AGENTS,
+    relationships: [],
+    world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+    rules: { startingMoney: 50, tickSpeed: 1 },
+    worldgen,
+  });
+  const savedConfig = () =>
+    db.select({ setup_config: worldState.setup_config }).from(worldState).get()!.setup_config as any;
+  const savedRoads = () =>
+    db.select({ road_tiles: worldState.road_tiles }).from(worldState).get()!.road_tiles;
+
+  it('persists organic and rebuilds the same lanes on restart', async () => {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const worldgen = { sizeTier: 'auto' as const, overrides: {}, seed: 'layout-organic', layoutStyle: 'organic' as const };
+    // Roads depend only on the seed, size and agent count, not on the cast.
+    const expected = generateWorld(worldgen, MINIMAL_AGENTS.length);
+    const grid = generateWorld({ ...worldgen, layoutStyle: 'grid' }, MINIMAL_AGENTS.length);
+    expect(expected.roads).not.toEqual(grid.roads);
+
+    await caller.initialize(base(worldgen) as any);
+    expect(savedConfig().worldgen.layoutStyle).toBe('organic');
+    expect(savedRoads()).toEqual(expected.roads);
+
+    await caller.restart();
+    expect(savedRoads()).toEqual(expected.roads);
+  });
+
+  it('restarts a legacy config (no layoutStyle key) as the grid', async () => {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const worldgen = { sizeTier: 'auto' as const, overrides: {}, seed: 'layout-legacy' };
+    const grid = generateWorld(worldgen, MINIMAL_AGENTS.length);
+
+    // A config posted without the key is saved with the default spelled out.
+    await caller.initialize(base(worldgen) as any);
+    expect(savedConfig().worldgen.layoutStyle).toBe('grid');
+    expect(savedRoads()).toEqual(grid.roads);
+
+    // And one saved before the key existed restarts as the same grid.
+    const saved = savedConfig();
+    const { layoutStyle: _dropped, ...legacyWorldgen } = saved.worldgen;
+    db.update(worldState).set({ setup_config: { ...saved, worldgen: legacyWorldgen } }).run();
+    await caller.restart();
+    expect(savedRoads()).toEqual(grid.roads);
+  });
+});

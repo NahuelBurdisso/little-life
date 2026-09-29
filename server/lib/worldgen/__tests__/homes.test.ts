@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { homesStage } from '../stages/homes';
-import { roadsStage, buildRoadDistance } from '../stages/roads';
+import { roadsStage } from '../stages/roads';
+import { buildRoadDistance } from '../stages/roadDistance';
 import { forkRng } from '../rng';
 import { BORDER_BUFFER } from '../config';
 import { FitError } from '../types';

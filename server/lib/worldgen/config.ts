@@ -90,6 +90,12 @@ export const WorldGenConfigObjectSchema = z.object({
    *  same either way; `false` keeps labels in selection order. Only has an
    *  effect when the caller passes `GenerateOptions.social`. */
   socialPlacement: z.boolean().default(true),
+  /** Road network style. `grid` is the fixed two-by-two street grid every town
+   *  had before; `organic` grows lanes from settlement seeds on an interest map
+   *  (see `stages/organicRoads.ts`), so every seed gives a different town shape.
+   *  Defaults to `grid` so configs saved before the option existed rebuild the
+   *  same town. */
+  layoutStyle: z.enum(['grid', 'organic']).default('grid'),
 });
 
 export const WorldGenConfigSchema = WorldGenConfigObjectSchema.refine(
@@ -103,6 +109,14 @@ export const WorldGenConfigSchema = WorldGenConfigObjectSchema.refine(
  * hand-built literals (db/seed.ts, seed-world.ts, the whole test suite), and a
  * required field would break all of them for a flag whose absence already has a
  * meaning. Readers treat anything but an explicit `false` as on.
+ *
+ * `layoutStyle` is optional for the same reason; readers treat anything but an
+ * explicit `'organic'` as the grid.
  */
 export type WorldGenConfig =
-  Omit<z.infer<typeof WorldGenConfigSchema>, 'socialPlacement'> & { socialPlacement?: boolean };
+  Omit<z.infer<typeof WorldGenConfigSchema>, 'socialPlacement' | 'layoutStyle'> & {
+    socialPlacement?: boolean;
+    layoutStyle?: LayoutStyle;
+  };
+
+export type LayoutStyle = 'grid' | 'organic';

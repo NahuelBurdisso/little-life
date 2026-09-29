@@ -85,8 +85,9 @@ export function WorldLayout({
     () => (socialOff ? 'off' : JSON.stringify([agents, relationships, scenario])),
     [socialOff, agents, relationships, scenario],
   );
+  const layoutStyle = config.layoutStyle ?? 'grid';
   const depKey =
-    `${config.sizeTier}|${customW}|${customH}|${agentCount}|${homeNamesKey}|${socialKey}`;
+    `${config.sizeTier}|${layoutStyle}|${customW}|${customH}|${agentCount}|${homeNamesKey}|${socialKey}`;
 
   // Client-side bounds check on the Custom size. `min`/`max` on
   // `<input type="number">` only constrain the spinner — typed and pasted text
@@ -172,7 +173,7 @@ export function WorldLayout({
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.seed, config.sizeTier, customW, customH, agentCount, homeNamesKey, socialKey]);
+  }, [config.seed, config.sizeTier, layoutStyle, customW, customH, agentCount, homeNamesKey, socialKey]);
 
   // Always a fresh seed. It used to be `seedDraft.trim() || randomSeed()`, but
   // the preview writes the resolved seed back into both `config.seed` and
@@ -279,6 +280,23 @@ export function WorldLayout({
                 Large ({TIER_DIMENSIONS.large.width} × {TIER_DIMENSIONS.large.height})
               </option>
               <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          {/* Town style. Same seed, same buildings — only the street network
+              (and so where everything lands) changes. */}
+          <div>
+            <label className="text-xs text-gray-400 uppercase tracking-wide">Town style</label>
+            <select
+              className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm"
+              value={layoutStyle}
+              onChange={(e) => {
+                const next = e.target.value as NonNullable<WorldGenConfig['layoutStyle']>;
+                onChange((prev) => ({ ...prev, layoutStyle: next }));
+              }}
+            >
+              <option value="grid">Grid (planned streets)</option>
+              <option value="organic">Organic village (winding lanes)</option>
             </select>
           </div>
 

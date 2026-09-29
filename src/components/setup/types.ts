@@ -192,10 +192,15 @@ export interface WorldGenConfig {
   /** Place households by the relationship graph (rivals near, secret lovers
    *  apart). Optional to match the server type; absent means on. */
   socialPlacement?: boolean;
+  /** Road network: the fixed street grid, or lanes grown from settlement seeds
+   *  (`server/lib/worldgen/stages/organicRoads.ts`). Optional to match the
+   *  server type; absent means grid. */
+  layoutStyle?: 'grid' | 'organic';
 }
 
 export const DEFAULT_WORLDGEN: WorldGenConfig = {
   sizeTier: 'auto',
   overrides: {},
   socialPlacement: true,
+  layoutStyle: 'grid',
 };
