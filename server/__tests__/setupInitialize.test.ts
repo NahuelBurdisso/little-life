@@ -473,11 +473,11 @@ describe('layout style through initialize and restart', () => {
 
 /**
  * B16: housemates, coworkers and next-door neighbours start acquainted instead
- * of as strangers, and an authored row still wins. Here for the same reason
- * as the blocks above: `initialize` clears every table, and files run in
- * parallel.
+ * of as strangers, and an authored row still wins. B17: seeded secrets keep the
+ * generator's `known_by`. Here for the same reason as the blocks above:
+ * `initialize` clears every table, and files run in parallel.
  */
-describe('starting relationships through initialize', () => {
+describe('starting relationships and secrets through initialize', () => {
   afterAll(async () => {
     await stopTickLoopAndWait();
   });
@@ -529,5 +529,32 @@ describe('starting relationships through initialize', () => {
       expect(rels.some((r) => r.agent_a === id || r.agent_b === id)).toBe(true);
     }
     for (const r of rels) expect(r.agent_a).toBeLessThan(r.agent_b);
+  });
+
+  it('does not tell the person seen in a witness secret that they were seen (B17)', async () => {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    // Witness secrets are one draw among many; walk scenario seeds until the
+    // high-drama town has one (deterministic, so this always finds the same).
+    let checked = 0;
+    for (let i = 0; i < 12 && checked === 0; i++) {
+      await caller.initialize({
+        agents: MINIMAL_AGENTS,
+        relationships: [],
+        world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+        rules: { startingMoney: 50, tickSpeed: 1 },
+        worldgen: { sizeTier: 'auto', overrides: {}, seed: 'b17' },
+        scenario: { drama: 100, romance: 100, crime: 100, trust: 50, seed: `b17-${i}` },
+      } as any);
+      for (const f of db.select().from(shared_knowledge).all()) {
+        const sighting = f.type === 'witness' || / saw /.test(f.content);
+        if (!sighting || f.target_id == null) continue;
+        // About the person seen (subject); known to the onlooker (target) only.
+        expect(f.known_by).not.toContain(f.subject_id);
+        expect(f.known_by).toContain(f.target_id);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });

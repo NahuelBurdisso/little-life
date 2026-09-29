@@ -849,7 +849,12 @@ function seedWorld(
             .filter((id): id is number => id !== undefined),
         ),
       ];
-      if (!knownBy.includes(subjectId)) knownBy.push(subjectId);
+      // The generator decides who knows (setupGenerator.ts): for a sighting —
+      // "A saw B sneaking out" — the fact is about B and only A knows, so B must
+      // NOT be added here. This used to push the subject unconditionally, which
+      // told every person who was seen that they had been seen (B17). Only a
+      // secret nobody would know falls back to its subject.
+      if (knownBy.length === 0) knownBy.push(subjectId);
 
       db.insert(shared_knowledge).values({
         type: secret.type,
