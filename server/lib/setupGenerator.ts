@@ -159,7 +159,10 @@ export function generateFromSliders(
       const isSighting = template.category === 'witness' && targetIdx !== null;
       const factSubject = isSighting ? targetIdx! : subjectIdx;
       const factTarget = isSighting ? subjectIdx : targetIdx;
-      const knownBy = isSighting ? [subjectIdx] : [subjectIdx, ...(targetIdx !== null ? [targetIdx] : [])];
+      // Otherwise both named agents know — except where the text says the
+      // target doesn't (unrequited love, private jealousy).
+      const targetKnows = targetIdx !== null && !template.targetUnaware;
+      const knownBy = isSighting || !targetKnows ? [subjectIdx] : [subjectIdx, targetIdx!];
 
       secrets.push({
         template_id: template.id,
@@ -252,8 +255,8 @@ export function generateFromSliders(
         content: secretContent,
         type: 'romantic',
         sensitivity: template.secret_sensitivity ?? 1,
-        subject_index: selected[0],
-        target_index: selected.length > 1 ? selected[1] : null,
+        subject_index: selected[template.secret_subject ?? 0],
+        target_index: selected[template.secret_target ?? 1] ?? null,
         known_by_indices: knownBy,
       };
     }

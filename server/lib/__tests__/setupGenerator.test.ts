@@ -158,4 +158,47 @@ describe('witness secrets', () => {
       expect(s.known_by_indices).toEqual([onlooker]);
     }
   });
+
+  const towns = (sliders: { drama: number; romance: number }) =>
+    Array.from({ length: 40 }, (_, i) =>
+      generateFromSliders({ ...sliders, crime: 5, trust: 5 }, mockAgents, seeded(i + 1)));
+
+  it('never tell the target a secret the text says they do not know', () => {
+    const oneSided = towns({ drama: 9, romance: 5 }).flatMap((t) => t.secrets)
+      .filter((s) => ['romantic_unrequited', 'romantic_jealousy'].includes(s.template_id));
+    expect(oneSided.length).toBeGreaterThan(0);
+    for (const s of oneSided) {
+      expect(s.target_index).not.toBeNull();
+      expect(s.known_by_indices).not.toContain(s.target_index);
+    }
+  });
+
+  it('romance secrets are about the agents their text names, known by the right people', () => {
+    const threadSecrets = towns({ drama: 5, romance: 10 })
+      .flatMap((t) => t.romanceThreads.flatMap((th) => (th.secret ? [th.secret] : [])));
+    // The seeds are fixed; make sure the templates this pins actually occur.
+    for (const id of ['love_triangle', 'jealousy_seed', 'secret_fling']) {
+      expect(threadSecrets.some((s) => s.template_id === id), id).toBe(true);
+    }
+
+    for (const s of threadSecrets) {
+      // Subject and target both appear in the text they are the subject of.
+      expect(s.content).toContain(mockAgents[s.subject_index].name);
+      if (s.target_index !== null) expect(s.content).toContain(mockAgents[s.target_index].name);
+
+      if (s.template_id === 'love_triangle') {
+        // "{agent_2} also has feelings for {agent_1}" — agent 2's secret.
+        expect(s.content.startsWith(mockAgents[s.subject_index].name)).toBe(true);
+        expect(s.known_by_indices).toEqual([s.subject_index]);
+      }
+      if (s.template_id === 'jealousy_seed') {
+        // "{agent_0} saw {agent_1} flirting…": about the flirt, known to the onlooker.
+        expect(s.content.startsWith(mockAgents[s.subject_index].name)).toBe(false);
+        expect(s.known_by_indices).not.toContain(s.subject_index);
+      }
+      if (s.template_id === 'secret_fling') {
+        expect(s.known_by_indices).toEqual(expect.arrayContaining([s.subject_index, s.target_index]));
+      }
+    }
+  });
 });

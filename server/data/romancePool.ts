@@ -19,6 +19,14 @@ export interface RomanceTemplate {
   secret_sensitivity?: 1 | 2;
   /** Who knows about it (agent indices + optional "friend" meaning a random friend) */
   known_by?: Array<number | 'friend'>;
+  /**
+   * Slots of the fact's subject and target (default 0 and 1). The secret is
+   * about whoever it names first: in a love triangle that is agent 2, and a
+   * subject outside the text made the wrong agent's secret — and setup adds
+   * the subject to known_by, so the wrong agent knew it.
+   */
+  secret_subject?: number;
+  secret_target?: number;
   /** Personality constraints per agent slot */
   constraints?: Record<number, Record<string, number>>;
   /** Maximum age gap between agents */
@@ -67,6 +75,8 @@ export const ROMANCE_POOL: RomanceTemplate[] = [
     secret_template: '{agent_2} also has feelings for {agent_1}',
     secret_sensitivity: 2,
     known_by: [2],
+    secret_subject: 2,
+    secret_target: 1,
     max_age_gap: 15,
   },
   {
@@ -79,7 +89,8 @@ export const ROMANCE_POOL: RomanceTemplate[] = [
     creates_secret: true,
     secret_template: '{agent_0} and {agent_1} had a secret encounter',
     secret_sensitivity: 2,
-    known_by: ['friend'],
+    // Both were there; the friend is the one they told.
+    known_by: [0, 1, 'friend'],
     constraints: { 0: { sensuality: 50 }, 1: { sensuality: 50 } },
     max_age_gap: 15,
   },
@@ -104,7 +115,10 @@ export const ROMANCE_POOL: RomanceTemplate[] = [
     creates_secret: true,
     secret_template: '{agent_0} saw {agent_1} flirting with {agent_2}',
     secret_sensitivity: 1,
-    known_by: [0, 1, 2],
+    // A sighting: it is about the flirt, and only the onlooker knows they were seen.
+    known_by: [0],
+    secret_subject: 1,
+    secret_target: 2,
     max_age_gap: 15,
   },
   {

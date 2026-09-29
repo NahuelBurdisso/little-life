@@ -10,6 +10,12 @@ export interface SecretTemplate {
   template: string;
   /** 1 = public knowledge, 2 = private, 3 = deeply secret */
   sensitivity: 1 | 2 | 3;
+  /**
+   * The {target} does not know. Setup otherwise puts both named agents in
+   * known_by, which made "in love with {target} but has never said a word"
+   * known to the target from day one.
+   */
+  targetUnaware?: true;
 }
 
 export const SECRETS_POOL: SecretTemplate[] = [
@@ -85,6 +91,7 @@ export const SECRETS_POOL: SecretTemplate[] = [
     category: 'romantic',
     template: '{subject} is deeply in love with {target} but has never said a word.',
     sensitivity: 2,
+    targetUnaware: true,
   },
   {
     id: 'romantic_past_relationship',
@@ -103,6 +110,7 @@ export const SECRETS_POOL: SecretTemplate[] = [
     category: 'romantic',
     template: '{subject} is consumed with jealousy over {target}\'s happiness.',
     sensitivity: 2,
+    targetUnaware: true,
   },
 
   // ─── past (3) ────────────────────────────────────────────────────────────────
