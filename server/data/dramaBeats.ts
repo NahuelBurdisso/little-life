@@ -18,7 +18,8 @@ export type DramaBeat =
   | 'breakup' | 'estrangement'                  // → heartbreak
   | 'arrest' | 'death' | 'birthday'
   | 'theft'                                     // tagged so it is not mistaken for a beat; no canvas FX
-  | 'arrival' | 'departure';                    // the town's population changing (lib/populationFlow.ts); no canvas FX yet
+  | 'arrival' | 'departure'                     // the town's population changing (lib/populationFlow.ts); no canvas FX yet
+  | 'new_job' | 'help_wanted' | 'inheritance';  // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday';
 
@@ -42,6 +43,11 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   // tags let the director, sound and gazette tell these rows apart.
   arrival: null,
   departure: null,
+  // Tagged so the director, sound and gazette can tell a town's trades
+  // changing hands from gossip about them.
+  new_job: null,
+  help_wanted: null,
+  inheritance: null,
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {
