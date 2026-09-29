@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  planEventDecor, planEvent, wellBox, eventAnchorRect, strangerSpot, riverRect, DECOR_FRAME_COUNT, DECOR_FRAMES,
+  planEventDecor, planEvent, weddingCouple, wellBox, eventAnchorRect, strangerSpot, riverRect, DECOR_FRAME_COUNT, DECOR_FRAMES,
   type DecorPlacement,
 } from '../eventDecor';
 import { openAreaPropBoxes } from '../../../zoneProps';
@@ -388,5 +388,23 @@ describe('eventAnchorRect', () => {
     expect(eventAnchorRect(ev(1, 'market_day'), LOCS, MAP)).toEqual(market.position);
     expect(eventAnchorRect(ev(1, 'storm'), LOCS, MAP)).toBeNull();
     expect(eventAnchorRect(null, LOCS, MAP)).toBeNull();
+  });
+});
+
+describe('wedding couple', () => {
+  it('reads the newlyweds from triggered_by', () => {
+    expect(weddingCouple(ev(1, 'wedding', { triggered_by: 'wedding:3-12' }))).toEqual([3, 12]);
+    expect(weddingCouple(ev(1, 'wedding', { triggered_by: 'random' }))).toBeNull();
+    expect(weddingCouple(ev(1, 'funeral', { triggered_by: 'death:3' }))).toBeNull();
+    expect(weddingCouple(null)).toBeNull();
+  });
+
+  it('a couple’s wedding carries petals that follow each spouse; a random one has none', () => {
+    const [plan] = planEventDecor([ev(5, 'wedding', { triggered_by: 'wedding:3-12', location_id: 1 })], LOCS, MAP);
+    expect(plan.placements.length).toBeGreaterThan(5);           // the arch etc. still on the square
+    expect(new Set(plan.followers!.map(f => f.agentId))).toEqual(new Set([3, 12]));
+    expect(plan.followers!.some(f => f.placement.frame === DECOR_FRAMES.petalFall && f.placement.motion?.kind === 'fall')).toBe(true);
+    expect(plan.followers!.every(f => f.placement.y < 0)).toBe(true); // above the head, not the feet
+    expect(planEventDecor([ev(6, 'wedding')], LOCS, MAP)[0].followers).toBeUndefined();
   });
 });

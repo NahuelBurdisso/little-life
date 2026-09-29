@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { loadStrip } from "../../stripAtlas";
 import { TILE_SIZE } from "../../../../lib/spriteConfig";
-import type { CanvasLayers, CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
+import type { CanvasLayers, CanvasServices, CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
 import { detailLevel, inView } from "../view";
 import {
   DECOR_FOOT_X, DECOR_FOOT_Y, DECOR_FRAME_COUNT, DECOR_FRAMES, DECOR_URL,
@@ -43,6 +43,11 @@ interface Group {
   target: 0 | 1;
   lastAlpha: number;
   lastLevel: number;
+  /**
+   * Decorations riding on a resident (a wedding's petals over the newlyweds): placed at the
+   * agent's sprite every frame, so they are culled one by one rather than by the group box.
+   */
+  followers: Array<{ agentId: string; sprite: PIXI.Sprite; p: DecorPlacement; shown: number }>;
 }
 
 /**
@@ -67,7 +72,7 @@ export class TownEventSystem implements CanvasSystem {
   /** Scratch result of `motionAt`, reused for every placement so a frame allocates nothing. */
   private readonly motion = newMotionOut();
 
-  constructor(private readonly layers: CanvasLayers) {
+  constructor(private readonly layers: CanvasLayers, private readonly services?: CanvasServices) {
     loadStrip(DECOR_URL, DECOR_FRAME_COUNT)
       .then(tex => {
         if (this.destroyed) return;
@@ -148,9 +153,19 @@ export class TownEventSystem implements CanvasSystem {
       x0 = Math.min(x0, p.x + ext.x0 - 20); x1 = Math.max(x1, p.x + ext.x1 + 20);
       y0 = Math.min(y0, p.y + ext.y0 - 44); y1 = Math.max(y1, p.y + ext.y1 + 4);
     });
+    // Followers live in `over` too (fading with the group) but skip the group's cull box.
+    const followers: Group["followers"] = [];
+    for (const f of plan.followers ?? []) {
+      const sprite = new PIXI.Sprite(textures[f.placement.frame]);
+      sprite.anchor.set(DECOR_FOOT_X / 32, DECOR_FOOT_Y / 32);
+      sprite.visible = false;
+      over.addChild(sprite);
+      followers.push({ agentId: String(f.agentId), sprite, p: f.placement, shown: -1 });
+    }
     this.layers.ground.addChild(ground);
     this.layers.overAgents.addChild(over);
     return {
+      followers,
       eventId: plan.eventId, ground, over, sprites, placements: plan.placements,
       shown: new Int16Array(plan.placements.length).fill(-1),
       animated, born: performance.now() / 1000, x0, y0, x1, y1,
@@ -185,12 +200,22 @@ export class TownEventSystem implements CanvasSystem {
       if (g.fade < 0) g.fade = 0;
 
       const onScreen = g.x1 >= view.x && g.x0 <= view.x + view.w && g.y1 >= view.y && g.y0 <= view.y + view.h;
-      g.ground.visible = g.over.visible = onScreen;
-      if (!onScreen) continue;
+      g.ground.visible = onScreen;
+      // The couple may walk far from the square: `over` stays on while it carries followers.
+      g.over.visible = onScreen || g.followers.length > 0;
 
       if (g.fade !== g.lastAlpha) {
         g.lastAlpha = g.fade;
         g.ground.alpha = g.over.alpha = g.fade;
+      }
+      if (g.followers.length > 0) this.stepFollowers(g, frame, level);
+      if (!onScreen) {
+        // Static placements in `over` must not draw while the group is culled.
+        if (g.followers.length > 0) for (let i = 0; i < g.sprites.length; i++) {
+          if (g.placements[i].layer === "over") g.sprites[i].visible = false;
+        }
+        g.lastLevel = -1; // re-apply garnish visibility when it comes back on screen
+        continue;
       }
       if (level !== g.lastLevel) {
         g.lastLevel = level;
@@ -229,6 +254,31 @@ export class TownEventSystem implements CanvasSystem {
       }
     }
   }
+
+  /** Move each follower to its resident; hidden while the resident has no sprite or is off screen. */
+  private stepFollowers(g: Group, frame: FrameContext, level: number): void {
+    const textures = this.textures!;
+    const t = frame.now / 1000;
+    const mo = this.motion;
+    for (const f of g.followers) {
+      const agent = this.services?.sprites.getSprite(f.agentId);
+      if (!agent || level === 0) { f.sprite.visible = false; continue; }
+      let x = agent.x + f.p.x, y = agent.y + f.p.y;
+      let alpha = 1;
+      if (f.p.motion) {
+        motionAt(f.p.motion, t, f.p.phase, t - g.born, mo);
+        x += mo.dx; y += mo.dy; alpha = mo.alpha;
+      }
+      if (!inView(frame.view, x, y - 16, 24)) { f.sprite.visible = false; continue; }
+      f.sprite.visible = true;
+      f.sprite.position.set(x, y);
+      f.sprite.alpha = alpha;
+      if (f.p.frames > 1) {
+        const cell = Math.floor(t * f.p.fps + f.p.phase * f.p.frames) % f.p.frames;
+        if (cell !== f.shown) { f.shown = cell; f.sprite.texture = textures[f.p.frame + cell]; }
+      }
+    }
+  }
 }
 
-export const createTownEventSystem: SystemFactory = (layers) => new TownEventSystem(layers);
+export const createTownEventSystem: SystemFactory = (layers, services) => new TownEventSystem(layers, services);
