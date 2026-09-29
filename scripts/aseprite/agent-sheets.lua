@@ -180,6 +180,15 @@ local function palette(img, a)
   end
   local skin = mode(skinC) or pc.rgba(200, 152, 108, 255)
   local crown = crownColours(img, a)
+  -- Skin shading is not hair. A deep cheek or jaw shadow sits far enough from the mid skin tone
+  -- to pass the `dist > 70` test below, and on a dark complexion (Priya: 4a3020 against 9a6d4c) it
+  -- was the only candidate, so her back view came out face-brown. The centre of the neck row is
+  -- bare skin on every base sprite, so any colour found there is a skin shade and never hair.
+  local neckSkin = {}
+  for x = MID - 2, MID + 1 do
+    local p = get(img, x, a.neck)
+    if A(p) == 255 and not isInk(p) then neckSkin[p] = true end
+  end
   for y = a.top, a.neck - 2 do
     if a.minX[y] then
       for x = a.minX[y] + 1, a.maxX[y] - 1 do
@@ -191,7 +200,8 @@ local function palette(img, a)
       if y >= a.top + 3 then
         for _, x in ipairs({ a.minX[y] + 1, a.minX[y] + 2, a.maxX[y] - 2, a.maxX[y] - 1 }) do
           local p = get(img, x, y)
-          if A(p) == 255 and not isInk(p) and not crown[p] and dist(p, skin) > 70 and luma(p) < 200 then
+          if A(p) == 255 and not isInk(p) and not crown[p] and not neckSkin[p]
+             and dist(p, skin) > 70 and luma(p) < 200 then
             hairC[p] = (hairC[p] or 0) + 1
           end
         end
@@ -458,6 +468,48 @@ local function sideLegTop(img, a)
   return math.max(top, a.bottom - 5)
 end
 
+-- Caps and brimmed hats. On the front sprite a cap's brim is a row exactly two pixels wider than
+-- the cheeks on each side (James's hat, Ray's police cap), which copied straight across made a
+-- profile with a bulge behind the head as well as in front — a hat that faces nowhere. Side-on the
+-- brim belongs to the front only: the row shifts one pixel forward so the back of the head ends in
+-- the crown's outline, and the bill grows `BILL_EXTRA` pixels past the face. Wider brims (Elena's
+-- straw hat) are round and stay symmetric, and so does anything narrower: a bun or a bucket hat
+-- has no row that overhangs the cheeks by two, so those sprites are untouched.
+local BILL_EXTRA = 1
+local function billForward(out, img, a, eye)
+  -- The cheeks: the row two under the eyes is the widest bare-face row on every base sprite.
+  local cheek = eye + 2
+  local faceMin, faceMax = a.minX[cheek], a.maxX[cheek]
+  if not faceMin then return end
+  local moved, backX = false, nil
+  for y = a.top + 3, eye - 2 do
+    local l, r = a.minX[y], a.maxX[y]
+    -- Two wider than the cheeks AND one wider than the crown row above: Elena's straw hat is also
+    -- two wider than her (braid-widened) cheeks, but three wider than its own crown.
+    local aboveL, aboveR = a.minX[y - 1], a.maxX[y - 1]
+    if l and aboveL and l == faceMin - 2 and r == faceMax + 2 and l == aboveL - 1 and r == aboveR + 1 then
+      local row = {}
+      for x = l, r do row[#row + 1] = get(img, x, y); out:drawPixel(x, y, 0) end
+      for i, px in ipairs(row) do
+        if i == #row then
+          for k = 0, BILL_EXTRA - 1 do out:drawPixel(l + i + k, y, row[#row - 1]) end
+          out:drawPixel(l + i + BILL_EXTRA, y, px)
+        else
+          out:drawPixel(l + i, y, px)
+        end
+      end
+      moved, backX = true, l
+    end
+  end
+  if moved then
+    -- The brim's soft shadow on the row below hung behind the head too; only the front stays.
+    for x = 0, backX do
+      local px = out:getPixel(x, eye - 1)
+      if A(px) > 0 and A(px) < 255 then out:drawPixel(x, eye - 1, 0) end
+    end
+  end
+end
+
 -- Everything but the moving parts: crown, profile, hanging hair, neck, torso and drop shadow.
 local function sideBody(img, a, skin, hair, frontOnly, sides, legTop)
   local out = blank()
@@ -472,6 +524,8 @@ local function sideBody(img, a, skin, hair, frontOnly, sides, legTop)
       if (A(p) > 0 and A(p) < 255) or (y > a.bottom and A(p) > 0) then out:drawPixel(x, y, p) end
     end
   end
+
+  billForward(out, img, a, eye)
 
   local hb, long = hangingHair(img, a, skin, eye)
   if hb then
@@ -549,6 +603,13 @@ end
 -- The near arm, from the shoulder to the hand, swung `swing` px at the hand (+ = forward). Sleeve
 -- colours come from the front's arm column; an arm hidden under a braid falls back to the other
 -- arm, then to the torso's side colour.
+local DARK_SLEEVE_LUMA = 60
+-- A lighter step of a dark colour (added, not scaled: scaling black stays black).
+local function lifted(p)
+  local function c(v) return math.min(255, v + 42) end
+  return pc.rgba(c(pc.rgbaR(p)), c(pc.rgbaG(p)), c(pc.rgbaB(p)), 255)
+end
+
 local function sideArm(out, img, a, sides, skin, swing)
   if not a.armBottom then return end
   local top, bottom = a.armBottom - 3, a.armBottom
@@ -559,12 +620,24 @@ local function sideArm(out, img, a, sides, skin, swing)
     end
     return fallback
   end
+  -- Near-black cloth (Marco's suit, Diego's jacket) sits on a torso of the same tone, so the arm
+  -- (outline, sleeve, a darker shade) vanished. On a dark sleeve the leading column becomes a lit
+  -- rim over the true sleeve colour, and the hand is always the skin-toned one with its shade.
+  local dark = luma(armColour(top + 1, sides[top + 1] or skin)) < DARK_SLEEVE_LUMA
   for y = top, bottom do
     local x = 15 + round(swing * (y - top + 1) / (bottom - top + 1))
     local c = (y == bottom) and armColour(y, skin) or armColour(y, sides[y] or skin)
     out:drawPixel(x - 1, y, OUTLINE)
-    out:drawPixel(x, y, c)
-    out:drawPixel(x + 1, y, scaled(c, 0.8))
+    if dark and y == bottom then
+      out:drawPixel(x, y, skin)
+      out:drawPixel(x + 1, y, scaled(skin, 0.8))
+    elseif dark then
+      out:drawPixel(x, y, lifted(c))
+      out:drawPixel(x + 1, y, c)
+    else
+      out:drawPixel(x, y, c)
+      out:drawPixel(x + 1, y, scaled(c, 0.8))
+    end
     if y == bottom then out:drawPixel(x + 2, y, OUTLINE) end
   end
   out:drawPixel(15 + swing, bottom + 1, OUTLINE)
@@ -676,8 +749,9 @@ local function build(dir, name)
   for i, img in ipairs(frames) do strip:drawImage(img, Point((i - 1) * W, 0)) end
   strip:saveAs(app.fs.joinPath(dir, name .. "_sheet.png"))
   spr:close()
-  print(string.format("%-18s legTop=%d neck=%d arms=%s-%s eye=%s", name, a.legTop, a.neck,
-    tostring(a.armTop), tostring(a.armBottom), tostring(a.eyeRow)))
+  local function hex(p) return string.format("%02x%02x%02x", pc.rgbaR(p), pc.rgbaG(p), pc.rgbaB(p)) end
+  print(string.format("%-18s legTop=%d neck=%d arms=%s-%s eye=%s skin=%s hair=%s", name, a.legTop, a.neck,
+    tostring(a.armTop), tostring(a.armBottom), tostring(a.eyeRow), hex(skin), hex(hair)))
 end
 
 local dir = app.params.dir or "public/sprites/agents"
