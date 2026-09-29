@@ -17,10 +17,12 @@
  *      to whatever network already exists, over a cost field that bends lanes
  *      around "rough" noise patches, charges for turning (long straight runs
  *      with occasional bends rather than staircases), and charges for running
- *      alongside an existing road (so lanes meet the network as T junctions
- *      instead of shadowing it and leaving an unbuildable sliver);
+ *      alongside an existing road (which *discourages* lanes from shadowing
+ *      the network; it does not rule it out);
  *   5. one extra link closes a loop between two far-apart parts of the tree
- *      when a short one exists, so the village is not all dead ends.
+ *      when a short one exists, so the village is not all dead ends;
+ *   6. any 1-tile strip of grass left sandwiched between two roads is paved
+ *      (see `fillSlivers`).
  *
  * It does *not* place buildings. It emits rectangular zones with the same
  * affinity vocabulary (and value ranges) as the grid's AFFINITIES table, so
@@ -431,7 +433,13 @@ export function generateOrganicRoads(
     }
   }
 
-  // ── 7. Zones ────────────────────────────────────────────────────────────────
+  // ── 7. Slivers ──────────────────────────────────────────────────────────────
+  // After the loop's lot check, not before: paving a sliver never changes what
+  // `lotsStillFit` sees (see `fillSlivers`), so the check's answer is the same
+  // either way and this avoids undoing out-of-order insertions.
+  fillSlivers(net, width, height);
+
+  // ── 8. Zones ────────────────────────────────────────────────────────────────
   const zones = deriveOrganicZones(width, height, interest, mainStreet, cx, cy);
 
   debug?.({ mainStreet, seeds, lanes, loops });
@@ -440,6 +448,64 @@ export function generateOrganicRoads(
 
 function nearRoadCost(d: number): number {
   return d > NEAR_ROAD_RADIUS ? 0 : (NEAR_ROAD_COST * (NEAR_ROAD_RADIUS + 1 - d)) / NEAR_ROAD_RADIUS;
+}
+
+// ─── Sliver fill ──────────────────────────────────────────────────────────────
+
+/**
+ * Pave every non-road tile that has road directly on both its north and south
+ * sides, or both its east and west sides, repeating until none is left.
+ *
+ * The near-road cost makes lanes avoid each other but cannot forbid it — a
+ * lane squeezed between a seed and the network, or a loop brushing past a
+ * lane, still ends up one tile off another road. Measured before this pass:
+ * 51 of 400 networks at 56×43 and 102 of 400 at 90×70 had such a tile, drawn
+ * as a lone strip or speck of grass inside the pavement.
+ *
+ * Placement space is unchanged: a sandwiched tile is inside its neighbours'
+ * ROAD_BUFFER ring already, and so is its own ring (every tile of it touches
+ * one of the two sandwiching road tiles, orthogonally or diagonally). Hence no
+ * `lotsStillFit` re-check.
+ *
+ * Output order: each paved tile is placed right after the earliest of its road
+ * neighbours in the emitted list, so the lamp sampling in `LightingSystem`
+ * still walks along the lanes instead of meeting a tail of stragglers.
+ */
+function fillSlivers(net: Network, width: number, height: number): void {
+  const key = new Map<number, number>();
+  net.tiles.forEach((t, i) => key.set(t.y * width + t.x, i));
+  const promoted: Array<{ tile: Tile; key: number }> = [];
+  const road = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < width && y < height && net.mask[y * width + x] === 1;
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        if (net.mask[y * width + x]) continue;
+        if (!((road(x, y - 1) && road(x, y + 1)) || (road(x - 1, y) && road(x + 1, y)))) continue;
+        let anchor = Infinity;
+        for (let d = 0; d < 4; d++) {
+          const k = key.get((y + DY[d]) * width + x + DX[d]);
+          if (k !== undefined && k < anchor) anchor = k;
+        }
+        net.mask[y * width + x] = 1;
+        // Half a step after the anchor: sorts between it and the tile that
+        // followed it. A tile paved off another paved tile nests the same way.
+        const k = anchor + 0.5;
+        key.set(y * width + x, k);
+        promoted.push({ tile: { x, y }, key: k });
+        changed = true;
+      }
+    }
+  }
+  if (promoted.length === 0) return;
+  // Stable sort: equal keys keep emission order, then discovery order.
+  const all = [
+    ...net.tiles.map((tile, i) => ({ tile, key: i })),
+    ...promoted,
+  ].sort((a, b) => a.key - b.key);
+  net.tiles.length = 0;
+  for (const e of all) net.tiles.push(e.tile);
 }
 
 // ─── Lot guard ────────────────────────────────────────────────────────────────
