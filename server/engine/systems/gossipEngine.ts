@@ -28,6 +28,7 @@ import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
 import { isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
+import { chancePerTick } from '../../lib/gameClock';
 
 interface AgentInfo {
   id: number;
@@ -72,8 +73,14 @@ export function isCommonKnowledge(
 /** How hard being found out hits the subject, per point of sensitivity. */
 const EXPOSURE_MOOD_HIT = 6;
 
-/** `nowMinutes`: the game-minute clock agent states are stamped in (lib/states.ts). */
-export function gossipTick(nowMinutes: number): void {
+/**
+ * `nowMinutes`: the game-minute clock agent states are stamped in (lib/states.ts).
+ * `tickSpeed`: game minutes this tick advances (world.tick_speed, 30 during a
+ * night skip). The eavesdrop / gossip / discovery rolls below are authored as
+ * chances per GAME MINUTE; rolling them once per tick made gossip four times
+ * rarer per game hour at 4x and nearly extinct through a night skip.
+ */
+export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
   const allAgents: AgentInfo[] = db.select({
     id: agents.id,
     name: agents.name,
@@ -146,7 +153,7 @@ export function gossipTick(nowMinutes: number): void {
 
           // Eavesdrop chance: curiosity-driven
           const curiosity = eavesdropper.personality?.curiosity ?? 50;
-          const chance = curiosity / 2500; // ~4% for max curiosity per tick, ~2% for average
+          const chance = chancePerTick(curiosity / 2500, tickSpeed); // ~4% per game minute for max curiosity, ~2% for average
           if (Math.random() > chance) continue;
 
           addKnowers(fact, [eavesdropper.id]);
@@ -177,7 +184,9 @@ export function gossipTick(nowMinutes: number): void {
 
       // Only gossip-prone agents share: curious + dishonest
       if (curiosity < 50 || honesty > 60) continue;
-      if (Math.random() > 0.02 * gossipMultiplier) continue; // 2% per tick, boosted by events
+      // 2% per game minute, boosted by events. chancePerTick caps at 1, so a big
+      // boost times a night-skip tick can't overflow the roll.
+      if (Math.random() > chancePerTick(Math.min(1, 0.02 * gossipMultiplier), tickSpeed)) continue;
 
       // Pick a random co-located agent to gossip with
       const targets = group.filter(a => a.id !== agent.id);
@@ -243,7 +252,8 @@ export function gossipTick(nowMinutes: number): void {
   for (const [, group] of locationGroups) {
     for (const agent of group) {
       if (!agent.personality || agent.personality.curiosity < 60) continue;
-      if (Math.random() > 0.005 * gossipMultiplier) continue; // 0.5% per tick, boosted by events
+      // 0.5% per game minute, boosted by events.
+      if (Math.random() > chancePerTick(Math.min(1, 0.005 * gossipMultiplier), tickSpeed)) continue;
 
       // Find secrets about co-located agents that this agent doesn't know
       const coLocatedIds = group.map(a => a.id).filter(id => id !== agent.id);

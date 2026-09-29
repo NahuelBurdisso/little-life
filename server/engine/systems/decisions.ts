@@ -20,7 +20,7 @@ import { isSeatedZone } from '../../data/interiors';
 import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
-import { gameMinutes, isOpenAt } from '../../lib/gameClock';
+import { chancePerTick, gameMinutes, isOpenAt } from '../../lib/gameClock';
 import { effectiveSleepWindow, inSleepWindow, sleepDurationMinutes } from '../../lib/sleepSchedule';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { distance } from '../../lib/utils';
@@ -34,7 +34,7 @@ import {
 } from '../../lib/personality';
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
-import { createFact, getShareableFacts, getAgentName, getNegativeFactCount } from '../../lib/gossip';
+import { createFact, getShareableFacts, getAgentName, getNegativeFactCount, countNegativeFactsBySubject } from '../../lib/gossip';
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
 import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
@@ -750,6 +750,8 @@ function scoreFreeTimeActions(
   econMap?: Map<number, EconRow>,
   activeEventTypes?: Set<string>,
   weather?: string,
+  /** This tick's negative-fact counts per agent (see `countNegativeFactsBySubject`); queried per target when absent. */
+  negativeFactCounts?: Map<number, number>,
 ): ScoredAction[] {
   const scores: ScoredAction[] = [];
   const evening = isEvening(world.time.hour);
@@ -898,7 +900,7 @@ function scoreFreeTimeActions(
     socScore *= getReputationSocialModifier(other.id);
 
     // Escalation: reduce social score toward agents with many negative facts
-    const targetNegFacts = getNegativeFactCount(other.id);
+    const targetNegFacts = negativeFactCounts ? (negativeFactCounts.get(other.id) ?? 0) : getNegativeFactCount(other.id);
     if (targetNegFacts >= 10) {
       socScore *= 0.1; // Pariah
     } else if (targetNegFacts >= 3) {
@@ -1487,6 +1489,10 @@ export function tick(world: WorldRow): void {
   const allActiveKnowledge = db.select().from(shared_knowledge)
     .where(eq(shared_knowledge.is_active, true))
     .all();
+  // Negative facts per subject, counted once from that snapshot: scoring
+  // socializing priced one shared_knowledge query per (agent, co-located other)
+  // per tick, and the constable check one more per pair.
+  const negativeFactCounts = countNegativeFactsBySubject(allActiveKnowledge);
 
   // Cache active world events — agents react to storms, festivals, etc.
   const activeWorldEvents = db.select().from(worldEvents)
@@ -1664,7 +1670,10 @@ export function tick(world: WorldRow): void {
       decision = scheduled && withMeal(scheduled, mealPlan);
     }
 
-    // Phase 2b: Event crowd behavior — idle agents gravitate toward active events
+    // Phase 2b: Event crowd behavior — idle agents gravitate toward active events.
+    // The pull chances below are authored per GAME MINUTE and rolled through
+    // chancePerTick, so a festival fills the square in the same game time at 4x
+    // (per tick, an idle agent set off after 1/4 of the game minutes) as at 1x.
     if (!decision && activeEventTypes.size > 0) {
       // Festival/wedding/competition: head to town square to join the fun.
       // A couple's wedding names its venue; go there rather than to whichever
@@ -1674,7 +1683,7 @@ export function tick(world: WorldRow): void {
         const venue = weddingVenue != null
           ? allLocations.find((l) => l.id === weddingVenue)
           : nearestLocation(agent.position, allLocations, 'town_square');
-        if (venue && agent.current_location !== venue.id && Math.random() < 0.4) {
+        if (venue && agent.current_location !== venue.id && Math.random() < chancePerTick(0.4, world.tick_speed)) {
           decision = { action: 'socializing', score: 3800, targetLocationId: venue.id };
         }
       }
@@ -1685,12 +1694,12 @@ export function tick(world: WorldRow): void {
       // Town meeting: head to town square
       if (activeEventTypes.has('town_meeting')) {
         const square = nearestLocation(agent.position, allLocations, 'town_square');
-        if (square && agent.current_location !== square.id && Math.random() < 0.6) {
+        if (square && agent.current_location !== square.id && Math.random() < chancePerTick(0.6, world.tick_speed)) {
           decision = { action: 'socializing', score: 3900, targetLocationId: square.id };
         }
       }
       // Traveling merchant: browse the market
-      if (activeEventTypes.has('traveling_merchant') && Math.random() < 0.25) {
+      if (activeEventTypes.has('traveling_merchant') && Math.random() < chancePerTick(0.25, world.tick_speed)) {
         const square = nearestLocation(agent.position, allLocations, 'town_square');
         if (square) {
           decision = { action: 'idle', score: 3500, targetLocationId: square.id, source: 'browse' };
@@ -1711,6 +1720,7 @@ export function tick(world: WorldRow): void {
         econMap,
         activeEventTypes,
         currentWeather,
+        negativeFactCounts,
       );
       if (scored.length > 0) {
         // Goal alignment bonus — boost social actions toward goal targets
@@ -2259,8 +2269,10 @@ export function tick(world: WorldRow): void {
     const loc = allLocations.find(l => l.id === locId);
     if (!loc || !socialLocTypes.has(loc.type)) continue;
 
-    // Pick a random pair from the group (max 1 new conversation per location per tick)
-    if (Math.random() > 0.15) continue; // 15% chance per tick per social location
+    // Pick a random pair from the group (max 1 new conversation per location per tick).
+    // 15% per GAME MINUTE per social location: rolled once per tick it left the
+    // tavern a quarter as chatty at 4x (chancePerTick compounds it over the tick).
+    if (Math.random() > chancePerTick(0.15, world.tick_speed)) continue;
     const shuffled = group.sort(() => Math.random() - 0.5);
     const a = shuffled[0];
     const b = shuffled[1];
@@ -2344,7 +2356,7 @@ export function tick(world: WorldRow): void {
 
       if (getAgentStates(other.id).includes('arrested')) continue;
 
-      const negFacts = getNegativeFactCount(other.id);
+      const negFacts = negativeFactCounts.get(other.id) ?? 0;
 
       // Check if constable has direct knowledge of crimes by this target (from cached data)
       const allKnowledgeFacts = allActiveKnowledge
@@ -2358,9 +2370,10 @@ export function tick(world: WorldRow): void {
       const arrestThreshold = allKnowledgeFacts.length > 0 ? 4 : 8;
       if (negFacts < arrestThreshold) continue;
 
-      // 25% chance when constable has direct crime knowledge, 10% otherwise
+      // 25% per game minute when the constable has direct crime knowledge, 10%
+      // otherwise (chancePerTick: the same odds per game minute at any speed).
       const arrestChance = allKnowledgeFacts.length > 0 ? 0.25 : 0.1;
-      if (Math.random() > arrestChance) continue;
+      if (Math.random() > chancePerTick(arrestChance, world.tick_speed)) continue;
 
       // Find the prison
       const prison = allLocations.find(l => l.type === 'prison');

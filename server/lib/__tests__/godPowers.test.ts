@@ -14,6 +14,7 @@ import { memoryService } from '../memory/instance';
 import { simEvents } from '../simEvents';
 import { nudgeRouter } from '../../routers/nudge';
 import { gossipTick } from '../../engine/systems/gossipEngine';
+import { onPlanReplanned } from '../playerOutcomes';
 import { isHeld } from '../../engine/systems/states';
 import { rumorPredicate, sanitizePlayerText, STIR_HOLD_MINUTES } from '../godPowers';
 import { gameMinutesNow } from '../worldClock';
@@ -179,6 +180,16 @@ describe('whisper_thought', () => {
       description: expect.stringContaining('open my own bakery'),
     }));
     expect(lastActivity('player_whisper')?.initiator_id).toBe(agentId);
+  });
+
+  it('tells the player when the whisper reworks the agent day', async () => {
+    await caller().execute({ action: { type: 'whisper_thought', agentId, text: 'I must find a lighthouse to keep' } });
+    const reason = (emit.mock.calls.find((c: any[]) => c[0] === 'plan:evaluate-replan')![1] as { description: string }).description;
+
+    onPlanReplanned({ agentId, description: reason, blocks: ['walk to the coast'] });
+
+    expect(String((lastActivity('player_outcome')!.template_data as Record<string, unknown>).description))
+      .toBe("Your whispered thought changed Whisper's day: now walk to the coast.");
   });
 
   it('refuses an injection attempt without touching memory', async () => {

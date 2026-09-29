@@ -12,7 +12,15 @@ import {
 } from '../../db/schema';
 import { simEvents } from '../simEvents';
 import { tick as relationshipsTick } from '../../engine/systems/relationships';
-import { clearPlayerOutcomes, describeExpired, describeOutcome, statusClause } from '../playerOutcomes';
+import {
+  clearPlayerOutcomes,
+  describeExpired,
+  describeOutcome,
+  registerWhisper,
+  statusClause,
+  whisperAired,
+  whisperStems,
+} from '../playerOutcomes';
 import { gatherMaterial } from '../gazette';
 
 /**
@@ -282,5 +290,72 @@ describe('planted rumors', () => {
     }).returning({ id: shared_knowledge.id }).get().id;
     simEvents.emit('rumor:reached_subject', { factId, subjectId: subject, tellerId: teller });
     expect(rumorRows(factId)).toHaveLength(0);
+  });
+});
+
+describe('whispered thoughts', () => {
+  const whisperRows = (agentId: number) => rowsOf('player_outcome', [agentId])
+    .filter((r) => (r.template_data as Record<string, unknown>).trigger === 'player_whisper');
+
+  it('picks distinctive words and needs two of them (or the only one) to call it aired', () => {
+    const stems = whisperStems('Maybe I should open my own bakery in the village');
+    expect(stems).toContain('baker');
+    expect(stems).not.toContain('maybe');
+    expect(whisperAired(['The weather is fine'], stems)).toBe(false);
+    // One shared word out of several is a coincidence.
+    expect(whisperAired(['I passed the bakery this morning'], stems)).toBe(false);
+    expect(whisperAired(['I want to open a bakery of my own'], stems)).toBe(true);
+    // A whisper with a single distinctive word is settled by that word.
+    expect(whisperAired(['Have you seen the lighthouse?'], whisperStems('The lighthouse'))).toBe(true);
+    expect(whisperAired(['anything'], [])).toBe(false);
+  });
+
+  it('reports once when the agent voices the thought in a conversation', () => {
+    const agent = insertAgent('Wanda Whisper');
+    const other = insertAgent('Wim Listener');
+    registerWhisper(agent, 'Maybe I should open my own bakery');
+    const talk = (text: string, extra: Record<string, unknown> = {}) => ({
+      messages: [{ speakerId: other, text: 'How is work?', sentiment: 0, topics: [], timestamp: 0 },
+        { speakerId: agent, text, sentiment: 0, topics: [], timestamp: 0, ...extra }],
+    });
+
+    // A canned fallback line is not the agent speaking.
+    simEvents.emit('conversation:ended', { agentId: agent, ...talk('I dream of my own bakery', { fallback: true }) });
+    // Unrelated chatter changes nothing.
+    simEvents.emit('conversation:ended', { agentId: agent, ...talk('Lovely weather today.') });
+    expect(whisperRows(agent)).toHaveLength(0);
+
+    simEvents.emit('conversation:ended', { agentId: agent, ...talk('Honestly I want to open my own bakery.') });
+    simEvents.emit('conversation:ended', { agentId: agent, ...talk('Honestly I want to open my own bakery.') });
+    const rows = whisperRows(agent);
+    expect(rows).toHaveLength(1);
+    const description = String((rows[0].template_data as Record<string, unknown>).description);
+    expect(description).toContain('Wanda');
+    expect(description).toContain('open my own bakery');
+  });
+
+  it('reports when the whisper reworks the day, then never again', () => {
+    const agent = insertAgent('Rita Replan');
+    registerWhisper(agent, 'I should leave this town');
+    const replanned = (description: string) => simEvents.emit('plan:replanned', {
+      agentId: agent, description, blocks: ['pack a bag', 'visit the station'],
+    });
+
+    replanned('talked with Bo about the harvest');
+    expect(whisperRows(agent)).toHaveLength(0);
+
+    replanned("had a sudden thought they can't shake: \"I should leave this town\"");
+    replanned("had a sudden thought they can't shake: \"I should leave this town\"");
+    const rows = whisperRows(agent);
+    expect(rows).toHaveLength(1);
+    expect(String((rows[0].template_data as Record<string, unknown>).description))
+      .toBe("Your whispered thought changed Rita's day: now pack a bag, visit the station.");
+
+    // Already reported: a later conversation says nothing more.
+    simEvents.emit('conversation:ended', {
+      agentId: agent,
+      messages: [{ speakerId: agent, text: 'I should leave this town', sentiment: 0, topics: [], timestamp: 0 }],
+    });
+    expect(whisperRows(agent)).toHaveLength(1);
   });
 });

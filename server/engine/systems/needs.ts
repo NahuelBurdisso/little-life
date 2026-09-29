@@ -1,4 +1,5 @@
-import { db } from '../../db';
+import { db, sqlite } from '../../db';
+import type { Statement } from 'better-sqlite3';
 import { agents, needs, economy, locations, worldState, worldEvents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { clamp } from '../../lib/utils';
@@ -45,6 +46,39 @@ export function updateWorkTracking(agentId: number, isWorking: boolean, elapsedM
   const next = (consecutiveWorkMinutes.get(agentId) ?? 0) + elapsedMinutes;
   consecutiveWorkMinutes.set(agentId, next);
   return next;
+}
+
+/**
+ * The end-of-loop write, once per agent per tick. Drizzle builds and compiles a
+ * fresh statement for every `db.update(...).set(...)` call (the tick profiler
+ * counts one `prepare` per execution), which for thirteen residents is thirteen
+ * SQLite compiles a tick for an identical query. Prepared once instead and
+ * re-run with new parameters; JSON columns are stringified here exactly as
+ * drizzle's `mode: 'json'` does.
+ *
+ * Lazy (first tick, not module load) so importing this file never needs the
+ * `needs` table to exist yet, and cached against the module's `sqlite` handle —
+ * the same single connection `db` wraps, which nothing swaps at runtime (a world
+ * replace rewrites rows, tests point the whole process at their own file before
+ * `server/db` loads). SQLite re-prepares a statement itself if the schema changes
+ * underneath it. It is still an UPDATE on `needs`, so the write-count triggers
+ * (db/index.ts) see it like any other.
+ */
+let writeNeedsStmt: Statement | undefined;
+function writeNeedsRow(
+  id: number,
+  v: {
+    hunger: number; energy: number; social: number; comfort: number; fun: number;
+    mood: number; stress: number; moodModifiers: unknown; lastUpdated: number;
+  },
+): void {
+  writeNeedsStmt ??= sqlite.prepare(
+    'UPDATE needs SET hunger = ?, energy = ?, social = ?, comfort = ?, fun = ?, mood = ?, stress = ?, mood_modifiers = ?, last_updated = ? WHERE id = ?',
+  );
+  writeNeedsStmt.run(
+    v.hunger, v.energy, v.social, v.comfort, v.fun, v.mood, v.stress,
+    JSON.stringify(v.moodModifiers), v.lastUpdated, id,
+  );
 }
 
 // Need names for iteration
@@ -599,7 +633,7 @@ export function needsTick(): void {
     }
 
     // Step 13: Write updated values
-    db.update(needs).set({
+    writeNeedsRow(agentNeeds.id, {
       hunger: updatedNeeds.hunger,
       energy: updatedNeeds.energy,
       social: updatedNeeds.social,
@@ -607,9 +641,9 @@ export function needsTick(): void {
       fun: updatedNeeds.fun,
       mood,
       stress,
-      mood_modifiers: activeMoodModifiers,
-      last_updated: currentTime,
-    }).where(eq(needs.id, agentNeeds.id)).run();
+      moodModifiers: activeMoodModifiers,
+      lastUpdated: currentTime,
+    });
   }
 
   emitter.markDirty('agents.all');
