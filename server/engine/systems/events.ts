@@ -7,7 +7,7 @@ import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
 import { simEvents } from '../../lib/simEvents';
-import { WORLD_EVENTS, type WorldEventDef, type WorldEventType } from '../../data/worldEventCatalog';
+import { WORLD_EVENTS, EVENT_WEATHER, type WorldEventDef, type WorldEventType } from '../../data/worldEventCatalog';
 
 // Season-based weather weights (including snowy for winter, windy for autumn)
 const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
@@ -19,19 +19,6 @@ const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
 
 type WorldEventRow = typeof worldEvents.$inferSelect;
 
-/**
- * Events that bring their own weather, held for the event's whole duration.
- * The client draws rain and darkens the sky from `world.weather`, not from the
- * event list, so a "Heavy Storm" under a cloudy sky looked like nothing was
- * happening.
- */
-const EVENT_WEATHER: Partial<Record<WorldEventType, string>> = {
-  storm: 'stormy',
-  // A "Scorching Heatwave" under a sunny sky drew no heat at all: `hot` was only
-  // ever reached by the 3% seasonal roll. The heat shimmer and the warm tint
-  // key on `world.weather`, so the event has to set it like the storm does.
-  heatwave: 'hot',
-};
 
 export type StartWorldEventResult =
   | { ok: true; event: WorldEventRow }

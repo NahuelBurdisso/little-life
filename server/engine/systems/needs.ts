@@ -8,7 +8,7 @@ import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 import { simEvents } from '../../lib/simEvents';
 import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
 import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
-import { aggregateEventEffects } from '../../data/worldEventCatalog';
+import { aggregateEventEffects, EVENT_WEATHER, type WorldEventType } from '../../data/worldEventCatalog';
 import { gameMinutes, hourChanged } from '../../lib/gameClock';
 import { serveMeal, hasPaidVisit, PANTRY_MOOD_PENALTY, PANTRY_MOOD_MINUTES, type Meal } from './economy';
 
@@ -232,6 +232,15 @@ export function needsTick(): void {
   // The catalog decides how each key stacks: boosts add, energy_drain multiplies.
   const activeEvents = db.select().from(worldEvents).where(eq(worldEvents.is_active, true)).all();
   const eventEffects = aggregateEventEffects(activeEvents.map((e) => e.effects));
+  // An event that brought the current weather with it (a Heavy Storm makes it
+  // stormy, a heatwave hot) prices that weather outdoors through its own
+  // `mood_outdoor`. Adding the plain weather penalty on top charged an agent
+  // caught outside twice for the same storm, -15 and -5 (B18). The event's
+  // figure is the one kept: it is the stronger, deliberate one, and plain
+  // stormy weather without the event keeps its milder -5.
+  const eventOwnsWeather = activeEvents.some(
+    (e) => EVENT_WEATHER[e.type as WorldEventType] === world.weather && (e.effects as Record<string, number>)?.mood_outdoor,
+  );
 
   for (const agent of activeAgents) {
     const agentNeeds = needsByAgent.get(agent.id);
@@ -472,7 +481,7 @@ export function needsTick(): void {
     }
 
     // Step 8: Weather mood effect
-    const weatherModifier = getWeatherMoodEffect(world.weather, isIndoors);
+    const weatherModifier = eventOwnsWeather && !isIndoors ? 0 : getWeatherMoodEffect(world.weather, isIndoors);
 
     // Step 9: Clamp all need values to 0-100
     for (const key of NEED_KEYS) {
