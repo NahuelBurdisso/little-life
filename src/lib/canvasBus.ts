@@ -19,6 +19,9 @@ export type InterventionKind =
   | 'force_confront'
   | 'introduce_agent'
   | 'remove_agent'
+  | 'whisper_thought'
+  | 'start_rumor'
+  | 'stir_feeling'
   | 'event'
   | 'weather';
 
@@ -28,6 +31,7 @@ export type CanvasBusEvent =
    * once the server accepted it. `locationId` is the destination of `suggest_go_to`;
    * `amount` the coins of `give_money`; `x`/`y` (world px) where the agent last stood,
    * for `remove_agent` — its sprite is gone by the time the canvas hears about it.
+   * `feeling` is the state `stir_feeling` planted (infatuated, jealous...).
    */
   | {
       type: 'intervention';
@@ -35,6 +39,7 @@ export type CanvasBusEvent =
       kind: InterventionKind | string;
       locationId?: number;
       amount?: number;
+      feeling?: string;
       x?: number;
       y?: number;
     }

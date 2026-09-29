@@ -12,8 +12,8 @@ import {
 } from "./playerFxFrames";
 import {
   arcBow, arcPoint, burstScale, coinCount, dotCount, dropBounce, easeIn, easeInOut, fadeOut,
-  flashAlpha, hopHeight, isTalking, perimeterPoint, pinDone, pulse, secretTravelSeconds,
-  talkArcDone, type Point,
+  feelingSpiralPoint, feelingStyle, flashAlpha, hopHeight, isTalking, perimeterPoint, pinDone,
+  pulse, rumorWispPoint, secretTravelSeconds, talkArcDone, thoughtFallPoint, type Point,
 } from "./fxMath";
 
 /**
@@ -55,6 +55,9 @@ export const fxKey = {
   intro: (agent: number) => `intro:${agent}`,
   farewell: (agent: number) => `farewell:${agent}`,
   event: (location: number) => `event:${location}`,
+  thought: (agent: number) => `thought:${agent}`,
+  rumor: (seeder: number) => `rumor:${seeder}`,
+  feeling: (agent: number) => `feeling:${agent}`,
   flash: "flash",
 } as const;
 
@@ -735,6 +738,189 @@ export class FlashFx implements Fx {
     // The pool resets anchor and tint on the next acquire.
     env.pool.release(this.s);
   }
+}
+
+// ── whisper_thought ──────────────────────────────────────────────────────────────────────────
+
+const THOUGHT_FALL_S = 1.1;
+const THOUGHT_HEIGHT = 90;
+const THOUGHT_TRAIL = 4;
+
+/**
+ * A lavender wisp drops out of the sky and curls down into the agent's head, then a "think"
+ * bubble: the idea arrived from nowhere. Same swirl cell as the secret, since both are words
+ * nobody said out loud.
+ */
+export class ThoughtFx implements Fx {
+  readonly key: string;
+  private t = 0;
+  private landed = false;
+  private readonly idStr: string;
+  private readonly head: PIXI.Sprite | null;
+  private readonly trail: Array<PIXI.Sprite | null> = [];
+
+  constructor(env: Env, agentId: number) {
+    this.key = fxKey.thought(agentId);
+    this.idStr = String(agentId);
+    const cell = cellOf("swirl");
+    this.head = grab(env, env.tex[cell]);
+    for (let i = 0; i < THOUGHT_TRAIL; i++) this.trail.push(grab(env, env.tex[cell]));
+  }
+
+  update(env: Env, f: FrameContext): boolean {
+    this.t += f.seconds;
+    const t = this.t;
+    const sp = env.sprites.getSprite(this.idStr);
+    if (!sp) return false;
+    const hx = sp.x, hy = sp.y - SWIRL_LIFT;
+
+    if (t < THOUGHT_FALL_S) {
+      const k = t / THOUGHT_FALL_S;
+      thoughtFallPoint(easeIn(k), THOUGHT_HEIGHT, pt);
+      if (this.head) {
+        setTex(this.head, env.tex[pfxFrame("swirl", t, true)]);
+        place(this.head, f.view, hx + pt.x, hy + pt.y, Math.min(1, t / 0.2), 0.9);
+      }
+      for (let i = 0; i < this.trail.length; i++) {
+        const s = this.trail[i];
+        if (!s) continue;
+        const ki = k - 0.06 * (i + 1);
+        if (ki <= 0) { s.visible = false; continue; }
+        thoughtFallPoint(easeIn(ki), THOUGHT_HEIGHT, pt2);
+        setTex(s, env.tex[pfxFrame("swirl", t + 0.05 * (i + 1), true)]);
+        place(s, f.view, hx + pt2.x, hy + pt2.y, 0.55 - 0.12 * i, 0.75 - 0.12 * i);
+      }
+      return true;
+    }
+
+    if (!this.landed) {
+      this.landed = true;
+      env.bubbles.showEmote(this.idStr, "think", { x: sp.x, y: sp.y });
+      for (let i = 0; i < this.trail.length; i++) hide(this.trail[i]);
+    }
+    const at = t - THOUGHT_FALL_S;
+    if (at >= ABSORB_S) return false;
+    const k = at / ABSORB_S;
+    if (this.head) place(this.head, f.view, hx, hy, 1 - k, 0.9 + 0.9 * k);
+    return true;
+  }
+
+  dispose(env: Env): void {
+    env.pool.release(this.head);
+    releaseAll(env, this.trail);
+  }
+}
+
+// ── start_rumor ──────────────────────────────────────────────────────────────────────────────
+
+const RUMOR_WISPS = 5;
+const RUMOR_STAGGER = 0.12;
+const RUMOR_DRIFT_S = 1.3;
+const RUMOR_DIST = 56;
+
+/**
+ * The seeder gets the "shh" emote and a fan of pink wisps leaves their head, drifting off in
+ * every direction and fading: the story is out, and nobody can say where it will land. The
+ * subject gets nothing — they don't know yet, and neither should the picture.
+ */
+export class RumorFx implements Fx {
+  readonly key: string;
+  private t = 0;
+  private readonly idStr: string;
+  private readonly wisps: Array<PIXI.Sprite | null> = [];
+  private readonly life = (RUMOR_WISPS - 1) * RUMOR_STAGGER + RUMOR_DRIFT_S;
+
+  constructor(env: Env, seederId: number) {
+    this.key = fxKey.rumor(seederId);
+    this.idStr = String(seederId);
+    const sp = env.sprites.getSprite(this.idStr);
+    if (sp) env.bubbles.showEmote(this.idStr, "whisper", { x: sp.x, y: sp.y });
+    for (let i = 0; i < RUMOR_WISPS; i++) {
+      const s = grab(env, env.tex[cellOf("swirl")]);
+      // Rosier than the secret's lavender: this one is meant to travel.
+      if (s) s.tint = 0xffb3c8;
+      this.wisps.push(s);
+    }
+  }
+
+  update(env: Env, f: FrameContext): boolean {
+    this.t += f.seconds;
+    const t = this.t;
+    if (t >= this.life) return false;
+    const sp = env.sprites.getSprite(this.idStr);
+    if (!sp) return false;
+    const hx = sp.x, hy = sp.y - SWIRL_LIFT - 4;
+    for (let i = 0; i < this.wisps.length; i++) {
+      const s = this.wisps[i];
+      if (!s) continue;
+      const wt = t - i * RUMOR_STAGGER;
+      if (wt < 0 || wt >= RUMOR_DRIFT_S) { s.visible = false; continue; }
+      const k = wt / RUMOR_DRIFT_S;
+      rumorWispPoint(i, RUMOR_WISPS, k, RUMOR_DIST, pt);
+      setTex(s, env.tex[pfxFrame("swirl", wt, true)]);
+      place(s, f.view, hx + pt.x, hy + pt.y, fadeOut(wt, RUMOR_DRIFT_S, 0.5), 0.6 + 0.3 * k);
+    }
+    return true;
+  }
+
+  dispose(env: Env): void { releaseAll(env, this.wisps); }
+}
+
+// ── stir_feeling ─────────────────────────────────────────────────────────────────────────────
+
+const FEELING_PARTICLES = 8;
+const FEELING_CLIMB_S = 1.2;
+const FEELING_STAGGER = 0.14;
+const FEELING_RISE = 34;
+
+/**
+ * The feeling wells up: particles in its colour (hearts for a crush, sour green for jealousy,
+ * gold for confidence, grey-blue wisps for stress) spiral up around the agent, and the emote
+ * the canvas uses for that state pops over their head.
+ */
+export class FeelingFx implements Fx {
+  readonly key: string;
+  private t = 0;
+  private readonly idStr: string;
+  private readonly animated: boolean;
+  private readonly parts: Array<PIXI.Sprite | null> = [];
+  private readonly life = (FEELING_PARTICLES - 1) * FEELING_STAGGER + FEELING_CLIMB_S;
+
+  constructor(env: Env, agentId: number, feeling: string | undefined) {
+    this.key = fxKey.feeling(agentId);
+    this.idStr = String(agentId);
+    const style = feelingStyle(feeling);
+    this.animated = style.cell === "swirl";
+    const sp = env.sprites.getSprite(this.idStr);
+    if (sp) env.bubbles.showEmote(this.idStr, style.emote, { x: sp.x, y: sp.y });
+    for (let i = 0; i < FEELING_PARTICLES; i++) {
+      const s = grab(env, env.tex[cellOf(style.cell)]);
+      if (s) s.tint = style.tint;
+      this.parts.push(s);
+    }
+  }
+
+  update(env: Env, f: FrameContext): boolean {
+    this.t += f.seconds;
+    const t = this.t;
+    if (t >= this.life) return false;
+    const sp = env.sprites.getSprite(this.idStr);
+    if (!sp) return false;
+    for (let i = 0; i < this.parts.length; i++) {
+      const s = this.parts[i];
+      if (!s) continue;
+      const pt0 = t - i * FEELING_STAGGER;
+      if (pt0 < 0 || pt0 >= FEELING_CLIMB_S) { s.visible = false; continue; }
+      const k = pt0 / FEELING_CLIMB_S;
+      feelingSpiralPoint(i, FEELING_PARTICLES, k, t, FEELING_RISE, pt);
+      if (this.animated) setTex(s, env.tex[pfxFrame("swirl", pt0, true)]);
+      const alpha = Math.min(1, pt0 / 0.15) * fadeOut(pt0, FEELING_CLIMB_S, 0.4);
+      place(s, f.view, sp.x + pt.x, sp.y + pt.y, alpha, this.animated ? 0.6 : 1.6);
+    }
+    return true;
+  }
+
+  dispose(env: Env): void { releaseAll(env, this.parts); }
 }
 
 // ── fallback ─────────────────────────────────────────────────────────────────────────────────

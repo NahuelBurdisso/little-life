@@ -20,6 +20,15 @@ import { zoneOccupancy } from '../lib/interiorGrid';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
 import { gameMinutes } from '../lib/gameClock';
+import {
+  RUMOR_MAX,
+  STIRRABLE_STATES,
+  WHISPER_MAX,
+  startRumor,
+  stirFeeling,
+  whisperThought,
+} from '../lib/godPowers';
+import { rumorReachedSubject } from '../lib/gossip';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -82,6 +91,23 @@ const nudgeInput = z.object({
     z.object({ type: z.literal('remove_agent'), agentId: z.number() }),
     z.object({ type: z.literal('tell_secret'), agentId: z.number(), targetId: z.number(), factId: z.number() }),
     z.object({ type: z.literal('force_confront'), agentA: z.number(), agentB: z.number() }),
+    // God powers that plant something and let the sim grow it (lib/godPowers.ts).
+    // The length caps are generous by a margin so a limit the client enforces
+    // is not a hard error here; godPowers trims to the real limit.
+    z.object({ type: z.literal('whisper_thought'), agentId: z.number(), text: z.string().min(1).max(WHISPER_MAX * 2) }),
+    z.object({
+      type: z.literal('start_rumor'),
+      seederId: z.number(),
+      subjectId: z.number(),
+      targetId: z.number().optional(),
+      detail: z.string().min(1).max(RUMOR_MAX * 2),
+    }),
+    z.object({
+      type: z.literal('stir_feeling'),
+      agentId: z.number(),
+      state: z.enum(STIRRABLE_STATES),
+      targetId: z.number().optional(),
+    }),
   ]),
 });
 
@@ -628,6 +654,9 @@ export const nudgeRouter = router({
               .set({ known_by: [...new Set([...knownBy, targetId])] })
               .where(eq(shared_knowledge.id, factId))
               .run();
+            // Being told a made-up story about yourself sours you on the teller,
+            // whoever made them say it.
+            rumorReachedSubject(fact, agentId, targetId);
           }
 
           // Queue dramatic conversation about this fact
@@ -708,6 +737,23 @@ export const nudgeRouter = router({
           emitter.markDirty('agents.all');
           emitter.flush();
           return queuedResult(agentA, agentB);
+        }
+
+        // ─── whisper_thought / start_rumor / stir_feeling ──────────────────
+        case 'whisper_thought': {
+          const result = whisperThought(action.agentId, action.text);
+          emitter.flush();
+          return result;
+        }
+        case 'start_rumor': {
+          const result = startRumor(action.seederId, action.subjectId, action.targetId ?? null, action.detail);
+          emitter.flush();
+          return result;
+        }
+        case 'stir_feeling': {
+          const result = stirFeeling(action.agentId, action.state, action.targetId ?? null);
+          emitter.flush();
+          return result;
         }
 
         // ─── Unknown ───────────────────────────────────────────────────────

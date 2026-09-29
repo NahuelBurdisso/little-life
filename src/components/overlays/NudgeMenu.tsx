@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { useNudge } from "../../hooks/useNudge";
+import { useNudge, FEELING_ICONS, type StirFeeling } from "../../hooks/useNudge";
 import { trpc } from "../../lib/trpc";
 import { locationIcon } from "../../lib/locationInfo";
 import { MiniPortrait } from "../ui/MiniPortrait";
@@ -15,7 +15,70 @@ interface NudgeMenuProps {
   onSelectAgent: (id: string) => void;
 }
 
-type SubMenu = "talk" | "goto" | "money" | "pair" | "topic" | "secret" | null;
+type SubMenu =
+  | "talk" | "goto" | "money" | "pair" | "topic" | "secret"
+  // God powers that plant something: a thought, a rumor, a feeling.
+  | "whisper" | "rumor" | "rumorText" | "feeling" | "feelingTarget"
+  | null;
+
+/** Same caps as server/lib/godPowers.ts (WHISPER_MAX, RUMOR_MAX). */
+const WHISPER_MAX = 140;
+const RUMOR_MAX = 120;
+
+const FEELINGS: Array<{ state: StirFeeling; label: string; hint: string; needsTarget: boolean }> = [
+  { state: "infatuated", label: "Infatuated with...", hint: "They can't stop thinking about someone", needsTarget: true },
+  { state: "jealous", label: "Jealous of...", hint: "Someone is getting too close to the one they love", needsTarget: true },
+  { state: "confident", label: "Confident", hint: "On top of the world — until someone pricks their vanity", needsTarget: false },
+  { state: "stressed", label: "Stressed", hint: "Everything piles up at once", needsTarget: false },
+];
+
+/** A one-line text box with a counter and a send button; Enter sends. */
+function TextPrompt({
+  placeholder,
+  max,
+  value,
+  onChange,
+  onSend,
+  hint,
+}: {
+  placeholder: string;
+  max: number;
+  value: string;
+  onChange: (v: string) => void;
+  onSend: () => void;
+  hint?: ReactNode;
+}) {
+  const ok = value.trim().length > 0;
+  return (
+    <div className="px-3 py-1.5">
+      {hint && <p className="pb-1 text-[10px] text-[var(--ui-text-secondary)]">{hint}</p>}
+      <input
+        autoFocus
+        type="text"
+        placeholder={placeholder}
+        maxLength={max}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && ok) onSend();
+        }}
+        className={W.input}
+      />
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="text-[10px] text-[var(--ui-text-disabled)] tabular-nums">
+          {value.length}/{max}
+        </span>
+        <button
+          disabled={!ok}
+          onClick={onSend}
+          className={`ml-auto px-3 py-1 text-xs ${W.btnPrimary}`}
+        >
+          Plant it
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /** The sim refuses talk/go-to nudges for sleepers (server/routers/nudge.ts), so grey them out up front. */
 function isAsleep(agent: any): boolean {
@@ -74,9 +137,19 @@ export function NudgeMenu({
   onClose,
   onSelectAgent,
 }: NudgeMenuProps) {
-  const { suggestTalk, suggestGoTo, giveMoney, removeAgent, tellSecret, forceConfront } = useNudge();
+  const {
+    suggestTalk, suggestGoTo, giveMoney, removeAgent, tellSecret, forceConfront,
+    whisperThought, startRumor, stirFeeling,
+  } = useNudge();
   const [subMenu, setSubMenu] = useState<SubMenu>(null);
   const [topicText, setTopicText] = useState("");
+  const [whisperText, setWhisperText] = useState("");
+  /** Who the rumor is about; the right-clicked agent is the one who hears it first. */
+  const [rumorSubject, setRumorSubject] = useState<string | null>(null);
+  const [rumorText, setRumorText] = useState("");
+  /** Optional second person the rumor involves (stored as the fact's target). */
+  const [rumorTarget, setRumorTarget] = useState<string>("");
+  const [feeling, setFeeling] = useState<StirFeeling | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   /** Partner picked from the "Pair with..." entry; wins over the canvas selection. */
   const [pairWith, setPairWith] = useState<string | null>(null);
@@ -108,6 +181,11 @@ export function NudgeMenu({
     setSubMenu(null);
     setPairWith(null);
     setConfirmRemove(false);
+    setWhisperText("");
+    setRumorSubject(null);
+    setRumorText("");
+    setRumorTarget("");
+    setFeeling(null);
   }, [agentId, position.x, position.y]);
 
   // Close on click outside
@@ -149,7 +227,8 @@ export function NudgeMenu({
 
   // Clamp position to viewport
   const left = Math.max(4, Math.min(position.x, window.innerWidth - 250));
-  const top = Math.max(4, Math.min(position.y, window.innerHeight - 340));
+  // The single-agent menu is ~10 rows now that the planting powers are in it.
+  const top = Math.max(4, Math.min(position.y, window.innerHeight - 400));
 
   const frame = `fixed z-50 ${W.modal} min-w-[220px] max-w-[280px] max-h-[70vh] py-1`;
   const back = (onBack: () => void, label = "← Back") => (
@@ -165,6 +244,48 @@ export function NudgeMenu({
     <div className="px-3 py-1 mb-0.5 flex items-center gap-1.5 text-[10px] text-[var(--ui-accent-gold)] uppercase tracking-wider border-b border-[var(--ui-border)]">
       {children}
     </div>
+  );
+
+  const firstOf = (a: any) => (a?.name ? String(a.name).split(" ")[0] : "them");
+  const rumorAbout = rumorSubject ? agents.find((a: any) => String(a.id) === rumorSubject) : null;
+
+  /** Detail box for a rumor about `rumorSubject`, heard first by the right-clicked agent. */
+  const rumorTextMenu = (onBack: () => void) => (
+    <>
+      {back(onBack)}
+      <TextPrompt
+        placeholder={`${firstOf(rumorAbout)} is secretly...`}
+        max={RUMOR_MAX}
+        value={rumorText}
+        onChange={setRumorText}
+        hint={
+          <>
+            What {firstOf(currentAgent)} "heard" about {firstOf(rumorAbout)}. It spreads if{" "}
+            {firstOf(currentAgent)} is the gossiping kind.
+          </>
+        }
+        onSend={() =>
+          fire(() => startRumor(agentId, rumorSubject!, rumorText.trim(), rumorTarget || undefined))
+        }
+      />
+      <label className="px-3 pb-1.5 flex items-center gap-2 text-[10px] text-[var(--ui-text-secondary)]">
+        Involving
+        <select
+          value={rumorTarget}
+          onChange={(e) => setRumorTarget(e.target.value)}
+          className="flex-1 min-w-0 bg-[var(--ui-bg-deep)] border border-[var(--ui-border)] px-1 py-0.5 text-[11px] text-[var(--ui-text-primary)]"
+        >
+          <option value="">nobody else</option>
+          {agents
+            .filter((a: any) => String(a.id) !== rumorSubject && String(a.id) !== agentId)
+            .map((a: any) => (
+              <option key={String(a.id)} value={String(a.id)}>
+                {a.name}
+              </option>
+            ))}
+        </select>
+      </label>
+    </>
   );
 
   // ─── Pair mode: two agents, secrets / confrontation / chat ───────────────────
@@ -203,6 +324,8 @@ export function NudgeMenu({
               Send
             </button>
           </div>
+        ) : subMenu === "rumorText" ? (
+          rumorTextMenu(() => setSubMenu(null))
         ) : subMenu === "secret" ? (
           <div className="max-h-56 overflow-y-auto">
             {back(() => setSubMenu(null))}
@@ -247,6 +370,30 @@ export function NudgeMenu({
             </Item>
             <Item icon="⚔️" onClick={() => fire(() => forceConfront(agentId, partnerId!))}>
               Force confrontation
+            </Item>
+            <Item
+              icon={FEELING_ICONS.infatuated}
+              title={`${firstOf(currentAgent)} can't stop thinking about ${firstOf(partner)}`}
+              onClick={() => fire(() => stirFeeling(agentId, "infatuated", partnerId!))}
+            >
+              Make {firstOf(currentAgent)} fall for {firstOf(partner)}
+            </Item>
+            <Item
+              icon={FEELING_ICONS.jealous}
+              title={`${firstOf(currentAgent)} sees ${firstOf(partner)} as a rival`}
+              onClick={() => fire(() => stirFeeling(agentId, "jealous", partnerId!))}
+            >
+              Make {firstOf(currentAgent)} jealous of {firstOf(partner)}
+            </Item>
+            <Item
+              icon="🗣"
+              title={`${firstOf(currentAgent)} hears a rumor about ${firstOf(partner)}`}
+              onClick={() => {
+                setRumorSubject(partnerId);
+                setSubMenu("rumorText");
+              }}
+            >
+              Rumor about {firstOf(partner)}...
             </Item>
             <Item
               icon="👁️"
@@ -339,6 +486,86 @@ export function NudgeMenu({
         </div>
       )}
 
+      {subMenu === "whisper" && (
+        <>
+          {back(() => setSubMenu(null))}
+          <TextPrompt
+            placeholder="Maybe I should..."
+            max={WHISPER_MAX}
+            value={whisperText}
+            onChange={setWhisperText}
+            hint={<>A thought that comes to {firstOf(currentAgent)} out of nowhere. It colors their plans and talk.</>}
+            onSend={() => fire(() => whisperThought(agentId, whisperText.trim()))}
+          />
+        </>
+      )}
+
+      {subMenu === "rumor" && (
+        <div className="max-h-56 overflow-y-auto">
+          {back(() => setSubMenu(null))}
+          <p className="px-3 pb-1 text-[10px] text-[var(--ui-text-secondary)]">
+            {firstOf(currentAgent)} hears a rumor about...
+          </p>
+          {otherAgents.map((a: any) => (
+            <Item
+              key={String(a.id)}
+              icon={<MiniPortrait agent={a} size={16} />}
+              onClick={() => {
+                setRumorSubject(String(a.id));
+                setSubMenu("rumorText");
+              }}
+            >
+              <span className="truncate">{a.name}</span>
+            </Item>
+          ))}
+        </div>
+      )}
+
+      {subMenu === "rumorText" && rumorTextMenu(() => setSubMenu("rumor"))}
+
+      {subMenu === "feeling" && (
+        <div>
+          {back(() => setSubMenu(null))}
+          {FEELINGS.map((f) => (
+            <Item
+              key={f.state}
+              icon={FEELING_ICONS[f.state]}
+              title={f.hint}
+              onClick={() => {
+                if (f.needsTarget) {
+                  setFeeling(f.state);
+                  setSubMenu("feelingTarget");
+                } else {
+                  fire(() => stirFeeling(agentId, f.state));
+                }
+              }}
+            >
+              {f.label}
+            </Item>
+          ))}
+        </div>
+      )}
+
+      {subMenu === "feelingTarget" && feeling && (
+        <div className="max-h-56 overflow-y-auto">
+          {back(() => setSubMenu("feeling"))}
+          <p className="px-3 pb-1 text-[10px] text-[var(--ui-text-secondary)]">
+            {feeling === "infatuated"
+              ? `Who does ${firstOf(currentAgent)} fall for?`
+              : `Who is ${firstOf(currentAgent)} jealous of?`}
+          </p>
+          {otherAgents.map((a: any) => (
+            <Item
+              key={String(a.id)}
+              icon={<MiniPortrait agent={a} size={16} />}
+              onClick={() => fire(() => stirFeeling(agentId, feeling, String(a.id)))}
+            >
+              <span className="truncate">{a.name}</span>
+            </Item>
+          ))}
+        </div>
+      )}
+
       {subMenu === "money" && (
         <div>
           {back(() => setSubMenu(null))}
@@ -373,6 +600,16 @@ export function NudgeMenu({
           </Item>
           <Item icon="🤝" onClick={() => setSubMenu("pair")}>
             Pair with...
+          </Item>
+          <div className="border-t border-[var(--ui-border)] my-1" />
+          <Item icon="💭" title="Plant a thought in their head" onClick={() => setSubMenu("whisper")}>
+            Whisper a thought...
+          </Item>
+          <Item icon="🗣" title="They hear a made-up story about someone" onClick={() => setSubMenu("rumor")}>
+            Start a rumor...
+          </Item>
+          <Item icon="💗" title="Stir a feeling in their heart" onClick={() => setSubMenu("feeling")}>
+            Stir a feeling...
           </Item>
           <Item
             icon="👁️"

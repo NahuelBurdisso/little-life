@@ -8,7 +8,8 @@ import {
   DIGITS_FRAME_COUNT, DIGITS_FRAME_SIZE, DIGITS_URL, PFX_FRAME_COUNT, PFX_FRAME_SIZE, PFX_URL,
 } from "./playerFxFrames";
 import {
-  CoinFx, ConfrontFx, EventBurstFx, FarewellFx, FlashFx, IntroFx, PinFx, PingFx, SecretFx, TalkFx, fxKey,
+  CoinFx, ConfrontFx, EventBurstFx, FarewellFx, FeelingFx, FlashFx, IntroFx, PinFx, PingFx, RumorFx,
+  SecretFx, TalkFx, ThoughtFx, fxKey,
   type Env, type Fx,
 } from "./effects";
 
@@ -21,7 +22,8 @@ type Intervention = Extract<CanvasBusEvent, { type: "intervention" }>;
  * The canvas's answer to what the player does. `useNudge` (and the event/weather menus) emit an
  * `intervention` on the canvas bus once the server accepted the action; this system turns each
  * kind into its own little scene — a matchmaker arc, a destination pin, a shower of coins, a
- * travelling whisper, crossed swords, a newcomer's arrival, a farewell, an event burst — and
+ * travelling whisper, crossed swords, a newcomer's arrival, a farewell, an event burst, a
+ * thought falling into a head, a rumor drifting off, a feeling welling up — and
  * falls back to the old gold ring for kinds it does not know.
  *
  * Purely client-side and short-lived: effects are created on the event, driven every frame from
@@ -137,6 +139,16 @@ class PlayerFxSystem implements CanvasSystem {
       }
       case "weather":
         return this.add(fxKey.flash, () => new FlashFx(env));
+      case "whisper_thought":
+        if (a != null) return this.add(fxKey.thought(a), () => new ThoughtFx(env, a));
+        break;
+      case "start_rumor":
+        // agentIds = [seeder, subject]; only the seeder shows anything (see RumorFx).
+        if (a != null) return this.add(fxKey.rumor(a), () => new RumorFx(env, a));
+        break;
+      case "stir_feeling":
+        if (a != null) return this.add(fxKey.feeling(a), () => new FeelingFx(env, a, e.feeling));
+        break;
     }
     // Unknown kind, or a known one missing what it needs: the generic ping on each agent.
     for (const id of ids) this.add(null, () => new PingFx(env, id));
