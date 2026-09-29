@@ -28,13 +28,12 @@ import {
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and, desc, gt, lt, sql } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
-import { clearConversationCache } from '../../helpers/conversationHelpers';
+import { clearConversationCache, fallbackDetector } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate } from '../../ai/templates';
 import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
-import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
@@ -549,7 +548,8 @@ async function processCompletedConversation(
   // Calculate overall sentiment: average of all message sentiments
   // (canned fallback actions are not speech and don't count — sanitizeDialogue.ts)
   let overallSentiment = 0;
-  const spoken = messages.filter((m) => !isFallbackMessage(m));
+  const isFallback = fallbackDetector(fresh.participants as number[]);
+  const spoken = messages.filter((m) => !isFallback(m));
   if (spoken.length > 0) {
     const sentimentSum = spoken.reduce((sum, m) => sum + m.sentiment, 0);
     overallSentiment = sentimentSum / spoken.length;
@@ -1298,7 +1298,7 @@ async function processCompletedConversation(
 
   // --- Conversation Quality Evaluation ---
   const evaluation = evaluateConversation({
-    messages: messages.map(m => ({ text: m.text || '', sentiment: m.sentiment || 0 })),
+    messages: messages.map(m => ({ text: m.text || '', sentiment: m.sentiment || 0, fallback: isFallback(m) })),
     injectedMemories: [], // Memories are in the LLM prompt, not stored on conversation record; evaluator redistributes this weight
     topic: (fresh.topic as string) || null,
     maxTurns: fresh.max_turns || 6,

@@ -33,12 +33,15 @@ describe('pickConversationGist', () => {
     ])).toBeNull();
   });
 
+  const nameOf = (id: number) => (id === ROSA ? 'Rosa Delgado' : id === YUKI ? 'Yuki Tanaka' : undefined);
+
   it('skips canned fallback narration', () => {
     expect(pickConversationGist([
+      // Legacy lines (no flag): the exact canned shape with their own speaker's name.
       { speakerId: ROSA, text: 'Rosa Delgado smiled and nodded.', sentiment: 0.9 },
       { speakerId: YUKI, text: '"Hmm, interesting," Yuki Tanaka said.', sentiment: 0.9 },
       { speakerId: YUKI, text: 'I am so sorry about everything that happened.', sentiment: 0.9, fallback: true },
-    ])).toBeNull();
+    ], nameOf)).toBeNull();
   });
 
   it('strips stage directions from older, unsanitised transcripts', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeDialogue, type DialogueSanitizeOptions } from '../sanitizeDialogue';
+import { sanitizeDialogue, isFallbackMessage, fallbackReply, type DialogueSanitizeOptions } from '../sanitizeDialogue';
 
 // Fixtures are real (or minimally completed) lines from a 104-line playtest
 // transcript; see the header of sanitizeDialogue.ts for the failure tally.
@@ -183,5 +183,27 @@ describe('sanitizeDialogue — truncation', () => {
   it('recovers a complete sentence after stripping a cut-off direction', () => {
     expect(clean('Sure, I can help. (He glances toward the door, clearly', { truncated: true }))
       .toBe('Sure, I can help.');
+  });
+});
+
+describe('isFallbackMessage', () => {
+  it('trusts the stored flag whenever it is present', () => {
+    expect(isFallbackMessage({ text: 'Omar Haddad shrugged.', fallback: false }, 'Omar Haddad')).toBe(false);
+    expect(isFallbackMessage({ text: 'Anything at all.', fallback: true })).toBe(true);
+  });
+
+  it("matches a legacy line only as the exact canned shape with its speaker's name", () => {
+    for (let i = 0; i < 20; i++) {
+      expect(isFallbackMessage({ text: fallbackReply('Omar Haddad') }, 'Omar Haddad')).toBe(true);
+    }
+    expect(isFallbackMessage({ text: '"Hmm, interesting," Omar Haddad said.' }, 'Omar Haddad')).toBe(true);
+  });
+
+  it('never flags real speech that merely resembles a fallback', () => {
+    for (const text of ['He shrugged.', 'Diego paused thoughtfully.', 'Diego Alvarez shrugged.', 'She smiled and nodded.']) {
+      expect(isFallbackMessage({ text }, 'Omar Haddad')).toBe(false);
+    }
+    // Without the speaker's name a legacy line is treated as speech.
+    expect(isFallbackMessage({ text: 'Omar Haddad shrugged.' })).toBe(false);
   });
 });

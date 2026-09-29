@@ -17,8 +17,8 @@ describe('evaluateConversation — canned fallbacks', () => {
     const withFallbacks = [
       ...spoken,
       // A stored sentiment on narration would have faked emotional range.
-      { text: 'Omar Haddad shrugged.', sentiment: -0.9 },
-      { text: '"Hmm, interesting," Sofia Reyes said.', sentiment: 0.9 },
+      { text: 'Omar Haddad shrugged.', sentiment: -0.9, fallback: true },
+      { text: '"Hmm, interesting," Sofia Reyes said.', sentiment: 0.9, fallback: true },
     ];
 
     const a = evaluateConversation({ ...base, messages: spoken });

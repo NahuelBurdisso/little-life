@@ -41,22 +41,28 @@ const FALLBACK_REPLIES: Array<(name: string) => string> = [
   (name) => `"Hmm, interesting," ${name} said.`,
   (name) => `${name} shrugged.`,
 ];
-const FALLBACK_REPLY = /^(?:[\p{L}' -]+ (?:smiled and nodded|paused thoughtfully|shrugged)\.|"Hmm, interesting," [\p{L}' -]+ said\.)$/u;
-
 export function fallbackReply(speakerName: string): string {
   return FALLBACK_REPLIES[Math.floor(Math.random() * FALLBACK_REPLIES.length)](speakerName);
 }
 
-function isFallbackReply(text: string): boolean {
-  return FALLBACK_REPLY.test(text.trim());
-}
-
 /**
- * A stored conversation message that is a canned fallback, not speech. New ones
- * carry `fallback: true`; the text match covers transcripts stored before that.
+ * A stored conversation message that is a canned fallback, not speech.
+ *
+ * Messages written since the flag exists carry `fallback: true | false`, and the
+ * flag is the whole answer. Only a legacy message (no key) falls back to the
+ * text — and only to the exact canned line with the speaker's own full name, so
+ * real speech such as "He shrugged." or "Diego paused thoughtfully." said about
+ * someone else is never mistaken for one. Without the speaker's name a legacy
+ * message is treated as speech.
  */
-export function isFallbackMessage(msg: { text?: string; fallback?: boolean }): boolean {
-  return msg.fallback === true || (typeof msg.text === 'string' && isFallbackReply(msg.text));
+export function isFallbackMessage(
+  msg: { text?: string; fallback?: boolean },
+  speakerName?: string,
+): boolean {
+  if (typeof msg.fallback === 'boolean') return msg.fallback;
+  if (!speakerName || typeof msg.text !== 'string') return false;
+  const text = msg.text.trim();
+  return FALLBACK_REPLIES.some((make) => make(speakerName) === text);
 }
 
 function escapeRegExp(s: string): string {

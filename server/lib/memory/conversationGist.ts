@@ -76,7 +76,7 @@ export function pickConversationGist(
 ): ConversationGist | null {
   let best: { line: GistLine; text: string; score: number } | null = null;
   for (const line of lines) {
-    if (!line.text || isFallbackMessage(line)) continue;
+    if (!line.text || isFallbackMessage(line, nameOf(line.speakerId))) continue;
     // Stored lines are sanitised on the way in now, but older transcripts are
     // not — re-running the (idempotent) sanitiser keeps directions out of memory.
     const text = sanitizeDialogue(line.text, { speakerName: nameOf(line.speakerId) ?? '', listenerName: '' });

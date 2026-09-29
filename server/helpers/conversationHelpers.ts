@@ -258,12 +258,30 @@ export function addMessage(
       sentiment,
       topics,
       timestamp,
-      ...(fallback ? { fallback: true } : {}),
+      // Always written, true or false: its presence is what tells a new
+      // message from a legacy one (see isFallbackMessage).
+      fallback,
     },
   ];
 
   db.update(conversations).set({ messages }).where(eq(conversations.id, conversationId)).run();
   return { messageCount: messages.length, maxTurns: conversation.max_turns };
+}
+
+/**
+ * `isFallbackMessage` for one conversation's transcript. Loads the participants'
+ * names once: a legacy message (stored before the `fallback` flag) only counts
+ * as a canned fallback if it is the exact canned line with its speaker's name.
+ */
+export function fallbackDetector(
+  participantIds: number[],
+): (msg: { speakerId: number; text?: string; fallback?: boolean }) => boolean {
+  const names = new Map(
+    db.select({ id: agents.id, name: agents.name }).from(agents)
+      .where(inArray(agents.id, participantIds)).all()
+      .map((a) => [a.id, a.name] as const),
+  );
+  return (msg) => isFallbackMessage(msg, names.get(msg.speakerId));
 }
 
 export function markConversationEnded(conversationId: number) {
@@ -272,8 +290,9 @@ export function markConversationEnded(conversationId: number) {
   if (!conversation || conversation.status === 'ended') return;
 
   // Canned fallback actions aren't speech; they don't count toward the mood.
-  const msgs = (conversation.messages as Array<{ text?: string; sentiment?: number; fallback?: boolean }>)
-    .filter((m) => !isFallbackMessage(m));
+  const isFallback = fallbackDetector(conversation.participants as number[]);
+  const msgs = (conversation.messages as Array<{ speakerId: number; text?: string; sentiment?: number; fallback?: boolean }>)
+    .filter((m) => !isFallback(m));
   const avgSentiment =
     msgs.length > 0
       ? msgs.reduce((sum, m) => sum + (m.sentiment ?? 0), 0) / msgs.length

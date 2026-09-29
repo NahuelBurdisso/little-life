@@ -518,9 +518,13 @@ export function buildConversationPrompt(
     friendship, isFirstMeeting, romance, lastSentiment,
   );
   const repetitionHint = buildRepetitionHint(
-    conversation.messages as Array<{ speakerId: number; text: string }>,
+    conversation.messages as Array<{ speakerId: number; text: string; fallback?: boolean }>,
     speaker.id,
+    speaker.name,
   );
+  // Legacy messages (no `fallback` key) are matched against the canned line
+  // with their own speaker's name — both names are known here.
+  const nameOf = (id: number) => (id === speaker.id ? speaker.name : otherAgent.name);
 
   // Build message array. Consecutive same-role messages are merged: the turn
   // instruction below always follows the other person's line, and Gemma-style
@@ -551,7 +555,7 @@ export function buildConversationPrompt(
     // As the speaker's own "assistant" turn it would teach them to narrate, so
     // it is dropped; the other person's is kept as a bracketed action, like the
     // [Memory]-style tags above, so the reply can still react to it.
-    if (isFallbackMessage(msg)) {
+    if (isFallbackMessage(msg, nameOf(msg.speakerId))) {
       if (msg.speakerId !== speaker.id) push("user", `[${msg.text}]`);
       continue;
     }
@@ -575,10 +579,13 @@ export function buildConversationPrompt(
  * speaker's own lines only — a handful of tokens, not a transcript.
  */
 function buildRepetitionHint(
-  messages: Array<{ speakerId: number; text: string }>,
+  messages: Array<{ speakerId: number; text: string; fallback?: boolean }>,
   speakerId: number,
+  speakerName: string,
 ): string {
-  const own = messages.filter((m) => m.speakerId === speakerId && !isFallbackMessage(m)).slice(-2);
+  const own = messages
+    .filter((m) => m.speakerId === speakerId && !isFallbackMessage(m, speakerName))
+    .slice(-2);
   const openers = new Set<string>();
   const questions = new Set<string>();
   for (const m of own) {
