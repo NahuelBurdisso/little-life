@@ -16,7 +16,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit && vitest run",
-    "deadcode": "node scripts/find-dead-code.mjs"
+    "deadcode": "node scripts/find-dead-code.mjs",
+    "soak": "tsx scripts/soak.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.95.2",

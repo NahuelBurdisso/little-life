@@ -169,7 +169,12 @@ export async function runSystemPhase(
 /** Guards against overlapping autoplay analysis windows (see step 9 below). */
 let isAnalyzing = false;
 
-async function gameTick(): Promise<void> {
+/**
+ * One full tick: advance the clock, run every phase, finalize. Exported so
+ * `scripts/soak.ts` can drive ticks back-to-back without the setTimeout loop;
+ * the server only ever calls it through `startTickLoop`.
+ */
+export async function gameTick(): Promise<void> {
   // Whole-tick budget: `perfCollector.flush` compares this against
   // TICK_INTERVAL_MS, so it has to include the world read and clock advance,
   // not just the phase loop.
