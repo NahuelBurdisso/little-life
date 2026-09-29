@@ -2,6 +2,7 @@ import * as PIXI from "pixi.js";
 import { bubbleText } from '../../lib/bubbleText';
 import type { SpritePool } from "./SpritePool";
 import { loadStrip } from "./stripAtlas";
+import { idString } from "./idString";
 import {
   EMOTES_URL, EMOTE_FRAME_COUNT, EMOTE_CELL, EMOTE_EMOJI_FALLBACK, emoteFrameAt,
 } from "./emoteFrames";
@@ -133,7 +134,6 @@ export class BubbleSystem {
   /** agentId → position. Entries are reused; `stamp` says whether one belongs to this frame. */
   private readonly posMap = new Map<string, { x: number; y: number; stamp: number }>();
   private frameStamp = 0;
-  private readonly idStrings = new Map<number, string>();
   private readonly convoAgents = new Set<string>();
   private readonly latestMessages = new Map<string, string>();
   private readonly latestIsAction = new Set<string>();
@@ -371,16 +371,6 @@ export class BubbleSystem {
     });
   }
 
-  /** `String(id)` memoised: agent ids are stringified for every map key, every frame. */
-  private idStr(id: number): string {
-    let s = this.idStrings.get(id);
-    if (s === undefined) {
-      s = String(id);
-      this.idStrings.set(id, s);
-    }
-    return s;
-  }
-
   removeBubble(agentId: string) {
     this.removeBubbleByKey(agentId);
   }
@@ -411,7 +401,7 @@ export class BubbleSystem {
     const posMap = this.posMap;
     for (let i = 0; i < agents.length; i++) {
       const a = agents[i];
-      const aid = this.idStr(a.id);
+      const aid = idString(a.id);
       const sprite = spritePool?.getSprite(aid);
       let entry = posMap.get(aid);
       if (!entry) {
@@ -460,7 +450,7 @@ export class BubbleSystem {
         const convo = conversations[c];
         const participants = convo.participants;
         if (participants) {
-          for (let i = 0; i < participants.length; i++) convoAgents.add(this.idStr(participants[i]));
+          for (let i = 0; i < participants.length; i++) convoAgents.add(idString(participants[i]));
         }
         // Last message per agent
         const messages = convo.messages;
@@ -468,7 +458,7 @@ export class BubbleSystem {
           for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
             if (msg.speakerId != null && msg.text) {
-              const sid = this.idStr(msg.speakerId);
+              const sid = idString(msg.speakerId);
               latestMessages.set(sid, msg.text);
               if (msg.fallback) latestIsAction.add(sid);
               else latestIsAction.delete(sid);
@@ -532,7 +522,7 @@ export class BubbleSystem {
     // Auto-emote triggers based on mood changes
     for (let i = 0; i < agents.length; i++) {
       const a = agents[i];
-      const aid = this.idStr(a.id);
+      const aid = idString(a.id);
       const pos = posMap.get(aid);
       if (!pos) continue;
       const curMood = (a as any).needs?.mood ?? 50;
@@ -625,7 +615,6 @@ export class BubbleSystem {
     this.prevMoodMap.clear();
     this.shownMessageCounts.clear();
     this.posMap.clear();
-    this.idStrings.clear();
     this.convoAgents.clear();
     this.latestMessages.clear();
     this.latestIsAction.clear();

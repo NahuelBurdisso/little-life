@@ -22,6 +22,7 @@ import { useCanvasActivity } from "../../hooks/useCanvasActivity";
 import { onCanvasEvent } from "../../lib/canvasBus";
 import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { ParticleContext } from "./particles/types";
+import { idString, pairKey } from "./idString";
 
 // Held-pose emotes: action type -> looping emote key. Emotes only live ~1.5s,
 // so a pose that lasts minutes has to re-puff to stay legible.
@@ -259,8 +260,8 @@ export const GameCanvas = React.memo(function GameCanvas({
         if (convo.status !== 'active') continue;
         const ids = (convo.participants ?? []) as (number | string)[];
         if (ids.length < 2) continue;
-        const spriteA = spritePoolRef.current.getSprite(String(ids[0]));
-        const spriteB = spritePoolRef.current.getSprite(String(ids[1]));
+        const spriteA = spritePoolRef.current.getSprite(idString(ids[0]));
+        const spriteB = spritePoolRef.current.getSprite(idString(ids[1]));
         if (!spriteA || !spriteB) continue;
 
         const ax = spriteA.container.x;
@@ -671,8 +672,8 @@ export const GameCanvas = React.memo(function GameCanvas({
         for (const agent of agentsRef.current ?? []) {
           const emote = POSE_EMOTES[actionTypeOf(agent)];
           if (!emote) continue;
-          const agentId = String(agent.id);
-          const key = `${agentId}:${emote}`;
+          const agentId = idString(agent.id);
+          const key = pairKey(agentId, emote);
           posing.add(key);
           if (now - (lastPosePuffRef.current.get(key) ?? 0) < POSE_PUFF_INTERVAL_MS) continue;
           const sprite = spritePoolRef.current.getSprite(agentId);
@@ -696,7 +697,7 @@ export const GameCanvas = React.memo(function GameCanvas({
         agentData.length = sourceAgents.length;
         for (let i = 0; i < sourceAgents.length; i++) {
           const a: any = sourceAgents[i];
-          const id = String(a.id);
+          const id = idString(a.id);
           const sprite = spritePool.getSprite(id);
           let entry = agentData[i];
           if (!entry) {
