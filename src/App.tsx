@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { trpc } from "./lib/trpc";
 import { isWorldReplaced } from "./lib/worldIdentity";
 import { SetupWizard } from "./components/setup/SetupWizard";
@@ -25,6 +25,9 @@ import { useAgents } from "./hooks/useAgents";
 import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
 import { useKeyboardControls } from "./hooks/useKeyboardControls";
+import { useFavorites } from "./hooks/useFavorites";
+import { worldSeedOf, orderCast, cycleAgentId } from "./lib/favorites";
+import { CastBar } from "./components/ui/CastBar";
 import { Toasts } from "./components/ui/Toasts";
 import { LoadingScreen } from "./components/ui/LoadingScreen";
 import { FloatingToolbar } from "./components/ui/FloatingToolbar";
@@ -42,6 +45,8 @@ export default function App() {
   const [setupComplete, setSetupComplete] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null); // string representation of numeric ID
   const [focusNonce, setFocusNonce] = useState(0);
+  // Camera lock requests for GameCanvas (cast bar double-click, F key).
+  const [followRequest, setFollowRequest] = useState<{ nonce: number; mode: "start" | "toggle" } | null>(null);
   // The building/open area whose LocationPanel is open (canvas click).
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [showEventMenu, setShowEventMenu] = useState(false);
@@ -162,6 +167,24 @@ export default function App() {
     return () => document.removeEventListener("keydown", handler);
   }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showAutoplay, selectedLocationId, selectedAgentId]);
 
+  // Cast bar: favourites are per world (keyed by seed) and sort first, both in the
+  // bar and in Tab order, so the two never disagree about who is "next".
+  const { favorites, toggleFavorite } = useFavorites(worldSeedOf(world?.setup_config));
+  const cast = useMemo(() => orderCast(agents, favorites), [agents, favorites]);
+
+  // Select an agent AND re-center on them, even if they were already selected.
+  const focusAgent = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+    setFocusNonce(n => n + 1);
+  }, []);
+
+  // Focus plus lock the camera on them (GameCanvas applies the lock after the
+  // selection change it would otherwise clear).
+  const followAgent = useCallback((agentId: string) => {
+    focusAgent(agentId);
+    setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "start" }));
+  }, [focusAgent]);
+
   // Keyboard controls
   useKeyboardControls({
     // The wizard and loading screen render before the sim exists; Space there
@@ -170,6 +193,17 @@ export default function App() {
     isPaused: Boolean(world?.is_paused),
     onTogglePause: () => nudge.togglePause(),
     onChangeSpeed: (speed: number) => nudge.changeSpeed(speed),
+    onCycleAgent: (direction) => {
+      const next = cycleAgentId(cast.map((a) => String(a.id)), selectedAgentId, direction);
+      if (next) focusAgent(next);
+    },
+    onToggleFollow: () => {
+      if (selectedAgentId) setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
+    },
+    agentKeysEnabled: !(
+      contextMenuAgent || showEventMenu || showGazette || showTownStats || showNewAgent ||
+      showRelGraph || showConvoHistory || showAutoplay
+    ),
   });
 
   // Canvas callbacks
@@ -190,12 +224,6 @@ export default function App() {
     },
     [agents, locations]
   );
-
-  // Select an agent AND re-center on them, even if they were already selected.
-  const focusAgent = useCallback((agentId: string) => {
-    setSelectedAgentId(agentId);
-    setFocusNonce(n => n + 1);
-  }, []);
 
   const handleAgentContextMenu = useCallback(
     (agentId: string, pos: { x: number; y: number }) => {
@@ -246,6 +274,17 @@ export default function App() {
         hasNewGazette={gazette.hasNew}
         onWorldReplaced={handleWorldReplaced}
       />
+      <CastBar
+        agents={cast}
+        locations={locations ?? []}
+        conversations={conversations ?? []}
+        selectedAgentId={selectedAgentId}
+        favorites={favorites}
+        onToggleFavorite={toggleFavorite}
+        onFocus={focusAgent}
+        onFollow={followAgent}
+        onContextMenu={handleAgentContextMenu}
+      />
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Conversations sidebar */}
         <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-hidden">
@@ -267,6 +306,7 @@ export default function App() {
           selectedLocationId={selectedLocationId}
           selectedAgentId={selectedAgentId}
           focusNonce={focusNonce}
+          followRequest={followRequest}
         />
         {/* AgentPanel sidebar */}
         {selectedAgentId && (

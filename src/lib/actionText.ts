@@ -75,3 +75,46 @@ export function describeAction(action: unknown, place?: string | null): string {
   const make = TYPE_TEXT[type];
   return capitalize(make ? make(place ?? null) : humanize(type));
 }
+
+const TYPE_ICON: Record<string, string> = {
+  sleeping: "💤",
+  eating: "🍽",
+  working: "🔨",
+  socializing: "💬",
+  talking: "💬",
+  walking: "🚶",
+  shopping: "🛒",
+  comfort: "🫂",
+  drama: "🔥",
+  arrested: "⛓",
+  idle: "🙂",
+};
+
+const ZONE_ICON: Record<string, string> = {
+  fish: "🎣",
+  garden: "🌱",
+  forage: "🌿",
+  perform: "🎭",
+  jog: "🏃",
+  browse: "📚",
+  rest: "🛋",
+  cook: "🍳",
+  contemplate: "💭",
+  watch: "👀",
+  people_watch: "👀",
+  comfort_visit: "🫂",
+  comfort: "🫂",
+  arrest: "⛓",
+  pickpocket: "🫳",
+  shoplifting: "🫳",
+};
+
+/** One glyph for what an agent is doing, resolved like `describeAction` (zone activity first). */
+export function actionIcon(action: unknown): string {
+  if (typeof action === "string") return TYPE_ICON[action] ?? "•";
+  if (!action || typeof action !== "object") return "•";
+  const a = action as { type?: unknown; zoneActivity?: unknown };
+  const zone = typeof a.zoneActivity === "string" && !a.zoneActivity.includes(":") ? a.zoneActivity : null;
+  if (zone && ZONE_ICON[zone]) return ZONE_ICON[zone];
+  return (typeof a.type === "string" && TYPE_ICON[a.type]) || "•";
+}
