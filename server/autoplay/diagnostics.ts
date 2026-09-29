@@ -279,7 +279,7 @@ export function diagnose(
     diagnoses.push({
       type: 'state_stuck',
       severity: stuck.durationTicks > stuck.expectedMaxDuration * 5 ? 'critical' : 'medium',
-      evidence: `${stuck.agentName}: ${stuck.stateType} for ${stuck.durationTicks} ticks (expected max: ${stuck.expectedMaxDuration})`,
+      evidence: `${stuck.agentName}: ${stuck.stateType} for ${Math.round(stuck.durationTicks)} game min (expected max: ${stuck.expectedMaxDuration} min)`,
       suggestion: `Check conditional exit logic for ${stuck.stateType}`,
       affectedAgents: [stuck.agentId],
       autoFixable: false,
