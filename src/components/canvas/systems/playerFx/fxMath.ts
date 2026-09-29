@@ -165,3 +165,64 @@ export function flashAlpha(elapsed: number, peak: number, life: number): number 
   if (elapsed < attack) return peak * (elapsed / attack);
   return peak * (1 - (elapsed - attack) / (life - attack));
 }
+
+// ── Planting powers (whisper / rumor / feeling) ──────────────────────────────────────────────
+
+/**
+ * Point `f` (0..1) of a thought falling into an agent's head: it starts `height` px above,
+ * circles inward on a shrinking loop and lands on (0, 0). Offsets from the head, into `out`.
+ */
+export function thoughtFallPoint(f: number, height: number, out: Point): Point {
+  const c = Math.min(1, Math.max(0, f));
+  const r = 16 * (1 - c);
+  const a = c * Math.PI * 3;
+  out.x = Math.sin(a) * r;
+  out.y = -height * (1 - c) * (1 - c) + Math.cos(a) * r * 0.35;
+  return out;
+}
+
+/**
+ * Where rumor wisp `i` of `n` is at `f` (0..1) of its drift: they leave the head in a fan
+ * (upper half-circle, left to right) and slow as they go, like talk carried off on the air.
+ */
+export function rumorWispPoint(i: number, n: number, f: number, dist: number, out: Point): Point {
+  const c = Math.min(1, Math.max(0, f));
+  const a = Math.PI * (1.1 + 0.8 * (n > 1 ? i / (n - 1) : 0.5));
+  const d = dist * (1 - (1 - c) * (1 - c));
+  out.x = Math.cos(a) * d;
+  out.y = Math.sin(a) * d * 0.6 - 6 * c;
+  return out;
+}
+
+/**
+ * A stirred feeling rising around an agent: particle `i` of `n`, `f` (0..1) through its own
+ * climb, orbiting on a flattened ring that narrows as it rises. Offsets from the feet.
+ */
+export function feelingSpiralPoint(i: number, n: number, f: number, t: number, rise: number, out: Point): Point {
+  const c = Math.min(1, Math.max(0, f));
+  const a = t * 3 + (i / Math.max(1, n)) * Math.PI * 2;
+  const r = 14 * (1 - c * 0.5);
+  out.x = Math.cos(a) * r;
+  out.y = -6 - c * rise + Math.sin(a) * r * 0.35;
+  return out;
+}
+
+export interface FeelingStyle {
+  /** playerfx.png cell name the particles use. */
+  cell: 'dotHeart' | 'dotPinkBig' | 'dotGoldBig' | 'dotGold' | 'swirl';
+  /** Multiplied into the cell's colours (0xffffff = as drawn). */
+  tint: number;
+  /** Emote over the agent (an emotes.png name, same as BubbleSystem's STATE_EMOTES). */
+  emote: string;
+}
+
+/** How each stirrable feeling looks. Unknown ones get plain gold dots and a "!". */
+export function feelingStyle(state: string | undefined): FeelingStyle {
+  switch (state) {
+    case 'infatuated': return { cell: 'dotHeart', tint: 0xffffff, emote: 'heart' };
+    case 'jealous': return { cell: 'dotPinkBig', tint: 0x9bd46a, emote: 'fire' };
+    case 'confident': return { cell: 'dotGoldBig', tint: 0xffffff, emote: 'star' };
+    case 'stressed': return { cell: 'swirl', tint: 0xa9b8d6, emote: 'sweat' };
+    default: return { cell: 'dotGold', tint: 0xffffff, emote: 'exclaim' };
+  }
+}

@@ -260,6 +260,64 @@ describe('PlayerFxSystem', () => {
     sys.destroy();
   });
 
+  it('whisper_thought: a wisp falls into the head, then a "think" bubble', async () => {
+    const { sys, overAgents, showEmote, run, visible } = setup();
+    await flush();
+    emit('whisper_thought', [2]);
+    run(0.3);
+    expect(visible()).toBeGreaterThan(0);
+    // Early in the fall the wisp is well above the head (feet at y 300, head ~272).
+    expect(overAgents.children.some(c => c.visible && c.y < 240)).toBe(true);
+    expect(showEmote).not.toHaveBeenCalled();
+    run(1);
+    expect(showEmote).toHaveBeenCalledWith('2', 'think', { x: 200, y: 300 });
+    run(0.5);
+    expect(visible()).toBe(0);
+    sys.destroy();
+  });
+
+  it('start_rumor: "shh" on the seeder and wisps drifting off them; nothing on the subject', async () => {
+    const { sys, overAgents, showEmote, run, visible } = setup();
+    await flush();
+    emit('start_rumor', [3, 6]);
+    expect(showEmote).toHaveBeenCalledWith('3', 'whisper', { x: 300, y: 300 });
+    expect(showEmote).not.toHaveBeenCalledWith('6', expect.anything(), expect.anything());
+    run(0.8);
+    const wisps = overAgents.children.filter(c => c.visible);
+    expect(wisps.length).toBeGreaterThanOrEqual(3);
+    expect(wisps.every(c => Math.abs(c.x - 300) < 80)).toBe(true);   // around the seeder, not the subject
+    run(2);
+    expect(visible()).toBe(0);
+    sys.destroy();
+  });
+
+  it('stir_feeling: the state emote and particles rising around the agent', async () => {
+    const { sys, overAgents, showEmote, run, visible } = setup();
+    await flush();
+    emit('stir_feeling', [4, 1], { feeling: 'jealous' });
+    expect(showEmote).toHaveBeenCalledWith('4', 'fire', { x: 400, y: 300 });
+    run(0.6);
+    const parts = overAgents.children.filter(c => c.visible) as PIXI.Sprite[];
+    expect(parts.length).toBeGreaterThanOrEqual(3);
+    expect(parts.every(c => Math.abs(c.x - 400) < 30 && c.y < 300)).toBe(true);
+    expect(parts[0].tint).not.toBe(0xffffff);          // jealousy is tinted sour green
+    run(3);
+    expect(visible()).toBe(0);
+    sys.destroy();
+  });
+
+  it('stir_feeling: re-stirring the same agent replaces the effect', async () => {
+    const { sys, ground, overAgents, run } = setup();
+    await flush();
+    emit('stir_feeling', [5], { feeling: 'confident' });
+    run(0.1);
+    const before = ground.children.length + overAgents.children.length;
+    for (let i = 0; i < 4; i++) emit('stir_feeling', [5], { feeling: 'stressed' });
+    run(0.1);
+    expect(ground.children.length + overAgents.children.length).toBe(before);
+    sys.destroy();
+  });
+
   it('an unknown kind gets the generic ring and "!" on each agent', async () => {
     const { sys, overAgents, showEmote } = setup();
     await flush();

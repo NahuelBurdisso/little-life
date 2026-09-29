@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   PIN_MAX_S, PIN_MIN_S, TALK_MAX_S, TALK_MIN_S,
-  arcBow, arcPoint, burstScale, coinCount, dotCount, dropBounce, fadeOut, flashAlpha, hopHeight,
-  isTalking, perimeterPoint, pinDone, pulse, secretTravelSeconds, talkArcDone,
+  arcBow, arcPoint, burstScale, coinCount, dotCount, dropBounce, fadeOut, feelingSpiralPoint,
+  feelingStyle, flashAlpha, hopHeight, isTalking, perimeterPoint, pinDone, pulse, rumorWispPoint,
+  secretTravelSeconds, talkArcDone, thoughtFallPoint,
 } from '../fxMath';
+import { EMOTE_NAMES } from '../../../emoteFrames';
+import { PFX_ANIMS } from '../playerFxFrames';
 
 describe('talkArcDone', () => {
   it('stays up while the pair is apart and silent', () => {
@@ -138,5 +141,44 @@ describe('event burst geometry', () => {
     perimeterPoint(10, 20, 100, 50, 0.25, o);
     expect(o.y).toBeCloseTo(20 + 0);                   // 75 along the top edge
     expect(o.x).toBeCloseTo(85);
+  });
+});
+
+describe('planting powers', () => {
+  it('a thought falls from above and lands exactly on the head', () => {
+    const p = { x: 0, y: 0 };
+    thoughtFallPoint(0, 90, p);
+    expect(p.y).toBeLessThan(-80);
+    thoughtFallPoint(1, 90, p);
+    expect(p.x).toBeCloseTo(0);
+    expect(p.y).toBeCloseTo(0);
+    // Always above (or at) the head on the way down.
+    for (let f = 0; f <= 1; f += 0.1) expect(thoughtFallPoint(f, 90, p).y).toBeLessThanOrEqual(6);
+  });
+
+  it('rumor wisps fan out upward from the head, first to the left and last to the right', () => {
+    const first = rumorWispPoint(0, 5, 1, 56, { x: 0, y: 0 });
+    const last = rumorWispPoint(4, 5, 1, 56, { x: 0, y: 0 });
+    expect(first.x).toBeLessThan(0);
+    expect(last.x).toBeGreaterThan(0);
+    expect(first.y).toBeLessThan(0);
+    expect(last.y).toBeLessThan(0);
+    const start = rumorWispPoint(2, 5, 0, 56, { x: 0, y: 0 });
+    expect(Math.abs(start.x) + Math.abs(start.y)).toBe(0);           // every wisp leaves from the head
+  });
+
+  it('feeling particles climb as they age and stay close to the agent', () => {
+    const lo = feelingSpiralPoint(0, 8, 0, 0, 34, { x: 0, y: 0 });
+    const hi = feelingSpiralPoint(0, 8, 1, 0, 34, { x: 0, y: 0 });
+    expect(hi.y).toBeLessThan(lo.y - 25);
+    expect(Math.abs(lo.x)).toBeLessThanOrEqual(14);
+  });
+
+  it('every feeling style names a real atlas cell and a real emote', () => {
+    for (const state of ['infatuated', 'jealous', 'confident', 'stressed', 'nonsense', undefined]) {
+      const st = feelingStyle(state);
+      expect(PFX_ANIMS[st.cell]).toBeDefined();
+      expect(EMOTE_NAMES).toContain(st.emote);
+    }
   });
 });
