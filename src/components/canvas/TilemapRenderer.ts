@@ -3,6 +3,8 @@ import { TILE_SIZE } from "../../lib/spriteConfig";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getTerrainTexture } from "./textures";
+import { loadStrip } from "./stripAtlas";
+import { PROPS_URL, PROP_FRAME_COUNT, propFrame, type PropSpriteKind } from "./propFrames";
 import {
   type BlobRaster, type BlobStyle, type SoftBlobStyle,
   bucketCellRects, buildTileSet, classifyRoadTile, connectedComponents, hash2, hasTile,
@@ -171,6 +173,8 @@ export class TilemapRenderer {
    *  a redraw while a texture fetch is in flight would otherwise let the stale
    *  callback add a duplicate tile group to the freshly cleared container. */
   private zoneGeneration = 0;
+  /** Bumped per `setTerrainTiles`, so a prop atlas that resolves late skips stale tiles. */
+  private terrainGeneration = 0;
 
   constructor(_app: PIXI.Application) {
     this.container = new PIXI.Container();
@@ -487,12 +491,19 @@ export class TilemapRenderer {
   setTerrainTiles(tiles: Array<{ x: number; y: number; kind: string }>): void {
     // Detach first: `destroy()` splices the child out of `children`, so
     // iterating the live array skips every second entry and leaks it.
-    for (const child of this.terrainContainer.removeChildren()) child.destroy();
+    for (const child of this.terrainContainer.removeChildren()) child.destroy({ children: true });
+    const generation = ++this.terrainGeneration;
 
     if (!Array.isArray(tiles) || tiles.length === 0) return;
 
     const g = new PIXI.Graphics();
     g.eventMode = 'none';
+    // Flowers and props: drawn as Graphics right away, then swapped for the Aseprite
+    // sprites (scripts/aseprite/nature-props.lua) once the atlas loads — or kept for
+    // good if it never does.
+    const pg = new PIXI.Graphics();
+    pg.eventMode = 'none';
+    const flowerTiles: Array<{ x: number; y: number; h: number }> = [];
     const ordered = [...tiles].sort((a, b) => a.y - b.y || a.x - b.x);
 
     type PropKind = 'tree' | 'bush' | 'rock';
@@ -542,10 +553,11 @@ export class TilemapRenderer {
 
       if (tile.kind === 'flowers') {
         // Small pink dots at tile center for a subtle flower look
-        g.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x3a5a2a, alpha: 0.15 });
-        g.circle(px + TILE_SIZE / 2 - 4, py + TILE_SIZE / 2 - 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
-        g.circle(px + TILE_SIZE / 2 + 4, py + TILE_SIZE / 2 + 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
-        g.circle(px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 5, 2.5).fill({ color: 0xd98aaa, alpha: 0.3 });
+        flowerTiles.push({ x: tile.x, y: tile.y, h });
+        pg.rect(px, py, TILE_SIZE, TILE_SIZE).fill({ color: 0x3a5a2a, alpha: 0.15 });
+        pg.circle(px + TILE_SIZE / 2 - 4, py + TILE_SIZE / 2 - 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
+        pg.circle(px + TILE_SIZE / 2 + 4, py + TILE_SIZE / 2 + 2, 3).fill({ color: 0xc75a8a, alpha: 0.35 });
+        pg.circle(px + TILE_SIZE / 2, py + TILE_SIZE / 2 - 5, 2.5).fill({ color: 0xd98aaa, alpha: 0.3 });
       } else if (tile.kind === 'grass_tuft') {
         this.drawTuft(g, px, py, tile.x, tile.y);
       } else if (tile.kind === 'tall_grass') {
@@ -571,12 +583,41 @@ export class TilemapRenderer {
     for (const p of props) {
       const px = p.x * TILE_SIZE;
       const py = p.y * TILE_SIZE;
-      if (p.kind === 'tree') this.drawTree(g, px, py, p.h);
-      else if (p.kind === 'bush') this.drawBush(g, px, py, p.h);
-      else this.drawRock(g, px, py, p.h);
+      if (p.kind === 'tree') this.drawTree(pg, px, py, p.h);
+      else if (p.kind === 'bush') this.drawBush(pg, px, py, p.h);
+      else this.drawRock(pg, px, py, p.h);
     }
 
     this.terrainContainer.addChild(g);
+    this.terrainContainer.addChild(pg);
+
+    loadStrip(PROPS_URL, PROP_FRAME_COUNT).then((frames) => {
+      if (generation !== this.terrainGeneration || pg.destroyed) return;
+      const layer = new PIXI.Container();
+      layer.eventMode = 'none';
+      // Same order as the Graphics pass: flat flowers first, then props by row.
+      const place = (kind: PropSpriteKind, tx: number, ty: number, h: number, dx: number, dy: number) => {
+        const sprite = new PIXI.Sprite(frames[propFrame(kind, h)]);
+        sprite.anchor.set(0.5, 0);
+        sprite.position.set(tx * TILE_SIZE + TILE_SIZE / 2 + dx, ty * TILE_SIZE + dy);
+        // Mirror half of them: doubles the apparent variety, and the light still reads
+        // as top-down because every cell is lit from straight above-ish.
+        if ((h >>> 27) & 1) sprite.scale.x = -1;
+        layer.addChild(sprite);
+      };
+      for (const f of flowerTiles) place('flowers', f.x, f.y, f.h, 0, 0);
+      for (const p of props) {
+        // Jitter uses the same bits as the Graphics versions so a prop doesn't move
+        // when its sprite arrives.
+        if (p.kind === 'tree') place('tree', p.x, p.y, p.h, ((p.h >>> 5) % 7) - 3, 0);
+        else if (p.kind === 'bush') place('bush', p.x, p.y, p.h, ((p.h >>> 5) % 9) - 4, ((p.h >>> 11) % 5) - 4);
+        else place('rock', p.x, p.y, p.h, ((p.h >>> 21) % 7) - 3, ((p.h >>> 25) % 5) - 4);
+      }
+      const at = this.terrainContainer.getChildIndex(pg);
+      this.terrainContainer.removeChild(pg);
+      pg.destroy();
+      this.terrainContainer.addChildAt(layer, at);
+    }).catch(() => { /* Graphics props stay */ });
   }
 
   /**
