@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 211 files / 2336 tests passing (autonomous improvement session, waves 1–3 merged).
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 219 files / 2470 tests passing (autonomous improvement session, waves 1–4 merged).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -112,30 +112,19 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
   schedule, not supply (farm output cut 3.0/2.4 → 2.0/1.6 barely moved it). Winter food_raw (27–38/day)
   was as high as spring — fishing/foraging bypassed the season table (fixed). Meal thresholds are not
   the lever (tried 70→62/60→52: noise); next candidates: free-time eat score `decisions.ts:~695`.
-- **E9 [L]** Old saves: the first nights of the treasury loop pull savings hard (up to 60% of cash
-  above the allowance); the treasury may dip negative before the first midnight. Salaries are defined
-  in three places (`server/data/agents.ts`, wizard `defaults.ts`, `JOB_OPTIONS`).
 
 ### Engine
 - **B13b [L]** Memory/activity-log retention converts game days to ticks at the *current* speed
   (approximate if the speed changed); `memories.created_at` stays on ticks.
-- **B19 [L]** `templates` DB table is write-only (`seed.ts`, `setup.ts`): selection reads the static
-  catalog in `server/data/templates.ts`.
 
 ### Found by playtest #2 (2026-09-29, real LLM, 15 game h at 1x + 61 game h at 4x)
 Evidence in the session scratchpad; line numbers approximate.
-- **G5 [L]** Template conversations (now ~25%, was ~half) still read as non-sequiturs; they remain
-  the fallback when LLM slots are full (`SMALL_TALK_TIER`, `planConversation`).
 - **L2 [L]** `plan.decompose` was the largest call count (~90/game day). Sleep, own-shift and
   home-meal blocks now skip the LLM (`deterministicDecompose.ts`); re-measure with an LLM_TRACE and
   widen its word lists (`:38-46`) if the saving is small.
 
 ### Client
 - **C10 [L]** Old conversations stored before 2026-09-29 render canned fallback lines as speech.
-- **C13 [L]** Story beats classify `drama` activity rows by their English wording
-  (`systems/beats/beatDetect.ts`); a reworded server template silently stops its beat. A `beat`
-  subtype on `logActivity` would make it robust. Weddings carry no couple ids, so the wedding
-  decoration can't point at anyone.
 - **C14 [L]** Event decorations and the fountain splash mirror `BuildingRenderer.addOpenArea`'s
   well/bench layout by formula (`townEvents/eventDecor.ts`, `ambientLife` `wellCenter`); moving
   the well there needs both updated. Same for `systems/placeLife/placeAnchors.ts`, which mirrors
@@ -228,6 +217,25 @@ Player-facing:
   advanced every tick, dead code, PlanTimeline "undefined", job titles, tension sources name who,
   soak forces template tier); **G6** generic openers stripped, **G7** no self-gossip via sightings;
   QA fixes (reputation rounding, infatuation perception, new residents get their job's workplace).
+- **Wave 4:** **proposals, engagements, weddings** of real couples (`server/lib/milestonesEngine.ts`,
+  `marriage.ts`, `relationships.status_since_minute`; partners 4–7 game days → llm_deep `proposal`
+  chat, the proposer walks to the partner; yes → `engaged`, a wedding event at the square ~1 day later
+  → sticky `married` (keeps the `partner` tag); no → heartbreak; affairs betraying a marriage are
+  sensitivity 4; random wedding weight 0; decorations follow the couple); **Director** mode
+  (🎬 toolbar, `src/lib/director.ts` shot scoring + hysteresis, lower-third captions, C toggles,
+  player camera input pauses it 20 s, roam skips homes); **G5** template chats are grounded topic
+  scripts (`server/data/smallTalkScripts.ts`, `server/lib/templateChat.ts`); **G6** follow-up keeps
+  bare greetings; **G7** confirmed facts never told to their subject, old sighting facts repaired at
+  boot (`server/db/sightingFactRepair.ts`); **C13** drama rows carry `metadata.beat`
+  (`server/data/dramaBeats.ts`), beatDetect prefers it; **E9** one job table (`server/data/jobs.ts`)
+  + treasury ramp over the first 3 nights for worlds starting the loop late
+  (`world_state.treasury_ramp_left`); **B19** templates catalog deleted (table kept, legacy); QA fixes:
+  player nudges for pairs across town no longer dropped or frozen, late memory writes after a reset
+  can't crash the server.
+- Open from wave 4: proposal gives up after 18 game h if the pair never meets
+  (`PROPOSAL_PENDING_MINUTES`); SnapResolver flee/plot/breakdown and several economy/tavern drama rows
+  untagged (no beat to draw); `NewAgentDialog.tsx:19` has its own job list; gossip memories still name
+  the teller in third person (`descriptionTemplates.ts:68-74`); template chats ignore sick/grieving.
 - Open from wave 3: whispered thoughts get no outcome (`godPowers.ts:123`); a WS down at first
   load shows the LoadingScreen without the banner; grey translucent circles seen once mid-skip
   (unexplained, `PlaybackOverlay.tsx`); getPair refetches every agents flush while open.
