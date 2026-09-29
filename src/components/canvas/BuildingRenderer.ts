@@ -1,7 +1,14 @@
 import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
-import { getFurnitureTexture, getFloorTexture, getRoofTexture } from "./textures";
+import { getFurnitureTexture, getFloorTexture, getRoofTexture, getPropTexture } from "./textures";
+import {
+  ZONE_PROPS,
+  isZoneIllustrated,
+  marketSquareStalls,
+  farmyardStock,
+  type PixelPlacement,
+} from "./zoneProps";
 
 const TILE_SIZE = 32;
 
@@ -623,11 +630,18 @@ export class BuildingRenderer {
       const zx = x + zone.relativePosition.x;
       const zy = y + zone.relativePosition.y;
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
-      zg.fill({ color: zone.color, alpha: 1.0 }); // alpha on the container handles fade
+      // A zone with a picture only needs a whisper of tint (the container's 0.4 on top makes
+      // it ~14%); a zone without one still relies on the rect + label to be readable.
+      const illustrated = isZoneIllustrated(loc.type, zone, FURNITURE_SPRITE);
+      zg.fill({ color: zone.color, alpha: illustrated ? 0.35 : 1.0 }); // container alpha handles fade
       // Subtle border to separate zones
       zg.rect(zx, zy, zone.relativePosition.width, zone.relativePosition.height);
       zg.stroke({ color: 0x3a3028, width: 0.5, alpha: 0.5 });
       interiorContainer.addChild(zg);
+
+      // Illustrated zones drop their text: the sprite says what the area is, and the
+      // hover card names the building.
+      if (illustrated) continue;
 
       // Zone label. Wrapped to the zone rect: most zones are a single 32px tile
       // and names like "Prep Table" render ~60px wide, so unwrapped labels spilled
@@ -695,6 +709,19 @@ export class BuildingRenderer {
         furnText.alpha = 0.6;
         interiorContainer.addChild(furnText);
       }
+    }
+
+    // ── 9b. Zone props (rugs, crates, benches, cells...). Same container as the furniture
+    // sprites so the roof-fade/hover logic shows and hides them together. ──
+    const typeProps = ZONE_PROPS[loc.type];
+    if (typeProps) {
+      const placements: PixelPlacement[] = [];
+      for (const zone of zones) {
+        for (const p of typeProps[zone.id] ?? []) {
+          placements.push({ sprite: p.sprite, x: x + p.tile[0] * TILE_SIZE, y: y + p.tile[1] * TILE_SIZE });
+        }
+      }
+      this.addPropSprites(furniture, placements);
     }
 
     this.buildingLayer.addChild(interiorContainer);
@@ -896,9 +923,41 @@ export class BuildingRenderer {
   }
 
   /**
+   * Create one plain Sprite per placement, once. Textures are shared through the loader
+   * cache, so a bench row costs one upload. Loading is async: until (or unless) a texture
+   * resolves the spot simply shows the floor, and `onFail` (at most once) lets the caller
+   * draw a Graphics stand-in instead.
+   */
+  private addPropSprites(
+    parent: PIXI.Container,
+    placements: readonly PixelPlacement[],
+    onFail?: () => void,
+  ): void {
+    let failed = false;
+    const fail = () => {
+      if (failed) return;
+      failed = true;
+      if (!parent.destroyed) onFail?.();
+    };
+    for (const p of placements) {
+      const tex = getPropTexture(p.sprite);
+      if (!tex) { fail(); continue; }
+      tex.then((t) => {
+        if (parent.destroyed) return;
+        const sprite = new PIXI.Sprite(t);
+        sprite.position.set(p.x, p.y);
+        parent.addChild(sprite);
+      }).catch(fail);
+    }
+  }
+
+  /**
    * Two rows of covered market stalls with a walkway between them. Stall count
    * follows the square's width, so a small market gets two stalls and a large
    * one gets a proper row rather than the props stretching to fit.
+   *
+   * Graphics stand-in only: the stalls are sprites (`marketSquareStalls`) unless their
+   * textures fail to load.
    */
   private drawMarketStalls(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
     const STALL_W = 26, STALL_H = 18, STEP = 38;
@@ -930,9 +989,8 @@ export class BuildingRenderer {
     }
   }
 
-  /** Fenced yard furniture: rails, hay bales and a water trough. */
-  private drawFarmyardProps(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
-    // Post-and-rail fence around the perimeter.
+  /** Post-and-rail fence around the farmyard perimeter. */
+  private drawFarmyardFence(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
     for (const railY of [y + 5, y + h - 5]) {
       g.rect(x + 4, railY - 1, w - 8, 2).fill({ color: 0x6a5236, alpha: 0.9 });
     }
@@ -940,7 +998,13 @@ export class BuildingRenderer {
       g.rect(px + 1, y + 3, 3, h - 6).fill({ color: 0x1a1208, alpha: 0.18 });
       g.rect(px, y + 2, 3, h - 4).fill({ color: 0x7a6242 });
     }
+  }
 
+  /**
+   * Graphics stand-in for the yard's hay bales and water trough, used only if the sprites
+   * (`farmyardStock`) fail to load.
+   */
+  private drawFarmyardStock(g: PIXI.Graphics, x: number, y: number, w: number, h: number): void {
     // Hay bales stacked in the upper-left, clear of the fence line.
     for (const [bx, by] of [[x + 14, y + 16], [x + 40, y + 16], [x + 27, y + 34]]) {
       if (bx + 22 > x + w - 8 || by + 16 > y + h - 8) continue;
@@ -1023,11 +1087,40 @@ export class BuildingRenderer {
     // places. Give each the props that name it.
     if (loc.type === 'market_square' || loc.type === 'farmyard' || loc.type === 'alley') {
       const props = new PIXI.Graphics();
-      if (loc.type === 'market_square') this.drawMarketStalls(props, x, y, width, height);
-      else if (loc.type === 'farmyard') this.drawFarmyardProps(props, x, y, width, height);
-      else this.drawAlleyProps(props, x, y, width, height);
+      if (loc.type === 'farmyard') this.drawFarmyardFence(props, x, y, width, height);
+      else if (loc.type === 'alley') this.drawAlleyProps(props, x, y, width, height);
       props.eventMode = 'none';
       this.buildingLayer.addChild(props);
+
+      // Stalls / bales / trough are sprites; the Graphics versions only appear if the
+      // textures cannot be loaded.
+      const sprites = new PIXI.Container();
+      sprites.eventMode = 'none';
+      this.buildingLayer.addChild(sprites);
+      const shift = (list: PixelPlacement[]) => list.map((p) => ({ ...p, x: x + p.x, y: y + p.y }));
+      if (loc.type === 'market_square') {
+        this.addPropSprites(sprites, shift(marketSquareStalls(width, height)),
+          () => this.drawMarketStalls(props, x, y, width, height));
+      } else if (loc.type === 'farmyard') {
+        this.addPropSprites(sprites, shift(farmyardStock(width, height)),
+          () => this.drawFarmyardStock(props, x, y, width, height));
+      }
+    }
+
+    // Zoned open areas (farm, park, town square): stalls, benches, beds, coop, barn...
+    // Always visible, unlike interior furniture — there is no roof to cut away.
+    const zoneProps = ZONE_PROPS[loc.type];
+    if (zoneProps) {
+      const placements: PixelPlacement[] = [];
+      for (const zone of INTERIOR_ZONES[loc.type] ?? []) {
+        for (const p of zoneProps[zone.id] ?? []) {
+          placements.push({ sprite: p.sprite, x: x + p.tile[0] * TILE_SIZE, y: y + p.tile[1] * TILE_SIZE });
+        }
+      }
+      const sprites = new PIXI.Container();
+      sprites.eventMode = 'none';
+      this.buildingLayer.addChild(sprites);
+      this.addPropSprites(sprites, placements);
     }
 
     // Town square landmark: a stone well/fountain at the center gives the
