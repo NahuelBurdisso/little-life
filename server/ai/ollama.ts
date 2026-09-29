@@ -13,7 +13,7 @@
 
 import { CONFIG } from '../lib/constants';
 import { acquireLLMSlot, acquireEmbeddingSlot, type LLMPriority } from './llmSemaphore';
-import { LLMEmptyReplyError } from './llmErrors';
+import { LLMEmptyReplyError, LLMAbortedError } from './llmErrors';
 
 export interface OllamaChatRequest {
   model: string;
@@ -21,6 +21,12 @@ export interface OllamaChatRequest {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   baseUrl?: string;
   priority?: LLMPriority;
+  /**
+   * Cancels the request (throws LLMAbortedError). A conversation turn passes
+   * one so that closing the conversation frees its LLM and runner slots at once
+   * instead of when a reply nobody will read finally arrives.
+   */
+  signal?: AbortSignal;
   options?: {
     temperature?: number;
     top_p?: number;
@@ -42,6 +48,18 @@ export interface OllamaChatResponse {
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
 
+/** Ties the caller's signal to this request's own (timeout) controller. */
+function linkAbort(signal: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!signal) return () => {};
+  if (signal.aborted) {
+    controller.abort();
+    return () => {};
+  }
+  const onAbort = (): void => controller.abort();
+  signal.addEventListener('abort', onAbort, { once: true });
+  return () => signal.removeEventListener('abort', onAbort);
+}
+
 export async function callOllamaChat(
   request: OllamaChatRequest
 ): Promise<OllamaChatResponse> {
@@ -60,9 +78,15 @@ async function callOllamaBackend(
   const url = `${baseUrl}/api/chat`;
 
   const release = await acquireLLMSlot(request.priority ?? 'normal');
+  // Cancelled while queued for the slot: hand it straight back.
+  if (request.signal?.aborted) {
+    release();
+    throw new LLMAbortedError();
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
+  const unlink = linkAbort(request.signal, controller);
 
   try {
     const body = {
@@ -111,11 +135,13 @@ async function callOllamaBackend(
     return { text: content, truncated: data.done_reason === 'length' };
   } catch (error: any) {
     if (error.name === "AbortError") {
+      if (request.signal?.aborted) throw new LLMAbortedError();
       throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    unlink();
     release();
   }
 }
@@ -128,9 +154,15 @@ async function callOpenAIChat(
   const url = `${baseUrl}/v1/chat/completions`;
 
   const release = await acquireLLMSlot(request.priority ?? 'normal');
+  // Cancelled while queued for the slot: hand it straight back.
+  if (request.signal?.aborted) {
+    release();
+    throw new LLMAbortedError();
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
+  const unlink = linkAbort(request.signal, controller);
 
   try {
     const body: any = {
@@ -181,11 +213,13 @@ async function callOpenAIChat(
     return { text: content, truncated: data.choices?.[0]?.finish_reason === 'length' };
   } catch (error: any) {
     if (error.name === "AbortError") {
+      if (request.signal?.aborted) throw new LLMAbortedError();
       throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    unlink();
     release();
   }
 }

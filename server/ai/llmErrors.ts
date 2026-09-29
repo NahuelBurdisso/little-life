@@ -14,3 +14,15 @@ export class LLMEmptyReplyError extends Error {
     this.name = 'LLMEmptyReplyError';
   }
 }
+
+/**
+ * The caller cancelled the request (its `signal` aborted) — e.g. the
+ * conversation it was generating a turn for was closed. Not a failure of the
+ * LLM and not a timeout: nothing should retry it or fall back.
+ */
+export class LLMAbortedError extends Error {
+  constructor(message = 'LLM request aborted by caller') {
+    super(message);
+    this.name = 'LLMAbortedError';
+  }
+}
