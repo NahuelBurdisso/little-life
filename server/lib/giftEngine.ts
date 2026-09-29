@@ -109,7 +109,13 @@ export function clearGiftTracking(): void {
 export const IMPULSIVE_GIFT_COOLDOWN_MINUTES = 240;
 /** Never give more than this share of what the giver has on hand. */
 export const IMPULSIVE_GIFT_MAX_FRACTION = 0.1;
-/** Never let an impulsive gift take the giver below this balance. */
+/**
+ * Never let an impulsive gift take the giver below this balance. It is only a
+ * lower bound: the effective floor is the larger of this and the wealth floor
+ * (half the world's money target, `giftMoneyFloor`) that chat gifts respect —
+ * in soak the impulsive path was the biggest gift source precisely because it
+ * ignored the wealth budget the chat path had just been given (E8).
+ */
 export const IMPULSIVE_GIFT_MONEY_FLOOR = 20;
 /** Below this the "gift" is pocket change — skip it rather than log noise. */
 const IMPULSIVE_GIFT_MIN_AMOUNT = 2;
@@ -162,10 +168,22 @@ export function giveImpulsiveGift(params: {
   const receiverEcon = db.select().from(economy).where(eq(economy.agent_id, receiver.id)).get();
   if (!giverEcon || !receiverEcon) return null;
 
+  // Same wealth budget as conversation gifts (E8): a tighter purse waits
+  // longer between gifts, measured against the giver's last gift of ANY kind
+  // (chat or impulsive share `lastGiftMinute`, so being generous once is
+  // generous for the day). The per-chat chance factor has no counterpart here:
+  // the states phase already rolls 30% per game minute, so scaling that roll
+  // would only delay the same gift by a few minutes.
+  const moneyTarget = worldMoneyTargetNow();
+  const tier = giftWealthTier(giverEcon.money, moneyTarget);
+  const lastAny = lastGiftMinute.get(giver.id);
+  if (lastAny !== undefined
+    && nowMinute - lastAny < GIFT_COOLDOWN_MINUTES * GIFT_COOLDOWN_DAYS[tier]) return null;
+
   const amount = Math.floor(Math.min(
     params.desiredAmount,
     giverEcon.money * IMPULSIVE_GIFT_MAX_FRACTION,
-    giverEcon.money - IMPULSIVE_GIFT_MONEY_FLOOR,
+    giverEcon.money - Math.max(IMPULSIVE_GIFT_MONEY_FLOOR, giftMoneyFloor(moneyTarget)),
   ));
   if (amount < IMPULSIVE_GIFT_MIN_AMOUNT) return null;
 
@@ -183,6 +201,7 @@ export function giveImpulsiveGift(params: {
   }).run();
 
   lastImpulsiveGift.set(giver.id, { atMinute: nowMinute, stateId });
+  lastGiftMinute.set(giver.id, nowMinute);
 
   logActivity({
     type: 'gift',
