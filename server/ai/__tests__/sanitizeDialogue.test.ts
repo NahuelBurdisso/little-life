@@ -247,8 +247,9 @@ describe('stripGenericOpener (G6)', () => {
 
   it('drops pure-pleasantry sentences in front of the real line', () => {
     expect(strip('Hey Yuki, how are you doing today? I heard the mill wheel cracked.')).toBe('I heard the mill wheel cracked.');
-    expect(strip("Good morning! How's your day going? Rosa's shop is closed again.")).toBe("Rosa's shop is closed again.");
-    expect(strip('Yuki! Good to see you. Did you hear about Diego?')).toBe('Did you hear about Diego?');
+    // The bare greeting stays; only the how-are-you goes.
+    expect(strip("Good morning! How's your day going? Rosa's shop is closed again.")).toBe("Good morning! Rosa's shop is closed again.");
+    expect(strip('Yuki! Good to see you. Did you hear about Diego?')).toBe('Yuki! Did you hear about Diego?');
     expect(strip("How have you been, Yuki? I've been meaning to ask about your garden.")).toBe("I've been meaning to ask about your garden.");
   });
 
@@ -262,6 +263,9 @@ describe('stripGenericOpener (G6)', () => {
     expect(strip("Good day for fishing, isn't it?")).toBe("Good day for fishing, isn't it?");
     expect(strip('How are the tomatoes coming along?')).toBe('How are the tomatoes coming along?');
     expect(strip('Yuki. I need a word.')).toBe('Yuki. I need a word.');
+    // Live model output (Gemma 4, G6 probe): a greeting then the real question.
+    expect(strip('Morning, Yuki. How is that new herb garden of yours coming along?'))
+      .toBe('Morning, Yuki. How is that new herb garden of yours coming along?');
   });
 
   it('knows every banned opener', () => {
