@@ -3,6 +3,7 @@ import { createTownEventSystem } from "./townEvents/TownEventSystem";
 import { createAmbientLifeSystem } from "./ambientLife/AmbientLifeSystem";
 import { createHeldItemSystem } from "./held/HeldItemSystem";
 import { createBeatSystem } from "./beats/BeatSystem";
+import { createPlayerFxSystem } from "./playerFx/PlayerFxSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -14,4 +15,6 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   createAmbientLifeSystem,
   createHeldItemSystem,
   createBeatSystem,
+  // The player's own actions draw last: they should never be hidden under a story beat.
+  createPlayerFxSystem,
 ];

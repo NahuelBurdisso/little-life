@@ -52,8 +52,8 @@ describe('fxFrame', () => {
 });
 
 describe('BEAT_STYLE', () => {
-  const kinds: Array<BeatKind | 'intervention'> = [
-    'fight', 'gift', 'romance', 'heartbreak', 'arrest', 'secret', 'levelup', 'birthday', 'death', 'intervention',
+  const kinds: BeatKind[] = [
+    'fight', 'gift', 'romance', 'heartbreak', 'arrest', 'secret', 'levelup', 'birthday', 'death',
   ];
   it('dresses every beat kind with a known effect', () => {
     for (const k of kinds) {
