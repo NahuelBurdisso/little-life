@@ -7,6 +7,7 @@ import { simEvents } from './simEvents';
 import { cliqueIdOf } from './cliques';
 import { thatSentence } from './factText';
 import { gameMinutesNow } from './worldClock';
+import { affairInvolvesMarriage, affairSensitivity } from './marriage';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -116,6 +117,13 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   // read "Marco Rivera: fight".
   fight: (s, t) =>
     `${s} got into a fight with ${t ?? 'someone'}`,
+  // Life milestones (lib/milestonesEngine.ts): subject is the one who proposed.
+  engagement: (s, t) =>
+    `${s} and ${t ?? 'someone'} are engaged to be married`,
+  proposal_rejected: (s, t) =>
+    `${s} asked ${t ?? 'someone'} to marry them and was turned down`,
+  wedding: (s, t) =>
+    `${s} and ${t ?? 'someone'} got married`,
 };
 
 /**
@@ -124,7 +132,11 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
  * own-secret filter covers them — Carlos doesn't gossip about his own affair
  * with Marco any more than Marco does.
  */
-const PARTICIPANT_TARGET_TYPES = new Set(['affair', 'conspiracy', 'confrontation', 'fight']);
+const PARTICIPANT_TARGET_TYPES = new Set([
+  'affair', 'conspiracy', 'confrontation', 'fight',
+  // A turned-down proposal is the target's story as much as the subject's.
+  'proposal_rejected',
+]);
 
 /**
  * Whether spreading this fact would be `agentId` gossiping about themselves.
@@ -199,6 +211,11 @@ export function createFact(
   // A fact about someone and themselves reads "Priya got drunk and said
   // terrible things to Priya" (the drunk_incident ripple rule targets 'self').
   if (targetId === subjectId) targetId = null;
+  // Every affair secret goes through here (the states phase's sighting, ripple
+  // rules, witnesses), so this is the one place that knows whether it betrays
+  // a marriage — and it is judged when the secret is born, which is when it
+  // is worth the most. Weddings raise affairs already known (milestonesEngine).
+  if (type === 'affair') sensitivity = affairSensitivity(sensitivity, affairInvolvesMarriage(subjectId, targetId));
   const subjectName = getAgentName(subjectId);
   const targetName = targetId != null ? getAgentName(targetId) : undefined;
 
