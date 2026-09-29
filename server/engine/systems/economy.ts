@@ -6,7 +6,7 @@ import { CONFIG } from '../../lib/constants';
 import type { Season } from '../../lib/types';
 import { emitter } from '../emitter';
 import { createFact } from '../../lib/gossip';
-import { getRecipeForJob, getMarketPrice, getCheapestFoodPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation, setEventPriceModifiers, getEventProductionMultiplier } from '../../lib/economyEngine';
+import { isFood, getRecipeForJob, getMarketPrice, getCheapestFoodPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation, setEventPriceModifiers, getEventProductionMultiplier } from '../../lib/economyEngine';
 import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { simEvents } from '../../lib/simEvents';
 import { getReputationPriceModifier } from '../../lib/reputationEngine';
@@ -100,16 +100,6 @@ const pantryMealDay = new Map<number, number>();
 
 export const PANTRY_MOOD_PENALTY = -5;
 export const PANTRY_MOOD_MINUTES = 180;
-
-/** Items that count as food: the item data says they satisfy hunger. */
-export function isFood(itemId: string): boolean {
-  return ITEM_REGISTRY[itemId]?.satisfies?.need === 'hunger';
-}
-
-/** Units of food an inventory holds, all kinds together. */
-export function foodCount(inventory: readonly { itemId: string; quantity: number }[]): number {
-  return inventory.reduce((n, i) => n + (isFood(i.itemId) ? i.quantity : 0), 0);
-}
 
 /**
  * The food item a meal from this inventory consumes: `preferred` (a service's

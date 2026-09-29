@@ -31,6 +31,7 @@ import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngin
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
+import { foodCount } from '../../lib/economyEngine';
 import { gameMinutesToMs } from '../../lib/worldClock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -462,9 +463,7 @@ function evaluateTriggers(
     // `<= 0`, not `=== 0`: sale tax splits leave fractional balances and
     // disasters can push money negative, and both are more broke than zero.
     if (eco && eco.money <= 0) {
-      const hasFood = (eco.inventory as any[]).some(
-        (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
-      );
+      const hasFood = foodCount(eco.inventory) > 0;
       if (!hasFood) {
         if (!brokeSince.has(agent.id)) {
           brokeSince.set(agent.id, nowMinutes);
@@ -1134,9 +1133,7 @@ function checkConditionalExits(
         const eco = db.select({ money: economyTable.money, inventory: economyTable.inventory })
           .from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
         if (eco && eco.money <= 0) {
-          const hasFood = (eco.inventory as any[]).some(
-            (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
-          );
+          const hasFood = foodCount(eco.inventory) > 0;
           if (!hasFood && Math.random() < chancePerTick(0.01, tickSpeed)) { // 1% per game minute
             shouldExit = true;
           }

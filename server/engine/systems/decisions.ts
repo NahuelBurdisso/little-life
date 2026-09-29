@@ -40,7 +40,8 @@ import { getReputationSocialModifier } from '../../lib/reputationEngine';
 import { getSharedHobbies } from '../../lib/hobbyEngine';
 import { getFavorSocialModifier } from '../../lib/favorEngine';
 import { getComfortVisit, completeComfortVisit } from '../../lib/lonelinessEngine';
-import { quoteMeal, foodCount, isFood, pantryWouldServe } from './economy';
+import { quoteMeal, pantryWouldServe } from './economy';
+import { foodCount, isFood } from '../../lib/economyEngine';
 import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 
 // --- Types ---
