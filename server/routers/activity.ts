@@ -1,11 +1,32 @@
 import { router, publicProcedure } from '../trpc';
 import { db } from '../db';
 import { activityLog } from '../db/schema';
-import { and, desc, eq, gt, gte, lt, inArray } from 'drizzle-orm';
+import { and, desc, gt, gte, lt, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
+import { getTimeline, involvesAgent } from '../lib/timeline';
 
 export const activityRouter = router({
+  /**
+   * The log by game day: days newest first, each with its Town Crier headline
+   * and the events that mattered (see lib/timeline.ts). Pages end on a day
+   * boundary; pass `nextCursor` back as `cursor` for older days. `agentId` is
+   * a resident's "story so far" — everything they did OR that happened to them.
+   */
+  getTimeline: publicProcedure
+    .input(
+      z.object({
+        day: z.number().int().optional(),
+        agentId: z.number().int().optional(),
+        minImportance: z.number().min(0).max(1).optional().default(0.6),
+        categories: z.array(z.string()).optional(),
+        cursor: z.number().int().optional(),
+        limit: z.number().int().min(1).max(200).optional().default(60),
+        order: z.enum(['time', 'importance']).optional(),
+      }).optional(),
+    )
+    .query(({ input }) => getTimeline(input ?? {})),
+
   getRecent: publicProcedure
     .input(
       z.object({
@@ -29,7 +50,9 @@ export const activityRouter = router({
         conditions.push(lt(activityLog.id, input.cursor));
       }
       if (input?.agentId) {
-        conditions.push(eq(activityLog.initiator_id, input.agentId));
+        // Not `initiator_id = agentId`: that showed only what the resident DID,
+        // and dropped everything that happened TO them (see involvesAgent).
+        conditions.push(involvesAgent(input.agentId));
       }
 
       const query = conditions.length
