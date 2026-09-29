@@ -110,7 +110,8 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 ### Economy balance (found by `npm run soak`)
 - **E11 [L]** Hunger averages sit at ~65–75 (target was 50–65) with no one at 0: driven by the meal
   schedule, not supply (farm output cut 3.0/2.4 → 2.0/1.6 barely moved it). Winter food_raw (27–38/day)
-  is as high as spring — fishing/foraging carry it; check the season modifier isn't bypassed.
+  was as high as spring — fishing/foraging bypassed the season table (fixed). Meal thresholds are not
+  the lever (tried 70→62/60→52: noise); next candidates: free-time eat score `decisions.ts:~695`.
 - **E9 [L]** Old saves: the first nights of the treasury loop pull savings hard (up to 60% of cash
   above the allowance); the treasury may dip negative before the first midnight. Salaries are defined
   in three places (`server/data/agents.ts`, wizard `defaults.ts`, `JOB_OPTIONS`).
@@ -130,8 +131,9 @@ Evidence in the session scratchpad; line numbers approximate.
 - **G7 [L]** Gossip residue: 2 self-gossip cases via a third party's sighting ("Diego told Marco that
   Yuki spotted Diego…"). (Contentless "confided something personal" rumors fixed: the shared
   secret's text is stored.)
-- **L2 [L]** `plan.decompose` is now the largest call count (~90/game day, ~66 tokens each). Sleep
-  blocks (~7%) could be decomposed without the LLM.
+- **L2 [L]** `plan.decompose` was the largest call count (~90/game day). Sleep, own-shift and
+  home-meal blocks now skip the LLM (`deterministicDecompose.ts`); re-measure with an LLM_TRACE and
+  widen its word lists (`:38-46`) if the saving is small.
 
 ### Client
 - **C10 [L]** Old conversations stored before 2026-09-29 render canned fallback lines as speech.
