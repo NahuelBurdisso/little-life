@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 156 files / 1853 tests passing (after the feedback pass).
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 187 files / 2113 tests passing (autonomous improvement session, wave 1–2 merged).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -111,23 +111,13 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 - **E11 [L]** Hunger averages sit at ~65–75 (target was 50–65) with no one at 0: driven by the meal
   schedule, not supply (farm output cut 3.0/2.4 → 2.0/1.6 barely moved it). Winter food_raw (27–38/day)
   is as high as spring — fishing/foraging carry it; check the season modifier isn't bypassed.
-- **E8 [L]** Gifts roughly doubled at 1x after the starting ties (friendlier chats → more post-chat
-  gifts, `giftEngine.ts:~186`); poor agents give 3–6 gifts/day.
 - **E9 [L]** Old saves: the first nights of the treasury loop pull savings hard (up to 60% of cash
   above the allowance); the treasury may dip negative before the first midnight. Salaries are defined
   in three places (`server/data/agents.ts`, wizard `defaults.ts`, `JOB_OPTIONS`).
-- **E10 [L]** Template chats give +3 social vs 8–15 for LLM chats (`conversations.ts:~2238` vs
-  `:~1425`); at 4x most chats are templates, so 4x towns stay short on social (days 1–2 lonely ~6).
 
 ### Engine
-- **B9 [M]** In-memory sim state lost on restart (hobby skills, favors, tension, momentum, gate
-  backoffs); drift cap re-baselines from drifted value (`personalityDrift.ts`).
 - **B13b [L]** Memory/activity-log retention converts game days to ticks at the *current* speed
   (approximate if the speed changed); `memories.created_at` stays on ticks.
-- **B20 [L]** The wizard's "Death Enabled" rule is never read by the server.
-- **B21 [L]** `agent:arrived`/`agent:departed` never fire (`movement.ts:~490-507` passes the new
-  location as both old and new), so MemoryObserver never records arrivals. Pre-existing.
-- **B18 [L]** Storm hits outdoor mood twice (event `mood_outdoor` + stormy-weather penalty in needs).
 - **B19 [L]** `templates` DB table is write-only (`seed.ts`, `setup.ts`): selection reads the static
   catalog in `server/data/templates.ts`.
 
@@ -140,19 +130,10 @@ Evidence in the session scratchpad; line numbers approximate.
 - **G7 [L]** Gossip residue: 2 self-gossip cases via a third party's sighting ("Diego told Marco that
   Yuki spotted Diego…"). (Contentless "confided something personal" rumors fixed: the shared
   secret's text is stored.)
-- **G8 [L]** Saved plan blocks all show `pending` (status lives in the in-memory cache). Plans now
-  arrive in ~7 s, so the 4x "plan after the day started" symptom is gone.
 - **L2 [L]** `plan.decompose` is now the largest call count (~90/game day, ~66 tokens each). Sleep
   blocks (~7%) could be decomposed without the LLM.
-- **G9 [L]** "X and Y are on a date" logged every tick before the conversation is queued
-  (`decisions.ts:~1613`); world-event observation text pastes name + description
-  (`descriptionTemplates.ts:~108`); goal memories "I've decided to Assess …..", raw ids in feed
-  ("gave food_raw"); `memories.created_at` only advances when a conversation turn runs
-  (`MemoryService.setTick` called from one place) → stale tick stamps.
 
 ### Client
-- **C8 [L]** Per-frame allocations: `BubbleSystem.update`, `ParticleEngine.update`,
-  `drawAgentLinks`, `LightingSystem.render`; occupancy dots recreated at 1 Hz.
 - **C10 [L]** Old conversations stored before 2026-09-29 render canned fallback lines as speech.
 - **C11 [L]** Residents without a hand-drawn base sprite (nudge "New Resident" → `sprite_sheet:
   'default'`, wizard custom names) have no `<key>.png`, so no sheet either: they render as the
@@ -196,6 +177,50 @@ Evidence in the session scratchpad; line numbers approximate.
 - RippleEngine `buildContext` runs twice per rule; sub-systems typed `any`.
 - DB migration chain stale (see CLAUDE.md gotchas); now also `clockMigration.ts` via user_version.
 - `playwright` is used by scripts but not in `package.json`. No README. `.env` tracked.
+
+## Autonomous improvement session (2026-09-29, parallel agents in worktrees, merged)
+
+Engine / data:
+- **B9** in-memory sim state persisted: `sim_snapshots` table (`server/engine/simSnapshots.ts`,
+  `snapshotCodec.ts`) saves hobby skills, favors, tension, mood momentum, drift baselines, state
+  trackers, starvation counters every game hour + on shutdown; restored at boot/world replace.
+  Drift cap anchored to the original personality. Not saved (on purpose): LLM backoffs, short
+  cooldowns, caches rebuilt from tables. Still lost: `lastBirthdayYear` (`agingEngine.ts:19`),
+  `sharedSecrets` (`secretSharing.ts:16`).
+- **B18** storm/heatwave outdoor mood no longer double-counted; **B20** rules read via
+  `server/lib/worldRules.ts` (`getRules()`, cached, `world_state.rule_overrides`); **B21** arrive/
+  depart events fire (arrival memories capped once per place per 180 game min).
+- **G9** mostly: date announced once, goal memories in prose (`goalText.ts`), human item names
+  (`itemPhrase`), world-event memories. Pickpocket/shoplift memories had "undefined".
+- **Wizard rules are real:** dramaIntensity scales random events + dark ripple rules + snap threshold,
+  sicknessRate/contagionRate scale sickness; LLM settings removed from the wizard (model is .env).
+  Storyteller presets Calm/Balanced/Chaos in the Autoplay panel. Nudger cooldown in game minutes.
+- **Story history kept:** `relationship_events.game_minute` (TEMP trigger, `relationshipEventClock.ts`);
+  turning points (`storyBeats.ts`) never pruned, trivial events pruned after 3 game days; chronicle
+  heat on game time, beats per pair.
+- **L2/G8 planning:** sleep, own-workplace shifts and home meals decomposed without the LLM
+  (`deterministicDecompose.ts`, est. −30–45% of `plan.decompose`; not measured live); blocks that never
+  ran are saved as `skipped`.
+- **Economy:** template chats pay 6–10 social (`socialGain.ts`, E10); chat gifts budgeted by wealth
+  (E8, soak −47%); fishing/foraging follow the season (E11 half — hunger avg still ~68).
+- **Save/load slots** (`server/lib/saves.ts`, router `saves`, 💾 in TopBar): backup + column-tolerant
+  load in one transaction, autosave each game day (last 3 kept), `data/saves/` gitignored.
+  `ALL_TABLES` now lives in `server/db/worldTables.ts`; world reset steps in `server/engine/worldRuntime.ts`.
+
+Player-facing:
+- **God powers:** whisper a thought, start a rumor, stir a feeling (`server/lib/godPowers.ts`,
+  NudgeMenu submenus, player FX). A rumor reaching its subject angers them at the teller.
+- **Cast bar** (`CastBar.tsx`): every resident, mood face, badges, favourites (per world seed),
+  click/double-click follow/right-click meddle; Tab/Shift+Tab cycle, F follow.
+- **Onboarding:** Quick Start on the Scenario step, "Meet the town" cards once per world, 3 coach
+  marks, `?` help overlay (`helpContent.ts` — keep in sync with `useKeyboardControls.ts`).
+- **🔥 Brewing** tab (`server/lib/brewing.ts`, `chronicle.getBrewing`): residents near snapping,
+  secrets about to become public, queued confrontations, goals near done, couples near a flip;
+  canvas fuse over anyone ≥85% of their snap threshold (`systems/fuse/`).
+- **C8** per-frame allocations removed from bubbles, particles, lighting, occupancy dots.
+
+Worktree note for agents: vitest excludes `.claude/**`, so inside `.claude/worktrees/*` tests need a
+temporary config without that exclude, plus a `data/` dir. `preview_start` always runs the MAIN repo.
 
 ## Fixed (2026-09-28 → 29)
 
