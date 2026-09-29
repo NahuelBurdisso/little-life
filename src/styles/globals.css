@@ -34,6 +34,16 @@
   --ui-alert-minor: #c07840;
   --ui-alert-player: #c8a84b;
   --ui-alert-player-bg: #2a2413;
+  /* Director captions (components/overlays/DirectorCaption.tsx): the lower-third
+     sits on the map, so its plate is the deep panel colour at 86% (the town shows
+     through, the text stays readable in every weather/lighting state). The four
+     speaker colours are warm-leaning and distinct in hue and lightness, so two
+     people in a scene never share one: lamp gold, dusk blue, brick rose, sage. */
+  --ui-caption-bg: rgba(15, 14, 11, 0.86);
+  --ui-speaker-0: #e2b85c;
+  --ui-speaker-1: #7fb3d0;
+  --ui-speaker-2: #d9836b;
+  --ui-speaker-3: #9dbf7c;
 }
 
 /* The warm palette as Tailwind colours (bg-ui-panel, border-ui-line, text-ui-dim,
@@ -74,6 +84,23 @@ body {
 }
 .toast-in { animation: toast-in 160ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .toast-in { animation: none; } }
+
+/* Director lower-third (src/components/overlays/DirectorCaption.tsx): rises in
+   when a shot starts, fades out (data-leaving) before the next shot's text. */
+@keyframes caption-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.director-caption {
+  background: var(--ui-caption-bg);
+  animation: caption-in 280ms ease-out;
+  transition: opacity 280ms ease, transform 280ms ease;
+}
+.director-caption[data-leaving="true"] { opacity: 0; transform: translateY(6px); }
+@media (prefers-reduced-motion: reduce) {
+  .director-caption { animation: none; transition: opacity 120ms linear; }
+  .director-caption[data-leaving="true"] { transform: none; }
+}
 
 /* Hottest rows of the feed's Brewing tab (src/components/ui/ActivityFeed.tsx):
    the heat bar breathes so a resident about to snap catches the eye. */

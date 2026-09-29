@@ -20,6 +20,8 @@ export function useKeyboardControls(callbacks: {
   onCycleAgent: (direction: 1 | -1) => void;
   /** F: lock or release the camera on the selected resident. */
   onToggleFollow: () => void;
+  /** C: show or hide the Director's lower-third captions. */
+  onToggleCaptions?: () => void;
   /**
    * False while a modal or menu is open. Tab must keep moving focus inside a
    * dialog (and F is not for the map behind it), so the resident keys stand down.
@@ -103,6 +105,11 @@ export function useKeyboardControls(callbacks: {
         case "KeyF":
           if (!cbRef.current.agentKeysEnabled) break;
           cbRef.current.onToggleFollow();
+          break;
+        case "KeyC":
+          // Same guard as F: with a dialog open the key belongs to the dialog.
+          if (!cbRef.current.agentKeysEnabled) break;
+          cbRef.current.onToggleCaptions?.();
           break;
         // Escape is owned by App's overlay handler, which closes only the topmost
         // layer. Deselecting here too would close the agent panel underneath it.
