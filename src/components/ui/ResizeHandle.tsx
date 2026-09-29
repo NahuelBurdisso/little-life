@@ -41,7 +41,7 @@ export function ResizeHandle({ direction, onResize, className }: ResizeHandlePro
   return (
     <div
       onMouseDown={handleMouseDown}
-      className={`${isHorizontal ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"} bg-gray-700 hover:bg-blue-500 active:bg-blue-400 transition-colors flex-shrink-0 z-10 ${className ?? ""}`}
+      className={`${isHorizontal ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"} bg-ui-raised hover:bg-ui-blue active:bg-ui-blue transition-colors flex-shrink-0 z-10 ${className ?? ""}`}
     />
   );
 }

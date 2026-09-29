@@ -40,7 +40,7 @@ function RadarChart({ values, selected }: RadarChartProps) {
   const polygon = radarPolygon(values);
 
   // axis endpoint labels colours
-  const axisColour = selected ? '#60a5fa' : '#6b7280'; // blue-400 or gray-500
+  const axisColour = selected ? '#c8a84b' : '#8a7f65'; // accent-gold or text-secondary
 
   return (
     <svg
@@ -57,7 +57,7 @@ function RadarChart({ values, selected }: RadarChartProps) {
           cy={CY}
           r={R * r}
           fill="none"
-          stroke="#374151"
+          stroke="#3d3a2e"
           strokeWidth="0.5"
         />
       ))}
@@ -83,7 +83,7 @@ function RadarChart({ values, selected }: RadarChartProps) {
       <polygon
         points={polygon}
         fill={selected ? 'rgba(59,130,246,0.25)' : 'rgba(99,102,241,0.2)'}
-        stroke={selected ? '#3b82f6' : '#818cf8'}
+        stroke={selected ? '#c8a84b' : '#5a8fb0'}
         strokeWidth="1.5"
         strokeLinejoin="round"
       />
@@ -98,7 +98,7 @@ function RadarChart({ values, selected }: RadarChartProps) {
             cx={x}
             cy={y}
             r="2"
-            fill={selected ? '#3b82f6' : '#818cf8'}
+            fill={selected ? '#c8a84b' : '#5a8fb0'}
           />
         );
       })}
@@ -119,20 +119,20 @@ function PresetCard({ preset, selected, onSelect }: PresetCardProps) {
     <button
       onClick={() => onSelect(preset.id)}
       className={`
-        rounded-xl border p-3 text-left transition-all
+        rounded-sm border p-3 text-left transition-all
         ${selected
-          ? 'border-blue-500 bg-blue-600/10 ring-1 ring-blue-500/50'
-          : 'border-gray-700 bg-gray-800 hover:border-gray-500 hover:bg-gray-750'
+          ? 'border-ui-gold bg-ui-gold/10 ring-1 ring-ui-gold/40'
+          : 'border-ui-line bg-ui-panel hover:border-ui-line-accent hover:bg-ui-raised'
         }
       `}
     >
       <RadarChart values={preset.values} selected={selected} />
 
       <div className="mt-2 text-center">
-        <div className={`text-sm font-semibold ${selected ? 'text-blue-300' : 'text-white'}`}>
+        <div className={`text-sm font-semibold ${selected ? 'text-ui-gold' : 'text-ui-text'}`}>
           {preset.label}
         </div>
-        <div className="mt-0.5 text-[10px] text-gray-400 leading-tight">
+        <div className="mt-0.5 text-[10px] text-ui-dim leading-tight">
           {preset.description}
         </div>
       </div>
@@ -147,7 +147,7 @@ function PresetCard({ preset, selected, onSelect }: PresetCardProps) {
               ${key === 'drama'   ? 'bg-red-900/40 text-red-300'     : ''}
               ${key === 'romance' ? 'bg-pink-900/40 text-pink-300'   : ''}
               ${key === 'crime'   ? 'bg-amber-900/40 text-amber-300' : ''}
-              ${key === 'trust'   ? 'bg-emerald-900/40 text-emerald-300' : ''}
+              ${key === 'trust'   ? 'bg-ui-good/15 text-ui-good' : ''}
             `}
           >
             {key[0].toUpperCase()}{key.slice(1, 2)}: {val}
@@ -174,8 +174,8 @@ export function PresetSelector({ selectedId, onSelect }: PresetSelectorProps) {
   return (
     <div>
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-white">Choose a Preset</h3>
-        <p className="text-[11px] text-gray-500 mt-0.5">
+        <h3 className="text-sm font-semibold text-ui-text">Choose a Preset</h3>
+        <p className="text-[11px] text-ui-muted mt-0.5">
           Pick a starting point — you can fine-tune the sliders below.
         </p>
       </div>

@@ -200,17 +200,17 @@ export function WorldLayout({
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-white">World Layout</h2>
+      <h2 className="text-lg font-semibold text-ui-text">World Layout</h2>
 
       <div className="flex gap-8">
         <div className="flex-1 space-y-4">
           {/* Seed input */}
           <div>
-            <label className="text-xs text-gray-400 uppercase tracking-wide">Seed</label>
+            <label className="text-xs text-ui-dim uppercase tracking-wide">Seed</label>
             <div className="flex gap-2 mt-1">
               <input
                 type="text"
-                className="flex-1 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm font-mono"
+                className="flex-1 px-2 py-1 bg-ui-panel border border-ui-line rounded text-sm font-mono"
                 placeholder="blank = random per regenerate"
                 value={seedDraft}
                 onChange={(e) => setSeedDraft(e.target.value)}
@@ -219,7 +219,7 @@ export function WorldLayout({
               <button
                 onClick={handleCopySeed}
                 disabled={!seedDraft}
-                className="px-2 py-1 text-xs text-gray-400 hover:text-white disabled:opacity-30"
+                className="px-2 py-1 text-xs text-ui-dim hover:text-ui-text disabled:opacity-30"
                 title="Copy seed to clipboard"
               >
                 copy
@@ -229,9 +229,9 @@ export function WorldLayout({
 
           {/* Size tier */}
           <div>
-            <label className="text-xs text-gray-400 uppercase tracking-wide">Size</label>
+            <label className="text-xs text-ui-dim uppercase tracking-wide">Size</label>
             <select
-              className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm"
+              className="mt-1 w-full px-2 py-1 bg-ui-panel border border-ui-line rounded text-sm"
               value={config.sizeTier}
               onChange={(e) => {
                 const sizeTier = e.target.value as WorldGenConfig['sizeTier'];
@@ -286,9 +286,9 @@ export function WorldLayout({
           {/* Town style. Same seed, same buildings — only the street network
               (and so where everything lands) changes. */}
           <div>
-            <label className="text-xs text-gray-400 uppercase tracking-wide">Town style</label>
+            <label className="text-xs text-ui-dim uppercase tracking-wide">Town style</label>
             <select
-              className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm"
+              className="mt-1 w-full px-2 py-1 bg-ui-panel border border-ui-line rounded text-sm"
               value={layoutStyle}
               onChange={(e) => {
                 const next = e.target.value as NonNullable<WorldGenConfig['layoutStyle']>;
@@ -302,7 +302,7 @@ export function WorldLayout({
 
           {/* Social placement toggle. Plot selection is identical either way;
               this only decides which household gets which house. */}
-          <label className="flex items-center gap-2 text-sm text-gray-300">
+          <label className="flex items-center gap-2 text-sm text-ui-text">
             <input
               type="checkbox"
               checked={config.socialPlacement !== false}
@@ -312,7 +312,7 @@ export function WorldLayout({
               }}
             />
             Place homes by relationships
-            <span className="text-xs text-gray-500">(rivals next door, secret lovers across town)</span>
+            <span className="text-xs text-ui-muted">(rivals next door, secret lovers across town)</span>
           </label>
 
           {/* The tier labels promise a number, and the pipeline quietly grows the
@@ -320,7 +320,7 @@ export function WorldLayout({
               in 13% of seeds with no client-side signal at all. Show what was
               actually generated, and say so when it differs. */}
           {previewResult && (
-            <div className="text-xs text-gray-500">
+            <div className="text-xs text-ui-muted">
               Generated: {previewResult.dimensions.width} × {previewResult.dimensions.height} tiles
               {(() => {
                 const preset = TIER_DIMENSIONS[config.sizeTier as keyof typeof TIER_DIMENSIONS];
@@ -353,7 +353,7 @@ export function WorldLayout({
           {config.sizeTier === 'custom' && (
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs text-gray-400 uppercase tracking-wide">Width</label>
+                <label className="text-xs text-ui-dim uppercase tracking-wide">Width</label>
                 {/* `value={customW || ''}` so backspacing the field empty leaves
                     it empty instead of snapping back to a literal 0.
                     Out-of-range values are allowed while typing — clamping on
@@ -364,7 +364,7 @@ export function WorldLayout({
                 <input
                   type="number"
                   min={WORLDGEN_MIN_WIDTH} max={WORLDGEN_MAX_WIDTH}
-                  className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm"
+                  className="mt-1 w-full px-2 py-1 bg-ui-panel border border-ui-line rounded text-sm"
                   value={customW || ''}
                   onChange={(e) => {
                     const typed = Math.round(Number(e.target.value));
@@ -390,11 +390,11 @@ export function WorldLayout({
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-400 uppercase tracking-wide">Height</label>
+                <label className="text-xs text-ui-dim uppercase tracking-wide">Height</label>
                 <input
                   type="number"
                   min={WORLDGEN_MIN_HEIGHT} max={WORLDGEN_MAX_HEIGHT}
-                  className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm"
+                  className="mt-1 w-full px-2 py-1 bg-ui-panel border border-ui-line rounded text-sm"
                   value={customH || ''}
                   onChange={(e) => {
                     const typed = Math.round(Number(e.target.value));
@@ -426,12 +426,12 @@ export function WorldLayout({
             <button
               onClick={handleRegenerate}
               disabled={agentCount === 0 || previewMutation.isPending || !!dimensionError}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm disabled:opacity-30"
+              className="px-4 py-2 bg-ui-gold text-ui-deep font-semibold hover:brightness-110 rounded text-sm disabled:opacity-30"
             >
               Regenerate
             </button>
             {previewMutation.isPending && (
-              <span className="text-xs text-gray-500 self-center">Generating…</span>
+              <span className="text-xs text-ui-muted self-center">Generating…</span>
             )}
           </div>
 

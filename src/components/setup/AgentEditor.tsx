@@ -83,7 +83,7 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold">👥 Agents ({agents.length}/{MAX_AGENTS})</h2>
         <button onClick={addAgent} disabled={agents.length >= MAX_AGENTS}
-          className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
+          className="px-3 py-1.5 text-xs bg-ui-gold text-ui-deep font-semibold hover:brightness-110 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
           + New Resident
         </button>
       </div>
@@ -96,36 +96,36 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
 
       <div className="grid grid-cols-3 gap-3 mb-4">
         {agents.map(a => (
-          <div key={a.id} className={`bg-gray-800 border rounded-lg p-3 cursor-pointer transition-colors hover:border-blue-500 ${editingId === a.id ? 'border-blue-500' : 'border-gray-700'}`} onClick={() => setEditingId(a.id)}>
+          <div key={a.id} className={`bg-ui-panel border rounded-lg p-3 cursor-pointer transition-colors hover:border-ui-gold ${editingId === a.id ? 'border-ui-gold' : 'border-ui-line'}`} onClick={() => setEditingId(a.id)}>
             <div className="flex items-center justify-between mb-1">
-              <div className="text-sm font-medium text-white truncate">{a.name}</div>
-              <button onClick={(e) => { e.stopPropagation(); removeAgent(a.id); }} className="text-gray-600 hover:text-red-400 text-xs">✕</button>
+              <div className="text-sm font-medium text-ui-text truncate">{a.name}</div>
+              <button onClick={(e) => { e.stopPropagation(); removeAgent(a.id); }} className="text-ui-muted hover:text-red-400 text-xs">✕</button>
             </div>
-            <div className="text-[10px] text-gray-400">{a.age}{a.gender === 'female' ? 'F' : 'M'} • {a.jobTitle}</div>
-            <div className="text-[9px] text-gray-500 mt-1 truncate italic">{personalitySummary(a.personality)}</div>
+            <div className="text-[10px] text-ui-dim">{a.age}{a.gender === 'female' ? 'F' : 'M'} • {a.jobTitle}</div>
+            <div className="text-[9px] text-ui-muted mt-1 truncate italic">{personalitySummary(a.personality)}</div>
           </div>
         ))}
       </div>
 
       {editingAgent && (
-        <div className="bg-gray-800 border border-gray-700 rounded-xl p-4">
+        <div className="bg-ui-panel border border-ui-line rounded-sm p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white">Editing: {editingAgent.name}</h3>
-            <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-white text-sm">✕</button>
+            <h3 className="text-sm font-bold text-ui-text">Editing: {editingAgent.name}</h3>
+            <button onClick={() => setEditingId(null)} className="text-ui-dim hover:text-ui-text text-sm">✕</button>
           </div>
 
           <div className="grid grid-cols-3 gap-3 mb-4">
             <div>
-              <label className="text-[10px] text-gray-400 uppercase block mb-1">Name</label>
-              <input value={editingAgent.name} maxLength={50} onChange={e => updateAgent(editingAgent.id, { name: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white" />
+              <label className="text-[10px] text-ui-dim uppercase block mb-1">Name</label>
+              <input value={editingAgent.name} maxLength={50} onChange={e => updateAgent(editingAgent.id, { name: e.target.value })} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text" />
             </div>
             <div>
-              <label className="text-[10px] text-gray-400 uppercase block mb-1">Age</label>
-              <input type="number" value={editingAgent.age} onChange={e => updateAgent(editingAgent.id, { age: Number(e.target.value) })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white" />
+              <label className="text-[10px] text-ui-dim uppercase block mb-1">Age</label>
+              <input type="number" value={editingAgent.age} onChange={e => updateAgent(editingAgent.id, { age: Number(e.target.value) })} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text" />
             </div>
             <div>
-              <label className="text-[10px] text-gray-400 uppercase block mb-1">Gender</label>
-              <select value={editingAgent.gender} onChange={e => updateAgent(editingAgent.id, { gender: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white">
+              <label className="text-[10px] text-ui-dim uppercase block mb-1">Gender</label>
+              <select value={editingAgent.gender} onChange={e => updateAgent(editingAgent.id, { gender: e.target.value })} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text">
                 <option value="male">Male</option>
                 <option value="female">Female</option>
               </select>
@@ -133,44 +133,44 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
           </div>
 
           <div className="mb-4">
-            <label className="text-[10px] text-gray-400 uppercase block mb-1">Job</label>
-            <select value={editingAgent.job} onChange={e => setJob(editingAgent.id, e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white">
+            <label className="text-[10px] text-ui-dim uppercase block mb-1">Job</label>
+            <select value={editingAgent.job} onChange={e => setJob(editingAgent.id, e.target.value)} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text">
               {JOB_OPTIONS.map(j => <option key={j.job} value={j.job}>{j.title} (${j.salary}/day{j.workplace ? ` at ${j.workplace}` : ''})</option>)}
             </select>
           </div>
 
           <div className="mb-4">
-            <label className="text-[10px] text-gray-400 uppercase block mb-1">Bio</label>
-            <textarea value={editingAgent.bio} maxLength={500} onChange={e => updateAgent(editingAgent.id, { bio: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white h-16 resize-none" placeholder="Write a short backstory..." />
+            <label className="text-[10px] text-ui-dim uppercase block mb-1">Bio</label>
+            <textarea value={editingAgent.bio} maxLength={500} onChange={e => updateAgent(editingAgent.id, { bio: e.target.value })} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text h-16 resize-none" placeholder="Write a short backstory..." />
           </div>
 
           <div className="mb-4">
-            <label className="text-[10px] text-gray-400 uppercase block mb-2">Personality</label>
+            <label className="text-[10px] text-ui-dim uppercase block mb-2">Personality</label>
             <div className="space-y-2">
               {PERSONALITY_AXES.map(axis => (
                 <div key={axis.key} className="flex items-center gap-2">
-                  <span className="text-[9px] text-gray-500 w-16 text-right">{axis.low}</span>
+                  <span className="text-[9px] text-ui-muted w-16 text-right">{axis.low}</span>
                   <input type="range" min={0} max={100} value={editingAgent.personality[axis.key]}
                     onChange={e => updateAgent(editingAgent.id, { personality: { ...editingAgent.personality, [axis.key]: Number(e.target.value) } })}
-                    className="flex-1 h-1.5 accent-blue-500" />
-                  <span className="text-[9px] text-gray-500 w-16">{axis.high}</span>
-                  <span className="text-[10px] text-gray-400 w-6 text-right">{editingAgent.personality[axis.key]}</span>
+                    className="flex-1 h-1.5 accent-ui-gold" />
+                  <span className="text-[9px] text-ui-muted w-16">{axis.high}</span>
+                  <span className="text-[10px] text-ui-dim w-6 text-right">{editingAgent.personality[axis.key]}</span>
                 </div>
               ))}
             </div>
           </div>
 
           <div className="mb-4">
-            <label className="text-[10px] text-gray-400 uppercase block mb-1">Traits</label>
+            <label className="text-[10px] text-ui-dim uppercase block mb-1">Traits</label>
             <div className="flex flex-wrap gap-1 mb-1">
               {editingAgent.traits.map((t, i) => (
-                <span key={i} className="text-[10px] px-1.5 py-0.5 bg-gray-700 rounded flex items-center gap-1">
+                <span key={i} className="text-[10px] px-1.5 py-0.5 bg-ui-raised rounded flex items-center gap-1">
                   {t}
-                  <button onClick={() => updateAgent(editingAgent.id, { traits: editingAgent.traits.filter((_, j) => j !== i) })} className="text-gray-500 hover:text-red-400">×</button>
+                  <button onClick={() => updateAgent(editingAgent.id, { traits: editingAgent.traits.filter((_, j) => j !== i) })} className="text-ui-muted hover:text-red-400">×</button>
                 </span>
               ))}
             </div>
-            <input placeholder="Type trait + Enter" className="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white w-48"
+            <input placeholder="Type trait + Enter" className="bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text w-48"
               onKeyDown={e => {
                 if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
                   updateAgent(editingAgent.id, { traits: [...editingAgent.traits, (e.target as HTMLInputElement).value.trim()] });
@@ -179,31 +179,31 @@ export function AgentEditor({ agents, onChange }: AgentEditorProps) {
               }} />
           </div>
 
-          <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-[10px] text-gray-500 hover:text-gray-300 mb-3">
+          <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-[10px] text-ui-muted hover:text-ui-text mb-3">
             {showAdvanced ? '▼ Hide advanced' : '▶ Show advanced (home, schedule)'}
           </button>
 
           {showAdvanced && (
-            <div className="border-t border-gray-700 pt-3 space-y-3">
+            <div className="border-t border-ui-line pt-3 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] text-gray-400 uppercase block mb-1">Home</label>
-                  <select value={editingAgent.homeName} onChange={e => updateAgent(editingAgent.id, { homeName: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white">
+                  <label className="text-[10px] text-ui-dim uppercase block mb-1">Home</label>
+                  <select value={editingAgent.homeName} onChange={e => updateAgent(editingAgent.id, { homeName: e.target.value })} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text">
                     {homeOptions.map(h => <option key={h} value={h}>{h}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] text-gray-400 uppercase block mb-1">Salary</label>
-                  <input type="number" value={editingAgent.salary} onChange={e => updateAgent(editingAgent.id, { salary: Number(e.target.value) })} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white" />
+                  <label className="text-[10px] text-ui-dim uppercase block mb-1">Salary</label>
+                  <input type="number" value={editingAgent.salary} onChange={e => updateAgent(editingAgent.id, { salary: Number(e.target.value) })} className="w-full bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text" />
                 </div>
               </div>
               <div className="grid grid-cols-4 gap-2">
                 {(['wakeTime', 'workStart', 'workEnd', 'sleepTime'] as const).map(field => (
                   <div key={field}>
-                    <label className="text-[9px] text-gray-500 block mb-0.5 capitalize">{field.replace('Time', '').replace(/([A-Z])/g, ' $1')}</label>
+                    <label className="text-[9px] text-ui-muted block mb-0.5 capitalize">{field.replace('Time', '').replace(/([A-Z])/g, ' $1')}</label>
                     <input type="number" min={0} max={23} value={editingAgent.schedule[field]}
                       onChange={e => updateAgent(editingAgent.id, { schedule: { ...editingAgent.schedule, [field]: Number(e.target.value) } })}
-                      className="w-full bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-[10px] text-white" />
+                      className="w-full bg-ui-deep border border-ui-line rounded px-1.5 py-0.5 text-[10px] text-ui-text" />
                   </div>
                 ))}
               </div>

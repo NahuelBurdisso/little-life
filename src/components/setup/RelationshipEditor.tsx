@@ -121,18 +121,18 @@ export function RelationshipEditor({ agents, relationships, onChange }: Props) {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold">🤝 Relationships</h2>
-        <span className="text-xs text-gray-500">{filtered.length} pairs shown</span>
+        <span className="text-xs text-ui-muted">{filtered.length} pairs shown</span>
       </div>
 
       <div className="flex gap-2 mb-3 flex-wrap">
         {(['all', 'set', 'friends', 'romantic', 'rivals'] as FilterMode[]).map(f => (
           <button key={f} onClick={() => setFilter(f)}
-            className={`text-[10px] px-2 py-1 rounded-md ${filter === f ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+            className={`text-[10px] px-2 py-1 rounded-md ${filter === f ? 'bg-ui-hover text-ui-text' : 'text-ui-dim hover:text-ui-text'}`}>
             {f} ({filterCounts[f]})
           </button>
         ))}
         <input placeholder="Search agent..." value={search} onChange={e => setSearch(e.target.value)}
-          className="ml-auto bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white w-40" />
+          className="ml-auto bg-ui-deep border border-ui-line rounded px-2 py-1 text-xs text-ui-text w-40" />
       </div>
 
       <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
@@ -144,39 +144,39 @@ export function RelationshipEditor({ agents, relationships, onChange }: Props) {
           const status = rel?.status ?? 'strangers';
 
           return (
-            <div key={`${p.a}-${p.b}`} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+            <div key={`${p.a}-${p.b}`} className="bg-ui-panel border border-ui-line rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-white font-medium">{p.a} ↔ {p.b}</div>
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 capitalize">
+                <div className="text-xs text-ui-text font-medium">{p.a} ↔ {p.b}</div>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-ui-raised text-ui-text capitalize">
                   {status.replace(/_/g, ' ')}
                 </span>
               </div>
 
               <div className="grid grid-cols-3 gap-3 mb-2">
                 <div>
-                  <label className="text-[9px] text-gray-500 block mb-0.5">Friendship ({fAB})</label>
+                  <label className="text-[9px] text-ui-muted block mb-0.5">Friendship ({fAB})</label>
                   <input type="range" min={-100} max={100} value={fAB}
                     onChange={e => updateRel(p.a, p.b, { friendshipAB: Number(e.target.value), friendshipBA: Number(e.target.value) })}
                     className="w-full h-1 accent-green-500" />
                 </div>
                 <div>
-                  <label className="text-[9px] text-gray-500 block mb-0.5">Romance ({rAB})</label>
+                  <label className="text-[9px] text-ui-muted block mb-0.5">Romance ({rAB})</label>
                   <input type="range" min={0} max={100} value={rAB}
                     onChange={e => updateRel(p.a, p.b, { romanceAB: Number(e.target.value), romanceBA: Number(e.target.value) })}
                     className="w-full h-1 accent-pink-500" />
                 </div>
                 <div>
-                  <label className="text-[9px] text-gray-500 block mb-0.5">Trust ({tAB})</label>
+                  <label className="text-[9px] text-ui-muted block mb-0.5">Trust ({tAB})</label>
                   <input type="range" min={-100} max={100} value={tAB}
                     onChange={e => updateRel(p.a, p.b, { trustAB: Number(e.target.value), trustBA: Number(e.target.value) })}
-                    className="w-full h-1 accent-blue-500" />
+                    className="w-full h-1 accent-ui-gold" />
                 </div>
               </div>
 
               <div className="flex gap-1">
                 {['friends', 'close', 'rivals', 'romantic', 'strangers'].map(preset => (
                   <button key={preset} onClick={() => applyPreset(p.a, p.b, preset)}
-                    className="text-[9px] px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 capitalize">
+                    className="text-[9px] px-1.5 py-0.5 bg-ui-raised hover:bg-ui-hover rounded text-ui-text capitalize">
                     {preset}
                   </button>
                 ))}
@@ -185,7 +185,7 @@ export function RelationshipEditor({ agents, relationships, onChange }: Props) {
           );
         })}
         {filtered.length === 0 && (
-          <p className="text-xs text-gray-500 italic py-4 text-center">
+          <p className="text-xs text-ui-muted italic py-4 text-center">
             No pairs match your filter. Try "all" to see everyone.
           </p>
         )}

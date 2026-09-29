@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { trpc } from "../../lib/trpc";
 import { useAgents } from "../../hooks/useAgents";
+import { EmptyState } from "./EmptyState";
 
 interface RelationshipGraphProps {
   isOpen: boolean;
@@ -54,7 +55,7 @@ const STATE_RING_COLORS: Record<string, string> = {
   angry: '#ef4444', jealous: '#f43f5e', heartbroken: '#fb7185', infatuated: '#ec4899',
   drunk: '#f59e0b', alcoholic: '#d97706', stressed: '#f97316', in_debt: '#ea580c',
   depressed: '#6366f1', lonely: '#8b5cf6', sick: '#a3e635', hungover: '#84cc16',
-  euphoric: '#10b981', confident: '#14b8a6', grieving: '#6b7280',
+  euphoric: '#10b981', confident: '#14b8a6', grieving: '#8a7f65',
 };
 
 const STATE_PRIORITY = [
@@ -63,14 +64,23 @@ const STATE_PRIORITY = [
   'euphoric', 'confident', 'grieving',
 ];
 
+/** One table for the canvas and the legend below it, so they can't drift apart. */
+const EDGE_COLORS = {
+  grudge: '#991b1b',
+  rivalry: '#ef4444',
+  romance: '#f472b6',
+  friendship: '#22c55e',
+  neutral: '#4a4535',
+} as const;
+
 function getEdgeColor(edge: GraphEdge): string {
-  if (edge.tags.includes('grudge')) return '#991b1b';
-  if (edge.status === 'rivals' || edge.status === 'enemies') return '#ef4444';
-  if (edge.status === 'partners' || edge.romanceAB > 30 || edge.romanceBA > 30) return '#f472b6';
+  if (edge.tags.includes('grudge')) return EDGE_COLORS.grudge;
+  if (edge.status === 'rivals' || edge.status === 'enemies') return EDGE_COLORS.rivalry;
+  if (edge.status === 'partners' || edge.romanceAB > 30 || edge.romanceBA > 30) return EDGE_COLORS.romance;
   const avgFriendship = (edge.friendshipAB + edge.friendshipBA) / 2;
-  if (avgFriendship > 30) return '#22c55e';
-  if (avgFriendship < -30) return '#ef4444';
-  return '#4b5563';
+  if (avgFriendship > 30) return EDGE_COLORS.friendship;
+  if (avgFriendship < -30) return EDGE_COLORS.rivalry;
+  return EDGE_COLORS.neutral;
 }
 
 function getEdgeWidth(edge: GraphEdge): number {
@@ -490,7 +500,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
           // Background pill
           const label = edge.status.replace(/_/g, ' ');
           const tw = ctx.measureText(label).width + 6;
-          ctx.fillStyle = '#111827';
+          ctx.fillStyle = '#0f0e0b';
           ctx.globalAlpha = 0.8;
           ctx.beginPath();
           ctx.roundRect(mx - tw / 2, my - 6, tw, 12, 3);
@@ -514,7 +524,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
         if (topState) {
           ctx.beginPath();
           ctx.arc(node.x, node.y, 19, 0, 2 * Math.PI);
-          ctx.strokeStyle = STATE_RING_COLORS[topState] ?? '#6b7280';
+          ctx.strokeStyle = STATE_RING_COLORS[topState] ?? '#6a6250';
           ctx.lineWidth = 2.5;
           ctx.stroke();
         }
@@ -522,14 +532,14 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
         // Main circle
         ctx.beginPath();
         ctx.arc(node.x, node.y, 16, 0, 2 * Math.PI);
-        ctx.fillStyle = isHovered ? '#374151' : '#1f2937';
+        ctx.fillStyle = isHovered ? '#2e2b20' : '#252219';
         ctx.fill();
         ctx.strokeStyle = node.color;
         ctx.lineWidth = 2.5;
         ctx.stroke();
 
         // Initial
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = "#d4c9a8";
         ctx.font = "bold 14px monospace";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -537,7 +547,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
 
         // Name below
         ctx.font = "9px sans-serif";
-        ctx.fillStyle = isDimmed ? '#6b7280' : '#d1d5db';
+        ctx.fillStyle = isDimmed ? '#6a6250' : '#d4c9a8';
         ctx.fillText(node.label, node.x, node.y + 26);
 
         // Mood indicator (small dot below name)
@@ -575,28 +585,28 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl w-[840px]"
+        className="bg-ui-panel border border-ui-line shadow-2xl w-[840px] max-w-[95vw]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-sm font-bold text-white">Relationship Graph</h2>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-ui-line">
+          <h2 className="text-sm font-bold text-ui-text">Relationship Graph</h2>
           <div className="flex items-center gap-2">
             {filterButtons.map(({ mode, label, icon }) => (
               <button
                 key={mode}
                 onClick={() => setFilter(mode)}
-                className={`text-xs px-2 py-1 rounded-md transition-colors ${
+                className={`text-xs px-2 py-1 rounded-sm border transition-colors ${
                   filter === mode
-                    ? 'bg-gray-600 text-white'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    ? 'bg-ui-hover text-ui-gold border-ui-line-accent'
+                    : 'text-ui-dim border-transparent hover:text-ui-text hover:bg-ui-hover'
                 }`}
               >
                 {icon} {label}
               </button>
             ))}
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">
+          <button onClick={onClose} className="text-ui-dim hover:text-ui-text text-lg leading-none">
             &times;
           </button>
         </div>
@@ -607,7 +617,7 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
             ref={canvasRef}
             width={800}
             height={600}
-            className="w-full rounded bg-gray-900 cursor-grab active:cursor-grabbing"
+            className="w-full rounded-sm bg-ui-deep cursor-grab active:cursor-grabbing"
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -616,69 +626,100 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent }: Relationsh
             onDoubleClick={handleDoubleClick}
           />
 
+          {/* Nothing to draw yet: an empty canvas looks broken, so say why. */}
+          {(agents.length === 0 || (relationships ?? []).length === 0) && (
+            <div className="absolute inset-2 flex items-center justify-center pointer-events-none">
+              <EmptyState
+                icon="🕸"
+                title={agents.length === 0 ? "Nobody lives here yet." : "Nobody has met yet."}
+                hint="Friendships, romances and rivalries are drawn as lines between residents as they form."
+              />
+            </div>
+          )}
+
           {/* Node Tooltip */}
           {hoveredNode && (
             <div
-              className="absolute z-50 pointer-events-none bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs shadow-lg"
+              className="absolute z-50 pointer-events-none bg-ui-deep border border-ui-line rounded-sm px-3 py-2 text-xs shadow-lg"
               style={{ left: tooltipPos.x + 12, top: tooltipPos.y - 10 }}
             >
-              <div className="font-bold text-white">{hoveredNode.label}</div>
-              {hoveredNode.job && <div className="text-gray-400">{hoveredNode.job}</div>}
+              <div className="font-bold text-ui-text">{hoveredNode.label}</div>
+              {hoveredNode.job && <div className="text-ui-dim">{hoveredNode.job}</div>}
               <div className="flex items-center gap-1 mt-1">
-                <span className="text-gray-400">Mood:</span>
-                <span className={hoveredNode.mood > 70 ? 'text-green-400' : hoveredNode.mood >= 40 ? 'text-yellow-400' : 'text-red-400'}>
+                <span className="text-ui-dim">Mood:</span>
+                <span className={hoveredNode.mood > 70 ? 'text-ui-good' : hoveredNode.mood >= 40 ? 'text-ui-gold' : 'text-ui-bad'}>
                   {Math.round(hoveredNode.mood)}
                 </span>
               </div>
               {hoveredNode.states.length > 0 && (
-                <div className="text-gray-400 mt-0.5">
+                <div className="text-ui-dim mt-0.5">
                   States: {hoveredNode.states.join(', ')}
                 </div>
               )}
-              <div className="text-gray-500 mt-1 italic">Double-click to select</div>
+              <div className="text-ui-muted mt-1 italic">Double-click to select</div>
             </div>
           )}
 
           {/* Edge Tooltip */}
           {hoveredEdge && !hoveredNode && (
             <div
-              className="absolute z-50 pointer-events-none bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs shadow-lg"
+              className="absolute z-50 pointer-events-none bg-ui-deep border border-ui-line rounded-sm px-3 py-2 text-xs shadow-lg"
               style={{ left: tooltipPos.x + 12, top: tooltipPos.y - 10 }}
             >
-              <div className="font-bold text-white capitalize">{hoveredEdge.status.replace(/_/g, ' ')}</div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-1 text-gray-300">
+              <div className="font-bold text-ui-text capitalize">{hoveredEdge.status.replace(/_/g, ' ')}</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-1 text-ui-text">
                 <span>Friendship:</span>
                 <span>{hoveredEdge.friendshipAB.toFixed(0)} / {hoveredEdge.friendshipBA.toFixed(0)}</span>
                 <span>Romance:</span>
                 <span>{hoveredEdge.romanceAB.toFixed(0)} / {hoveredEdge.romanceBA.toFixed(0)}</span>
                 <span>Trust:</span>
                 <span>{hoveredEdge.trustAB.toFixed(0)} / {hoveredEdge.trustBA.toFixed(0)}</span>
-                <span className="text-gray-400">Interactions:</span>
-                <span className="text-gray-400">{hoveredEdge.interactionCount}</span>
+                <span className="text-ui-dim">Interactions:</span>
+                <span className="text-ui-dim">{hoveredEdge.interactionCount}</span>
               </div>
               {hoveredEdge.tags.length > 0 && (
-                <div className="text-gray-400 mt-1">Tags: {hoveredEdge.tags.join(', ')}</div>
+                <div className="text-ui-dim mt-1">Tags: {hoveredEdge.tags.join(', ')}</div>
               )}
             </div>
           )}
         </div>
 
-        {/* Legend */}
-        <div className="flex items-center justify-center gap-4 px-5 py-2 border-t border-gray-700 text-[10px] text-gray-400">
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-0.5 bg-green-500" /> Friendship
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-0.5 bg-pink-400" /> Romance
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-0.5 bg-red-500" /> Rivalry
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-0.5 bg-red-900 border-dashed border-b" /> Grudge
-          </span>
-          <span className="text-gray-500">|</span>
-          <span>Drag nodes • Scroll to zoom • Double-click node to select • Double-click empty to reset</span>
+        {/* Legend: what the lines and rings mean, then how to drive the graph. */}
+        <div className="px-5 py-2.5 border-t border-ui-line flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-[10px]">
+          <div className="flex items-center gap-4 text-ui-dim">
+            <span className="text-ui-muted uppercase tracking-wider">Lines</span>
+            {([
+              ['Friendship', EDGE_COLORS.friendship, false],
+              ['Romance', EDGE_COLORS.romance, false],
+              ['Rivalry', EDGE_COLORS.rivalry, false],
+              ['Grudge', EDGE_COLORS.grudge, true],
+            ] as const).map(([label, color, dashed]) => (
+              <span key={label} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block w-5"
+                  style={{ borderTop: `2px ${dashed ? 'dashed' : 'solid'} ${color}` }}
+                />
+                {label}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5" title="A coloured ring around a resident shows their strongest active state (angry, in love, drunk...)">
+              <span className="inline-block w-3 h-3 rounded-full border-2 border-ui-gold" />
+              State ring
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-ui-muted">
+            {[
+              ['drag', 'move or pan'],
+              ['scroll', 'zoom'],
+              ['double-click', 'open resident'],
+              ['double-click empty', 'reset view'],
+            ].map(([key, what]) => (
+              <span key={key} className="flex items-center gap-1">
+                <kbd className="px-1 py-px bg-ui-raised border border-ui-line text-ui-dim rounded-sm not-italic">{key}</kbd>
+                {what}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
     </div>
