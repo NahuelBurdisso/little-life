@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNudge } from "../../hooks/useNudge";
 import { W } from "./warmClasses";
+import { JOB_OPTIONS } from "../../../server/data/jobs";
 
 interface NewAgentDialogProps {
   isOpen: boolean;
@@ -16,9 +17,14 @@ const TRAIT_OPTIONS = [
   "caring", "independent",
 ];
 
-const JOB_OPTIONS = [
-  "farmer", "shopkeeper", "bartender", "doctor",
-  "handyperson", "musician", "baker", "unemployed",
+/**
+ * Every job in the one job table (server/data/jobs.ts), plus no job at all.
+ * This list used to be its own eight names, so a newcomer could never be the
+ * town's missing doctor's assistant, constable or mayor.
+ */
+const JOB_CHOICES: ReadonlyArray<{ job: string; title: string }> = [
+  ...JOB_OPTIONS.map(({ job, title }) => ({ job, title })),
+  { job: "unemployed", title: "Unemployed" },
 ];
 
 export function NewAgentDialog({ isOpen, onClose, onCreated }: NewAgentDialogProps) {
@@ -147,9 +153,9 @@ export function NewAgentDialog({ isOpen, onClose, onCreated }: NewAgentDialogPro
               onChange={(e) => setJob(e.target.value)}
               className={W.input}
             >
-              {JOB_OPTIONS.map((j) => (
+              {JOB_CHOICES.map(({ job: j, title }) => (
                 <option key={j} value={j}>
-                  {j.charAt(0).toUpperCase() + j.slice(1)}
+                  {title}
                 </option>
               ))}
             </select>
