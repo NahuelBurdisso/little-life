@@ -7,6 +7,8 @@ export interface TimelineOptions {
   agentId?: number;
   minImportance: number;
   categories?: string[];
+  /** Categories shown whatever their importance (server/lib/timeline.ts). */
+  alwaysCategories?: string[];
   order?: "time" | "importance";
   limit?: number;
 }
@@ -34,6 +36,7 @@ export function useTimeline(opts: TimelineOptions) {
       agentId: opts.agentId,
       minImportance: opts.minImportance,
       categories: opts.categories?.length ? opts.categories : undefined,
+      alwaysCategories: opts.alwaysCategories?.length ? opts.alwaysCategories : undefined,
       order: opts.order,
       limit: opts.limit ?? 60,
     },

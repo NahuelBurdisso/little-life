@@ -21,6 +21,7 @@ export const activityRouter = router({
         agentId: z.number().int().optional(),
         minImportance: z.number().min(0).max(1).optional().default(0.6),
         categories: z.array(z.string()).optional(),
+        alwaysCategories: z.array(z.string()).optional(),
         cursor: z.number().int().optional(),
         limit: z.number().int().min(1).max(200).optional().default(60),
         order: z.enum(['time', 'importance']).optional(),
