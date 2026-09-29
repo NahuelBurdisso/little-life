@@ -20,3 +20,7 @@ docs/scratch/shots/
 vite.config.ts.timestamp-*
 
 data/backup-*/
+
+# LLM traces (full prompts) and bench reports from scripts/llm-bench.ts.
+data/trace/
+data/bench/
