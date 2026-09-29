@@ -213,3 +213,36 @@ export function farmyardStock(w: number, h: number): PixelPlacement[] {
   if (tx > 8 && ty > 8) out.push({ sprite: 'trough', x: tx, y: ty });
   return out;
 }
+
+// ── Footprints, for other layers that must keep clear ──────────────────────────────────────
+
+/** Sprites larger than one tile (px). Everything else is 32x32. */
+const PROP_SIZE: Readonly<Record<string, readonly [number, number]>> = {
+  podium: [64, 32],
+  chicken_coop: [64, 32],
+  barn: [64, 64],
+};
+
+export interface PropBox { x: number; y: number; w: number; h: number }
+
+/**
+ * Pixel boxes (relative to the location's top-left) of the always-visible props of an open
+ * area — the town square's stalls, podium and benches, the park's beds, the farm's coop and
+ * barn, a market square's stalls. Event decorations use them to avoid standing a festival
+ * stall on the podium. Empty for buildings: their furniture is indoors, under the roof.
+ */
+export function openAreaPropBoxes(type: string, w: number, h: number): PropBox[] {
+  const box = (sprite: string, x: number, y: number): PropBox => {
+    const [bw, bh] = PROP_SIZE[sprite] ?? [32, 32];
+    return { x, y, w: bw, h: bh };
+  };
+  if (type === 'market_square') return marketSquareStalls(w, h).map(p => box(p.sprite, p.x, p.y));
+  if (type === 'farmyard') return farmyardStock(w, h).map(p => box(p.sprite, p.x, p.y));
+  const zones = ZONE_PROPS[type];
+  if (!zones || !['town_square', 'park', 'farm'].includes(type)) return [];
+  const out: PropBox[] = [];
+  for (const list of Object.values(zones)) {
+    for (const p of list) out.push(box(p.sprite, p.tile[0] * 32, p.tile[1] * 32));
+  }
+  return out;
+}

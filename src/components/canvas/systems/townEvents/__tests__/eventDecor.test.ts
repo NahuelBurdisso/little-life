@@ -3,6 +3,7 @@ import {
   planEventDecor, planEvent, wellBox, eventAnchorRect, strangerSpot, riverRect, DECOR_FRAME_COUNT, DECOR_FRAMES,
   type DecorPlacement,
 } from '../eventDecor';
+import { openAreaPropBoxes } from '../../../zoneProps';
 
 const square = { id: 1, type: 'town_square', position: { x: 640, y: 320, width: 384, height: 256 }, entry_point: { x: 832, y: 448 } };
 const market = { id: 2, type: 'market_square', position: { x: 96, y: 96, width: 320, height: 160 }, entry_point: { x: 250, y: 176 } };
@@ -91,6 +92,23 @@ describe('planEvent', () => {
         if (!solid.has(p.frame)) continue;
         const hit = p.x + 12 > box.x0 && p.x - 12 < box.x1 && p.y > box.y0 && p.y - 8 < box.y1;
         expect(hit, `${type} frame ${p.frame} at ${p.x},${p.y}`).toBe(false);
+      }
+    }
+  });
+
+  it("keeps solid decorations off the square's own stalls, podium and benches", () => {
+    const boxes = openAreaPropBoxes('town_square', square.position.width, square.position.height)
+      .map(b => ({ ...b, x: b.x + square.position.x, y: b.y + square.position.y }));
+    for (const type of ['festival', 'wedding', 'funeral', 'harvest', 'competition', 'town_meeting', 'scandal', 'heatwave']) {
+      for (const p of planEvent(ev(1, type), [square], MAP)) {
+        if (p.layer !== 'ground' || p.motion) continue;
+        // Bunting strings and their posts hang along the edges above the stalls, on purpose.
+        const r = square.position;
+        const edge = [30, 34, 38, r.height - 4].some(dy => p.y === r.y + dy);
+        if (p.frame <= DECOR_FRAMES.buntingDark + 1 || (edge && (p.frame === DECOR_FRAMES.lantern || p.frame === DECOR_FRAMES.post))) continue;
+        // A 24 px wide, 8 px deep base at the foot — Layout.free's default footprint.
+        const hit = boxes.find(b => p.x + 12 > b.x && p.x - 12 < b.x + b.w && p.y > b.y && p.y - 8 < b.y + b.h);
+        expect(hit, `${type} frame ${p.frame} at ${p.x},${p.y}`).toBeUndefined();
       }
     }
   });

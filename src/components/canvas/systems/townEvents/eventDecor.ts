@@ -11,6 +11,7 @@
  */
 
 import { INTERIOR_ZONES } from '../../../../../server/data/interiors';
+import { openAreaPropBoxes, type PropBox } from '../../zoneProps';
 
 export const DECOR_URL = '/sprites/fx/decor.png';
 export const DECOR_FRAME_COUNT = 69;
@@ -178,6 +179,12 @@ export function wellBox(r: Rect, type: string): { x0: number; y0: number; x1: nu
 
 const BUNTING_FPS = 4;
 
+/** Offsets tried, nearest first, when a solid decoration's slot is taken by a static prop. */
+const NUDGES: ReadonlyArray<readonly [number, number]> = [
+  [0, -20], [0, 20], [24, 0], [-24, 0], [24, -20], [-24, -20], [24, 20], [-24, 20],
+  [0, -40], [0, 40], [48, 0], [-48, 0],
+];
+
 /** Cluster anchors as fractions of the rect: where props go in the bands around the well. */
 type Slot = 'nw' | 'ne' | 'w' | 'e' | 'sw' | 'se';
 const SQUARE_SLOTS: Record<Slot, readonly [number, number]> = {
@@ -194,9 +201,12 @@ class Layout {
   readonly ax: number;
   readonly nFoot: number;
   private readonly slots: Record<Slot, readonly [number, number]>;
+  /** The area's own props (stalls, podium, benches...), absolute px. Solid decor keeps off them. */
+  private readonly props: PropBox[];
 
   constructor(readonly r: Rect, readonly type: string, readonly seed: number) {
     this.box = wellBox(r, type);
+    this.props = openAreaPropBoxes(type, r.width, r.height).map(b => ({ ...b, x: b.x + r.x, y: b.y + r.y }));
     const isSquare = type === 'town_square';
     this.slots = isSquare ? SQUARE_SLOTS : OPEN_SLOTS;
     this.ax = isSquare ? r.x + Math.floor(r.width / 2 / TILE) * TILE + 16 : r.x + Math.round(r.width / 2);
@@ -213,14 +223,28 @@ class Layout {
     const { r, box } = this;
     if (x < r.x || x > r.x + r.width || y < r.y || y > r.y + r.height) return false;
     if (box && x + halfW > box.x0 && x - halfW < box.x1 && y > box.y0 && y - depth < box.y1) return false;
-    return true;
+    return !this.onProp(x, y, halfW, depth);
+  }
+
+  /** Whether an object's base (foot at x,y) overlaps one of the area's static props. */
+  private onProp(x: number, y: number, halfW: number, depth: number): boolean {
+    for (const p of this.props) {
+      if (x + halfW > p.x && x - halfW < p.x + p.w && y > p.y && y - depth < p.y + p.h) return true;
+    }
+    return false;
   }
 
   /** Round to whole pixels: the atlas is pixel art and half-pixel sprites shimmer. */
   add(frame: number, x: number, y: number, o: { layer?: DecorLayer; frames?: number; fps?: number; solid?: boolean; salt?: number; motion?: DecorMotion; tint?: number } = {}): boolean {
     x = Math.round(x); y = Math.round(y);
     const solid = o.solid ?? true;
-    if (solid ? !this.free(x, y) : !(x >= this.r.x && x <= this.r.x + this.r.width && y >= this.r.y && y <= this.r.y + this.r.height)) {
+    if (solid && !this.free(x, y)) {
+      // Slots were laid out for a bare square; now that it has stalls, a podium and benches,
+      // a slot can land on one. Step to the nearest clear spot rather than drop the piece.
+      const alt = NUDGES.find(([dx, dy]) => this.free(x + dx, y + dy));
+      if (!alt) return false;
+      x += alt[0]; y += alt[1];
+    } else if (!solid && !(x >= this.r.x && x <= this.r.x + this.r.width && y >= this.r.y && y <= this.r.y + this.r.height)) {
       return false;
     }
     const frames = o.frames ?? 1;
