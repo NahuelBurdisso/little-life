@@ -4,7 +4,7 @@ import { db } from '../../db';
 import { agents, locations, needs, worldState } from '../../db/schema';
 import { statesTick } from '../../engine/systems/states';
 import { updateHungerTracking, clearHungerTracking } from '../lifeEventsEngine';
-import { isDeathEnabled } from '../worldRules';
+import { clearRulesCache, isDeathEnabled } from '../worldRules';
 import { CONFIG } from '../constants';
 
 /**
@@ -17,7 +17,9 @@ let savedConfig: Record<string, any> | null = null;
 let starving: number;
 
 function setRules(rules: Record<string, unknown> | null): void {
-  db.update(worldState).set({ setup_config: rules ? { rules } : null }).run();
+  db.update(worldState).set({ setup_config: rules ? { rules } : null, rule_overrides: null }).run();
+  // getRules() is cached; the server drops it on a world replace, the test has to do it itself.
+  clearRulesCache();
 }
 const alive = () => db.select({ is_active: agents.is_active }).from(agents).where(eq(agents.id, starving)).get()!.is_active;
 
@@ -59,6 +61,7 @@ afterAll(() => {
   db.update(agents).set({ is_active: false }).where(eq(agents.id, starving)).run();
   if (createdWorld) db.delete(worldState).run();
   else db.update(worldState).set({ setup_config: savedConfig }).run();
+  clearRulesCache();
   vi.restoreAllMocks();
 });
 
