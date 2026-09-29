@@ -44,6 +44,8 @@ const SCALE = 8;  // Lightmap at 1/8 resolution
 // dark ground (fresh-eyes audit r27). Module scope: `render` walks every light
 // every frame, so a literal inside that loop allocated N arrays per frame.
 const RING_ALPHAS = [0.35, 0.25, 0.18, 0.12, 0.07, 0.04];
+/** Scratch fill style for the rings, rewritten per ring instead of allocating `{ color, alpha }`. */
+const RING_FILL = { color: 0, alpha: 0 };
 
 const BUILDING_LIGHT: Record<string, {
   color: number; radius: number; intensity: number; flicker: number;
@@ -524,16 +526,10 @@ export class LightingSystem {
     this.lightGfx.clear();
     this.lightGfx.blendMode = 'add';
 
-    // Camera transform: world → lightmap coords
-    const toLmX = (wx: number) => (wx * cameraScale + cameraX) / SCALE;
-    const toLmY = (wy: number) => (wy * cameraScale + cameraY) / SCALE;
-    const toRadius = (r: number) => (r * cameraScale) / SCALE;
-
-    // Cull: only draw lights visible on screen
+    // Camera transform (world → lightmap coords) and the on-screen cull are inlined in the loop
+    // below rather than held in per-frame arrow functions: `render` runs at 60 fps and those
+    // were four closures allocated every frame.
     const pad = 100 / SCALE;
-    const isVisible = (lmx: number, lmy: number, lmr: number) =>
-      lmx + lmr > -pad && lmx - lmr < targetW + pad &&
-      lmy + lmr > -pad && lmy - lmr < targetH + pad;
 
     // Refilled in place rather than spread into a fresh array: this runs every
     // frame and the light lists can be hundreds of entries long.
@@ -544,12 +540,14 @@ export class LightingSystem {
     for (const l of this.eventLights) allLights.push(l);
     if (this.isNightish) for (const l of this.streetLights) allLights.push(l);
 
-    for (const light of allLights) {
-      const lx = toLmX(light.x);
-      const ly = toLmY(light.y);
-      const lr = toRadius(light.radius);
+    for (let n = 0; n < allLights.length; n++) {
+      const light = allLights[n];
+      const lx = (light.x * cameraScale + cameraX) / SCALE;
+      const ly = (light.y * cameraScale + cameraY) / SCALE;
+      const lr = (light.radius * cameraScale) / SCALE;
 
-      if (!isVisible(lx, ly, lr)) continue;
+      if (!(lx + lr > -pad && lx - lr < targetW + pad &&
+            ly + lr > -pad && ly - lr < targetH + pad)) continue;
 
       // Apply flicker
       let intensity = light.intensity;
@@ -570,8 +568,10 @@ export class LightingSystem {
       const fillColor = rgbToHex(fr, fg, fb);
 
       for (let i = 0; i < RING_ALPHAS.length; i++) {
-        this.lightGfx.circle(lx, ly, (lr * (i + 1)) / RING_ALPHAS.length)
-          .fill({ color: fillColor, alpha: RING_ALPHAS[i] });
+        // Pixi copies the style into its own object, so one scratch literal serves every ring.
+        RING_FILL.color = fillColor;
+        RING_FILL.alpha = RING_ALPHAS[i];
+        this.lightGfx.circle(lx, ly, (lr * (i + 1)) / RING_ALPHAS.length).fill(RING_FILL);
       }
     }
 
