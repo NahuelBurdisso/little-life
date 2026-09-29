@@ -34,6 +34,8 @@ interface QueueEntry {
   priority: number; // getTypePriority result, cached here for overflow sort
   depth: number;
   parentIds: number[];
+  /** The tick the memory happened on (`created_at`), not the tick the batch is flushed on. */
+  tick: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +73,13 @@ export class MemoryService {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  /** Called each game tick to update the current tick counter. */
+  /**
+   * Set the tick counter. The tick loop calls it every tick (engine/tick.ts) —
+   * it used to be called from one conversation helper only, so `created_at` /
+   * `last_accessed` stamps and the recency term of retrieval stood still
+   * between conversation turns. Stamps are TICKS (`world.time.totalTicks`),
+   * which is what the consolidator and retention convert from (TickClock).
+   */
   setTick(tick: number): void {
     this.currentTick = tick;
   }
@@ -173,6 +181,7 @@ export class MemoryService {
       priority,
       depth,
       parentIds,
+      tick: this.currentTick,
     });
 
     if (this.queue.length > WRITE_QUEUE_HARD_CAP) this.dropLeastImportant();
@@ -460,7 +469,6 @@ export class MemoryService {
       if (generation !== this.generation) return;
 
       // Build insert items
-      const tick = this.currentTick;
       const insertItems = batch.map((entry, i) => ({
         agentId: entry.agentId,
         type: entry.type,
@@ -469,7 +477,7 @@ export class MemoryService {
         emotional_valence: entry.emotional_valence,
         embedding: vectors[i] ? float32ArrayToBuffer(vectors[i]) : null,
         metadata: entry.metadata,
-        currentTick: tick,
+        currentTick: entry.tick,
         depth: entry.depth,
         parentIds: entry.parentIds,
       }));

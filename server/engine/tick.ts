@@ -226,6 +226,13 @@ export async function gameTick(): Promise<void> {
     current_tick_phase: 1,
   };
 
+  // Memory stamps (`created_at`, `last_accessed`, the recency term of
+  // retrieval) are TICKS. The service only learned the tick when a
+  // conversation turn ran, so memories written by perception, gossip or gifts
+  // between turns carried a stale stamp; hand it the clock every tick, before
+  // any phase can record.
+  memoryService.setTick(newTime.totalTicks);
+
   // 7. Run the system phases sequentially
   const phaseMs: Array<[string, number]> = [];
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
