@@ -8,7 +8,7 @@
  * Town Crier headline when the paper ran one (gazette.ts).
  */
 
-import { and, asc, desc, gte, inArray, lt, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, gte, inArray, lt, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db';
 import { activityLog, gazetteIssues } from '../db/schema';
 import { CONFIG } from './constants';
@@ -48,6 +48,13 @@ export interface TimelineInput {
   /** Rows below this importance are left out; 0.6 is "would make the paper". */
   minImportance?: number;
   categories?: string[];
+  /**
+   * Categories that skip the `minImportance` bar. The player's own doings
+   * (whisper, rumor, stir, nudge, gift: 0.4 by design, so they stay out of the
+   * gazette) never reach 0.6, which left a resident's Story tab claiming
+   * "nothing has happened to them" after a day of interventions.
+   */
+  alwaysCategories?: string[];
   /** Row id of the oldest row already shown: the page continues below it. */
   cursor?: number;
   /** Rows per page (a page always ends on a day boundary, see below). */
@@ -88,9 +95,12 @@ export function getTimeline(input: TimelineInput = {}): TimelinePage {
 
   // `game_minute IS NOT NULL`: a row with no clock stamp (logged with no world
   // row) can't be placed in a day. Startup backfills every old row.
+  const importanceBar = gte(activityLog.importance, input.minImportance ?? 0.6);
   const conds: SQL[] = [
     sql`${activityLog.game_minute} IS NOT NULL`,
-    gte(activityLog.importance, input.minImportance ?? 0.6),
+    input.alwaysCategories?.length
+      ? or(importanceBar, inArray(activityLog.category, input.alwaysCategories))!
+      : importanceBar,
   ];
   if (input.categories?.length) conds.push(inArray(activityLog.category, input.categories));
   if (input.agentId != null) conds.push(involvesAgent(input.agentId));

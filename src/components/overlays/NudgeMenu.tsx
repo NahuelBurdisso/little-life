@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useNudge, FEELING_ICONS, type StirFeeling } from "../../hooks/useNudge";
 import { trpc } from "../../lib/trpc";
 import { locationIcon } from "../../lib/locationInfo";
@@ -116,7 +116,8 @@ function Item({
       disabled={disabled}
       title={title}
       onClick={onClick}
-      className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs transition-colors ${
+      role="menuitem"
+      className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs transition-colors outline-none focus-visible:bg-[var(--ui-bg-hover)] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--ui-accent-gold)] ${
         disabled
           ? "text-[var(--ui-text-disabled)] cursor-not-allowed"
           : danger
@@ -202,17 +203,64 @@ export function NudgeMenu({
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose]);
 
-  // Close on escape
+  // Escape peels one layer: text box / list -> its parent list -> the menu root,
+  // remove confirmation -> root, "pick someone else" -> root; only from the root
+  // does it close the menu. Capture phase + stopPropagation for the same reason
+  // as TopBar's confirm dialog: App owns a document-level Escape chain that closes
+  // the whole context menu, so a bubble listener here could never get in first and
+  // Esc used to throw away a half-typed whisper along with the submenu.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (subMenu) setSubMenu(null);
-        else onClose();
+      if (e.key !== "Escape") return;
+      const parent: SubMenu = isPairMode ? null
+        : subMenu === "rumorText" ? "rumor"
+        : subMenu === "feelingTarget" ? "feeling"
+        : null;
+      if (subMenu) {
+        e.stopPropagation();
+        setSubMenu(parent);
+      } else if (confirmRemove) {
+        e.stopPropagation();
+        setConfirmRemove(false);
+      } else if (pairWith) {
+        e.stopPropagation();
+        setPairWith(null);
+      } else {
+        onClose();
       }
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose, subMenu]);
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [onClose, subMenu, confirmRemove, pairWith, isPairMode]);
+
+  // Keyboard reach: whichever view is showing, put focus on its first item (a view
+  // with a text box already grabbed it through autoFocus), so arrows / Enter work
+  // without a mouse. Runs after paint of the new view, hence the layout key list.
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu || menu.contains(document.activeElement)) return;
+    menu.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [agentId, position.x, position.y, subMenu, confirmRemove, pairWith, isPairMode]);
+
+  // Arrow keys / Home / End walk the enabled items of the current view (disabled
+  // buttons aren't focusable anyway); only when a menu item has focus, so the
+  // arrows still move the caret inside the whisper / topic text boxes.
+  const onMenuKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.getAttribute("role") !== "menuitem") return;
+    const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'));
+    const i = items.indexOf(target);
+    if (i < 0) return;
+    let next: number | null = null;
+    if (e.key === "ArrowDown") next = (i + 1) % items.length;
+    else if (e.key === "ArrowUp") next = (i - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    if (next == null) return;
+    e.preventDefault();
+    items[next].focus();
+    items[next].scrollIntoView({ block: "nearest" });
+  };
 
   // Only the secret picker needs this, and it is a full-table scan server-side.
   const { data: knownFacts } = trpc.knowledge.getKnownBy.useQuery(
@@ -233,11 +281,15 @@ export function NudgeMenu({
   // The single-agent menu is ~10 rows now that the planting powers are in it.
   const top = Math.max(4, Math.min(position.y, window.innerHeight - 400));
 
+  const menuLabel = isPairMode
+    ? `Nudge ${currentAgent?.name ?? "resident"} and ${partner?.name ?? "another resident"}`
+    : `Nudge ${currentAgent?.name ?? "resident"}`;
   const frame = `fixed z-50 ${W.modal} min-w-[220px] max-w-[280px] max-h-[70vh] py-1`;
   const back = (onBack: () => void, label = "← Back") => (
     <button
       type="button"
-      className="w-full text-left px-3 py-1 text-[10px] text-[var(--ui-text-secondary)] hover:text-[var(--ui-text-primary)]"
+      role="menuitem"
+      className="w-full text-left px-3 py-1 text-[10px] text-[var(--ui-text-secondary)] hover:text-[var(--ui-text-primary)] outline-none focus-visible:text-[var(--ui-accent-gold)]"
       onClick={onBack}
     >
       {label}
@@ -294,7 +346,7 @@ export function NudgeMenu({
   // ─── Pair mode: two agents, secrets / confrontation / chat ───────────────────
   if (isPairMode) {
     return (
-      <div ref={menuRef} className={frame} style={{ left, top }}>
+      <div ref={menuRef} className={frame} style={{ left, top }} role="menu" aria-label={menuLabel} onKeyDown={onMenuKeyDown}>
         {header(
           <>
             {currentAgent && <MiniPortrait agent={currentAgent} size={16} />}
@@ -424,7 +476,7 @@ export function NudgeMenu({
   // ─── Single-agent mode ────────────────────────────────────────────────────────
   const asleep = isAsleep(currentAgent);
   return (
-    <div ref={menuRef} className={frame} style={{ left, top }}>
+    <div ref={menuRef} className={frame} style={{ left, top }} role="menu" aria-label={menuLabel} onKeyDown={onMenuKeyDown}>
       {header(
         <>
           {currentAgent && <MiniPortrait agent={currentAgent} size={16} />}
@@ -607,7 +659,7 @@ export function NudgeMenu({
           <Item icon="🤝" onClick={() => setSubMenu("pair")}>
             Pair with...
           </Item>
-          <div className="border-t border-[var(--ui-border)] my-1" />
+          <div role="separator" className="border-t border-[var(--ui-border)] my-1" />
           <Item icon="💭" title="Plant a thought in their head" onClick={() => setSubMenu("whisper")}>
             Whisper a thought...
           </Item>
@@ -626,7 +678,7 @@ export function NudgeMenu({
           >
             View memories
           </Item>
-          <div className="border-t border-[var(--ui-border)] my-1" />
+          <div role="separator" className="border-t border-[var(--ui-border)] my-1" />
           <Item icon="✕" danger onClick={() => setConfirmRemove(true)}>
             Remove from town
           </Item>
@@ -638,12 +690,13 @@ export function NudgeMenu({
           <p className="text-xs text-[var(--ui-text-primary)] mb-2">Remove {currentAgent?.name}?</p>
           <div className="flex gap-2">
             <button
+              role="menuitem"
               className="flex-1 px-2 py-1 text-xs border border-[var(--ui-negative)] bg-[var(--ui-negative)]/20 text-[var(--ui-negative)] hover:bg-[var(--ui-negative)]/30 transition-colors"
               onClick={() => fire(() => removeAgent(agentId))}
             >
               Confirm
             </button>
-            <button className={`flex-1 px-2 py-1 text-xs ${W.btn}`} onClick={() => setConfirmRemove(false)}>
+            <button role="menuitem" className={`flex-1 px-2 py-1 text-xs ${W.btn}`} onClick={() => setConfirmRemove(false)}>
               Cancel
             </button>
           </div>

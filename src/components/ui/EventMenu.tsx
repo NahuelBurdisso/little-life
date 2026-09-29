@@ -205,7 +205,7 @@ export function EventMenu({ isOpen, onClose, activeEvents, nowMinutes }: EventMe
           </div>
           {currentWeather && (
             <p className={`text-[10px] ${W.muted} mb-2`}>
-              Now: {weatherEmoji(currentWeather)} <span className="capitalize">{currentWeather}</span>
+              Now: {weatherEmoji(currentWeather, world?.time?.hour)} <span className="capitalize">{currentWeather}</span>
               {weatherLeft >= 1 ? ` · ${formatTimeLeft(weatherLeft)}` : ""}
             </p>
           )}

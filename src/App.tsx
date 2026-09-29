@@ -45,6 +45,8 @@ import { CoachMarks } from "./components/ui/CoachMarks";
 import { HelpOverlay } from "./components/ui/HelpOverlay";
 import { useFirstRunGuide } from "./hooks/useFirstRunGuide";
 import { worldSeedKey } from "./lib/firstRun";
+import { useToolbarCollapsed } from "./hooks/useToolbarCollapsed";
+import { toolbarClearance } from "./lib/toolbarLayout";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -102,10 +104,14 @@ export default function App() {
     }
   }, [isNewSimulation]);
 
-  // Resizable panel sizes
-  const [leftWidth, setLeftWidth] = useState(280);
-  const [rightWidth, setRightWidth] = useState(300);
-  const [bottomHeight, setBottomHeight] = useState(120);
+  const { collapsed: toolbarCollapsed, toggle: toggleToolbar } = useToolbarCollapsed();
+
+  // Resizable panel sizes. Starting sizes shrink on small windows (the sidebars
+  // were 280 + 300 of a 1024 window, leaving a ~350px map); the handles still
+  // stretch them. Read once: a window resized later keeps whatever the player set.
+  const [leftWidth, setLeftWidth] = useState(() => (window.innerWidth < 1200 ? 220 : 280));
+  const [rightWidth, setRightWidth] = useState(() => (window.innerWidth < 1200 ? 260 : 300));
+  const [bottomHeight, setBottomHeight] = useState(() => (window.innerHeight < 700 ? 96 : 120));
 
   const handleLeftResize = useCallback((delta: number) => {
     setLeftWidth(w => Math.max(40, Math.min(500, w + delta)));
@@ -406,8 +412,24 @@ export default function App() {
             followRequest={followRequest}
             onUserCameraInput={noteDirectorInput}
           />
-          <DirectorCaption caption={director.caption} cut={director.cut} />
+          <DirectorCaption caption={director.caption} cut={director.cut} rightClearance={toolbarClearance(toolbarCollapsed)} />
           <DirectorChip paused={director.paused} onResume={director.resume} />
+          {/* Drama alerts (the Director decides which of them the camera cuts to) */}
+          <DramaAlerts alerts={drama.alerts} dismiss={drama.dismiss} onFocusAgent={focusAgent} />
+          {/* Tools strip: bottom-right of the map, folds into an icon rail */}
+          <FloatingToolbar
+            onNewAgent={() => setShowNewAgent(true)}
+            onShowRelationships={() => setShowRelGraph(true)}
+            onShowHistory={() => setShowConvoHistory(true)}
+            onShowTimeline={() => setShowTimeline(true)}
+            onShowAutoplay={() => setShowAutoplay(true)}
+            autoCut={autoCut}
+            onToggleAutoCut={() => setAutoCut(v => !v)}
+            onMeetTheTown={guide.openTour}
+            onShowHelp={guide.openHelp}
+            collapsed={toolbarCollapsed}
+            onToggleCollapsed={toggleToolbar}
+          />
         </div>
         {/* AgentPanel sidebar */}
         {selectedAgentId && (
@@ -429,20 +451,6 @@ export default function App() {
         <ActivityFeed onSelectAgent={focusAgent} />
       </div>
 
-      {/* Floating toolbar for extra actions */}
-      <FloatingToolbar
-        onNewAgent={() => setShowNewAgent(true)}
-        onShowRelationships={() => setShowRelGraph(true)}
-        onShowHistory={() => setShowConvoHistory(true)}
-        onShowTimeline={() => setShowTimeline(true)}
-        onShowAutoplay={() => setShowAutoplay(true)}
-        autoCut={autoCut}
-        onToggleAutoCut={() => setAutoCut(v => !v)}
-        onMeetTheTown={guide.openTour}
-        onShowHelp={guide.openHelp}
-        rightOffset={selectedAgentId ? rightWidth + 16 : 16}
-      />
-
       {/* Clicked building / open area */}
       {selectedLocation && (
         <LocationPanel
@@ -461,8 +469,6 @@ export default function App() {
       {/* Acknowledgements for player actions (lib/toast.ts) */}
       <Toasts />
 
-      {/* Drama alerts (the Director decides which of them the camera cuts to) */}
-      <DramaAlerts alerts={drama.alerts} dismiss={drama.dismiss} onFocusAgent={focusAgent} />
       <Inbox
         isOpen={showInbox}
         onClose={() => setShowInbox(false)}

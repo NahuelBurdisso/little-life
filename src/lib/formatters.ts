@@ -81,9 +81,24 @@ export function formatGameMinute(minute: number): string {
   return `Day ${day}, ${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-export function weatherEmoji(weather: string): string {
+/**
+ * Same night as `computeDayPhase` on the server (20:00-05:00). Kept as an hour
+ * check so the client doesn't need the world's `day_phase` column to draw an icon.
+ */
+export function isNightHour(hour: number): boolean {
+  return hour >= 20 || hour < 5;
+}
+
+/**
+ * `hour` is optional: a weather *choice* (the event menu's buttons) has no time
+ * of day and keeps the sun. Pass the world hour to get the night variants -
+ * clear skies become a moon, and the unknown-weather default too - instead of
+ * a sun shining at 9 PM.
+ */
+export function weatherEmoji(weather: string, hour?: number): string {
+  const night = hour != null && isNightHour(hour);
   const map: Record<string, string> = {
-    sunny: "\u2600\uFE0F",
+    sunny: night ? "\uD83C\uDF19" : "\u2600\uFE0F",
     cloudy: "\u2601\uFE0F",
     rainy: "\uD83C\uDF27\uFE0F",
     stormy: "\u26C8\uFE0F",
@@ -92,7 +107,7 @@ export function weatherEmoji(weather: string): string {
     windy: "\uD83D\uDCA8",
     hot: "\uD83D\uDD25",
   };
-  return map[weather] ?? "\uD83C\uDF24\uFE0F";
+  return map[weather] ?? (night ? "\uD83C\uDF19" : "\uD83C\uDF24\uFE0F");
 }
 
 export function seasonEmoji(season: string): string {

@@ -17,16 +17,28 @@ const LEVELS = [
   { value: 0.3, label: "More" },
 ] as const;
 
+/** The player's own doings sit at 0.4 (out of the gazette, see activityRegistry) - below "Notable". */
+const PLAYER_CATEGORIES = ["player"];
+
 /**
  * "Story so far": one resident's timeline. The same query as the town
  * Timeline, filtered to everything they did OR that happened to them, days
- * newest first and the most important line first inside each day, so the
- * confession outranks the errand it followed.
+ * newest first. "Big moments" and "Notable" lead each day with the most
+ * important line, so the confession outranks the errand it followed; "More" is
+ * the full log, so it reads morning to night like a diary (sorted by
+ * importance its timestamps jumped around). What the player did to this
+ * resident always shows from "Notable" down: it is part of their story even
+ * though it is deliberately low-importance.
  */
 export function StoryTab({ agentId, agentName, onSelectAgent }: StoryTabProps) {
   const { world } = useWorldState();
   const [minImportance, setMinImportance] = useState<number>(0.6);
-  const timeline = useTimeline({ agentId, minImportance, order: "importance" });
+  const timeline = useTimeline({
+    agentId,
+    minImportance,
+    order: minImportance <= 0.3 ? "time" : "importance",
+    alwaysCategories: minImportance <= 0.6 ? PLAYER_CATEGORIES : undefined,
+  });
 
   return (
     <div>

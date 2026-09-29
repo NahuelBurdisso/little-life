@@ -46,6 +46,9 @@ function Toggle({
   /** The setting is kept but does nothing right now (its parent switch is off). */
   inactive?: boolean;
 }) {
+  // The stored value is kept (it comes back when the parent goes on), but a
+  // switch that does nothing must not read as ON: show it off and lock it.
+  const shown = checked && !inactive;
   return (
     <div className={`flex items-center justify-between gap-3 transition-opacity ${inactive ? "opacity-45" : ""}`}>
       <div className="min-w-0">
@@ -55,17 +58,17 @@ function Toggle({
       <button
         type="button"
         role="switch"
-        aria-checked={checked}
+        aria-checked={shown}
         aria-label={label}
-        disabled={pending}
+        disabled={pending || inactive}
         onClick={() => onChange(!checked)}
         className={`relative w-10 h-5 rounded-full border shrink-0 transition-colors disabled:opacity-50 ${
-          checked ? "bg-ui-gold/30 border-ui-gold" : "bg-ui-raised border-ui-line"
-        }`}
+          inactive ? "cursor-not-allowed" : ""
+        } ${shown ? "bg-ui-gold/30 border-ui-gold" : "bg-ui-raised border-ui-line"}`}
       >
         <span
           className={`absolute top-0.5 w-3.5 h-3.5 rounded-full transition-all ${
-            checked ? "left-[22px] bg-ui-gold" : "left-0.5 bg-ui-dim"
+            shown ? "left-[22px] bg-ui-gold" : "left-0.5 bg-ui-dim"
           }`}
         />
       </button>
@@ -149,8 +152,9 @@ function StorytellerSection({ poll }: { poll: number | false }) {
       await configure.mutateAsync({
         enabled: preset.autoplay.enabled,
         boredThreshold: preset.autoplay.boredThreshold,
-        // A preset that turns the watcher on means it to act, not just watch.
-        ...(preset.autoplay.enabled ? { autoNudge: true } : {}),
+        // A preset that turns the watcher on means it to act, not just watch; one that
+        // leaves it off must not keep a stale "nudge when bored" ON behind it.
+        autoNudge: preset.autoplay.enabled,
       });
       pushToast(`Storyteller: ${preset.label}. ${preset.blurb}`, "success", preset.icon);
     } catch {

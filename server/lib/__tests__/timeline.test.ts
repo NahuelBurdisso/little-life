@@ -126,6 +126,20 @@ describe('getTimeline', () => {
     expect(getTimeline({ minImportance: 0 }).days[0].events).toHaveLength(2);
   });
 
+  it('alwaysCategories shows low-importance rows of those categories only', () => {
+    // A whisper is 0.4 by design: under the 0.6 "Notable" bar, still part of the resident's story.
+    const whisper = row({ minute: at(1, 9), importance: 0.4, category: 'player', type: 'player_whisper', initiator: 7, agents: [7] });
+    row({ minute: at(1, 10), importance: 0.4, category: 'routine', initiator: 7, agents: [7] });
+    const big = row({ minute: at(1, 11), importance: 0.9, initiator: 7, agents: [7] });
+    const plain = getTimeline({ agentId: 7 }).days.flatMap((d) => d.events.map((e) => e.id));
+    expect(plain).toEqual([big]);
+    const withPlayer = getTimeline({ agentId: 7, alwaysCategories: ['player'] }).days.flatMap((d) => d.events.map((e) => e.id));
+    expect(withPlayer.sort()).toEqual([whisper, big].sort());
+    // Still scoped to the resident: another resident's player row stays out.
+    row({ minute: at(1, 12), importance: 0.4, category: 'player', initiator: 8, agents: [8] });
+    expect(getTimeline({ agentId: 7, alwaysCategories: ['player'] }).days.flatMap((d) => d.events)).toHaveLength(2);
+  });
+
   it('filters by category and by day', () => {
     row({ minute: at(1), category: 'drama' });
     row({ minute: at(1), category: 'goal' });
