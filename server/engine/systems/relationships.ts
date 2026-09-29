@@ -17,7 +17,7 @@ type RelRow = typeof relationships.$inferSelect;
 
 // --- Helpers ---
 
-function applyDiminishing(currentValue: number, delta: number): number {
+export function applyDiminishing(currentValue: number, delta: number): number {
   if (delta > 0 && currentValue > 0) {
     const resistance = currentValue / 100;
     return delta * (1 - resistance * CONFIG.RELATIONSHIPS.DIMINISHING_RETURNS_FACTOR);

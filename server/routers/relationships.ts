@@ -4,6 +4,7 @@ import { relationships, agents } from '../db/schema';
 import { eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { getCliques } from '../lib/cliques';
+import { getPairDossier } from '../lib/pairDossier';
 
 export const relationshipsRouter = router({
   getAgentRelationships: publicProcedure
@@ -37,6 +38,17 @@ export const relationshipsRouter = router({
   getGraph: publicProcedure.query(() => {
     return db.select().from(relationships).all();
   }),
+
+  /**
+   * Everything about one pair: both directions, the events that shaped it, the
+   * last conversations, the secrets around it, its story arcs and a
+   * friendship/romance history. Oriented to the arguments (`a` first). Null when
+   * either id isn't a resident. The dossier modal refetches it off the same
+   * agents channel as the graph (`useAgents`).
+   */
+  getPair: publicProcedure
+    .input(z.object({ a: z.number().int(), b: z.number().int() }))
+    .query(({ input }) => getPairDossier(input.a, input.b)),
 
   /** Social groups derived from the friendship graph. Memoised server-side. */
   getCliques: publicProcedure.query(() => getCliques()),
