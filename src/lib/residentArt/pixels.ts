@@ -15,14 +15,14 @@ export interface PixelImage {
   readonly data: Uint8ClampedArray<ArrayBuffer>;
 }
 
-export const TRANSPARENT: RGBA = 0;
+const TRANSPARENT: RGBA = 0;
 
 /** `hex("1a1510")` → opaque colour; `hex("0a0806", 0x6e)` → translucent (drop shadows). */
 export function hex(rgb: string, alpha = 255): RGBA {
   return ((parseInt(rgb, 16) << 8) | (alpha & 255)) >>> 0;
 }
 
-export function channels(c: RGBA): [number, number, number, number] {
+function channels(c: RGBA): [number, number, number, number] {
   return [(c >>> 24) & 255, (c >>> 16) & 255, (c >>> 8) & 255, c & 255];
 }
 

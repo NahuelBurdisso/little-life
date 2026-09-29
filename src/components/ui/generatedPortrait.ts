@@ -3,7 +3,7 @@ import { drawPortrait } from "../../lib/residentArt/portrait";
 import type { PortraitMood } from "./portraitMood";
 
 /** The fields of an agent row the generated look depends on (same as the map sprite's). */
-export interface PortraitAgent {
+interface PortraitAgent {
   name: string;
   gender?: string | null;
   age?: number | null;

@@ -99,7 +99,7 @@ export const HAIRS: readonly Ramp[] = [
 const GREY_HAIR = ramp("6a6660", "9a9088", "b8b0a4");
 const WHITE_HAIR = ramp("a8a098", "d8d4c8", "f0ece0");
 
-export const SHIRTS: readonly Ramp[] = [
+const SHIRTS: readonly Ramp[] = [
   ramp("182848", "283858", "3a486a"), // navy
   ramp("2a4260", "3a5e88", "4a7ab0"), // blue
   ramp("1e3a58", "2a5078", "3e6c98"), // denim
@@ -121,7 +121,7 @@ const ACCENTS: readonly Ramp[] = [
   ramp("9a7020", "c8a04a", "e8c848"),
 ];
 
-export const PANTS: readonly Ramp[] = [
+const PANTS: readonly Ramp[] = [
   ramp("0a1828", "1a2840", "2a3858"), // navy
   ramp("2a1a10", "4e3824", "6a5038"), // brown
   ramp("1a1816", "2e2c2a", "44403a"), // charcoal
