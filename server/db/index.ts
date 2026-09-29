@@ -46,7 +46,7 @@ const PERF_INDEXES = [
   // range-scanned on `timestamp` — by the heartbroken check in states.ts, once
   // per agent per tick, on a table that is only ever appended to. The window is
   // narrow (60 ticks), so the range index alone reduces a growing full scan to a
-  // handful of rows; chronicle and the autoplay collectors ride it too.
+  // handful of rows; the autoplay collectors ride it too.
   'CREATE INDEX IF NOT EXISTS idx_relationship_events_timestamp ON relationship_events (timestamp)',
   'CREATE INDEX IF NOT EXISTS idx_conversations_started_at ON conversations (started_at)',
   // Game-day retention (relationships.ts pruneRelationshipEvents) range-scans
