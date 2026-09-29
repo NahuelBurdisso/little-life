@@ -151,6 +151,19 @@ function getMinDuration(actionType: string): number {
   return CONFIG.DECISIONS.ACTION_MIN_DURATIONS[actionType] ?? 10;
 }
 
+/**
+ * Action duration for an arrival that plays the 5-tick interior lerp first.
+ *
+ * Durations are game minutes (see isActionComplete in decisions.ts), but the
+ * lerp in tick() advances one step per TICK, so the padding is worth
+ * 5 × tick_speed game minutes. Rounded up: at 0.5x that is 2.5, and
+ * `action_duration` is an INTEGER column compared against whole game minutes —
+ * rounding down would cut the lerp short by a tick.
+ */
+export function interiorTransitionDuration(minDuration: number, tickSpeed: number): number | null {
+  return minDuration > 0 ? minDuration + Math.ceil(5 * tickSpeed) : null;
+}
+
 function isClosedBuilding(locType: string): boolean {
   // Positive membership, not `!OPEN_AREA_TYPES.has(...)`. The derived locations
   // (mainstreet, alley, farmyard, market_square) are open ground but have no
@@ -293,10 +306,7 @@ function handleArrival(
         current_path: null,
         current_action: transitionAction,
         action_started: gameMinutes(world.time),
-        // Durations are game minutes (see isActionComplete in decisions.ts), but
-        // the lerp in tick() advances one step per TICK, so the 5-tick padding is worth
-        // 5 * tick_speed game minutes.
-        action_duration: minDuration > 0 ? minDuration + 5 * world.tick_speed : null,
+        action_duration: interiorTransitionDuration(minDuration, world.tick_speed),
         action_queue: queue,
       })
       .where(eq(agents.id, agent.id))

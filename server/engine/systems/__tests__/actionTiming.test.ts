@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { advanceClock } from '../../tick';
 import { isActionComplete } from '../decisions';
+import { interiorTransitionDuration } from '../movement';
 import { gameMinutes } from '../../../lib/gameClock';
 import { CONFIG } from '../../../lib/constants';
 
@@ -53,5 +54,18 @@ describe('action durations are game minutes', () => {
     const agent = sleeper(time, 10);
     for (let i = 0; i < 50; i++) time = advanceClock(time, 0);
     expect(isActionComplete(agent, gameMinutes(time))).toBe(false);
+  });
+});
+
+describe('interior transition padding', () => {
+  it('is a whole number of game minutes covering the 5-tick lerp at every speed', () => {
+    for (const speed of [0.5, 1, 2, 4]) {
+      const duration = interiorTransitionDuration(30, speed)!;
+      expect(Number.isInteger(duration)).toBe(true);
+      expect(duration - 30).toBeGreaterThanOrEqual(5 * speed);
+    }
+    expect(interiorTransitionDuration(30, 0.5)).toBe(33); // 2.5 rounded up, not a REAL 32.5
+    expect(interiorTransitionDuration(30, 1)).toBe(35);
+    expect(interiorTransitionDuration(0, 1)).toBeNull();
   });
 });
