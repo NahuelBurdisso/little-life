@@ -30,7 +30,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 | Server | Node + `tsx`, Express 5, tRPC 11 over **WebSocket only** (`ws://localhost:3001`) |
 | DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
 | Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
-| LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything; config in `.env`, Ollama flags in `start-game.bat` |
+| LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything, qwen3-embedding:0.6b for memory; config in `.env`, Ollama flags in `start-game.bat` |
 | Tests | Vitest 2, 43 files / ~504 tests, all server-side |
 
 ## Commands
@@ -43,6 +43,7 @@ npm run deadcode     # orphan files + exports nothing uses (confirm with grep be
 npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
 npx tsx scripts/llm-smoke.ts       # one of each structured prompt against the model
 npx tsx scripts/llm-bench.ts --trace t.jsonl --models a,b   # replay a captured LLM_TRACE
+npx tsx scripts/embed-eval.ts --a m1 --b m2 --trace t.jsonl # blind retrieval eval of two embedders
 npx tsx server/seed-world.ts       # reseed the running server's world
 node scripts/shot-gallery.mjs day  # Playwright screenshots of :5173 (needs dev running)
 ```
@@ -107,7 +108,12 @@ directly — keep those free of Node/DB imports.
 - Test runs are noisy (`[worldgen] done ...` logs) — grep for `Test Files` / `FAIL`.
 - **LLM output that code parses is structured**: pass a JSON schema as `format` to `callOllamaChat`
   (see `planPrompts.ts`, `goalPrompts.ts`) and keep a tolerant parser. Tag every call with `purpose`.
-  Changing `num_ctx` per call makes Ollama reload the model — it is pinned in `CONFIG.AI.NUM_CTX`.
+  Changing `num_ctx` per call makes Ollama reload the model — it is pinned in `CONFIG.AI.NUM_CTX`
+  (chat) and `CONFIG.AI.EMBED_NUM_CTX` (embeddings). Prompts that imagine town life include
+  `TOWN_SETTING` (`server/ai/setting.ts`, around 1900).
+- **New tables** go in `schema.ts` (tests) *and* a `CREATE TABLE IF NOT EXISTS` in
+  `server/db/index.ts` (runtime), plus `ALL_TABLES` in `routers/setup.ts` and `db/seed.ts` if the
+  rows belong to one world.
 - Vitest 2 quirk: a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
   when the throw is caught. Use `mockClear()` + `mockImplementationOnce(() => { throw ... })`.
 

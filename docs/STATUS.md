@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 126 files / 1464 tests passing.
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 131 files / 1506 tests passing.
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -47,6 +47,23 @@ worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
   replans 24 → 8, output tokens 36k → 16k/day, embedding failures 70+ → 0.
 - LLM conversations with 4+ lines store each side's first-person takeaway as the memory
   (`conversationSummary.ts`); `LLM_CONVERSATION_SUMMARIES=0` disables.
+- **Setting:** the town lives around 1900 (no phones, cars, electricity, internet) — one line,
+  `server/ai/setting.ts`, in dialogue, plan and goal prompts. Stops "social media"/"bus" plans.
+- **Embeddings:** `qwen3-embedding:0.6b` (beat mxbai 22-15 in a blind retrieval eval,
+  `scripts/embed-eval.ts`), queries get Qwen's instruction prefix (`asRetrievalQuery`), every call
+  pins `num_ctx` 2048 (at its default 32k it took 4 GB of VRAM and slowed the 26B to ~9 tok/s).
+  `app_meta.embedding_model` records which model made the stored vectors; at start and each day
+  change `embeddingBackfill.ts` embeds memories without a vector (seeded backstory had none) and
+  re-embeds everything after a model change.
+- **The Town Crier** (`server/lib/gazette.ts`, `gazette_issues`, router `gazette`, UI
+  `src/components/ui/Gazette.tsx`): at each day change the model writes a period newspaper from the
+  day's important feed lines (rumor retellings collapsed) and chronicle arcs — headline, 2-4
+  articles led by the human story, gossip column. "📰 Paper" in the TopBar, archive, "Print
+  today's edition". `LLM_GAZETTE=0` disables.
+- MTP vs plain Gemma 4 26B measured on replayed game traffic: MTP 29% faster (126 s vs 163 s).
+  `gemma4:26b-a4b-it-q4_K_M` (17 GB) is installed but unused. With OLLAMA_MAX_LOADED_MODELS=2 a
+  third model (e.g. a second embedder in scripts) waits forever for the busy chat model to be
+  evicted — `ollama stop` it first.
 
 ## Tooling
 
@@ -126,8 +143,6 @@ Evidence in the session scratchpad; line numbers approximate.
   secret's text is stored.)
 - **G8 [L]** Saved plan blocks all show `pending` (status lives in the in-memory cache). Plans now
   arrive in ~7 s, so the 4x "plan after the day started" symptom is gone.
-- **L1 [L]** Plans occasionally mention things the town doesn't have ("Stare at Marco's social
-  media", "nearest diner"): the setting's era/amenities are never stated in prompts.
 - **L2 [L]** `plan.decompose` is now the largest call count (~90/game day, ~66 tokens each). Sleep
   blocks (~7%) could be decomposed without the LLM.
 - **G9 [L]** "X and Y are on a date" logged every tick before the conversation is queued
@@ -250,6 +265,9 @@ before merging.
   "lash out" snaps becoming breakdowns, listener addressed by full name, speech bubbles cut
   mid-word at 60 chars (now whole sentences / word boundary, 84 chars), shared secrets stored
   without their content. The tick loop now warns when ticks overrun the interval (`[tick] … slow`).
+  Later the same day: L1 (setting stated), facts about someone and themselves ("Priya said terrible
+  things to Priya"), raw relationship keys in the feed ("are now romantic_interest"), seeded
+  memories never retrievable (no vectors).
 
 ## Next steps (suggested order)
 
