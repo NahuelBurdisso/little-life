@@ -6,15 +6,21 @@
 --
 -- The hand-authored 32x32 front sprite `<name>.png` stays the source of truth. For each one this
 -- writes `<name>_sheet.aseprite` (frames + tags, editable in Aseprite) and `<name>_sheet.png`, a
--- horizontal strip the client slices by index. Frame layout — keep in sync with
--- `SHEET_FRAMES` in src/components/canvas/agentSheet.ts:
+-- horizontal strip the client slices by index. Frame layout — keep in sync with `SHEET_FRAMES` in
+-- src/components/canvas/agentFrames.ts and with `bodyFrames` in src/lib/residentArt/bodySheet.ts
+-- (the generator for residents without art); agentFrames.test.ts parses `TAGS` below to check:
 --
 --   0 idle_down   1 blink_down   2-5 walk_down   6 idle_up   7-10 walk_up
+--   11 idle_side   12-15 walk_side
+--
+-- The side view faces right. The client mirrors the whole rig for a walk to the left, so one
+-- profile serves both directions (and the rig's held item swaps hands with it).
 --
 -- Everything is derived rather than drawn so all 13 residents keep their identity and a retouch of
 -- the base sprite only needs a re-run. The derivations lean on the layout every base sprite shares:
 -- feet at the bottom with a translucent drop shadow under them, legs split by an outline column at
--- x=15/16, head on top of a wider torso whose outermost columns are the arms.
+-- x=15/16, head on top of a wider torso whose outermost columns are the arms, and a face template
+-- with the eyes five rows above the neck.
 
 local W, H = 32, 32
 local MID = 16 -- first column of the right half
@@ -24,7 +30,16 @@ local function A(p) return pc.rgbaA(p) end
 local function key(p) return p end
 local function luma(p) return 0.299 * pc.rgbaR(p) + 0.587 * pc.rgbaG(p) + 0.114 * pc.rgbaB(p) end
 local OUTLINE = app.pixelColor.rgba(0x1a, 0x15, 0x10, 255) -- the art bible's universal outline
+local EYE_WHITE = app.pixelColor.rgba(0xf0, 0xe2, 0xc8, 255) -- same eye colours as bodySheet.ts
+local PUPIL = app.pixelColor.rgba(0x1a, 0x10, 0x0a, 255)
 local EYE_MAX_LUMA = 34 -- pupils are near-black; so is a lot of hair, hence the isolation test
+
+-- Tag name, first frame, last frame (1-based, Aseprite's numbering) and per-frame duration in ms.
+local TAGS = {
+  { "idle_down", 1, 1, 400 }, { "blink_down", 2, 2, 120 }, { "walk_down", 3, 6, 140 },
+  { "idle_up", 7, 7, 400 }, { "walk_up", 8, 11, 140 },
+  { "idle_side", 12, 12, 400 }, { "walk_side", 13, 16, 140 },
+}
 
 local function blank() local i = Image(W, H, ColorMode.RGB); i:clear(0); return i end
 local function get(img, x, y)
@@ -252,9 +267,65 @@ local function blink(img, a, skin)
   return out
 end
 
+-- ── Front-only garments ───────────────────────────────────────────────────────────────────
+
+-- Colours that only ever show on the front of the torso: aprons, bibs, ties, collars. They never
+-- reach the torso's side columns (the ones next to the arms) nor the arms themselves. That is what
+-- tells Priya's apron — white from the shoulder seam to below the waist, but never at her sides —
+-- from Sofia's pale shirt, which wraps round to the sleeves.
+local function frontOnlyColours(img, a)
+  local out = {}
+  if not a.armTop then return out end
+  local l, r = a.armLeftX + 3, a.armRightX - 3
+  local seen, allRound = {}, {}
+  for y = a.neck + 1, a.legTop - 1 do
+    for x = l, r do
+      local p = get(img, x, y)
+      if A(p) == 255 and not isInk(p) then seen[p] = true end
+    end
+    for _, x in ipairs({ l, r, a.armLeftX + 1, a.armRightX - 1 }) do
+      local p = get(img, x, y)
+      if A(p) == 255 and not isInk(p) then allRound[p] = true end
+    end
+  end
+  for p in pairs(seen) do
+    if not allRound[p] then out[p] = true end
+  end
+  return out
+end
+
+-- The colour of each torso row seen from behind or from the side: the most common colour of the
+-- three columns inside each arm, front-only garments excluded, so horizontal bands — blouse, belt,
+-- skirt — survive. A row the front garment covers edge to edge (an apron's skirt, the bib's top
+-- row) takes the torso's most common side colour instead: the dress under the apron. It used to
+-- take the apron itself, which is why Priya showed a white apron from behind.
+local function torsoSides(img, a, frontOnly)
+  local sides = {}
+  if not a.armTop then return sides end
+  local l, r = a.armLeftX + 3, a.armRightX - 3
+  local tally, missing = {}, {}
+  for y = a.neck + 1, a.legTop - 1 do
+    local counts = {}
+    for _, x in ipairs({ l, l + 1, l + 2, r - 2, r - 1, r }) do
+      local p = get(img, x, y)
+      if A(p) == 255 and not isInk(p) and not frontOnly[p] then counts[p] = (counts[p] or 0) + 1 end
+    end
+    local side = mode(counts)
+    if side then
+      sides[y] = side
+      tally[side] = (tally[side] or 0) + 1
+    else
+      table.insert(missing, y)
+    end
+  end
+  local fill = mode(tally)
+  for _, y in ipairs(missing) do sides[y] = fill end
+  return sides
+end
+
 -- Back view: the head turns to hair, front details (ties, buttons, aprons, bibs) turn to the
 -- garment colour at the side of each row. Silhouette, outline, arms and legs are untouched.
-local function backView(img, a, skin, hair)
+local function backView(img, a, skin, hair, sides)
   local out = copy(img)
   -- Whatever sits on the top three rows of the head is a hat or the crown of the hair; both look
   -- the same from behind, so those colours are kept wherever they appear.
@@ -279,17 +350,12 @@ local function backView(img, a, skin, hair)
       end
     end
   end
-  -- Torso: each row takes the most common colour of the three columns inside each arm, so
-  -- horizontal bands — blouse, belt, skirt — survive while the centre loses its front-only detail.
+  -- Torso: each row flattens to its side colour (`torsoSides`), so the centre loses its
+  -- front-only detail.
   if a.armTop then
     local l, r = a.armLeftX + 3, a.armRightX - 3
     for y = a.neck + 2, a.legTop - 1 do
-      local counts = {}
-      for _, x in ipairs({ l, l + 1, l + 2, r - 2, r - 1, r }) do
-        local p = get(img, x, y)
-        if A(p) == 255 and not isInk(p) then counts[p] = (counts[p] or 0) + 1 end
-      end
-      local side = mode(counts)
+      local side = sides[y]
       if side then
         for x = l, r do
           local p = get(img, x, y)
@@ -299,6 +365,265 @@ local function backView(img, a, skin, hair)
     end
   end
   return out
+end
+
+-- ── Side view ──────────────────────────────────────────────────────────────────────────────
+-- Facing right. Built from the front sprite in layers: the crown/hat rows as they are (a hat or
+-- the top of the hair looks the same from every side), a profile face, the hair that hangs below
+-- the ears, the torso with its centre columns (and so its front-only detail) taken out, one arm
+-- over it, and two legs in stride. Keep in step with `drawSide` in bodySheet.ts.
+
+local function scaled(p, f)
+  local function c(v) return math.max(0, math.min(255, math.floor(v * f))) end
+  return pc.rgba(c(pc.rgbaR(p)), c(pc.rgbaG(p)), c(pc.rgbaB(p)), 255)
+end
+
+local function round(v) return math.floor(v + 0.5) end
+
+-- Profile head as palette slots from x = PROFILE_X, keyed by row offset from the eye row. Every
+-- base sprite shares the face template (eyes five rows above the neck, an 8-px face at x 12..19),
+-- so one profile fits all of them; what makes it theirs is the palette, the crown rows kept above
+-- it, the hair hanging behind it and the beard on its jaw. The back half is hair with the ear in
+-- front of it, the eye sits one pixel in from the brow, and the nose is the one pixel that sticks
+-- out past the face (x = 20).
+--   1/2 hair dark/mid · s/k/l skin shade/mid/light · w/e eye white/pupil · p mouth · O outline
+local PROFILE_X = 11
+local PROFILE = {
+  [-1] = "O1221kkkk.",
+  [0]  = "O122skwek.",
+  [1]  = "O121sklkkk",
+  [2]  = ".O1sklllk.",
+  [3]  = "..Oskklkp.",
+  [4]  = "...OskkkO.",
+}
+
+-- Hair hanging below the ears — long hair, Elena's braid, Priya's ponytail — lies outside the face
+-- columns on the front sprite. Returns the lowest such row and its colour, or nil for short hair.
+local function hangingHair(img, a, skin, eye)
+  local counts, bottom = {}, nil
+  for y = eye + 1, a.neck do
+    for x = 0, W - 1 do
+      if x < 12 or x > 19 then
+        local p = get(img, x, y)
+        if A(p) == 255 and not isInk(p) and dist(p, skin) > 70 and luma(p) < 200 then
+          counts[p] = (counts[p] or 0) + 1
+          bottom = y
+        end
+      end
+    end
+  end
+  return bottom, mode(counts)
+end
+
+-- Facial hair: jaw rows (under the nose down to the chin) with at least three pixels that are
+-- hair, not lips and not the shading of a darker skin — very dark, or close to the hair colour.
+-- Two is not enough: Carlos's jaw shadow is two hair-dark pixels, and side-on it became a strap.
+local function beardRows(img, eye, skin, hair)
+  local rows, counts = {}, {}
+  for y = eye + 2, eye + 4 do
+    local n = 0
+    for x = 13, 18 do
+      local p = get(img, x, y)
+      if A(p) == 255 and not isInk(p) and dist(p, skin) > 70 then
+        local r, g, b = pc.rgbaR(p), pc.rgbaG(p), pc.rgbaB(p)
+        local lip = r - g > 40 and r - b > 40
+        if not lip and (luma(p) < 60 or dist(p, hair) < 40) then
+          n = n + 1
+          counts[p] = (counts[p] or 0) + 1
+        end
+      end
+    end
+    if n >= 3 then rows[y] = true end
+  end
+  return rows, mode(counts)
+end
+
+-- The first row of the legs proper: walking up from the feet, rows holding nothing but the two
+-- legs (nothing outside x 12..19, a dark seam at 15/16). At most six rows: dark trousers pass the
+-- seam test right up to the belt, and a hip that long would stride from the waist.
+local function sideLegTop(img, a)
+  local top = a.bottom
+  for y = a.bottom, a.top, -1 do
+    local ok = true
+    for x = 0, W - 1 do
+      if (x < 12 or x > 19) and A(get(img, x, y)) == 255 then ok = false end
+    end
+    for _, x in ipairs({ MID - 1, MID }) do
+      local p = get(img, x, y)
+      if A(p) == 255 and luma(p) > EYE_MAX_LUMA then ok = false end
+    end
+    if not ok then break end
+    top = y
+  end
+  return math.max(top, a.bottom - 5)
+end
+
+-- Everything but the moving parts: crown, profile, hanging hair, neck, torso and drop shadow.
+local function sideBody(img, a, skin, hair, frontOnly, sides, legTop)
+  local out = blank()
+  local eye = a.neck - 5
+  for y = 0, eye - 2 do
+    for x = 0, W - 1 do out:drawPixel(x, y, get(img, x, y)) end
+  end
+  -- Brim shadows and other translucent pixels on the face rows stay; so does the drop shadow.
+  for y = eye - 1, H - 1 do
+    for x = 0, W - 1 do
+      local p = get(img, x, y)
+      if (A(p) > 0 and A(p) < 255) or (y > a.bottom and A(p) > 0) then out:drawPixel(x, y, p) end
+    end
+  end
+
+  local hb, long = hangingHair(img, a, skin, eye)
+  if hb then
+    -- Behind the head: drawn first so the profile's back outline lies over it.
+    for y = eye + 1, hb do
+      out:drawPixel(10, y, OUTLINE)
+      out:drawPixel(11, y, long)
+      out:drawPixel(12, y, scaled(long, 0.8))
+    end
+    if hb < a.neck then
+      out:drawPixel(11, hb + 1, OUTLINE)
+      out:drawPixel(12, hb + 1, OUTLINE)
+    end
+  end
+
+  local slots = {
+    O = OUTLINE, ["1"] = scaled(hair, 0.75), ["2"] = hair,
+    s = scaled(skin, 0.8), k = skin, l = scaled(skin, 1.12),
+    w = EYE_WHITE, e = PUPIL,
+    p = pc.rgba(math.floor(pc.rgbaR(skin) * 0.72), math.floor(pc.rgbaG(skin) * 0.62),
+                math.floor(pc.rgbaB(skin) * 0.58), 255),
+  }
+  local beard, beardC = beardRows(img, eye, skin, hair)
+  for dy = -1, 4 do
+    local row, y = PROFILE[dy], eye + dy
+    for i = 1, #row do
+      local c = row:sub(i, i)
+      if c ~= "." then
+        local x = PROFILE_X + i - 1
+        local p = slots[c]
+        if beard[y] and beardC and x >= 15 and (c == "s" or c == "k" or c == "l") then p = beardC end
+        out:drawPixel(x, y, p)
+      end
+    end
+  end
+  -- Neck, as on the front (its centre run only: long hair beside it was drawn above).
+  if a.minX[a.neck] then
+    for x = a.minX[a.neck], a.maxX[a.neck] do out:drawPixel(x, a.neck, get(img, x, a.neck)) end
+  end
+
+  -- Torso: drop the two centre columns (placket, tie, buttons — the front's own detail) and close
+  -- the halves up, so the chest is two pixels narrower than the front and the arms are gone. A
+  -- front-only garment keeps only the two frontmost columns: the edge of an apron seen side-on.
+  for y = a.neck + 1, legTop - 1 do
+    local x0, x1 = a.minX[y], a.maxX[y]
+    if x0 and x0 < MID - 1 and x1 > MID then
+      -- The body's own outline is the first ink out from the centre. The row's opaque run can go
+      -- further: through the arms, or into Carlos's hammer hanging at his hip, which side-on
+      -- became a stray fist in front of the belly.
+      local l, r = x0, x1
+      for x = MID - 2, x0, -1 do if isInk(get(img, x, y)) then l = x; break end end
+      for x = MID + 1, x1 do if isInk(get(img, x, y)) then r = x; break end end
+      if r - l >= 5 then x0, x1 = l, r end
+      -- Arms drawn without an inner outline (Elena's two-pixel sleeves) have no ink to stop at:
+      -- clamp to the torso proper and close it with outline. The arm band is the four rows over
+      -- the hand, whatever `analyse` measured.
+      local band = a.armBottom and y >= a.armBottom - 4 and y <= a.armBottom + 1
+      if band then x0, x1 = math.max(x0, a.armLeftX + 2), math.min(x1, a.armRightX - 2) end
+      for x = x0, MID - 2 do out:drawPixel(x + 1, y, get(img, x, y)) end
+      for x = MID + 1, x1 do out:drawPixel(x - 1, y, get(img, x, y)) end
+      if band then
+        out:drawPixel(x0 + 1, y, OUTLINE)
+        out:drawPixel(x1 - 1, y, OUTLINE)
+      end
+      if sides[y] then
+        for x = x0 + 2, x1 - 4 do
+          if frontOnly[out:getPixel(x, y)] then out:drawPixel(x, y, sides[y]) end
+        end
+      end
+    end
+  end
+  return out
+end
+
+-- The near arm, from the shoulder to the hand, swung `swing` px at the hand (+ = forward). Sleeve
+-- colours come from the front's arm column; an arm hidden under a braid falls back to the other
+-- arm, then to the torso's side colour.
+local function sideArm(out, img, a, sides, skin, swing)
+  if not a.armBottom then return end
+  local top, bottom = a.armBottom - 3, a.armBottom
+  local function armColour(y, fallback)
+    for _, x in ipairs({ a.armLeftX + 1, a.armRightX - 1 }) do
+      local p = get(img, x, y)
+      if A(p) == 255 and not isInk(p) then return p end
+    end
+    return fallback
+  end
+  for y = top, bottom do
+    local x = 15 + round(swing * (y - top + 1) / (bottom - top + 1))
+    local c = (y == bottom) and armColour(y, skin) or armColour(y, sides[y] or skin)
+    out:drawPixel(x - 1, y, OUTLINE)
+    out:drawPixel(x, y, c)
+    out:drawPixel(x + 1, y, scaled(c, 0.8))
+    if y == bottom then out:drawPixel(x + 2, y, OUTLINE) end
+  end
+  out:drawPixel(15 + swing, bottom + 1, OUTLINE)
+  out:drawPixel(16 + swing, bottom + 1, OUTLINE)
+end
+
+-- One leg from the front's left-leg strip (x 12..15: outline, two colours, seam). The hip stays
+-- put and the foot lands `foot` px forward (+) or back (-), the rows between sheared along; `lift`
+-- raises the foot like `liftLeg`. The sole and the closing outline reach one pixel further forward:
+-- the toe that says which way the body faces. The far leg is darker, so a stride reads as two legs.
+local function sideLeg(out, img, top, bottom, foot, lift, far)
+  local n = math.max(1, bottom - top)
+  for y = top, bottom do
+    local sy = y + lift
+    if sy <= bottom then
+      local x = 14 + round(foot * (y - top) / n)
+      for i = 0, 3 do
+        local p = get(img, 12 + i, sy)
+        if A(p) == 255 then
+          if far and not isInk(p) then p = scaled(p, 0.7) end
+          out:drawPixel(x + i, y, p)
+        end
+      end
+      if sy == bottom - 1 then
+        local shoe = get(img, 14, sy)
+        if far and not isInk(shoe) then shoe = scaled(shoe, 0.7) end
+        out:drawPixel(x + 3, y, shoe)
+        out:drawPixel(x + 4, y, OUTLINE)
+      elseif sy == bottom then
+        out:drawPixel(x + 4, y, OUTLINE)
+      end
+    end
+  end
+end
+
+-- idle, then the walk: contact (near leg forward, arm back) · passing (far leg swings through,
+-- lifted) · contact (far leg forward, arm forward) · passing (near leg swings through). Contact
+-- frames bob the body down a pixel, as the front walk does.
+local SIDE_POSES = {
+  { far = -1, near = 0, arm = 0, bob = 0 },
+  { far = -2, near = 2, arm = -2, bob = 1 },
+  { far = 1, farLift = 1, near = -1, arm = 0, bob = 0 },
+  { far = 2, near = -2, arm = 2, bob = 1 },
+  { far = -1, near = 1, nearLift = 1, arm = 0, bob = 0 },
+}
+
+local function sideFrames(img, a, skin, hair, frontOnly, sides)
+  local legTop = sideLegTop(img, a)
+  local body = sideBody(img, a, skin, hair, frontOnly, sides, legTop)
+  local frames = {}
+  for _, pose in ipairs(SIDE_POSES) do
+    local f = copy(body)
+    sideLeg(f, img, legTop, a.bottom, pose.far, pose.farLift or 0, true)
+    sideLeg(f, img, legTop, a.bottom, pose.near, pose.nearLift or 0, false)
+    sideArm(f, img, a, sides, skin, pose.arm)
+    if pose.bob > 0 then f = bob(f, { legTop = legTop }, pose.bob) end
+    table.insert(frames, f)
+  end
+  return frames
 end
 
 -- ── Build ──────────────────────────────────────────────────────────────────────────────────
@@ -323,12 +648,16 @@ local function build(dir, name)
   local base = blank(); base:drawImage(src, Point(0, 0))
   local a = analyse(base)
   local skin, hair = palette(base, a)
-  local back = backView(base, a, skin, hair)
+  local frontOnly = frontOnlyColours(base, a)
+  local sides = torsoSides(base, a, frontOnly)
+  local back = backView(base, a, skin, hair, sides)
 
   local frames = { base, blink(base, a, skin) }
   for _, f in ipairs(walkCycle(base, a)) do table.insert(frames, f) end
   table.insert(frames, back)
   for _, f in ipairs(walkCycle(back, a)) do table.insert(frames, f) end
+  for _, f in ipairs(sideFrames(base, a, skin, hair, frontOnly, sides)) do table.insert(frames, f) end
+  assert(#frames == TAGS[#TAGS][3], "frame count out of step with TAGS")
 
   local spr = Sprite(W, H, ColorMode.RGB)
   spr.filename = name .. "_sheet"
@@ -336,13 +665,8 @@ local function build(dir, name)
   local layer = spr.layers[1]
   layer.name = "body"
   for i, img in ipairs(frames) do spr:newCel(layer, spr.frames[i], img, Point(0, 0)) end
-  local durations = { 400, 120, 140, 140, 140, 140, 400, 140, 140, 140, 140 }
-  for i, d in ipairs(durations) do spr.frames[i].duration = d / 1000 end
-  local tags = {
-    { "idle_down", 1, 1 }, { "blink_down", 2, 2 }, { "walk_down", 3, 6 },
-    { "idle_up", 7, 7 }, { "walk_up", 8, 11 },
-  }
-  for _, t in ipairs(tags) do
+  for _, t in ipairs(TAGS) do
+    for i = t[2], t[3] do spr.frames[i].duration = t[4] / 1000 end
     local tag = spr:newTag(t[2], t[3]); tag.name = t[1]
   end
   spr:saveAs(app.fs.joinPath(dir, name .. "_sheet.aseprite"))

@@ -124,11 +124,12 @@ body {
 @media (prefers-reduced-motion: reduce) { .ui-skeleton { animation: none; } }
 
 /* Loading screen (src/components/ui/LoadingScreen.tsx): a townsperson strolling
-   along the title card. The sheet is 11 frames of 32px (canvas/agentFrames.ts);
-   frames 2-5 are the front-facing walk cycle, drawn here at 2x. */
+   along the title card. The sheet is 16 frames of 32px (canvas/agentFrames.ts);
+   frames 12-15 are the side walk cycle (facing right; the scaleX(-1) half of the
+   stroll mirrors it), drawn here at 2x. */
 @keyframes ui-walk-cycle {
-  from { background-position-x: -128px; }
-  to { background-position-x: -384px; }
+  from { background-position-x: -768px; }
+  to { background-position-x: -1024px; }
 }
 @keyframes ui-walk-across {
   0% { transform: translateX(-130px) scaleX(1); }
@@ -140,7 +141,7 @@ body {
 .ui-walker {
   width: 64px;
   height: 64px;
-  background-size: 704px 64px;
+  background-size: 1024px 64px;
   image-rendering: pixelated;
   animation:
     ui-walk-cycle 0.5s steps(4) infinite,
