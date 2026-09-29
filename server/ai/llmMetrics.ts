@@ -20,6 +20,7 @@ import path from 'path';
 export type LLMPurpose =
   | 'conversation'
   | 'conversation.retry'
+  | 'conversation.summary'
   | 'snap'
   | 'goal.review'
   | 'goal.ambition'

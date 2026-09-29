@@ -35,6 +35,11 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => (ctx.who === 'I' ? `I told ${ctx.other}, "${ctx.quote}"` : `${ctx.other} told me, "${ctx.quote}"`),
     (ctx) => `Talking with ${ctx.other}, ${ctx.who === 'I' ? 'I' : 'they'} said, "${ctx.quote}"`,
   ],
+  // The participant's own first-person takeaway (see conversationSummary.ts).
+  conversation_takeaway: [
+    (ctx) => `Talking with ${ctx.other}: ${ctx.takeaway}`,
+    (ctx) => `After my talk with ${ctx.other}: ${ctx.takeaway}`,
+  ],
   conversation_cut_short_quote: [
     (ctx) => `${ctx.other} and I got cut off right after ${ctx.who === 'I' ? 'I' : 'they'} said, "${ctx.quote}"`,
     (ctx) => `My conversation with ${ctx.other} ended before we were done. ${ctx.who === 'I' ? 'I' : 'They'} had just said, "${ctx.quote}"`,

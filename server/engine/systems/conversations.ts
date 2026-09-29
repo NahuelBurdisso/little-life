@@ -1395,6 +1395,9 @@ async function finishCompletedConversation(
 
     simEvents.emit('conversation:ended', {
       agentId: participant.id,
+      // Lets the memory observer summarise the conversation once for all
+      // participants (lib/memory/conversationSummary.ts).
+      conversationId: fresh.id,
       perpetratorId: otherIds[0] ?? null,
       otherName: otherNames.join(' and '),
       summary: fresh.topic ?? '',

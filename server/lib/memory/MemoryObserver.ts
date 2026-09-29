@@ -6,6 +6,12 @@ import { db } from '../../db';
 import { agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { gameMinutesNow } from '../worldClock';
+import { CONFIG } from '../constants';
+import { summarizeConversation, MIN_SUMMARY_LINES, type SummaryLine } from './conversationSummary';
+import { isFallbackMessage } from '../../ai/sanitizeDialogue';
+
+/** One summary call per conversation, shared by its participants' handlers. */
+const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
 
 /**
  * Game minutes before the same perception line may be stored again for the
@@ -55,6 +61,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     'conversation:ended',
     ({
       agentId,
+      conversationId,
       otherName,
       summary,
       turns,
@@ -63,6 +70,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       messages,
     }: {
       agentId: number;
+      conversationId?: number;
       otherName: string;
       summary: string;
       turns: number;
@@ -70,9 +78,6 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       truncated?: boolean;
       messages?: GistLine[];
     }) => {
-      // Remember something that was actually said, not just the topic label.
-      // Only LLM conversations pass their transcript; template ones (and any
-      // transcript with nothing worth quoting) keep the topic templates.
       const names = new Map<number, string | undefined>();
       const nameOf = (id: number) => {
         if (!names.has(id)) {
@@ -80,6 +85,48 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         }
         return names.get(id);
       };
+
+      // LLM conversations long enough to have content: remember each side's
+      // own takeaway (one shared LLM call). A cut-short one keeps the gist and
+      // its "we got cut off" wording.
+      const spoken: SummaryLine[] = (messages ?? [])
+        .filter((m) => !isFallbackMessage(m, nameOf(m.speakerId) ?? ''))
+        .map((m) => ({ speaker: nameOf(m.speakerId) ?? 'Someone', text: m.text }));
+      const me = nameOf(agentId);
+      if (CONFIG.AI.CONVERSATION_SUMMARIES && conversationId != null && !truncated && me && spoken.length >= MIN_SUMMARY_LINES) {
+        let pending = pendingSummaries.get(conversationId);
+        if (!pending) {
+          const participants = [...new Set(spoken.map((l) => l.speaker))];
+          pending = summarizeConversation(participants, spoken);
+          pendingSummaries.set(conversationId, pending);
+          void pending.finally(() => setTimeout(() => pendingSummaries.delete(conversationId), 60_000));
+        }
+        void pending.then((takeaways) => {
+          const takeaway = takeaways?.get(me);
+          // The world may have been replaced while the model answered, and
+          // SQLite reuses ids: only record for the same person.
+          const current = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get()?.name;
+          if (current !== me) return;
+          if (!takeaway) {
+            recordGist();
+            return;
+          }
+          memoryService.record(
+            agentId,
+            'conversation',
+            describeEvent('conversation_takeaway', { other: otherName, takeaway }),
+            { subtype: 'conversation', summary, turns, takeaway: true },
+            sentiment,
+          );
+        });
+        return;
+      }
+      recordGist();
+
+      function recordGist(): void {
+      // Remember something that was actually said, not just the topic label.
+      // Only LLM conversations pass their transcript; template ones (and any
+      // transcript with nothing worth quoting) keep the topic templates.
       const gist = messages?.length ? pickConversationGist(messages, nameOf) : null;
       let description: string;
       if (gist) {
@@ -116,6 +163,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         },
         sentiment,
       );
+      }
     },
   );
 

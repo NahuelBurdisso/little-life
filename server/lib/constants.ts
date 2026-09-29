@@ -169,6 +169,11 @@ export const CONFIG = {
     // 5 min unloads it whenever the game sits paused a while, and the next
     // conversation turn then pays a multi-second reload.
     KEEP_ALIVE: process.env.LLM_KEEP_ALIVE ?? '30m',
+    // One LLM call per finished LLM conversation writes each participant's
+    // first-person takeaway as their memory of it (conversationSummary.ts).
+    // Off under vitest: the observer runs inside engine tests, which must not
+    // reach a real model.
+    CONVERSATION_SUMMARIES: !process.env.VITEST && process.env.LLM_CONVERSATION_SUMMARIES !== '0',
   },
 
   // Decision Engine
