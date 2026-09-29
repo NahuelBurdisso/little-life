@@ -30,7 +30,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 | Server | Node + `tsx`, Express 5, tRPC 11 over **WebSocket only** (`ws://localhost:3001`) |
 | DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
 | Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
-| LLM | Ollama (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Config in `.env` |
+| LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything; config in `.env`, Ollama flags in `start-game.bat` |
 | Tests | Vitest 2, 43 files / ~504 tests, all server-side |
 
 ## Commands
@@ -41,6 +41,8 @@ npm run check        # tsc --noEmit + vitest run  ← gate for every change
 npm test             # vitest only
 npm run deadcode     # orphan files + exports nothing uses (confirm with grep before deleting)
 npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
+npx tsx scripts/llm-smoke.ts       # one of each structured prompt against the model
+npx tsx scripts/llm-bench.ts --trace t.jsonl --models a,b   # replay a captured LLM_TRACE
 npx tsx server/seed-world.ts       # reseed the running server's world
 node scripts/shot-gallery.mjs day  # Playwright screenshots of :5173 (needs dev running)
 ```
@@ -68,7 +70,9 @@ server/
   lib/                *Engine.ts subsystems, cascade/ (Ripple/Tension/Snap), memory/,
                       goals/, planning/, perception/, worldgen/ (procedural town pipeline)
   lib/simEvents.ts    sync EventEmitter; listeners run INSIDE the emitting phase's transaction
-  ai/                 ollama.ts client, llmSemaphore (8 slots, priority), generateResponse
+  ai/                 ollama.ts client (format/JSON schema, metrics, LLM_TRACE), llmSemaphore
+                      (LLM_PARALLEL slots = OLLAMA_NUM_PARALLEL, 1 reserved for dialogue),
+                      llmMetrics, warmup, generateResponse
   autoplay/           profiler + boredom auto-nudger (AUTOPLAY_CONFIG in lib/constants.ts)
   data/               static data: agents, templates, interiors, building templates
   db/                 schema.ts, index.ts (pragmas + additive ALTER migrations), seed.ts
@@ -98,9 +102,12 @@ directly — keep those free of Node/DB imports.
   `tick_speed > 1`. Prefer game-time.
 - **Client data freshness.** Only queries invalidated by a subscription hook refresh
   (`refetchOnWindowFocus: false`). A new query that isn't wired to a channel will be stale forever.
-- **Hardcoded ports:** client WS URL `ws://localhost:3001` in `src/lib/trpc.ts`.
+- **Ports:** client WS URL defaults to `ws://localhost:3001` (`src/lib/trpc.ts`), overridable with `VITE_WS_URL`.
 - Windows + `core.autocrlf`: expect LF→CRLF warnings; don't commit whitespace-only diffs.
 - Test runs are noisy (`[worldgen] done ...` logs) — grep for `Test Files` / `FAIL`.
+- **LLM output that code parses is structured**: pass a JSON schema as `format` to `callOllamaChat`
+  (see `planPrompts.ts`, `goalPrompts.ts`) and keep a tolerant parser. Tag every call with `purpose`.
+  Changing `num_ctx` per call makes Ollama reload the model — it is pinned in `CONFIG.AI.NUM_CTX`.
 - Vitest 2 quirk: a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
   when the throw is caught. Use `mockClear()` + `mockImplementationOnce(() => { throw ... })`.
 
