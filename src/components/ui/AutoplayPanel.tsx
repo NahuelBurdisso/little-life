@@ -3,6 +3,7 @@ import { trpc } from "../../lib/trpc";
 import { pushToast } from "../../lib/toast";
 import { EmptyState } from "./EmptyState";
 import { Skeleton } from "./Skeleton";
+import { STORYTELLERS, matchStoryteller, type StorytellerPreset } from "../../../server/data/rulesCatalog";
 
 interface AutoplayPanelProps {
   isOpen: boolean;
@@ -116,6 +117,117 @@ function SectionTitle({ children, right }: { children: ReactNode; right?: ReactN
   );
 }
 
+/**
+ * The Storyteller: one click sets how dramatic, sickly and contagious the town
+ * is (world.setRules, saved with the world) and how eagerly autoplay pokes it
+ * (autoplay.configure, process-wide). The two live in different places on the
+ * server, so a preset is two mutations; the badge re-derives which preset is
+ * running from both, and reads "Custom" once either is changed by hand.
+ */
+function StorytellerSection({ poll }: { poll: number | false }) {
+  const utils = trpc.useUtils();
+  const { data: rules } = trpc.world.getRules.useQuery(undefined, { refetchInterval: poll });
+  const { data: config } = trpc.autoplay.getConfig.useQuery(undefined, { refetchInterval: poll });
+  const setRules = trpc.world.setRules.useMutation();
+  // Its own instance: the panel's `configure` toasts "Autoplay on/off", and a
+  // preset should answer with one toast of its own.
+  const configure = trpc.autoplay.configure.useMutation();
+  const pending = setRules.isPending || configure.isPending;
+
+  const current =
+    rules && config
+      ? matchStoryteller(rules, { enabled: config.ENABLED, boredThreshold: config.BOREDOM_THRESHOLD })
+      : undefined;
+
+  async function apply(preset: StorytellerPreset) {
+    try {
+      const res = await setRules.mutateAsync(preset.rules);
+      if (!res.ok) {
+        pushToast(`Couldn't set the storyteller — ${res.error}.`, "warning", preset.icon);
+        return;
+      }
+      await configure.mutateAsync({
+        enabled: preset.autoplay.enabled,
+        boredThreshold: preset.autoplay.boredThreshold,
+        // A preset that turns the watcher on means it to act, not just watch.
+        ...(preset.autoplay.enabled ? { autoNudge: true } : {}),
+      });
+      pushToast(`Storyteller: ${preset.label}. ${preset.blurb}`, "success", preset.icon);
+    } catch {
+      pushToast("Couldn't change the storyteller — is the server running?", "error");
+    } finally {
+      void utils.world.getRules.invalidate();
+      void utils.autoplay.getConfig.invalidate();
+    }
+  }
+
+  const currentLabel =
+    current === undefined ? null : current === null ? "Custom" : STORYTELLERS.find((p) => p.id === current)!.label;
+
+  return (
+    <div className="px-5 py-3 border-b border-ui-line">
+      <SectionTitle
+        right={
+          currentLabel && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 border ${
+                current ? "bg-ui-gold/15 text-ui-gold border-ui-gold/40" : "bg-ui-raised text-ui-muted border-ui-line"
+              }`}
+              title={current ? "The town is running this preset" : "Rules or autoplay were changed by hand"}
+            >
+              {currentLabel}
+            </span>
+          )
+        }
+      >
+        Storyteller
+      </SectionTitle>
+      <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Storyteller">
+        {STORYTELLERS.map((p) => {
+          const active = current === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={pending || !rules || !config}
+              onClick={() => void apply(p)}
+              title={p.blurb}
+              className={`text-left px-2 py-1.5 border transition-colors disabled:opacity-50 ${
+                active
+                  ? "bg-ui-gold/10 border-ui-gold text-ui-text"
+                  : "bg-ui-raised border-ui-line text-ui-dim hover:border-ui-line-accent hover:text-ui-text"
+              }`}
+            >
+              <div className="text-xs font-medium">
+                {p.icon} {p.label}
+              </div>
+              <div className="text-[9px] text-ui-muted leading-snug mt-0.5">
+                drama {p.rules.dramaIntensity} · {p.autoplay.enabled ? `nudges > ${p.autoplay.boredThreshold}` : "no nudges"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {rules && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {[
+            ["drama", rules.dramaIntensity],
+            ["sickness", rules.sicknessRate],
+            ["contagion", rules.contagionRate],
+            ["death", rules.deathEnabled ? "on" : "off"],
+          ].map(([k, v]) => (
+            <span key={k} className="text-[10px] px-1.5 py-0.5 bg-ui-raised border border-ui-line text-ui-dim">
+              <span className="text-ui-muted">{k}</span> {v}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ago(ms: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
   if (s < 60) return "just now";
@@ -214,6 +326,8 @@ export function AutoplayPanel({ isOpen, onClose }: AutoplayPanelProps) {
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          <StorytellerSection poll={poll} />
+
           {/* Controls */}
           <div className="px-5 py-3 border-b border-ui-line space-y-3">
             {!config ? (
