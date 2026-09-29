@@ -8,6 +8,7 @@ import { gameMinutes } from './gameClock';
 import { gameMinutesNow } from './worldClock';
 import { addToInventory, removeFromInventory, getInventoryCount } from './economyEngine';
 import { ITEM_REGISTRY } from '../data/economyData';
+import { CONFIG } from './constants';
 
 // ─── Gift Engine ──────────────────────────────────────────────────────────────
 // After positive conversations, warm/romantic agents may spontaneously gift items.
@@ -20,6 +21,70 @@ import { ITEM_REGISTRY } from '../data/economyData';
 // the more often the same agent gifted per game day.
 const lastGiftMinute = new Map<number, number>();
 export const GIFT_COOLDOWN_MINUTES = 1440; // 1 game day
+
+// ─── Gift budget by wealth (E8) ───────────────────────────────────────────────
+// The starting ties made chats friendlier, and every friendly chat rolls a
+// gift, so the soak saw 3-6 gifts a day town-wide — and a fair share came from
+// people with $30-45 in the till, who then handed over $15 or the bread they
+// were about to eat. Generosity is now a budget the giver can afford:
+//
+// - comfortable (cash at or above the money target, i.e. an above-average purse):
+//   one gift a game day, as before;
+// - tight (>= half the target): one every two days;
+// - poor (below that): one every three days, and never the food they need.
+//
+// Wealth is measured against the WORLD's money target (the wizard's starting
+// cash), not a fixed dollar figure, so a rich-town scenario and a poor-town one
+// both give at the same relative rate.
+export type GiftWealthTier = 'comfortable' | 'tight' | 'poor';
+
+/**
+ * Share of the money target at or above which a giver is comfortable. The
+ * treasury pulls cash toward its 80% allowance, so most of a town sits near
+ * there: with the line at 80% nearly everyone was "comfortable" and the soak's
+ * gift count barely moved (-22%); at 100% about half the town is throttled.
+ */
+export const GIFT_COMFORTABLE_SHARE = 1.0;
+/** Share of the money target below which a giver is poor. */
+export const GIFT_TIGHT_SHARE = 0.5;
+/** Cooldown in game days per tier. */
+export const GIFT_COOLDOWN_DAYS: Record<GiftWealthTier, number> = { comfortable: 1, tight: 2, poor: 3 };
+/** Multiplier on the per-chat gift chance per tier: a tight purse is less often open. */
+export const GIFT_CHANCE_FACTOR: Record<GiftWealthTier, number> = { comfortable: 1, tight: 0.6, poor: 0.3 };
+/** A non-comfortable giver keeps at least this many of a food item for themselves. */
+export const GIFT_FOOD_RESERVE = 3;
+
+export function giftWealthTier(money: number, moneyTarget: number): GiftWealthTier {
+  if (money >= moneyTarget * GIFT_COMFORTABLE_SHARE) return 'comfortable';
+  if (money >= moneyTarget * GIFT_TIGHT_SHARE) return 'tight';
+  return 'poor';
+}
+
+/** A cash gift never leaves the giver with less than this (half the money target). */
+export function giftMoneyFloor(moneyTarget: number): number {
+  return moneyTarget * GIFT_TIGHT_SHARE;
+}
+
+/**
+ * First gift item worth handing over, or null. A giver who isn't comfortable
+ * won't give away food down to their last few units: it is their next meal,
+ * and the pantry runs are already the poorest agents' weak spot.
+ */
+export function pickGiftItem(inventory: unknown[], tier: GiftWealthTier): string | null {
+  for (const item of GIFT_ITEMS) {
+    const have = getInventoryCount(inventory as any[], item);
+    if (have <= 0) continue;
+    const isFoodItem = ITEM_REGISTRY[item]?.category === 'food';
+    if (isFoodItem && tier !== 'comfortable' && have <= GIFT_FOOD_RESERVE) continue;
+    return item;
+  }
+  return null;
+}
+
+function worldMoneyTargetNow(): number {
+  const w = db.select({ target: worldState.money_target_per_capita }).from(worldState).limit(1).get();
+  return w?.target ?? CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
+}
 
 /** Drop per-agent gift cooldowns for a world replace (agent ids are reused). */
 export function clearGiftTracking(): void {
@@ -164,6 +229,8 @@ function initGiftSystem(): void {
     const now = Date.now();
     const nowMinute = gameMinutesNow();
     const lastMinute = lastGiftMinute.get(payload.agentId);
+    // Cheap exit for the common case before any DB read: even the richest
+    // giver waits a full day.
     if (lastMinute !== undefined && nowMinute - lastMinute < GIFT_COOLDOWN_MINUTES) return;
 
     // Check personality
@@ -188,25 +255,32 @@ function initGiftSystem(): void {
     // Low morality agents don't gift
     if (personality.morality < 30) giftChance *= 0.3;
 
-    if (Math.random() > giftChance) return;
-
     // Check if agent has money
     const econ = db.select().from(economy).where(eq(economy.agent_id, payload.agentId)).get();
     if (!econ || econ.money < 10) return; // need at least $10 to gift
 
-    // Find best gift item the agent has in inventory
-    let giftItem: string | null = null;
-    for (const item of GIFT_ITEMS) {
-      if (getInventoryCount(econ.inventory as any[], item) > 0) {
-        giftItem = item;
-        break;
-      }
-    }
+    // The gift budget scales with wealth (E8): tighter givers wait longer and
+    // feel generous less often.
+    const moneyTarget = worldMoneyTargetNow();
+    const tier = giftWealthTier(econ.money, moneyTarget);
+    if (lastMinute !== undefined
+      && nowMinute - lastMinute < GIFT_COOLDOWN_MINUTES * GIFT_COOLDOWN_DAYS[tier]) return;
+
+    if (Math.random() > giftChance * GIFT_CHANCE_FACTOR[tier]) return;
+
+    // Find best gift item the agent can spare
+    const giftItem = pickGiftItem(econ.inventory as any[], tier);
 
     // If no items in inventory, buy one (spontaneous purchase for gifting)
     if (!giftItem) {
-      // Just gift money directly — simpler
-      const giftAmount = Math.min(Math.floor(econ.money * 0.15), 15); // 15% of money, max $15
+      // Just gift money directly — simpler. 15% of cash, max $15, and never
+      // below the wealth floor: a giver at $30 of a $57 target used to hand
+      // over $4 of what pays for tomorrow's meals.
+      const giftAmount = Math.min(
+        Math.floor(econ.money * 0.15),
+        15,
+        Math.floor(econ.money - giftMoneyFloor(moneyTarget)),
+      );
       if (giftAmount < 3) return;
 
       const recipientEcon = db.select().from(economy).where(eq(economy.agent_id, otherId)).get();

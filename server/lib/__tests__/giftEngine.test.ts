@@ -15,6 +15,9 @@ import {
   clearGiftTracking,
   giveImpulsiveGift,
   GIFT_COOLDOWN_MINUTES,
+  GIFT_FOOD_RESERVE,
+  giftWealthTier,
+  pickGiftItem,
   IMPULSIVE_GIFT_COOLDOWN_MINUTES,
   IMPULSIVE_GIFT_MONEY_FLOOR,
 } from '../giftEngine';
@@ -72,7 +75,9 @@ function insertAgent(name: string, at: number): number {
   }).returning({ id: agents.id }).get().id;
 }
 
-function insertEconomy(agentId: number, money: number): void {
+type Stack = { itemId: string; quantity: number; acquiredAt: number };
+
+function insertEconomy(agentId: number, money: number, inventory: Stack[] = []): void {
   db.insert(economy).values({
     agent_id: agentId,
     job: 'unemployed',
@@ -81,7 +86,7 @@ function insertEconomy(agentId: number, money: number): void {
     work_performance: 0.5,
     money,
     daily_expenses: 0,
-    inventory: [],
+    inventory,
     last_payday: 0,
     production_remainder: 0,
   }).run();
@@ -152,12 +157,12 @@ let clock = 10_000;
 let n = 0;
 
 /** Fresh giver/receiver pair alone at their own tavern. */
-function pair(giverMoney: number, receiverMoney = 50) {
+function pair(giverMoney: number, receiverMoney = 50, giverInventory: Stack[] = []) {
   n++;
   const loc = insertLocation(`gift tavern ${n}`);
   const giver = insertAgent(`Giver ${n}`, loc);
   const receiver = insertAgent(`Receiver ${n}`, loc);
-  insertEconomy(giver, giverMoney);
+  insertEconomy(giver, giverMoney, giverInventory);
   insertEconomy(receiver, receiverMoney);
   return { loc, giver, receiver };
 }
@@ -321,6 +326,126 @@ describe('conversation gift cooldown', () => {
     setClock(clock + GIFT_COOLDOWN_MINUTES);
     talk(giver, receiver);
     expect(conversationGiftsFrom(giver)).toHaveLength(2);
+  });
+});
+
+/**
+ * E8: gifts doubled after the starting ties, and poor agents gave 3-6 a day —
+ * $15 or the bread they were about to eat. The budget now follows wealth
+ * against the world's money target (default $75 here: comfortable >= $75,
+ * tight >= $37.5, poor below).
+ */
+describe('conversation gift wealth budget', () => {
+  beforeEach(() => {
+    clearGiftTracking();
+    clock += 10_000;
+    setClock(clock);
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const WARM = {
+    honesty: 50, aggression: 20, warmth: 100, impulsiveness: 50, vanity: 50,
+    curiosity: 50, loyalty: 50, morality: 80, sensuality: 50, neuroticism: 50,
+  };
+  const talk = (giver: number, receiver: number) =>
+    simEvents.emit('conversation:ended', { agentId: giver, perpetratorId: receiver, sentiment: 0.9, turns: 6 });
+  const cashGifts = (agentId: number) =>
+    db.select().from(economyTransactions).where(and(
+      eq(economyTransactions.from_agent, agentId),
+      eq(economyTransactions.reason, 'gift'),
+    )).all();
+  const inv = (itemId: string, quantity: number): Stack[] => [{ itemId, quantity, acquiredAt: 0 }];
+  const held = (agentId: number, itemId: string) =>
+    (db.select().from(economy).where(eq(economy.agent_id, agentId)).get()!.inventory as Stack[])
+      .find((i) => i.itemId === itemId)?.quantity ?? 0;
+
+  it('sorts givers into tiers by their share of the money target', () => {
+    expect(giftWealthTier(75, 75)).toBe('comfortable');
+    expect(giftWealthTier(74, 75)).toBe('tight');
+    expect(giftWealthTier(37.5, 75)).toBe('tight');
+    expect(giftWealthTier(37, 75)).toBe('poor');
+    // The same cash is comfortable in a poorer town.
+    expect(giftWealthTier(50, 50)).toBe('comfortable');
+  });
+
+  it('a comfortable giver still gifts once a game day', () => {
+    const { giver, receiver } = pair(200);
+    setEffectivePersonality(giver, WARM);
+    talk(giver, receiver);
+    setClock(clock + GIFT_COOLDOWN_MINUTES);
+    talk(giver, receiver);
+    expect(cashGifts(giver)).toHaveLength(2);
+  });
+
+  it('a tight giver waits two game days', () => {
+    const { giver, receiver } = pair(59);
+    setEffectivePersonality(giver, WARM);
+    talk(giver, receiver);
+    expect(cashGifts(giver)).toHaveLength(1);
+    // $59 - a cash gift: still tight (>= $37.5), so a day is not enough...
+    setClock(clock + GIFT_COOLDOWN_MINUTES);
+    talk(giver, receiver);
+    expect(cashGifts(giver)).toHaveLength(1);
+    // ...but two are.
+    setClock(clock + GIFT_COOLDOWN_MINUTES * 2);
+    talk(giver, receiver);
+    expect(cashGifts(giver).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a tight purse is opened less often: the same roll gifts when comfortable, not when tight', () => {
+    // warmth 100 → 30% per friendly chat; a tight giver gets 60% of that (18%).
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    const rich = pair(200);
+    const tight = pair(59);
+    setEffectivePersonality(rich.giver, WARM);
+    setEffectivePersonality(tight.giver, WARM);
+    talk(rich.giver, rich.receiver);
+    talk(tight.giver, tight.receiver);
+    expect(cashGifts(rich.giver)).toHaveLength(1);
+    expect(cashGifts(tight.giver)).toHaveLength(0);
+  });
+
+  it('a poor giver hands over no cash: it would take them under the floor', () => {
+    const { giver, receiver } = pair(30);
+    setEffectivePersonality(giver, WARM);
+    talk(giver, receiver);
+    expect(cashGifts(giver)).toHaveLength(0);
+    expect(money(giver)).toBe(30);
+  });
+
+  it('a cash gift stops at the wealth floor instead of 15% of cash', () => {
+    // $45 of a $75 target: 15% is $6, but only $7 sits above the $37.5 floor.
+    const { giver, receiver } = pair(45);
+    setEffectivePersonality(giver, WARM);
+    talk(giver, receiver);
+    expect(cashGifts(giver)).toHaveLength(1);
+    expect(money(giver)).toBeGreaterThanOrEqual(37.5);
+  });
+
+  it('a non-comfortable giver keeps the food they need', () => {
+    expect(pickGiftItem(inv('bread', GIFT_FOOD_RESERVE), 'poor')).toBeNull();
+    expect(pickGiftItem(inv('bread', GIFT_FOOD_RESERVE), 'tight')).toBeNull();
+    expect(pickGiftItem(inv('bread', GIFT_FOOD_RESERVE + 1), 'poor')).toBe('bread');
+    expect(pickGiftItem(inv('bread', 1), 'comfortable')).toBe('bread');
+  });
+
+  it('through the event: a poor giver with a little bread gives no bread', () => {
+    // $38 is tight; with 2 loaves (under the reserve) the item path is skipped
+    // and the cash fallback ($0.5 above the floor) is under the $3 minimum.
+    const { giver, receiver } = pair(38, 50, inv('bread', 2));
+    setEffectivePersonality(giver, WARM);
+    talk(giver, receiver);
+    expect(held(giver, 'bread')).toBe(2);
+    expect(cashGifts(giver)).toHaveLength(0);
+  });
+
+  it('through the event: a comfortable giver gives the bread', () => {
+    const { giver, receiver } = pair(200, 50, inv('bread', 2));
+    setEffectivePersonality(giver, WARM);
+    talk(giver, receiver);
+    expect(held(giver, 'bread')).toBe(1);
+    expect(held(receiver, 'bread')).toBe(1);
   });
 });
 
