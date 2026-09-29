@@ -14,7 +14,8 @@ export const contextBuilder = new ContextBuilder(memoryService);
 export const memoryConsolidator = new MemoryConsolidator(memoryService, memoryService.getStore());
 export const selfDescriptionGenerator = new SelfDescriptionGenerator(memoryService);
 
-// Personality-gated reflection threshold
+// Personality-gated reflection threshold, never below this floor.
+const MIN_REFLECTION_THRESHOLD = 80;
 function getReflectionThreshold(agentId: number): number {
   const BASE = 150;
   const agent = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, agentId)).get();
@@ -23,8 +24,8 @@ function getReflectionThreshold(agentId: number): number {
   const c = ((p.curiosity ?? 50) / 100);
   const n = ((p.neuroticism ?? 50) / 100);
   const i = ((p.impulsiveness ?? 50) / 100);
-  return Math.max(80, Math.min(250, BASE + c * -20 + n * -15 + i * 20));
+  return Math.max(MIN_REFLECTION_THRESHOLD, Math.min(250, BASE + c * -20 + n * -15 + i * 20));
 }
 
-export const reflectionTrigger = new ReflectionTrigger(getReflectionThreshold);
+export const reflectionTrigger = new ReflectionTrigger(getReflectionThreshold, MIN_REFLECTION_THRESHOLD);
 export const reflectionRunner = new ReflectionRunner(memoryService);
