@@ -155,7 +155,7 @@ Evidence in the session scratchpad; line numbers approximate.
 - Remaining per-agent queries in `states.ts` (heartbreak check ~679, conversation windows) and
   `needs.ts:602` (13 Drizzle updates/tick). Profile with `npx tsx scripts/tick-profile.ts`.
 - DB migration chain stale (see CLAUDE.md gotchas); now also `clockMigration.ts` via user_version.
-- `playwright` is used by scripts but not in `package.json`. No README. `.env` tracked.
+- `.env` tracked. (README added 2026-09-29; `playwright` is a devDependency — browsers need `npx playwright install chromium`.)
 
 ## Autonomous improvement session (2026-09-29, parallel agents in worktrees, merged)
 
