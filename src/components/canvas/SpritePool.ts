@@ -1,5 +1,6 @@
 import * as PIXI from "pixi.js";
 import { AgentSprite } from "./AgentSprite";
+import { statePoseFor } from "./statePose";
 
 export interface AgentData {
   id: number;
@@ -95,6 +96,7 @@ export class SpritePool {
       sprite.setSelected(id === selectedAgentId);
       sprite.updateStates(agent.activeStates ?? []);
       sprite.updateMood(agent.needs?.mood ?? 50);
+      sprite.setStatePose(statePoseFor(agent));
       sprite.setInsideBuilding(agent.current_location != null);
     }
 

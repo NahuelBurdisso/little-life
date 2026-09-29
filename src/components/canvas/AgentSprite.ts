@@ -2,6 +2,7 @@ import * as PIXI from "pixi.js";
 import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 import { facingFromStep, pickAgentFrame, type SheetFacing } from "./agentFrames";
 import { loadAgentSheet } from "./agentSheet";
+import { newPoseOffsets, poseOffsets, type PoseKind, type StatePose } from "./statePose";
 
 const LERP_SPEED = 0.12;
 
@@ -35,6 +36,11 @@ const SIT_LEAN = 0.05;               // radians of slouch toward `facing`
 const WORK_RATE = 0.09;              // radians per frame (~1.2s per stroke at 60fps)
 const WORK_BOB_HEIGHT = 2.2;         // px the body dips at the bottom of a stroke
 const WORK_LEAN = 0.13;              // radians of forward lean at full stroke
+
+// State body language (statePose.ts) rides on top of the transforms above.
+const STATE_POSE_FADE = 0.08;        // per-frame blend of a pose in/out (also when the kind changes)
+const STATE_POSE_GATE = 0.15;        // per-frame blend of the walking/seated suppression
+const STATE_POSE_WALK_HOLD = 24;     // idle frames (~0.4s) before a stopped body counts as standing
 
 // Blinking (sheet sprites only): a closed-eye frame every few seconds, desynced per agent.
 const BLINK_MIN_GAP = 150;           // frames (~2.5s at 60fps) between blinks, minimum
@@ -127,6 +133,18 @@ export class AgentSprite {
   private workBlend = 0; // 0 = still, 1 = full work motion
   private workPhase = 0;
   private seated = false;
+
+  // State pose: `poseKind` is what the data asks for; `poseActive` is what is playing. When they
+  // differ the old pose eases out (`poseWeight` -> 0) before the new one eases in.
+  private poseKind: PoseKind = 'none';
+  private poseActive: PoseKind = 'none';
+  private poseWeight = 0;
+  private poseGate = 1;       // 0 while the body's current activity rules the pose out
+  private poseClock = Math.random() * 60; // seconds; desyncs agents in the same state
+  private poseDx = 0;         // pose x offset currently baked into rig.x
+  private readonly poseOff = newPoseOffsets();
+  private poseTint = 0xffffff;
+  private moodShade = 0xffffff;
 
   constructor(name: string, spriteKey?: string) {
     this.container = new PIXI.Container();
@@ -242,6 +260,8 @@ export class AgentSprite {
     }
     // Between the behind-attachments and the hand.
     this.rig.addChildAt(sprite, this.rig.getChildIndex(this.hand));
+    // A pose tint or mood shade that arrived while the texture was loading.
+    this.applyTint();
   }
 
   private onSpriteLoadFailed(name: string) {
@@ -309,6 +329,18 @@ export class AgentSprite {
    */
   setSeated(seated: boolean) {
     this.seated = seated;
+  }
+
+  /**
+   * Body language for the agent's states (drunk sway, sad slump...). Cheap to call every data
+   * refresh: it only records the target; `animate` eases the pose in and out.
+   */
+  setStatePose(pose: StatePose) {
+    this.poseKind = pose.kind;
+    if (pose.tint !== this.poseTint) {
+      this.poseTint = pose.tint;
+      this.applyTint();
+    }
   }
 
   /** Horizontal facing: 1 = right, -1 = left. The rig is mirrored accordingly. */
@@ -381,6 +413,7 @@ export class AgentSprite {
       this.sheetFacing = 'down';
       this.showFrame(false);
       this.idlePhase += SLEEP_BREATH_RATE * deltaTime;
+      this.poseDx = 0; // the lying transform below is absolute; no pose offset survives in it
       if (body) {
         body.rotation = this.facing * SLEEP_ROTATION * this.poseBlend;
         body.x = -this.facing * SLEEP_SHIFT_X * this.poseBlend;
@@ -391,7 +424,10 @@ export class AgentSprite {
       return;
     }
 
-    if (body) body.x *= SETTLE; // decay the lying offset after waking
+    // Decay the lying offset after waking — but not the pose's own x offset, which is re-added
+    // below every frame and would otherwise be shrunk to nothing by this.
+    if (body) body.x = (body.x - this.poseDx) * SETTLE;
+    this.poseDx = 0;
 
     const walking = dist > WALK_MIN_STEP * deltaTime;
     this.walkingNow = walking;
@@ -403,6 +439,8 @@ export class AgentSprite {
     this.workBlend +=
       ((this.actionType === 'working' && !walking ? 1 : 0) - this.workBlend) * blendStep;
     if (this.workBlend > 0.01) this.workPhase += WORK_RATE * deltaTime;
+
+    const pose = this.stepPose(walking, deltaTime);
 
     if (walking) {
       this.sheetFacing = facingFromStep(stepX, stepY, this.sheetFacing);
@@ -418,6 +456,7 @@ export class AgentSprite {
         body.y = -Math.abs(Math.sin(this.walkPhase)) * WALK_BOB_HEIGHT * procedural;
         body.rotation = Math.sin(this.walkPhase) * WALK_SWAY * procedural;
         body.scale.set(this.facing, 1);
+        this.addPose(body, pose);
       }
     } else {
       // Stopped agents turn to face the camera unless they're busy with something in
@@ -436,7 +475,7 @@ export class AgentSprite {
       // Idle: breathe, plus whatever the current pose adds. Offsets are absolute
       // rather than decayed so sitting and working hold their shape instead of
       // being pulled back to rest every frame.
-      this.idlePhase += IDLE_BREATH_RATE * deltaTime;
+      this.idlePhase += IDLE_BREATH_RATE * pose.breathRate * deltaTime;
       if (body) {
         const breath = Math.sin(this.idlePhase) * IDLE_BREATH_SCALE;
         // Half-wave: the effort stroke dips and returns, it does not rise above rest.
@@ -448,8 +487,60 @@ export class AgentSprite {
           this.facing * (1 - breath * 0.5),
           (1 + breath) * (1 - SIT_SQUASH * this.sitBlend),
         );
+        this.addPose(body, pose);
       }
     }
+  }
+
+  /**
+   * Advance the state pose and return its offsets for this frame, already weighted by how far
+   * the pose has eased in. The returned object is reused — read it before the next call.
+   *
+   * Suppression: a walking body keeps only `sway` (the drunk's stagger), and a seated or
+   * working one drops the hopping poses (stomp, bounce) that would lift it off its seat or
+   * bench. The gate eases rather than snaps, because walks are strings of short glides and a
+   * hard switch would flicker a slump on and off between steps.
+   */
+  private stepPose(walking: boolean, deltaTime: number) {
+    this.poseClock += deltaTime / 60;
+    const fade = Math.min(1, STATE_POSE_FADE * deltaTime);
+    if (this.poseActive !== this.poseKind) {
+      // Ease the outgoing pose to nothing, then switch.
+      this.poseWeight -= this.poseWeight * fade;
+      if (this.poseWeight < 0.02) {
+        this.poseWeight = 0;
+        this.poseActive = this.poseKind;
+      }
+    } else {
+      this.poseWeight += ((this.poseActive === 'none' ? 0 : 1) - this.poseWeight) * fade;
+    }
+
+    const active = this.poseActive;
+    const hops = active === 'stomp' || active === 'bounce';
+    // Walking includes the brief pauses between the server's steps (see TURN_TO_CAMERA_AFTER).
+    const moving = walking || this.idleFrames < STATE_POSE_WALK_HOLD;
+    const allowed = moving
+      ? active === 'sway'
+      : !(hops && (this.sitBlend > 0.3 || this.workBlend > 0.3));
+    this.poseGate += ((allowed ? 1 : 0) - this.poseGate) * Math.min(1, STATE_POSE_GATE * deltaTime);
+
+    const o = poseOffsets(active, this.poseClock, this.poseOff);
+    const w = this.poseWeight * this.poseGate;
+    o.dx *= w;
+    o.dy *= w;
+    o.rot *= w;
+    o.scaleY = 1 + (o.scaleY - 1) * w;
+    o.breathRate = 1 + (o.breathRate - 1) * w;
+    return o;
+  }
+
+  /** Layer the pose on top of the transform the caller just set on the rig. */
+  private addPose(body: PIXI.Container, o: { dx: number; dy: number; rot: number; scaleY: number }) {
+    body.x += o.dx;
+    body.y += o.dy;
+    body.rotation += this.facing * o.rot;
+    body.scale.y *= o.scaleY;
+    this.poseDx = o.dx;
   }
 
   private showFrame(walking: boolean, blinking = false) {
@@ -519,12 +610,26 @@ export class AgentSprite {
     }
 
     // Sprite: subtle tint based on mood (dark = despair, bright = thriving)
-    if (this.sprite) {
-      const t = Math.max(0, Math.min(1, mood / 100));
-      // Lerp from dim (0x808080) to full bright (0xffffff)
-      const shade = Math.round(128 + 127 * t);
-      this.sprite.tint = (shade << 16) | (shade << 8) | shade;
+    const t = Math.max(0, Math.min(1, mood / 100));
+    // Lerp from dim (0x808080) to full bright (0xffffff)
+    const shade = Math.round(128 + 127 * t);
+    this.moodShade = (shade << 16) | (shade << 8) | shade;
+    this.applyTint();
+  }
+
+  /** Mood shade times the state pose's tint (only `shiver` has one), channel by channel. */
+  private applyTint() {
+    if (!this.sprite) return;
+    const m = this.moodShade;
+    const p = this.poseTint;
+    if (p === 0xffffff) {
+      this.sprite.tint = m;
+      return;
     }
+    const r = (((m >> 16) & 255) * ((p >> 16) & 255) / 255) | 0;
+    const g = (((m >> 8) & 255) * ((p >> 8) & 255) / 255) | 0;
+    const b = ((m & 255) * (p & 255) / 255) | 0;
+    this.sprite.tint = (r << 16) | (g << 8) | b;
   }
 
   /** Show or hide the interior glow effect. */
