@@ -184,6 +184,9 @@ const MIN_BAND = 5;
 class MinHeap {
   private pri: number[] = [];
   private val: number[] = [];
+  /** Priority of the entry the last `pop` returned. A field rather than a
+   *  returned tuple: pop runs ~10k times per search and the tuple was garbage. */
+  topPriority = 0;
   get size() { return this.val.length; }
   push(p: number, v: number) {
     const pri = this.pri, val = this.val;
@@ -197,8 +200,9 @@ class MinHeap {
     }
     pri[i] = p; val[i] = v;
   }
-  /** Pops the minimum; returns [priority, value]. Caller checks `size` first. */
-  pop(): [number, number] {
+  /** Pops the minimum and returns its value (priority in `topPriority`).
+   *  Caller checks `size` first. */
+  pop(): number {
     const pri = this.pri, val = this.val;
     const topP = pri[0], topV = val[0];
     const lastP = pri.pop()!, lastV = val.pop()!;
@@ -216,7 +220,8 @@ class MinHeap {
       }
       pri[i] = lastP; val[i] = lastV;
     }
-    return [topP, topV];
+    this.topPriority = topP;
+    return topV;
   }
 }
 
@@ -401,7 +406,7 @@ export function generateOrganicRoads(
       const d = stampDist(x, y);
       if (d === 0) return junction(net, x, y);
       return baseCost[y * width + x] + nearRoadCost(d);
-    });
+    }, stampDist);
     if (!path) continue;
     // Painted from the junction outward, so the tile order walks away from the
     // network the way a street is actually laid (and lamps follow it).
@@ -556,36 +561,33 @@ function lotsStillFit(
       }
     }
   }
-  // Summed-area table over `blocked`, rebuilt after each placement, so every
-  // candidate origin is an O(1) rect test.
+  // Summed-area table over the road/border mask, so every candidate origin is
+  // an O(1) rect test. Placed lots are few (≤ 13), so they are tested as a list
+  // of reserved rects (footprint + BUILDING_GAP ring) rather than by rebuilding
+  // the table after each one.
   const sat = new Int32Array((width + 1) * (height + 1));
-  const rebuild = () => {
-    for (let y = 0; y < height; y++) {
-      let row = 0;
-      for (let x = 0; x < width; x++) {
-        row += blocked[y * width + x];
-        sat[(y + 1) * (width + 1) + x + 1] = sat[y * (width + 1) + x + 1] + row;
-      }
+  for (let y = 0; y < height; y++) {
+    let row = 0;
+    for (let x = 0; x < width; x++) {
+      row += blocked[y * width + x];
+      sat[(y + 1) * (width + 1) + x + 1] = sat[y * (width + 1) + x + 1] + row;
     }
-  };
+  }
   const rectSum = (x: number, y: number, w: number, h: number) =>
     sat[(y + h) * (width + 1) + x + w] - sat[y * (width + 1) + x + w] -
     sat[(y + h) * (width + 1) + x] + sat[y * (width + 1) + x];
+  const reserved: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  const hitsReserved = (x: number, y: number, w: number, h: number) =>
+    reserved.some((r) => x < r.x2 && x + w > r.x1 && y < r.y2 && y + h > r.y1);
 
   const sorted = [...lots].sort((a, b) => b.w * b.h - a.w * a.h);
-  rebuild();
   for (const lot of sorted) {
     const w = lot.w + LOT_SLACK, h = lot.h + LOT_SLACK;
     let placed = false;
     for (let y = 0; y + h <= height && !placed; y++) {
       for (let x = 0; x + w <= width; x++) {
-        if (rectSum(x, y, w, h) !== 0) continue;
-        for (let yy = Math.max(0, y - BUILDING_GAP); yy < Math.min(height, y + h + BUILDING_GAP); yy++) {
-          for (let xx = Math.max(0, x - BUILDING_GAP); xx < Math.min(width, x + w + BUILDING_GAP); xx++) {
-            blocked[yy * width + xx] = 1;
-          }
-        }
-        rebuild();
+        if (rectSum(x, y, w, h) !== 0 || hitsReserved(x, y, w, h)) continue;
+        reserved.push({ x1: x - BUILDING_GAP, y1: y - BUILDING_GAP, x2: x + w + BUILDING_GAP, y2: y + h + BUILDING_GAP });
         placed = true;
         break;
       }
@@ -621,21 +623,26 @@ const BLOCKED = -2;
 const UNSET = -3;
 
 /**
- * Dijkstra over (cell, heading) states from `start` to the first cell for which
+ * A* over (cell, heading) states from `start` to the first cell for which
  * `cost` returns GOAL (BLOCKED cells are never entered). Heading is part of the
  * state because the turn charge depends on it; without it the search cannot
  * tell a straight run from a zigzag of the same length. Returns the cell path
  * start → goal (inclusive), or null.
  *
- * No heuristic: the goal is "any cell touching the network", whose nearest
- * member is not known in advance, and the map is small (≤ 90×70 cells × 5
- * states), so plain Dijkstra costs a millisecond or two.
+ * `h` must be a lower bound on the remaining cost that drops by at most 1 per
+ * step (every step costs ≥ BASE_COST = 1), i.e. consistent — the callers pass
+ * a tile distance to the goal set, which is. It was plain Dijkstra at first;
+ * the heuristic changes nothing about which costs are optimal (only how ties
+ * break). The saving is modest — a tile distance is a weak bound next to the
+ * rough, near-road and vertical-step charges — and the search is still most of
+ * the ~6 ms an organic network takes at 56×43.
  */
 function cheapestPath(
   start: Tile,
   width: number,
   loX: number, hiX: number, loY: number, hiY: number,
   cost: (x: number, y: number) => number,
+  h: (x: number, y: number) => number,
 ): Tile[] | null {
   const cells = width * (hiY + 2);
   const states = cells * 5; // 4 headings + "none" for the start
@@ -643,9 +650,7 @@ function cheapestPath(
   const prev = new Int32Array(states).fill(-1);
   const heap = new MinHeap();
   const startState = (start.y * width + start.x) * 5 + 4;
-  dist[startState] = 0;
-  heap.push(0, startState);
-  // Memoised per cell: `cost` does noise and distance lookups and would
+  // Memoised per cell: `cost` and `h` do noise and distance lookups and would
   // otherwise run once per incoming edge.
   const memo = new Float64Array(cells).fill(UNSET);
   const costAt = (x: number, y: number) => {
@@ -653,13 +658,23 @@ function cheapestPath(
     if (memo[i] === UNSET) memo[i] = cost(x, y);
     return memo[i];
   };
+  const hMemo = new Float64Array(cells).fill(-1);
+  const hAt = (x: number, y: number) => {
+    const i = y * width + x;
+    if (hMemo[i] < 0) hMemo[i] = h(x, y);
+    return hMemo[i];
+  };
+  dist[startState] = 0;
+  heap.push(hAt(start.x, start.y), startState);
 
   while (heap.size > 0) {
-    const [d, s] = heap.pop();
-    if (d > dist[s]) continue;
+    const s = heap.pop();
+    const f = heap.topPriority;
     const cell = (s / 5) | 0;
     const heading = s % 5;
     const x = cell % width, y = (cell - x) / width;
+    const d = dist[s];
+    if (f > d + hAt(x, y)) continue; // stale entry
     if (s !== startState && costAt(x, y) === GOAL) {
       const out: Tile[] = [];
       for (let t = s; t !== -1; t = prev[t]) {
@@ -682,7 +697,7 @@ function cheapestPath(
       if (nd < dist[ns]) {
         dist[ns] = nd;
         prev[ns] = s;
-        heap.push(nd, ns);
+        heap.push(nd + hAt(nx, ny), ns);
       }
     }
   }
@@ -707,6 +722,14 @@ function closeLoop(
   let best: { path: Tile[]; gain: number } | null = null;
   for (const end of deadEnds) {
     const walk = networkWalk(net, width, height, end);
+    const far: Tile[] = [];
+    for (const t of net.tiles) if (walk[t.y * width + t.x] >= LOOP_MIN_DETOUR) far.push(t);
+    if (far.length === 0) continue;
+    const farDist = buildRoadDistance(width, height, far);
+    const toFar = (x: number, y: number) => {
+      const i = y * width + x;
+      return Math.min(farDist[i], farDist[i + 1], farDist[i + width], farDist[i + width + 1]);
+    };
     const path = cheapestPath(end, width, loX, hiX, loY, hiY, (x, y) => {
       let touchesFar = false, touchesNear = false, touchesMid = false;
       for (const [dx, dy] of STAMP) {
@@ -724,7 +747,7 @@ function closeLoop(
       if (touchesNear) return baseCost[i];
       const d = Math.min(roadDist[i], roadDist[i + 1], roadDist[i + width], roadDist[i + width + 1]);
       return baseCost[i] + nearRoadCost(d);
-    });
+    }, toFar);
     if (!path) continue;
     // Only cells that add road count toward the link's length.
     const fresh = path.filter((c) => !STAMP.every(([dx, dy]) => net.mask[(c.y + dy) * width + c.x + dx]));
