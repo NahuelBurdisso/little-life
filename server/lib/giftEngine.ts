@@ -5,6 +5,7 @@ import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
 import { gameMinutes } from './gameClock';
+import { gameMinutesNow } from './worldClock';
 import { addToInventory, removeFromInventory, getInventoryCount } from './economyEngine';
 import { ITEM_REGISTRY } from '../data/economyData';
 
@@ -63,13 +64,6 @@ const IMPULSIVE_GIFT_PHRASES: Record<ImpulsiveGiftReason, (giver: string, receiv
   euphoric_gift: (g, r, a) => `${g}, riding a high, gave $${a} to ${r}`,
 };
 
-function currentGameMinute(): number {
-  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  const t = world?.time;
-  if (!t) return 0;
-  return t.day * 1440 + t.hour * 60 + t.minute;
-}
-
 /**
  * Hand `desiredAmount` (capped) from `giver` to `receiver` as a state-driven
  * impulsive gift. Returns the amount actually given, or null when the cooldown,
@@ -90,7 +84,7 @@ export function giveImpulsiveGift(params: {
 }): number | null {
   const { giver, receiver, reason, stateId } = params;
 
-  const nowMinute = currentGameMinute();
+  const nowMinute = gameMinutesNow();
   const last = lastImpulsiveGift.get(giver.id);
   if (last) {
     if (last.stateId === stateId) return null;
@@ -168,7 +162,7 @@ function initGiftSystem(): void {
     // Check cooldown (game time). `now` stays wall-clock for the ledger row and
     // inventory `acquiredAt`, which are wall-clock ms everywhere else.
     const now = Date.now();
-    const nowMinute = currentGameMinute();
+    const nowMinute = gameMinutesNow();
     const lastMinute = lastGiftMinute.get(payload.agentId);
     if (lastMinute !== undefined && nowMinute - lastMinute < GIFT_COOLDOWN_MINUTES) return;
 

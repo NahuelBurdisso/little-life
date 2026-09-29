@@ -11,6 +11,7 @@ import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY }
 import { simEvents } from '../../lib/simEvents';
 import { getReputationPriceModifier } from '../../lib/reputationEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
+import { gameMinutes } from '../../lib/gameClock';
 
 // --- Module-level state for batching and milestones ---
 
@@ -348,12 +349,12 @@ export function economyTick(): void {
   }
 
   // ========== 2. PAYDAY ==========
-  // `economy.last_payday` is GAME MINUTES (day*1440 + hour*60 + minute). It used
+  // `economy.last_payday` is GAME MINUTES (`gameMinutes(world.time)`). It used
   // to be Date.now() compared against "6 hours" converted to real ms by
   // assuming one tick per real second — wrong whenever a tick isn't a second
   // (the loop runs every TICK_INTERVAL_MS / tick_speed) or the game is paused.
   const minPaydayIntervalMinutes = CONFIG.ECONOMY.MIN_PAYDAY_INTERVAL_HOURS * 60;
-  const nowGameMinute = world.time!.day * 1440 + world.time!.hour * 60 + world.time!.minute;
+  const nowGameMinute = gameMinutes(world.time!);
 
   for (const agent of activeAgents) {
     const econ = econByAgent.get(agent.id);

@@ -54,8 +54,9 @@ export function clearPerWorldCaches(): void {
   // Keyed on `action_started`: a stale entry could match a new world's action
   // and silently skip that agent's first meal/shopping purchase.
   clearPurchaseTracking();
-  // Goal-system singletons. Both compare a stored tick stamp against `totalTicks`;
-  // after a replace the difference goes negative and the guard never opens again,
+  // Goal-system singletons. Both compare a stored game-minute stamp against the
+  // clock; a replaced world can start earlier, the difference goes negative and
+  // the guard never opens again,
   // which silently disables goal pivoting, stale-goal abandonment, and agent-name
   // refresh in goal-review prompts.
   pivotEvaluator.clear();
