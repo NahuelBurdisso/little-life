@@ -5,6 +5,35 @@ import type { MemoryService } from './MemoryService';
 import { db } from '../../db';
 import { agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
+import { gameMinutesNow } from '../worldClock';
+
+/**
+ * Game minutes before the same perception line may be stored again for the
+ * same agent. Perception fires every time two agents are near each other, and
+ * a playtest stored "I noticed Diego Santos nearby and struck up a
+ * conversation." 71 times — 867 of 1055 new memories were observations. The
+ * copies drown retrieval (every query about Diego returns the same line),
+ * trip the reflection trigger on repetition alone, and fill reflection prompts.
+ */
+export const PERCEPTION_REPEAT_MINUTES = 180;
+
+const lastPerceived = new Map<string, number>();
+
+/** Whether this perception line should be stored now (and remember it if so). */
+export function shouldRecordPerception(agentId: number, description: string, nowMinutes: number): boolean {
+  const key = `${agentId}|${description}`;
+  const last = lastPerceived.get(key);
+  if (last != null && nowMinutes - last >= 0 && nowMinutes - last < PERCEPTION_REPEAT_MINUTES) return false;
+  lastPerceived.set(key, nowMinutes);
+  if (lastPerceived.size > 5000) {
+    for (const [k, t] of lastPerceived) if (nowMinutes - t >= PERCEPTION_REPEAT_MINUTES) lastPerceived.delete(k);
+  }
+  return true;
+}
+
+export function clearPerceptionDedup(): void {
+  lastPerceived.clear();
+}
 
 export function initMemoryObserver(memoryService: MemoryService): void {
   simEvents.on('agent:arrived', ({ agentId, locationName }: { agentId: number; locationName: string }) => {
@@ -219,9 +248,9 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   simEvents.on('perception:observed', ({ agentId, targetName, templateKey }: { agentId: number; targetName: string; templateKey: string }) => {
-    memoryService.record(agentId, 'observation',
-      describeEvent(templateKey, { target: targetName }),
-      { subtype: 'perception', targetName });
+    const description = describeEvent(templateKey, { target: targetName });
+    if (!shouldRecordPerception(agentId, description, gameMinutesNow())) return;
+    memoryService.record(agentId, 'observation', description, { subtype: 'perception', targetName });
   });
 
   // Goals

@@ -44,8 +44,11 @@ import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
+import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
 
 export function clearPerWorldCaches(): void {
+  // Game-minute stamps of recently stored perception lines (MemoryObserver).
+  clearPerceptionDedup();
   // Tick-valued trackers
   clearStatesTrackers();
   clearLonelinessTracking();
