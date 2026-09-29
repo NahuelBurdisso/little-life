@@ -18,6 +18,7 @@ import { conversationsOnTemplates } from './conversationPacing';
 import { gameMinutesNow } from './worldClock';
 import { db } from '../db';
 import { worldState } from '../db/schema';
+import { nightSkip } from '../engine/nightSkip';
 
 export const HEALTH_CHANNEL = 'world.health';
 
@@ -39,7 +40,9 @@ function currentSpeed(): number {
 
 export function getHealthSnapshot(): HealthSnapshot {
   const onTemplates = (() => {
-    try { return conversationsOnTemplates(gameMinutesNow(), currentSpeed()); } catch { return false; }
+    // Judged at the speed the player chose: a night skip runs at 30x, where every
+    // measured turn is "too slow", and that is the skip's doing, not the model's.
+    try { return conversationsOnTemplates(gameMinutesNow(), nightSkip.restoreSpeed() ?? currentSpeed()); } catch { return false; }
   })();
   const breakerOpen = planLLMGate.breakerOpen;
   const verdict = evaluateLLMHealth({ ...llmHealth.evidence(), breakerOpen, conversationsOnTemplates: onTemplates });

@@ -8,6 +8,7 @@ import { startTickLoop, stopTickLoopAndWait } from './engine/tick';
 import { restoreWorldCaches, saveWorldCaches } from './engine/worldCaches';
 import { warmUpModels } from './ai/warmup';
 import { startHealthWatch } from './lib/health';
+import { recoverInterruptedSkip } from './engine/nightSkip';
 import { runEmbeddingBackfill } from './lib/memory/embeddingBackfill';
 import { endOrphanedLLMConversations } from './engine/systems/conversations';
 import { taskRunner } from './ai/taskRunner';
@@ -146,6 +147,11 @@ startHealthWatch();
 // Then give every memory a vector from the current embedding model (seeded
 // backstory has none; a model change invalidates the old ones).
 void warmUpModels().then(() => runEmbeddingBackfill(() => memoryService.invalidateEmbeddings()));
+
+// A skip the previous process died in the middle of left tick_speed at its
+// fast-forward value; put the player's speed back before the first tick.
+const recoveredSpeed = recoverInterruptedSkip();
+if (recoveredSpeed != null) console.log(`Night skip was interrupted; speed restored to ${recoveredSpeed}x`);
 
 // Start tick loop
 startTickLoop();

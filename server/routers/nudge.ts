@@ -20,6 +20,7 @@ import { zoneOccupancy } from '../lib/interiorGrid';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
 import { gameMinutes } from '../lib/gameClock';
+import { nightSkip } from '../engine/nightSkip';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -78,6 +79,8 @@ const nudgeInput = z.object({
     z.object({ type: z.literal('give_money'), agentId: z.number(), amount: z.number() }),
     z.object({ type: z.literal('change_speed'), speed: z.number() }),
     z.object({ type: z.literal('toggle_pause') }),
+    z.object({ type: z.literal('skip_night') }),
+    z.object({ type: z.literal('cancel_night_skip') }),
     z.object({ type: z.literal('introduce_agent'), name: z.string(), bio: z.string(), traits: z.array(z.string()), job: z.string() }),
     z.object({ type: z.literal('remove_agent'), agentId: z.number() }),
     z.object({ type: z.literal('tell_secret'), agentId: z.number(), targetId: z.number(), factId: z.number() }),
@@ -318,6 +321,10 @@ export const nudgeRouter = router({
             };
           }
 
+          // A speed the player picks ends a night skip and stands: restoring the
+          // skip's remembered speed on top of it would undo their click.
+          nightSkip.cancel({ restore: false });
+
           db.update(worldState)
             .set({
               tick_speed: speed,
@@ -329,6 +336,28 @@ export const nudgeRouter = router({
           emitter.markDirty('world.state');
           emitter.flush();
           return { success: true };
+        }
+
+        // ─── skip_night / cancel_night_skip ────────────────────────────────
+        // The rules (and their refusal reasons) live in lib/nightSkip.ts; the
+        // controller then drives the speed from the tick loop.
+        case 'skip_night': {
+          const started = nightSkip.start(world);
+          if (started.ok) {
+            emitter.markDirty('world.state');
+            emitter.flush();
+            return { success: true };
+          }
+          return { success: false, reason: started.reason };
+        }
+
+        case 'cancel_night_skip': {
+          const ended = nightSkip.cancel({ restore: true });
+          if (ended) {
+            emitter.markDirty('world.state');
+            emitter.flush();
+          }
+          return { success: ended, ...(ended ? {} : { reason: 'No night skip is running' }) };
         }
 
         // ─── toggle_pause ──────────────────────────────────────────────────
