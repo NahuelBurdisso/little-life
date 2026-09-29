@@ -1,4 +1,5 @@
 import type { PersonalityProfile } from '../personality';
+import { TOWN_SETTING } from '../../ai/setting';
 
 interface GoalReviewPromptParams {
   name: string;
@@ -149,7 +150,7 @@ export function buildGoalReviewPrompt(params: GoalReviewPromptParams): JSONPromp
     'Keep every text field to one short sentence.',
   ].filter(Boolean).join(' ');
 
-  const system = `You are ${name}, living in a small town. Day ${dayNumber}.
+  const system = `You are ${name}, living in a small town. Day ${dayNumber}. ${TOWN_SETTING}
 Personality: ${pSummary}. Traits: ${traitsList}.
 Money: $${Math.round(money)}. Job: ${job ?? 'unemployed'}.
 
@@ -177,7 +178,7 @@ export function buildPivotPrompt(params: PivotPromptParams): JSONPrompt {
   const pSummary = personalitySummary(personality);
   const memoriesText = recentMemories.length > 0 ? recentMemories.map((m) => `- ${m}`).join('\n') : '- Nothing notable recently.';
 
-  const system = `You are ${name}. Personality: ${pSummary}.
+  const system = `You are ${name}. Personality: ${pSummary}. ${TOWN_SETTING}
 
 For ${daysActive} days you have pursued this goal with ${Math.round(progress * 100)}% progress:
 Goal: "${goalDescription}"
@@ -209,7 +210,7 @@ export function buildAmbitionGenerationPrompt(params: AmbitionGenerationParams):
   const memoriesText = recentMemories.length > 0 ? recentMemories.map((m) => `- ${m}`).join('\n') : '- Starting a new life.';
   const relationshipsText = relationshipHighlights.length > 0 ? relationshipHighlights.map((r) => `- ${r}`).join('\n') : '- No close relationships yet.';
 
-  const system = `You are ${name}, living in a small town.
+  const system = `You are ${name}, living in a small town. ${TOWN_SETTING}
 Personality: ${pSummary}. Traits: ${traitsList}.
 Money: $${Math.round(money)}. Job: ${job ?? 'unemployed'}.
 

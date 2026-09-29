@@ -10,6 +10,7 @@ import { generateVoiceDirective } from './voiceDirective';
 import { selectConversationContext, ContextItem } from './contextSelector';
 import { isFallbackMessage } from './sanitizeDialogue';
 import { firstName } from './names';
+import { TOWN_SETTING } from './setting';
 
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
@@ -442,7 +443,7 @@ export function buildAgentSystemPrompt(
   }
 
   // Build prompt parts, filtering empties
-  const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ');
+  const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING}`;
   const middle = [descriptionLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
