@@ -218,6 +218,9 @@ describe('planEventDecor', () => {
   it('decorates a type once even if the server has two of them, except fires', () => {
     expect(planEventDecor([ev(1, 'festival'), ev(2, 'festival')], LOCS, MAP).map(p => p.eventId)).toEqual([1]);
     expect(planEventDecor([ev(1, 'fire_outbreak'), ev(2, 'fire_outbreak')], LOCS, MAP)).toHaveLength(2);
+    const homes = [{ ...home, id: 40 }, { ...home, id: 41, position: { ...home.position, x: 900 }, entry_point: { x: 948, y: 736 } }];
+    const arrivals = [ev(3, 'new_arrival', { location_id: 40 }), ev(4, 'new_arrival', { location_id: 41 })];
+    expect(planEventDecor(arrivals, homes, MAP).map(p => p.eventId)).toEqual([3, 4]);
   });
 
   it('copes with empty and malformed input', () => {

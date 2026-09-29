@@ -688,16 +688,19 @@ export function planEvent(event: any, locations: any[], map: MapPx | null, roads
     .map(e => e[0]);
 }
 
+const PER_PLACE = new Set(['fire_outbreak', 'new_arrival']);
+
 /**
  * Plans for every active event that has decorations. A type is decorated once — two festivals
- * would stack identical bunting — except fires, which burn different roofs.
+ * would stack identical bunting — except events tied to a building, which happen in different
+ * places: fires burn different roofs, and two newcomers arrive at two doors.
  */
 export function planEventDecor(events: any[], locations: any[], map: MapPx | null, roads?: readonly RoadTile[] | null): EventDecorPlan[] {
   const plans: EventDecorPlan[] = [];
   const seen = new Set<string>();
   for (const e of events ?? []) {
     if (!e || typeof e.type !== 'string') continue;
-    if (e.type !== 'fire_outbreak' && seen.has(e.type)) continue;
+    if (!PER_PLACE.has(e.type) && seen.has(e.type)) continue;
     const placements = planEvent(e, locations, map, roads);
     if (placements.length === 0) continue;
     seen.add(e.type);
