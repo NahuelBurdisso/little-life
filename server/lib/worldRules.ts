@@ -136,11 +136,6 @@ export function isDeathEnabled(): boolean {
   return getRules().deathEnabled;
 }
 
-/** "Population flow" (default on): residents may move away and newcomers arrive on their own. */
-export function isPopulationFlowOn(): boolean {
-  return getRules().populationFlow;
-}
-
 /** Scale on the hourly random-event roll and the dark cascade rules. */
 export function dramaMultiplier(rules: LiveRules = getRules()): number {
   return DRAMA_MULTIPLIER[rules.dramaIntensity];

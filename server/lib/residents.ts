@@ -172,11 +172,6 @@ export type CreateResidentResult =
   | { ok: true; agentId: number; homeId: number; homeName: string; lodging: boolean; workplaceId: number | null; jobTitle: string }
   | { ok: false; reason: string };
 
-/** Living residents right now. */
-export function livingCount(): number {
-  return db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all().length;
-}
-
 /**
  * The first-person line a newcomer starts with. The seeded cast carries
  * authored backstory memories; without one a newcomer's first reflection had
