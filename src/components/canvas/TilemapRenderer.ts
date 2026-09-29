@@ -12,6 +12,7 @@ import {
   isInsideCell, isOffMap, rasterizeBlobs, rasterizeSoftBlob, uniqueTiles,
   CELL_EDGE, CELL_HALO, CELL_RING,
 } from "../../lib/autotile";
+import { doorSide, doorStartTile, pathRects, routeDoorPath } from "../../lib/doorRoute";
 
 import { OPEN_AREA_TYPES, OUTDOOR_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
 
@@ -381,7 +382,9 @@ export class TilemapRenderer {
   /**
    * Draw worn dirt paths from each building door to the nearest road tile.
    * Implies foot-traffic history — buildings no longer float on untouched grass.
-   * Idempotent — re-running replaces prior paths.
+   * Routed over the tile grid around building footprints (`routeDoorPath`): the old
+   * straight L crossed neighbouring houses in tight organic blocks. A door with no
+   * short clean route simply gets no path. Idempotent — re-running replaces prior paths.
    */
   setDoorPaths(locations: any[], roadTiles: Array<{ x: number; y: number }>): void {
     // Detach first: `destroy()` splices the child out of `children`, so
@@ -389,10 +392,38 @@ export class TilemapRenderer {
     for (const child of this.doorPathContainer.removeChildren()) child.destroy();
     if (!Array.isArray(locations) || !Array.isArray(roadTiles) || roadTiles.length === 0) return;
 
-    const g = new PIXI.Graphics();
     const PATH_W = 10;
     const PATH_COLOR = 0x8a7248; // packed earth
     const PATH_ALPHA = 0.5;
+    /** Longest footpath, in tiles — the old code skipped doors > 10 tiles from a road. */
+    const MAX_PATH_TILES = 10;
+
+    const roadSet = buildTileSet(roadTiles);
+    const bounds = this.mapWidth > 0 && this.mapHeight > 0
+      ? { width: Math.round(this.mapWidth / TILE_SIZE), height: Math.round(this.mapHeight / TILE_SIZE) }
+      : undefined;
+
+    // Footprints a path must not enter. Same rule as the server's collision grid
+    // (`generateCollisionGridForLocations`): every non-outdoor location is a solid block.
+    const solid = new Set<string>();
+    for (const loc of locations) {
+      const p = loc?.position;
+      if (!p?.width || OUTDOOR_TYPES.has(loc.type)) continue;
+      const x0 = Math.floor(p.x / TILE_SIZE);
+      const y0 = Math.floor(p.y / TILE_SIZE);
+      const x1 = x0 + Math.ceil(p.width / TILE_SIZE);
+      const y1 = y0 + Math.ceil(p.height / TILE_SIZE);
+      for (let ty = y0; ty < y1; ty++) for (let tx = x0; tx < x1; tx++) solid.add(`${tx},${ty}`);
+    }
+    // The map's perimeter ring is a wall too (drawn as overgrowth).
+    const isBlocked = (x: number, y: number) =>
+      solid.has(`${x},${y}`) ||
+      (bounds !== undefined && (x <= 0 || y <= 0 || x >= bounds.width - 1 || y >= bounds.height - 1));
+
+    // Two doors sharing a corridor produce identical rects; drawing both would stack
+    // the translucent fill, so each rect is drawn once.
+    const drawn = new Set<string>();
+    const g = new PIXI.Graphics();
 
     for (const loc of locations) {
       // OUTDOOR_TYPES: the derived locations were drawing a footpath from their
@@ -403,39 +434,28 @@ export class TilemapRenderer {
       const ep = loc.entry_point;
       if (!pos?.width || !ep) continue;
 
-      // Nearest road tile center (Manhattan)
-      let bx = 0, by = 0, bestD = Infinity;
-      for (const t of roadTiles) {
-        const cx = t.x * TILE_SIZE + TILE_SIZE / 2;
-        const cy = t.y * TILE_SIZE + TILE_SIZE / 2;
-        const d = Math.abs(cx - ep.x) + Math.abs(cy - ep.y);
-        if (d < bestD) { bestD = d; bx = cx; by = cy; }
-      }
-      if (bestD > TILE_SIZE * 10) continue; // building far from any road — skip
+      const side = doorSide(ep, pos);
+      const start = doorStartTile(ep, side, TILE_SIZE);
+      const route = routeDoorPath({
+        start,
+        isGoal: (x, y) => hasTile(roadSet, x, y),
+        // The start tile is the door's own approach; it is walkable by construction.
+        isBlocked: (x, y) => (x !== start.x || y !== start.y) && isBlocked(x, y),
+        maxSteps: MAX_PATH_TILES,
+        bounds,
+      });
+      if (!route) continue; // no clean short route — better no path than one through a roof
 
-      // Door on top/bottom edge → leave vertically first; else horizontally first
-      const vertFirst =
-        Math.abs(ep.y - pos.y) < 6 || Math.abs(ep.y - (pos.y + pos.height)) < 6;
-
-      if (vertFirst) {
-        // vertical leg at door x, then horizontal leg at road y
-        g.rect(ep.x - PATH_W / 2, Math.min(ep.y, by), PATH_W, Math.abs(by - ep.y) + PATH_W / 2)
-          .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
-        if (Math.abs(bx - ep.x) > PATH_W / 2) {
-          g.rect(Math.min(ep.x, bx) - PATH_W / 2, by - PATH_W / 2, Math.abs(bx - ep.x) + PATH_W, PATH_W)
-            .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
-        }
-      } else {
-        // horizontal leg at door y, then vertical leg at road x
-        g.rect(Math.min(ep.x, bx), ep.y - PATH_W / 2, Math.abs(bx - ep.x) + PATH_W / 2, PATH_W)
-          .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
-        if (Math.abs(by - ep.y) > PATH_W / 2) {
-          g.rect(bx - PATH_W / 2, Math.min(ep.y, by) - PATH_W / 2, PATH_W, Math.abs(by - ep.y) + PATH_W)
-            .fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
-        }
+      for (const r of pathRects(route, TILE_SIZE, PATH_W, { ep, side })) {
+        const k = `${r.x},${r.y},${r.w},${r.h}`;
+        if (drawn.has(k)) continue;
+        drawn.add(k);
+        g.rect(r.x, r.y, r.w, r.h);
       }
     }
 
+    // One path, one fill: the rects never overlap, so the alpha stays uniform.
+    if (drawn.size > 0) g.fill({ color: PATH_COLOR, alpha: PATH_ALPHA });
     this.doorPathContainer.addChild(g);
   }
 
