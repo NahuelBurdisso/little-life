@@ -6,6 +6,12 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set DATABASE_PATH=./data/verify.db&& npm run dev"],
       "port": 5173
+    },
+    {
+      "name": "little-life-client-3011",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set VITE_WS_URL=ws://localhost:3011&& npx vite --port 5174 --strictPort"],
+      "port": 5174
     }
   ]
 }

@@ -74,6 +74,17 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
   // Polled, not subscribed: the semaphore is in-memory and changes between
   // ticks, so there is no dirty-channel to hang a subscription off.
   const { data: llm } = trpc.world.getLLMStats.useQuery(undefined, { refetchInterval: 2000 });
+  // Per-purpose latency since server start, for the 🧠 tooltip: says *what* is
+  // slow when the queue grows (dialogue vs planning vs reflection).
+  const { data: llmMetrics } = trpc.world.getLLMMetrics.useQuery(undefined, { refetchInterval: 10000 });
+  const llmTitle = [
+    'LLM calls running / queued — a growing queue means the model can\'t keep up with this speed',
+    ...(llmMetrics ?? []).slice(0, 8).map((m) =>
+      `${m.purpose}: ${m.calls} calls · p50 ${(m.p50Ms / 1000).toFixed(1)}s · p95 ${(m.p95Ms / 1000).toFixed(1)}s` +
+      (m.tokPerSec ? ` · ${m.tokPerSec} tok/s` : '') +
+      (m.errors ? ` · ${m.errors} errors` : ''),
+    ),
+  ].join('\n');
 
   const hasConfig = !!world.setup_config;
 
@@ -98,7 +109,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           {llm && (
             <span
               className={llm.waiting > 0 ? "text-yellow-400" : ""}
-              title="LLM calls running / queued — a growing queue means the model can't keep up with this speed"
+              title={llmTitle}
             >
               🧠 {llm.active}
               {llm.waiting > 0 && `+${llm.waiting}`}
