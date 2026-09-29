@@ -1,6 +1,7 @@
 import * as PIXI from "pixi.js";
 import { TILE_SIZE } from "../../../../lib/spriteConfig";
 import { OUTDOOR_TYPES } from "../../../../../server/lib/worldgen/buildingTemplates";
+import { INTERIOR_ZONES } from "../../../../../server/data/interiors";
 import { loadStrip } from "../../stripAtlas";
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from "../../BuildingRenderer";
 import type { CanvasLayers, CanvasServices, CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
@@ -190,6 +191,18 @@ class AmbientLifeSystem implements CanvasSystem {
       if (!OUTDOOR_TYPES.has(l.type)) solid.push(p.x, p.y, p.width, p.height);
       if (l.type === 'home' && l.entry_point) homes.push({ id: l.id, x: l.entry_point.x, y: l.entry_point.y + 12 });
       if (l.type === 'town_square') well = wellCenter(p);
+      // Worldgen lays no water terrain; the park's riverside zone is the only water on the
+      // map (drawn as river tiles), so it is where the ducks swim.
+      if (l.type === 'park') {
+        const river = INTERIOR_ZONES.park?.find(z => z.id === 'riverside');
+        const tx0 = Math.floor(p.x / TILE_SIZE), ty0 = Math.floor(p.y / TILE_SIZE);
+        for (const [tx, ty] of river?.tiles ?? []) {
+          const key = (ty0 + ty) * mapW + (tx0 + tx);
+          if (this.waterTiles.has(key)) continue;
+          this.waterTiles.add(key);
+          this.waterSpots.push((tx0 + tx) * TILE_SIZE + TILE_SIZE / 2, (ty0 + ty) * TILE_SIZE + TILE_SIZE / 2);
+        }
+      }
     }
     homes.sort((a, b) => a.id - b.id);
     this.solid = Float32Array.from(solid);
