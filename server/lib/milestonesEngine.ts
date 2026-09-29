@@ -562,8 +562,10 @@ export function queuePendingProposalNow(proposerId: number): boolean {
 interface ConversationEndedPayload {
   agentId: number;
   perpetratorId?: number | null;
-  /** Only LLM conversations carry it; template chats don't. */
+  /** Both tiers carry it (a template chat is stored as a conversation row too); `template` tells them apart. */
   conversationId?: number;
+  /** Set by the template tier's emit (conversations.ts `processTimedOutEntry`). */
+  template?: boolean;
   summary?: string;
   turns?: number;
   sentiment?: number;
@@ -582,10 +584,17 @@ export function onConversationEnded(p: ConversationEndedPayload): void {
   const state = pairs.get(key);
   if (!state || state.proposerId !== p.agentId || state.pendingSince == null) return;
   // Another LLM conversation the two had while the proposal waited for a slot:
-  // not the moment. A template chat carries no conversation id; if the two had
-  // one, that is when the question came up (template tier: decided by
-  // feelings, below).
-  const isLLM = p.conversationId != null;
+  // not the moment. If the two had a template chat, that is when the question
+  // came up (template tier: decided by feelings, below).
+  //
+  // The tier is read off `template`, not off the conversation id: template chats
+  // were given a conversation row (and so an id) for the player-outcome reporter,
+  // after which `conversationId != null` held for them too, their script topic
+  // never matched PROPOSAL_TOPIC, and a proposal that fell to the template tier (a
+  // slot busy for PROPOSAL_QUEUE_WAIT_MINUTES, or no LLM at all) was ignored,
+  // expired 18 h later and was re-announced a day after that, forever. A 30-day
+  // soak saw 12 proposals from 4 couples and not one answer.
+  const isLLM = p.conversationId != null && !p.template;
   if (isLLM && p.summary !== PROPOSAL_TOPIC) return;
 
   const rel = relBetween(p.agentId, otherId);

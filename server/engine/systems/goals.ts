@@ -178,6 +178,16 @@ function evaluateTriggers(
 
     if (trigger.personality_gate && !checkPersonalityGate(personality, trigger.personality_gate)) continue;
 
+    // `trigger_on: 'observers'` (protect a sick neighbour, comfort a grieving one) means the
+    // goal belongs to someone WATCHING the state, aimed at the one who has it. Nothing here
+    // implements that: `checkTriggerCondition` tests the agent's OWN states, so the sick or
+    // grieving resident got a target-less "protect" / "comfort_grieving" goal about themselves.
+    // Such a goal can never advance (progress needs a target: conversation listener below) nor
+    // end on `target_recovered` (needs one too), so it sat until the 3-day timeout: 47 of the 57
+    // goals of a 30-day, 13-resident soak, and 456 goals given up at 32 residents, all of them
+    // this. Skipped until observers exist rather than creating dead goals.
+    if (trigger.trigger_on === 'observers') continue;
+
     const targetId = checkTriggerCondition(trigger, agent, nowMinutes, cachedKnowledge, cachedRelationships, stateRows);
     if (targetId === false) continue;
 

@@ -205,6 +205,31 @@ export function setPhaseProbe(fn: ((slice: string) => void) | null): void {
 }
 
 /**
+ * What one finished tick cost: the whole `gameTick` and, per system phase, its wall time.
+ * `totalMs` minus the phases is everything else the tick does (perception, tavern,
+ * milestones, day-change housekeeping, the clock advance).
+ */
+export interface TickTiming {
+  totalMs: number;
+  phaseMs: ReadonlyArray<readonly [name: string, ms: number]>;
+}
+
+let timingObserver: ((t: TickTiming) => void) | null = null;
+
+/**
+ * Observe every completed tick's timings (null to stop). One observer at a time.
+ *
+ * Why an export and not a second measurement: `gameTick` already times each phase for
+ * `reportSlowTick`, which only speaks when a tick overruns and then only names the top
+ * three. `scripts/soak.ts` wants the p50/p95 of every phase over a whole run to say which
+ * one grows with the cast size, so it reads the numbers the tick already has. Unset, this
+ * costs one null check per tick.
+ */
+export function setTickTimingObserver(fn: ((t: TickTiming) => void) | null): void {
+  timingObserver = fn;
+}
+
+/**
  * One full tick: advance the clock, run every phase, finalize. Exported so
  * `scripts/soak.ts` can drive ticks back-to-back without the setTimeout loop;
  * the server only ever calls it through `startTickLoop`.
@@ -476,6 +501,8 @@ export async function gameTick(): Promise<void> {
   emitter.markDirty('world.state');
   emitter.markDirty('activity.all');
   emitter.flush();
+
+  if (timingObserver) timingObserver({ totalMs: performance.now() - tickStart, phaseMs });
 }
 
 // ─── Tick loop ────────────────────────────────────────────────────────────────

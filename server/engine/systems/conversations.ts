@@ -2057,6 +2057,10 @@ async function processTimedOutEntry(
       // memory observer's LLM summary also keys on it, but a template exchange
       // is under its minimum line count, so it still gets the template memory.
       conversationId: templateConversationId,
+      // Says so, because an id no longer tells the two tiers apart: the proposal
+      // listener (lib/milestonesEngine.ts) decides a template exchange by the
+      // answerer's feelings but waits for the proposal topic on an LLM one.
+      template: true,
       perpetratorId: otherAgent.id,
       otherName: otherAgent.name,
       summary: conversationDoc.topic ?? '',
