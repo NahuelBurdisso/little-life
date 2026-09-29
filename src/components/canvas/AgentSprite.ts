@@ -110,6 +110,8 @@ const STATE_PRIORITY: string[] = [
  */
 const HAND_X = 7;
 const HAND_Y = -10;
+/** The profile's near hand (agent-sheets.lua `sideArm`) hangs at the torso's middle, x 15..16. */
+const SIDE_HAND_X = 1;
 
 /** Two 0xRRGGBB tints multiplied channel by channel. */
 function mulTint(m: number, p: number): number {
@@ -445,7 +447,7 @@ export class AgentSprite {
     return this.facing;
   }
 
-  /** Which sheet view is showing: 'down' = face to camera, 'up' = back to camera. */
+  /** Which sheet view is showing: 'down' = face to camera, 'up' = back to camera, 'side' = profile. */
   get viewFacing(): SheetFacing {
     return this.sheetFacing;
   }
@@ -687,6 +689,9 @@ export class AgentSprite {
   }
 
   private showFrame(walking: boolean, blinking = false) {
+    // Side-on, the near hand swings in front of the chest rather than at the body's edge.
+    // Only sheet sprites have a profile; the static fallback keeps its front-view hand.
+    this.hand.x = this.frames && this.sheetFacing === 'side' ? SIDE_HAND_X : HAND_X;
     if (!this.frames || !this.sprite) return;
     const i = pickAgentFrame({
       facing: this.sheetFacing,
