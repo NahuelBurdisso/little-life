@@ -35,6 +35,9 @@ import {
 import { getEffectivePersonality, getAgentStates } from '../../lib/states';
 import { agentStates } from '../../db/schema';
 import { createFact, getShareableFacts, getAgentName, getNegativeFactCount, countNegativeFactsBySubject } from '../../lib/gossip';
+import {
+  arrestableFactsBySubject, DIRECT_CRIME_TYPES, inPostReleaseCooldown, lastSentenceEnds, markFactsPaid,
+} from '../../lib/arrests';
 import { computeBehaviorModifiers, BehaviorContext } from '../../lib/personalityEngine';
 import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
@@ -2347,7 +2350,12 @@ export function tick(world: WorldRow): void {
   }
 
   // --- Constable Arrest Mechanic ---
-  // If the constable is at the same location as an agent with 8+ negative facts, arrest them
+  // If the constable is at the same location as an agent with 8+ arrestable facts (4+ when
+  // they know of a theft or blackmail first-hand), arrest them. What counts is lib/arrests.ts:
+  // no earlier arrests, seduction rumors or grudges, nothing already paid for with a sentence,
+  // and nobody fresh out of jail.
+  const arrestableFacts = arrestableFactsBySubject(allActiveKnowledge);
+  const sentenceEnds = lastSentenceEnds(allActiveKnowledge);
   for (const agent of activeAgents) {
     const agentEconRow = econMap.get(agent.id);
     if (!agentEconRow || agentEconRow.job !== 'constable') continue;
@@ -2364,17 +2372,14 @@ export function tick(world: WorldRow): void {
       }
 
       if (getAgentStates(other.id).includes('arrested')) continue;
+      if (inPostReleaseCooldown(sentenceEnds, other.id, nowMinutes)) continue;
 
-      const negFacts = negativeFactCounts.get(other.id) ?? 0;
+      const record = arrestableFacts.get(other.id) ?? [];
+      const negFacts = record.length;
 
       // Check if constable has direct knowledge of crimes by this target (from cached data)
-      const allKnowledgeFacts = allActiveKnowledge
-        .filter(f => {
-          const knownBy = f.known_by as number[];
-          return knownBy.includes(agent.id) && // constable knows
-            f.subject_id === other.id && // about this target
-            ['theft', 'blackmail', 'seduction'].includes(f.type);
-        });
+      const allKnowledgeFacts = record
+        .filter(f => (f.known_by as number[]).includes(agent.id) && DIRECT_CRIME_TYPES.has(f.type));
 
       const arrestThreshold = allKnowledgeFacts.length > 0 ? 4 : 8;
       if (negFacts < arrestThreshold) continue;
@@ -2444,6 +2449,10 @@ export function tick(world: WorldRow): void {
         },
         metadata: { beat: 'arrest' },
       });
+
+      // The sentence pays for the record it was for: those facts stop counting toward an
+      // arrest once it ends (and the cooldown runs from then).
+      markFactsPaid(record.map(f => f.id), nowMinutes + sentence);
 
       // Create arrest gossip fact
       createFact('arrest', other.id, agent.id, 2, [agent.id, other.id], 'witnessed', { detail: `arrested by ${agent.name}` });

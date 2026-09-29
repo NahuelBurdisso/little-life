@@ -547,6 +547,13 @@ export const shared_knowledge = sqliteTable('shared_knowledge', {
   is_public: integer('is_public', { mode: 'boolean' }).notNull().default(false),
   /** Real ms at which it crossed the threshold, null while still a secret. */
   revealed_at: integer('revealed_at'),
+  /**
+   * GAME MINUTE the jail sentence this fact earned ends; null while unpunished. An arrest
+   * marks the facts it was for (lib/arrests.ts): the town still knows them, but the constable
+   * doesn't arrest anyone twice for the same misdeeds, which re-jailed the same resident on
+   * every release (facts never expire).
+   */
+  paid_at: integer('paid_at'),
 }, (table) => [
   index('idx_shared_knowledge_subject').on(table.subject_id),
   index('idx_shared_knowledge_active').on(table.is_active),
