@@ -1,4 +1,5 @@
 import type { AgentConfig, RelationshipConfig } from './types';
+import { AGENT_SEEDS } from '../../../server/data/agents';
 
 // Default agents — hardcoded summary of the 13 agents from server/data/agents.ts
 // (We can't import server code in the frontend, so this is a client-side copy)
@@ -233,13 +234,43 @@ export function getDefaultAgents(): AgentConfig[] {
   ];
 }
 
+/**
+ * The default cast's authored relationships, read from `AGENT_SEEDS` (pure data,
+ * safe to import client-side) instead of a hand-kept copy.
+ *
+ * The copy had drifted to 6 of the 17 authored pairs, so the backstories above
+ * described friendships the town never seeded — James "is a regular" at Marco's
+ * bar, Priya "leaves Thomas pastries every morning", Yuki "needles" the mayor —
+ * and all of those people started as strangers. Each pair is listed by both
+ * sides in the seed data; the first listing wins, as it always has for the
+ * seed-data path (`server/seed-world.ts`).
+ *
+ * Housemates, coworkers and next-door neighbours that nobody authored are not
+ * listed here: `setup.initialize` seeds them from the cast and the generated map
+ * (`server/lib/startingTies.ts`), so they also apply to a cast the player edits.
+ */
 export function getDefaultRelationships(): RelationshipConfig[] {
-  return [
-    { agentAName: 'Elena Voss', agentBName: 'James O\'Brien', friendshipAB: 55, friendshipBA: 60, romanceAB: 0, romanceBA: 0, trustAB: 60, trustBA: 55, familiarity: 70, status: 'friends', tags: ['coworkers'] },
-    { agentAName: 'Rosa Chen', agentBName: 'Yuki Tanaka', friendshipAB: 75, friendshipBA: 80, romanceAB: 20, romanceBA: 15, trustAB: 75, trustBA: 80, familiarity: 85, status: 'close_friends', tags: ['housemate', 'roommate'] },
-    { agentAName: 'Dr. Sofia Petrov', agentBName: 'Omar Hassan', friendshipAB: 55, friendshipBA: 50, romanceAB: 0, romanceBA: 0, trustAB: 60, trustBA: 55, familiarity: 65, status: 'friends', tags: ['coworkers'] },
-    { agentAName: 'Lucia Fernandez', agentBName: 'Diego Santos', friendshipAB: 60, friendshipBA: 65, romanceAB: 45, romanceBA: 55, trustAB: 50, trustBA: 55, familiarity: 75, status: 'romantic_interest', tags: ['crush'] },
-    { agentAName: 'Marco Rivera', agentBName: 'Carlos Mendez', friendshipAB: 50, friendshipBA: 50, romanceAB: 0, romanceBA: 0, trustAB: 45, trustBA: 45, familiarity: 60, status: 'friends', tags: ['drinking_buddy'] },
-    { agentAName: 'Carlos Mendez', agentBName: 'Ray Kowalski', friendshipAB: -25, friendshipBA: -15, romanceAB: 0, romanceBA: 0, trustAB: -20, trustBA: -10, familiarity: 45, status: 'rivals', tags: ['antagonist', 'grudge'] },
-  ];
+  const seen = new Set<string>();
+  const rows: RelationshipConfig[] = [];
+  for (const seed of AGENT_SEEDS) {
+    for (const rel of seed.initialRelationships) {
+      const key = [seed.name, rel.otherName].sort().join('\u0000');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        agentAName: seed.name,
+        agentBName: rel.otherName,
+        friendshipAB: rel.friendshipAB,
+        friendshipBA: rel.friendshipBA,
+        romanceAB: rel.romanceAB,
+        romanceBA: rel.romanceBA,
+        trustAB: rel.trustAB,
+        trustBA: rel.trustBA,
+        familiarity: rel.familiarity,
+        status: rel.status,
+        tags: [...rel.tags],
+      });
+    }
+  }
+  return rows;
 }

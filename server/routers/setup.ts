@@ -47,6 +47,7 @@ import { emitter } from '../engine/emitter';
 import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges } from '../lib/worldgen/social';
+import { buildStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
 import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
 import { resetCascade } from '../lib/cascade';
@@ -634,6 +635,35 @@ function seedWorld(
     return fresh;
   };
 
+  // 6a. Structural ties first: housemates, coworkers and next-door neighbours
+  //     already know each other (lib/startingTies.ts has the why). Staged before
+  //     the authored rows so those overwrite the values, and before the scenario
+  //     so the trust slider calibrates these too and a scenario rivalry can
+  //     still sour a household.
+  const homeDoors = new Map<string, { x: number; y: number }>();
+  for (const loc of dynamicLocations) {
+    if (loc.type === 'home') homeDoors.set(loc.name, loc.entry_point);
+  }
+  const structuralTags = new Map<string, string[]>();
+  for (const tie of buildStartingTies(config.agents, homeDoors)) {
+    const aId = agentMap.get(tie.a);
+    const bId = agentMap.get(tie.b);
+    if (aId === undefined || bId === undefined) continue;
+    const row = relFor(aId, bId);
+    const flipped = aId > bId;
+    row.friendship_ab = flipped ? tie.friendshipBA : tie.friendshipAB;
+    row.friendship_ba = flipped ? tie.friendshipAB : tie.friendshipBA;
+    row.trust_ab = flipped ? tie.trustBA : tie.trustAB;
+    row.trust_ba = flipped ? tie.trustAB : tie.trustBA;
+    row.familiarity = tie.familiarity;
+    row.status = tie.status;
+    row.tags = [...tie.tags];
+    structuralTags.set(pairKey(aId, bId), tie.tags);
+  }
+
+  // 6b. Authored rows (wizard / saved config). Their values win outright; only
+  //     the structural tags are kept alongside theirs, since "they share a house"
+  //     is still true of two rivals.
   for (const relCfg of config.relationships) {
     const agentAId = agentMap.get(relCfg.agentAName);
     const agentBId = agentMap.get(relCfg.agentBName);
@@ -651,7 +681,7 @@ function seedWorld(
     row.trust_ab = flipped ? relCfg.trustBA : relCfg.trustAB;
     row.trust_ba = flipped ? relCfg.trustAB : relCfg.trustBA;
     row.familiarity = relCfg.familiarity;
-    row.tags = relCfg.tags;
+    row.tags = [...new Set([...relCfg.tags, ...(structuralTags.get(pairKey(agentAId, agentBId)) ?? [])])];
     row.status = relCfg.status;
   }
 

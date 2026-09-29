@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { db } from '../db';
-import { economy, locations, relationships, shared_knowledge, worldState } from '../db/schema';
+import { agents, economy, locations, relationships, shared_knowledge, worldState } from '../db/schema';
 import { generateWorld } from '../lib/worldgen';
 import { stopTickLoopAndWait } from '../engine/tick';
 
@@ -468,5 +468,66 @@ describe('layout style through initialize and restart', () => {
     db.update(worldState).set({ setup_config: { ...saved, worldgen: legacyWorldgen } }).run();
     await caller.restart();
     expect(savedRoads()).toEqual(grid.roads);
+  });
+});
+
+/**
+ * B16: housemates, coworkers and next-door neighbours start acquainted instead
+ * of as strangers, and an authored row still wins. Here for the same reason
+ * as the blocks above: `initialize` clears every table, and files run in
+ * parallel.
+ */
+describe('starting relationships through initialize', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
+  it('seeds housemates and coworkers, and lets authored rows win on values', async () => {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const cast = MINIMAL_AGENTS.map((a, i) => ({
+      ...a,
+      // 1+2 share a house; 3+4 share a workplace; 5 lives and works alone.
+      homeName: i === 1 ? 'Home 1' : a.homeName,
+      workplaceName: i === 2 || i === 3 ? 'Town Hall' : null,
+    }));
+    await caller.initialize({
+      agents: cast,
+      relationships: [{
+        agentAName: 'Test Agent 2', agentBName: 'Test Agent 1',
+        friendshipAB: -30, friendshipBA: -20, romanceAB: 0, romanceBA: 0,
+        trustAB: -10, trustBA: -5, familiarity: 60, status: 'rivals', tags: ['grudge'],
+      }],
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: { sizeTier: 'auto', overrides: {}, seed: 'starting-ties' },
+    } as any);
+
+    const idOf = new Map(db.select({ id: agents.id, name: agents.name }).from(agents).all()
+      .map((a) => [a.name, a.id]));
+    const rels = db.select().from(relationships).all();
+    const rel = (x: string, y: string) => {
+      const [a, b] = [idOf.get(x)!, idOf.get(y)!].sort((p, q) => p - q);
+      return rels.find((r) => r.agent_a === a && r.agent_b === b);
+    };
+
+    // Authored housemate rivalry: authored values, both tag sets.
+    const housemates = rel('Test Agent 1', 'Test Agent 2')!;
+    expect(housemates.status).toBe('rivals');
+    expect(housemates.friendship_ab).toBe(-20); // Agent 1 → Agent 2 (authored as BA)
+    expect(housemates.friendship_ba).toBe(-30);
+    expect(housemates.tags).toEqual(expect.arrayContaining(['grudge', 'housemate']));
+
+    const coworkers = rel('Test Agent 3', 'Test Agent 4')!;
+    expect(coworkers.tags).toContain('coworker');
+    expect(coworkers.friendship_ab).toBeGreaterThan(10);
+    expect(coworkers.friendship_ba).toBeGreaterThan(10);
+    expect(coworkers.familiarity).toBeGreaterThanOrEqual(5);
+
+    // Every household has at least one neighbour tie, so nobody starts alone.
+    for (const id of idOf.values()) {
+      expect(rels.some((r) => r.agent_a === id || r.agent_b === id)).toBe(true);
+    }
+    for (const r of rels) expect(r.agent_a).toBeLessThan(r.agent_b);
   });
 });

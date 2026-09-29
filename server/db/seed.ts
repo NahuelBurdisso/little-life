@@ -24,6 +24,7 @@ import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges, type SocialRelationship } from '../lib/worldgen/social';
 import { getRelationshipSeeds } from '../data/relationships';
+import { buildStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -343,7 +344,41 @@ function seed() {
   for (const rel of relSeeds) {
     db.insert(relationships).values({ ...rel, last_interaction_minute: seedStartMinute }).run();
   }
-  console.log(`[seed] Inserted ${relSeeds.length} relationships.`);
+  // Housemates / coworkers / next-door neighbours nobody authored, as
+  // `setup.initialize` seeds them (lib/startingTies.ts). Authored pairs keep
+  // their rows untouched here — this path has no scenario to fold in.
+  const authored = new Set(relSeeds.map((r) => `${r.agent_a}:${r.agent_b}`));
+  const homeDoors = new Map(LOCATIONS.filter((l) => l.type === 'home').map((l) => [l.name, l.entry_point]));
+  let structural = 0;
+  for (const tie of buildStartingTies(AGENT_SEEDS, homeDoors)) {
+    const aId = agentMap.get(tie.a);
+    const bId = agentMap.get(tie.b);
+    if (aId === undefined || bId === undefined) continue;
+    const [lo, hi] = aId < bId ? [aId, bId] : [bId, aId];
+    if (authored.has(`${lo}:${hi}`)) continue;
+    const aIsLo = aId === lo;
+    db.insert(relationships).values({
+      agent_a: lo,
+      agent_b: hi,
+      friendship_ab: aIsLo ? tie.friendshipAB : tie.friendshipBA,
+      friendship_ba: aIsLo ? tie.friendshipBA : tie.friendshipAB,
+      romance_ab: 0,
+      romance_ba: 0,
+      trust_ab: aIsLo ? tie.trustAB : tie.trustBA,
+      trust_ba: aIsLo ? tie.trustBA : tie.trustAB,
+      familiarity: tie.familiarity,
+      interaction_count: 0,
+      last_interaction: now,
+      last_interaction_minute: seedStartMinute,
+      average_interaction_sentiment: 0,
+      tags: tie.tags,
+      status: tie.status,
+      created_at: now,
+      last_updated: now,
+    }).run();
+    structural++;
+  }
+  console.log(`[seed] Inserted ${relSeeds.length} authored + ${structural} structural relationships.`);
 
   // 6. Insert memories
   console.log('[seed] Inserting memories...');
