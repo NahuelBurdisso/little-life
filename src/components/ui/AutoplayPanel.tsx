@@ -357,7 +357,7 @@ export function AutoplayPanel({ isOpen, onClose }: AutoplayPanelProps) {
                 />
                 <div className="flex flex-wrap gap-1.5 pt-0.5">
                   {[
-                    ["window", `${config.WINDOW_SIZE} ticks`],
+                    ["window", `${config.WINDOW_MINUTES} game min`],
                     ["threshold", `boredom > ${config.BOREDOM_THRESHOLD}`],
                     ["limit", `${config.MAX_NUDGES_PER_DAY} nudges / day`],
                   ].map(([k, v]) => (
@@ -377,7 +377,7 @@ export function AutoplayPanel({ isOpen, onClose }: AutoplayPanelProps) {
               title={enabled ? "Waiting for the first window…" : "Autoplay is off"}
               hint={
                 enabled
-                  ? `A report appears after ${config?.WINDOW_SIZE ?? 60} ticks (about one game hour) at the current speed.`
+                  ? `A report appears after ${config?.WINDOW_MINUTES ?? 60} game minutes (about one game hour) of watching.`
                   : "Switch it on and the first health check of the town lands here after one window."
               }
             />

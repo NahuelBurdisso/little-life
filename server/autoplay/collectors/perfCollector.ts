@@ -13,7 +13,9 @@ import { and, gte, isNotNull } from 'drizzle-orm';
  */
 function pushCapped<T>(arr: T[], value: T): void {
   arr.push(value);
-  const cap = CONFIG.AUTOPLAY.WINDOW_SIZE * 2;
+  // One sample per tick, and a window is WINDOW_MINUTES of game time: 1 tick
+  // per minute at 1x, up to 2 at the slowest 0.5x. 4x leaves headroom.
+  const cap = CONFIG.AUTOPLAY.WINDOW_MINUTES * 4;
   if (arr.length > cap) arr.splice(0, arr.length - cap);
 }
 
@@ -21,7 +23,7 @@ function pushCapped<T>(arr: T[], value: T): void {
  * Separate, much larger cap for LLM call records. Unlike the tick accumulators
  * above there is not one sample per tick: concurrent calls, multi-turn
  * conversations and per-retry records mean a normal window can hold many times
- * WINDOW_SIZE entries, and the tick cap silently truncated real data. This is
+ * WINDOW_MINUTES entries, and the tick cap silently truncated real data. This is
  * only a leak guard for the "flush() never runs" case, so it is sized well
  * above any plausible window; overflow is counted into `droppedSamples` on the
  * snapshot.

@@ -9,12 +9,23 @@ export const AUTOPLAY_CONFIG = {
   // profiler adds per-tick DB reads and the nudger injects events into the
   // player's town outside the tick transactions. Toggled from the Autoplay panel.
   ENABLED: false,
-  WINDOW_SIZE: 60,           // ticks per analysis window (~1 game hour)
+  // GAME minutes per analysis window (one game hour). It used to be counted in
+  // ticks and tested with `totalTicks % N`, which is a different span at every
+  // tick_speed (a 60-tick window was 4 game hours at 4x) and could miss the
+  // boundary entirely; the tick loop now detects the crossing on the game clock.
+  WINDOW_MINUTES: 60,
   BOREDOM_THRESHOLD: 55,     // score to trigger auto-nudges
   AUTO_NUDGE: true,
   MAX_NUDGES_PER_DAY: 12,
   HISTORY_WINDOWS: 24,
 };
+
+/**
+ * The values above as shipped, frozen before anything mutates them. A new
+ * world starts from these (`loadAutoplayConfig`): the config is per world, so
+ * the previous town's Chaos storyteller must not leak into the next one.
+ */
+export const AUTOPLAY_DEFAULTS: Readonly<typeof AUTOPLAY_CONFIG> = Object.freeze({ ...AUTOPLAY_CONFIG });
 
 export const CONFIG = {
   // Simulation

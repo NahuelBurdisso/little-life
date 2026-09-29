@@ -78,8 +78,8 @@ class AutoPlayer {
    * `conditionHistory` has to go with it. Retained across a gap, the first window
    * of the new session is compared against three PRE-GAP windows, so a `>= 2`
    * gate can fire and claim "3+ consecutive windows" on one window of real
-   * evidence. Across a windowSize change it is worse still: the retained entries
-   * were recorded over a different tick span, so "3 consecutive windows" no
+   * evidence. Across a window-size change it is worse still: the retained entries
+   * were recorded over a different game-time span, so "3 consecutive windows" no
    * longer denotes any fixed duration. Baselines legitimately survive a resize
    * (see routers/autoplay.ts) — a run counter does not.
    */
@@ -133,11 +133,15 @@ class AutoPlayer {
     };
 
     // Build analysis window
-    const windowSize = CONFIG.AUTOPLAY.WINDOW_SIZE;
+    // The window is WINDOW_MINUTES of game time. Game-minute columns take it
+    // as is; the tick-stamped ones (activity_log.timestamp) need it converted
+    // at the current speed, approximate across a speed change.
+    const windowMinutes = CONFIG.AUTOPLAY.WINDOW_MINUTES;
+    const tickSpeed = worldRow.tick_speed > 0 ? worldRow.tick_speed : 1;
     const endTick = time.totalTicks;
-    const startTick = Math.max(0, endTick - windowSize);
+    const startTick = Math.max(0, endTick - Math.round(windowMinutes / tickSpeed));
     const endMinutes = gameMinutes(time);
-    const startMinutes = endMinutes - (endTick - startTick) * (worldRow.tick_speed ?? 1);
+    const startMinutes = endMinutes - windowMinutes;
     const startMs = this.lastAnalyzeMs;
     const nowMs = Date.now();
 
@@ -293,7 +297,8 @@ class AutoPlayer {
       retryCount: latest.perf.llm.retryCount,
       queueHealth: {
         depth: latest.health.queueDepth,
-        saturationRate: latest.perf.llm.slotSaturationTicks / Math.max(1, CONFIG.AUTOPLAY.WINDOW_SIZE),
+        // Saturated ticks over the ticks actually sampled in the window.
+        saturationRate: latest.perf.llm.slotSaturationTicks / Math.max(1, latest.perf.tickDurations.length),
       },
       phaseTimings: latest.perf.phaseTimings,
       tickHealth: {

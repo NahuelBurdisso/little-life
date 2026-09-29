@@ -29,6 +29,8 @@ export type { LiveRules } from '../data/rulesCatalog';
  * being written back into `setup_config`: that one is the scenario, and a
  * Restart replays it — a Storyteller click made mid-run should not become part
  * of the scenario, and Restart should give back the town the wizard built.
+ * (The Storyteller's autoplay settings ride in the same column under
+ * `autoplay`; see lib/autoplaySettings.ts. The rules reader ignores them.)
  * Both columns belong to the world row, so a world replace drops them together.
  *
  * Worlds without a saved config (the default seed, pre-wizard saves), keys a
@@ -105,7 +107,13 @@ export function setRuleOverrides(patch: RuleOverrides): LiveRules {
     .limit(1)
     .get();
   if (!row) throw new Error('No world to set rules on');
-  const next = { ...pickValid(row.rule_overrides), ...RuleOverridesSchema.parse(patch) };
+  // `autoplay` (lib/autoplaySettings.ts) shares the column; carry it through.
+  const autoplay = row.rule_overrides?.autoplay;
+  const next = {
+    ...(autoplay !== undefined ? { autoplay } : {}),
+    ...pickValid(row.rule_overrides),
+    ...RuleOverridesSchema.parse(patch),
+  };
   db.update(worldState).set({ rule_overrides: next }).run();
   cached = null;
   return getRules();

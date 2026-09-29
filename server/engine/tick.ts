@@ -297,15 +297,17 @@ export async function gameTick(): Promise<void> {
     } catch { /* fresh DB */ }
   }
 
-  // AutoPlay analysis window. Deliberately TICKS, not game time: the window is
-  // a profiler sample of the loop itself (tick durations, slot state), and its
-  // size is set in ticks from the autoplay router. `analyze` is not awaited, so a window that takes
-  // longer than WINDOW_SIZE ticks would otherwise start a second run that
-  // interleaves with the first over the same `perf.flush()` (which resets) and
-  // history state. markDirty has to wait for the report it announces.
+  // AutoPlay analysis window, in GAME minutes: the engagement collectors read
+  // game-time tables, so "one window" has to mean the same slice of town life
+  // at every tick_speed. It used to be `totalTicks % WINDOW_SIZE` — 60 ticks is
+  // 4 game hours at 4x, and a step of 4 minutes can skip the boundary outright.
+  // `crossedBoundary` fires once per boundary at any speed. `analyze` is not
+  // awaited, so a window that takes longer than one window would otherwise
+  // start a second run that interleaves with the first over the same
+  // `perf.flush()` (which resets) and history state (`isAnalyzing`).
   if (
     CONFIG.AUTOPLAY.ENABLED &&
-    newTime.totalTicks % CONFIG.AUTOPLAY.WINDOW_SIZE === 0 &&
+    crossedBoundary(gameMinutes(oldTime), nowMinutes, CONFIG.AUTOPLAY.WINDOW_MINUTES) &&
     !isAnalyzing
   ) {
     isAnalyzing = true;
