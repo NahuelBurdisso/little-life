@@ -82,3 +82,29 @@ describe('extractConfidedQuote', () => {
       .toBe("He said 'never again' and I believed him.");
   });
 });
+
+describe('thatSentence with the lead\'s own people (G7)', () => {
+  const yuki = { name: 'Yuki Tanaka', gender: 'female' };
+  const diego = { name: 'Diego Santos', gender: 'male' };
+  const marco = { name: 'Marco Rivera', gender: 'male' };
+  const sighting = "Yuki Tanaka spotted Diego Santos at a secret meeting they weren't supposed to attend.";
+
+  it('never names the teller or listener twice', () => {
+    expect(thatSentence('Yuki Tanaka told Marco Rivera', sighting, [yuki, marco])).toBe(
+      "Yuki Tanaka told Marco Rivera that she spotted Diego Santos at a secret meeting they weren't supposed to attend.",
+    );
+    expect(thatSentence('Diego Santos overheard', sighting, [diego])).toBe(
+      "Diego Santos overheard that Yuki Tanaka spotted him at a secret meeting they weren't supposed to attend.",
+    );
+  });
+
+  it('uses the possessive and a neutral pronoun when gender is unknown', () => {
+    expect(thatSentence('Rosa Chen learned', "Lucia noticed discrepancies in Rosa Chen's shop ledger.", [{ name: 'Rosa Chen' }]))
+      .toBe('Rosa Chen learned that Lucia noticed discrepancies in their shop ledger.');
+  });
+
+  it('leaves facts that do not name them alone', () => {
+    expect(thatSentence('Marco Rivera told Priya Sharma', sighting, [marco, { name: 'Priya Sharma', gender: 'female' }]))
+      .toBe("Marco Rivera told Priya Sharma that Yuki Tanaka spotted Diego Santos at a secret meeting they weren't supposed to attend.");
+  });
+});

@@ -42,14 +42,56 @@ export function endSentence(text: string): string {
   return TERMINATED.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+/** Whoever the feed line is about, when their own name may appear in the fact. */
+export interface FactSelf {
+  name: string;
+  /** `agents.gender`: 'female' / 'male'; anything else reads as "they". */
+  gender?: string | null;
+}
+
+const PRONOUNS: Record<string, { subject: string; object: string; possessive: string }> = {
+  female: { subject: 'she', object: 'her', possessive: 'her' },
+  male: { subject: 'he', object: 'him', possessive: 'his' },
+};
+const NEUTRAL_PRONOUNS = { subject: 'they', object: 'them', possessive: 'their' };
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Replace `self`'s own name inside a fact clause with a pronoun, so a feed line
+ * about them doesn't name them twice. Playtest G7: "Diego Santos told Marco
+ * Rivera that Yuki Tanaka spotted Diego Santos at a secret meeting" read as
+ * Diego gossiping about himself in the third person. Now the witness telling
+ * her own sighting reads "Yuki told Marco that she spotted Diego…", and the
+ * seen man overhearing it reads "Diego overheard that Yuki spotted him…".
+ * At the start of the clause the name is the grammatical subject; anywhere
+ * else it is an object; "Rosa Chen's" becomes the possessive.
+ */
+export function withSelfAsPronoun(clause: string, self: FactSelf): string {
+  const name = self.name.trim();
+  if (!name) return clause;
+  const p = PRONOUNS[(self.gender ?? '').toLowerCase()] ?? NEUTRAL_PRONOUNS;
+  const escaped = escapeRegExp(name);
+  let out = clause.replace(new RegExp(`\\b${escaped}['’]s\\b`, 'g'), p.possessive);
+  out = out.replace(new RegExp(`^${escaped}\\b`), p.subject);
+  out = out.replace(new RegExp(`\\b${escaped}\\b`, 'g'), p.object);
+  return out;
+}
+
 /**
  * "<lead> that <fact>." — the one shape every gossip/drama feed line uses.
  * "that + clause" needs no grammatical agreement with the fact, unlike the old
  * "overheard something about <fact>", which only worked for noun phrases and
  * every fact is a full clause.
+ *
+ * `selves` are the people the lead names (the teller and listener, the
+ * eavesdropper): their own names inside the fact become pronouns — see
+ * withSelfAsPronoun.
  */
-export function thatSentence(lead: string, factContent: string): string {
-  const trimmed = factContent.trim();
+export function thatSentence(lead: string, factContent: string, selves: FactSelf[] = []): string {
+  const trimmed = selves.reduce((text, self) => withSelfAsPronoun(text, self), factContent.trim());
   // A question can't follow "that" ("…overheard that is Marco broke"), and
   // swapping its "?" for "." would state a suspicion as fact. Quote it whole.
   if (/\?["'”’»)\]]*$/.test(trimmed)) {

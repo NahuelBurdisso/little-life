@@ -14,6 +14,7 @@ import {
 import { backfillActivityLogGameMinutes } from './activityLogClock';
 import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
+import { repairLegacySightingFacts } from './sightingFactRepair';
 import { CONFIG } from '../lib/constants';
 import path from 'path';
 import fs from 'fs';
@@ -294,6 +295,8 @@ export function initSchema(): void {
     () => backfillRelationshipEventGameMinutes(sqlite),
     // activity_log.game_minute: logActivity stamps new rows, this heals old ones.
     () => backfillActivityLogGameMinutes(sqlite),
+    // Every start; matches only old-orientation rows, so a no-op once healed.
+    () => repairLegacySightingFacts(sqlite),
   ]);
   // Again, for indexes on columns migrateSchema only just added: on an old file
   // the first pass above failed on idx_relationship_events_game_minute (and

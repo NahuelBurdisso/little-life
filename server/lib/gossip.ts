@@ -5,7 +5,7 @@ import { logActivity } from './activityLogger';
 import { PersonalityProfile } from './personality';
 import { simEvents } from './simEvents';
 import { cliqueIdOf } from './cliques';
-import { thatSentence } from './factText';
+import { thatSentence, type FactSelf } from './factText';
 import { gameMinutesNow } from './worldClock';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
@@ -140,6 +140,25 @@ export function isOwnSecret(
 }
 
 /**
+ * Whether `listenerId` may be told this fact as gossip. Nobody is told a
+ * confirmed fact about themselves as if it were news about someone else (G7:
+ * "Marco told Diego that Yuki spotted Diego…"): they either lived it or it is
+ * a sighting of them, and either way the scene is a confrontation, not gossip.
+ *
+ * The one deliberate exception is an UNVERIFIED rumor — a fabricated one,
+ * including the player's `start_rumor` god power (godPowers.ts). Hearing that
+ * one about yourself is the point: `rumorReachedSubject` turns it into anger
+ * at the teller, so it must still be allowed to reach its subject.
+ */
+export function mayBeToldTo(
+  fact: { subject_id: number; target_id: number | null; type: string; reliability: string | null },
+  listenerId: number,
+): boolean {
+  if (!isOwnSecret(fact, listenerId)) return true;
+  return fact.reliability === 'unverified';
+}
+
+/**
  * What a jealous agent says about their rival. The jealousy trigger knows who
  * the rival is and who they are both after, so the rumor can name it instead
  * of the contentless "There are rumors going around about X". Undefined when
@@ -158,6 +177,16 @@ export function getAgentName(agentId: number): string {
     .where(eq(agents.id, agentId))
     .get();
   return row?.name ?? `Agent#${agentId}`;
+}
+
+/** Name + gender, for feed lines that turn the person's own name into a pronoun. */
+export function getAgentSelf(agentId: number): FactSelf {
+  const row = db
+    .select({ name: agents.name, gender: agents.gender })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .get();
+  return { name: row?.name ?? `Agent#${agentId}`, gender: row?.gender ?? null };
 }
 
 // ─── getRelationshipFriendship ────────────────────────────────────────────────
@@ -322,6 +351,10 @@ export function getShareableFacts(
     // LLM as "things you could gossip about" and let spreadGossip leak them the
     // moment the speaker said their own name. Confessing is a separate path.
     if (isOwnSecret(fact, speakerId)) return false;
+    // Nor is a confirmed fact about the listener (see mayBeToldTo). The
+    // relevance sort below puts facts about the listener FIRST, so without this
+    // the LLM was handed "tell Diego that Yuki spotted Diego" as its best gossip.
+    if (!mayBeToldTo(fact, listenerId)) return false;
 
     // Personality gates
     if (fact.sensitivity >= 2 && personality.honesty > 60) return false;
@@ -481,12 +514,12 @@ export function spreadGossip(
     rumorReachedSubject(fact, _speakerId, listenerId);
 
     if (fact.sensitivity >= 2) {
-      const listenerName = getAgentName(listenerId);
+      const listener = getAgentSelf(listenerId);
       logActivity({
         type: 'drama',
         initiator: listenerId,
         target: fact.subject_id,
-        templateData: { description: thatSentence(`${listenerName} learned`, fact.content) },
+        templateData: { description: thatSentence(`${listener.name} learned`, fact.content, [listener]) },
       });
     }
   }
