@@ -16,6 +16,8 @@
  * empty model reply (retry once, then the canned fallback).
  */
 
+import { firstName, nameVariants } from './names';
+
 export interface DialogueSanitizeOptions {
   /** Full name of the agent speaking. */
   speakerName: string;
@@ -55,10 +57,6 @@ function isFallbackReply(text: string): boolean {
  */
 export function isFallbackMessage(msg: { text?: string; fallback?: boolean }): boolean {
   return msg.fallback === true || (typeof msg.text === 'string' && isFallbackReply(msg.text));
-}
-
-function firstName(fullName: string): string {
-  return fullName.trim().split(/\s+/)[0] ?? '';
 }
 
 function escapeRegExp(s: string): string {
@@ -107,12 +105,12 @@ function isSelfTag(sentence: string, speakerNames: readonly string[]): boolean {
   if (words[0] === 'I') {
     i = 1;
   } else {
-    const matched = speakerNames.find((n) => {
-      const parts = n.split(/\s+/);
-      return parts.every((p, k) => words[k] === p);
-    });
+    // Tag words had their punctuation stripped, so compare "Dr. Sofia" as "Dr Sofia".
+    const matched = speakerNames
+      .map((n) => n.replace(/\./g, '').split(/\s+/))
+      .find((parts) => parts.every((p, k) => words[k] === p));
     if (!matched) return false;
-    i = matched.split(/\s+/).length;
+    i = matched.length;
   }
   if (words[i] && /ly$/i.test(words[i]) && words[i + 1] && TAG_VERB.test(words[i + 1])) i++;
   if (!words[i] || !TAG_VERB.test(words[i])) return false;
@@ -183,14 +181,15 @@ function extractSpokenWords(text: string, speakerNames: readonly string[]): stri
 
   const allTags = outsides.every((seg) =>
     seg
-      .split(/(?<=[.!?…])\s+/)
+      // Sentence ends, but not the "." of a title ("Dr. Sofia Petrov sighs.").
+      .split(/(?<=[.!?…])(?<!\b(?:Dr|Mr|Mrs|Ms|Prof|Rev|St)\.)\s+/)
       .every((sentence) => !/\p{L}/u.test(sentence) || isSelfTag(sentence, speakerNames)),
   );
   return allTags ? spoken.join(' ') : text;
 }
 
-function stripSpeakerPrefix(text: string, speakerFull: string, speaker: string): string {
-  const names = [speakerFull.trim(), speaker].filter(Boolean).map(escapeRegExp);
+function stripSpeakerPrefix(text: string, speakerNames: readonly string[]): string {
+  const names = speakerNames.map(escapeRegExp);
   if (names.length === 0) return text;
   return text.replace(new RegExp(`^\\s*(?:${names.join('|')})\\s*:\\s*`, 'i'), '');
 }
@@ -324,8 +323,9 @@ export function sanitizeDialogue(raw: string, opts: DialogueSanitizeOptions): st
   text = text.replace(EMOJI, '');
   text = stripStageDirections(text);
   text = text.replace(/\s+/g, ' ').trim();
-  text = stripSpeakerPrefix(text, opts.speakerName, speaker);
-  text = extractSpokenWords(text, [opts.speakerName.trim(), speaker].filter(Boolean));
+  const speakerNames = nameVariants(opts.speakerName);
+  text = stripSpeakerPrefix(text, speakerNames);
+  text = extractSpokenWords(text, speakerNames);
   text = tidy(text);
   text = fixWrongVocatives(text, speaker, listener, opts.townNames ?? []);
   if (opts.truncated) text = trimIncompleteTail(text);

@@ -9,6 +9,7 @@ import { PersonalityProfile } from '../lib/personality';
 import { generateVoiceDirective } from './voiceDirective';
 import { selectConversationContext, ContextItem } from './contextSelector';
 import { isFallbackMessage } from './sanitizeDialogue';
+import { firstName } from './names';
 
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
@@ -543,7 +544,7 @@ export function buildConversationPrompt(
     text: string;
     fallback?: boolean;
   }>;
-  const otherFirstName = otherAgent.name.split(' ')[0];
+  const otherFirstName = firstName(otherAgent.name);
 
   for (const msg of recentMessages) {
     // A canned fallback ("Omar smiled and nodded.") is narration, not a line.

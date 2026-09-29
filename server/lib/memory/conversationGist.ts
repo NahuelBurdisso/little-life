@@ -66,13 +66,20 @@ function shorten(text: string): string {
   return out.replace(/"/g, "'");
 }
 
-export function pickConversationGist(lines: readonly GistLine[]): ConversationGist | null {
+/**
+ * @param nameOf resolves a speakerId to the agent's full name, so older,
+ *   unsanitised lines lose their "Dr. Sofia:" prefixes and self-narrated tags.
+ */
+export function pickConversationGist(
+  lines: readonly GistLine[],
+  nameOf: (speakerId: number) => string | undefined = () => undefined,
+): ConversationGist | null {
   let best: { line: GistLine; text: string; score: number } | null = null;
   for (const line of lines) {
     if (!line.text || isFallbackMessage(line)) continue;
     // Stored lines are sanitised on the way in now, but older transcripts are
     // not — re-running the (idempotent) sanitiser keeps directions out of memory.
-    const text = sanitizeDialogue(line.text, { speakerName: '', listenerName: '' });
+    const text = sanitizeDialogue(line.text, { speakerName: nameOf(line.speakerId) ?? '', listenerName: '' });
     if (text.split(/\s+/).length < 4) continue;
     const s = score(text, line.sentiment ?? 0);
     if (!best || s > best.score) best = { line, text, score: s };

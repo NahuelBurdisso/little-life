@@ -44,13 +44,20 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       // Remember something that was actually said, not just the topic label.
       // Only LLM conversations pass their transcript; template ones (and any
       // transcript with nothing worth quoting) keep the topic templates.
-      const gist = messages?.length ? pickConversationGist(messages) : null;
+      const names = new Map<number, string | undefined>();
+      const nameOf = (id: number) => {
+        if (!names.has(id)) {
+          names.set(id, db.select({ name: agents.name }).from(agents).where(eq(agents.id, id)).get()?.name);
+        }
+        return names.get(id);
+      };
+      const gist = messages?.length ? pickConversationGist(messages, nameOf) : null;
       let description: string;
       if (gist) {
         const who = gist.speakerId === agentId ? 'I' : 'they';
         // In a group chat the quote belongs to one of several people.
         const quotedName = who === 'they' && otherName.includes(' and ')
-          ? db.select({ name: agents.name }).from(agents).where(eq(agents.id, gist.speakerId)).get()?.name ?? otherName
+          ? nameOf(gist.speakerId) ?? otherName
           : otherName;
         description = describeEvent(truncated ? 'conversation_cut_short_quote' : 'conversation_end_quote', {
           other: quotedName,
