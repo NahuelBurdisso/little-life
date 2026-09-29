@@ -44,7 +44,14 @@ class TaskRunner {
         emitter.markDirty('conversations');
       }
     } catch (err) {
-      console.error(`Conversation ${conversationId} error:`, err);
+      // The chain stops here and nothing retries the turn: the conversation
+      // sits `active` until conversationsTick's game-minute budget wraps it up.
+      // Say so, with who was speaking, instead of a bare error line.
+      console.warn(
+        `[taskRunner] Conversation ${conversationId}: turn for agent ${speakerId} threw; ` +
+          'no further turns — the scheduler will close it at its budget.',
+        err,
+      );
       this.conversationSlots--;
       emitter.markDirty('conversations');
     }
