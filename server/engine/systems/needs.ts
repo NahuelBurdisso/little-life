@@ -151,7 +151,7 @@ export function serviceApplies(
 
   if (need === 'hunger') {
     const meal = ctx.meal;
-    if (!meal || meal.locationId !== ctx.location.id || meal.source === 'pantry') return false;
+    if (!meal || meal.locationId !== ctx.location.id || meal.source === 'pantry' || meal.source === 'ration') return false;
     if (service.cost > 0) return meal.source === 'bought' || meal.source === 'own_stock';
     if (service.itemRequired) return meal.source === 'own_food';
     return true;
@@ -244,7 +244,10 @@ export function needsTick(): void {
     let meal: Meal | null = null;
     if (actionType === 'eating') {
       const here = agent.current_location != null ? locationsById.get(agent.current_location) ?? null : null;
-      meal = serveMeal(world, agent, here, economyByAgent, { hunger: agentNeeds.hunger });
+      meal = serveMeal(world, agent, here, economyByAgent, {
+        hunger: agentNeeds.hunger,
+        critical: agentNeeds.thresholds?.critical,
+      });
       if (!meal) modifiers = { ...modifiers, hunger: NO_FOOD_HUNGER_MODIFIER };
     }
     const mealBoughtHere = meal != null && (meal.source === 'bought' || meal.source === 'own_stock')

@@ -11,7 +11,8 @@ import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY }
 import { simEvents } from '../../lib/simEvents';
 import { getReputationPriceModifier } from '../../lib/reputationEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
-import { gameMinutes } from '../../lib/gameClock';
+import { gameMinutes, isOpenAt } from '../../lib/gameClock';
+import { getAgentStates } from '../../lib/states';
 
 // --- Module-level state for batching and milestones ---
 
@@ -68,9 +69,10 @@ export function clearPurchaseTracking(): void {
  * - `own_stock` a vendor's owner eating a unit of their own stock
  * - `own_food`  a food item from the eater's inventory (groceries, own harvest)
  * - `pantry`    the starvation safety net: no food, no money (or starving) —
- *               see PANTRY below
+ *               see pantryMealDay below
+ * - `ration`    the jail feeds its prisoners (they can't go anywhere to eat)
  */
-export type MealSource = 'bought' | 'own_stock' | 'own_food' | 'pantry';
+export type MealSource = 'bought' | 'own_stock' | 'own_food' | 'pantry' | 'ration';
 export interface Meal {
   source: MealSource;
   /** Where the meal was had (null outdoors); location services only feed you where you ate. */
@@ -105,13 +107,25 @@ export const PANTRY_MOOD_MINUTES = 180;
  * The food item a meal from this inventory consumes: `preferred` (a service's
  * `itemRequired`, e.g. a home kitchen wants `food_raw`) when held, else the
  * cheapest food held — bread or a prepared meal from the shop feeds you at home
- * just as well.
+ * just as well. Items in `keep` (the eater's own production inputs: the
+ * baker's food_raw is tomorrow's bread) are eaten only when nothing else is.
  */
-function pickFood(inventory: readonly { itemId: string; quantity: number }[], preferred: string | null): string | null {
-  if (preferred && inventory.some((i) => i.itemId === preferred && i.quantity > 0)) return preferred;
+function pickFood(
+  inventory: readonly { itemId: string; quantity: number }[],
+  preferred: string | null,
+  keep: ReadonlySet<string> = new Set(),
+): string | null {
   const foods = inventory.filter((i) => i.quantity > 0 && isFood(i.itemId));
-  foods.sort((a, b) => ITEM_REGISTRY[a.itemId].basePrice - ITEM_REGISTRY[b.itemId].basePrice);
-  return foods[0]?.itemId ?? null;
+  const spare = foods.filter((i) => !keep.has(i.itemId));
+  const pool = spare.length > 0 ? spare : foods;
+  if (preferred && pool.some((i) => i.itemId === preferred)) return preferred;
+  pool.sort((a, b) => ITEM_REGISTRY[a.itemId].basePrice - ITEM_REGISTRY[b.itemId].basePrice);
+  return pool[0]?.itemId ?? null;
+}
+
+/** Items the agent's job consumes (a baker's food_raw), kept back from meals. */
+function productionInputs(job: string): ReadonlySet<string> {
+  return new Set(Object.keys(getRecipeForJob(job)?.inputs ?? {}));
 }
 
 type LocationRow = typeof locations.$inferSelect;
@@ -171,7 +185,7 @@ export function serveMeal(
   agent: { id: number; name: string; home: number | null; action_started: number },
   location: LocationRow | null,
   econByAgent: Map<number, EconRecord>,
-  opts: { hunger?: number; now?: number } = {},
+  opts: { hunger?: number; critical?: number; now?: number } = {},
 ): Meal | null {
   const actionKey = `eating:${agent.action_started}`;
   const cached = mealThisAction.get(agent.id);
@@ -186,8 +200,9 @@ export function serveMeal(
     return meal;
   };
 
-  // 1. A food vendor.
-  if (location?.owner != null) {
+  // 1. A food vendor — while it is open (someone lingering past closing time
+  // used to be served).
+  if (location?.owner != null && (location.owner === agent.id || isOpenAt(location.operating_hours, world.time!.hour))) {
     const ownerEcon = econByAgent.get(location.owner);
     const quote = ownerEcon ? quoteMeal(location, ownerEcon, season, agent.id) : null;
     if (ownerEcon && quote) {
@@ -214,15 +229,23 @@ export function serveMeal(
 
   // 2. Own food — at home that is cooking your groceries; elsewhere a packed lunch.
   const preferred = location ? hungerService(location)?.itemRequired ?? null : null;
-  const food = pickFood(eaterEcon.inventory as any[], preferred);
+  const food = pickFood(eaterEcon.inventory as any[], preferred, productionInputs(eaterEcon.job));
   if (food) {
     consumeItem(eaterEcon, food);
     return serve({ source: 'own_food', locationId: location?.id ?? null, item: food });
   }
 
-  // 3. The pantry safety net.
+  // 3. Prison rations. An arrested agent is held in the cell for up to 48 game
+  // hours and can reach neither a shop nor their pantry; unfed, a sentence was
+  // most of the 72-hour starvation clock.
+  if (location?.type === 'prison' && getAgentStates(agent.id).includes('arrested')) {
+    return serve({ source: 'ration', locationId: location.id, item: null });
+  }
+
+  // 4. The pantry safety net.
   const day = world.time!.day;
-  if (location != null && location.id === agent.home && pantryWouldServe(agent.id, eaterEcon.money, opts.hunger, day)) {
+  if (location != null && location.id === agent.home
+    && pantryWouldServe(agent.id, eaterEcon.money, opts.hunger, day, opts.critical)) {
     pantryMealDay.set(agent.id, day);
     return serve({ source: 'pantry', locationId: location.id, item: null });
   }
@@ -232,12 +255,20 @@ export function serveMeal(
 
 /**
  * Would the pantry feed this agent today (at home)? Broke — can't afford the
- * cheapest food — or starving, and not used yet this game day.
+ * cheapest food — or starving, and not used yet this game day. `critical` is
+ * the agent's own threshold (needs.thresholds.critical), the same one the
+ * decision engine's hunger emergency uses, so "starving" means one thing.
  */
-export function pantryWouldServe(agentId: number, money: number, hunger: number | undefined, day: number): boolean {
+export function pantryWouldServe(
+  agentId: number,
+  money: number,
+  hunger: number | undefined,
+  day: number,
+  critical: number = CONFIG.NEEDS.THRESHOLDS.critical,
+): boolean {
   if (pantryMealDay.get(agentId) === day) return false;
   const broke = money < getCheapestFoodPrice();
-  const starving = hunger !== undefined && hunger < CONFIG.NEEDS.THRESHOLDS.critical;
+  const starving = hunger !== undefined && hunger < critical;
   return broke || starving;
 }
 

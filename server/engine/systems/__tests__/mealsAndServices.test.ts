@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { db } from '../../../db';
-import { agents, economy, economyTransactions, locations, needs, worldState } from '../../../db/schema';
+import { agents, agentStates, economy, economyTransactions, locations, needs, worldState } from '../../../db/schema';
 import { and, eq, like } from 'drizzle-orm';
 import { needsTick, serviceApplies } from '../needs';
-import { clearPurchaseTracking, PANTRY_MOOD_PENALTY } from '../economy';
-import { chooseMealTarget, groceryList } from '../decisions';
+import { clearPurchaseTracking, economyTick, PANTRY_MOOD_PENALTY } from '../economy';
+import { chooseMealTarget, groceryList, checkEmergency, HUNGER_INTERRUPTS_WORK } from '../decisions';
 import { CONFIG } from '../../../lib/constants';
 
 /**
@@ -283,46 +283,56 @@ describe('decisions: where to eat and what to buy', () => {
     const near = loc('shop', SHOP_SERVICES, grocerId, 100, { open: 8, close: 18 });
     const bakerId = agent(home, { money: 0, inventory: stock({ bread: 10 }) });
     const far = loc('bakery', [{ needSatisfied: 'hunger', amount: 12, cost: 5, itemRequired: null }], bakerId, 900, { open: 4, close: 14 });
+    const park = loc('park', [], null, 500);
     // Only this scene's places: other tests' shops (open, stocked, at x=0) would be nearer.
-    const all = db.select().from(locations).all().filter((l) => [home, near, far].includes(l.id));
+    const all = db.select().from(locations).all().filter((l) => [home, near, far, park].includes(l.id));
     const econMap = new Map(db.select().from(economy).all().map((e) => [e.agent_id, e]));
-    return { home, near, far, all, econMap, grocerId };
+    return { home, near, far, park, all, econMap, grocerId };
   }
-  const me = (home: number) => ({ id: -1, home, position: { x: 0, y: 0 } });
+  const me = (home: number, at: number | null = home) => ({ id: -1, home, position: { x: 0, y: 0 }, current_location: at });
+  const to = (id: number) => ({ locationId: id, here: false });
 
   it('hungry with no food and some money: the nearest open vendor, not home', () => {
     const w = world();
-    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, time)).toBe(w.near);
+    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, time)).toEqual(to(w.near));
   });
 
   it('skips a closed vendor', () => {
     const w = world();
-    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, { ...time, hour: 6 })).toBe(w.far);
+    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, { ...time, hour: 6 })).toEqual(to(w.far));
   });
 
-  it('with food at home: eats at home', () => {
+  it('carrying food: eats it where they stand, even when a vendor was requested', () => {
     const w = world();
-    expect(chooseMealTarget(me(w.home), { money: 20, inventory: stock({ food_raw: 1 }) }, w.home, w.all, w.econMap, time)).toBe(w.home);
+    const groceries = { money: 20, inventory: stock({ food_raw: 1 }) };
+    expect(chooseMealTarget(me(w.home, w.park), groceries, w.park, w.all, w.econMap, time)).toEqual({ locationId: w.park, here: true });
+    expect(chooseMealTarget(me(w.home, w.park), groceries, w.far, w.all, w.econMap, time)).toEqual({ locationId: w.park, here: true });
+    // Outdoors: no location, still here.
+    expect(chooseMealTarget(me(w.home, null), groceries, w.near, w.all, w.econMap, time)).toEqual({ locationId: undefined, here: true });
   });
 
-  it('keeps a requested vendor that will serve them', () => {
+  it('carrying food but already sitting in a vendor that serves them: buys there', () => {
     const w = world();
-    expect(chooseMealTarget(me(w.home), { money: 20, inventory: stock({ food_raw: 1 }) }, w.far, w.all, w.econMap, time)).toBe(w.far);
+    expect(chooseMealTarget(me(w.home, w.near), { money: 20, inventory: stock({ food_raw: 1 }) }, w.near, w.all, w.econMap, time))
+      .toEqual(to(w.near));
   });
 
   it('broke with no food: home, where the pantry is', () => {
     const w = world();
-    expect(chooseMealTarget(me(w.home), { money: 0, inventory: [] }, w.near, w.all, w.econMap, time)).toBe(w.home);
+    expect(chooseMealTarget(me(w.home), { money: 0, inventory: [] }, w.near, w.all, w.econMap, time)).toEqual(to(w.home));
   });
 
-  it('nothing open, money, not starving: no meal target (idle, not an hour at an empty table)', () => {
+  it('nothing open, money, not starving: no meal (the caller drops eating)', () => {
     const w = world();
     expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, { ...time, hour: 22 }, 40)).toBeNull();
   });
 
-  it('nothing open but starving: home, for the pantry', () => {
+  it('nothing open but starving by the agent\'s own threshold: home, for the pantry', () => {
     const w = world();
-    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, { ...time, hour: 22 }, 5)).toBe(w.home);
+    const late = { ...time, hour: 22 };
+    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, late, 5)).toEqual(to(w.home));
+    // A custom critical threshold of 25 makes hunger 20 "starving" for the pantry too.
+    expect(chooseMealTarget(me(w.home), { money: 20, inventory: [] }, w.home, w.all, w.econMap, late, 20, 25)).toEqual(to(w.home));
   });
 
   it('the shopping list restocks an empty pantry with the shop\'s cheapest foods', () => {
@@ -330,5 +340,93 @@ describe('decisions: where to eat and what to buy', () => {
     const shop = w.all.find((l) => l.id === w.near)!;
     expect(groceryList({ inventory: [] }, shop)).toEqual(['food_raw', 'bread']);
     expect(groceryList({ inventory: stock({ bread: 2 }) }, shop)).toEqual([]);
+  });
+});
+
+describe('decisions: the hunger emergency', () => {
+  function subject(hunger: number, action: string) {
+    const home = loc('home', HOME_SERVICES);
+    const id = agent(home, { hunger });
+    act(id, { type: action }, home);
+    return {
+      agent: db.select().from(agents).where(eq(agents.id, id)).get()!,
+      needs: { ...needsOf(id), energy: 80, social: 80, mood: 60 },
+      home,
+    };
+  }
+
+  it('is skipped when there is no meal to be had anywhere', () => {
+    const { agent: a, needs: n } = subject(5, 'idle');
+    expect(checkEmergency(a, n, [], [], [], undefined, () => null)).toBeNull();
+  });
+
+  it('goes where the meal is when there is one', () => {
+    const { agent: a, needs: n, home } = subject(5, 'idle');
+    const d = checkEmergency(a, n, [], [], [], undefined, () => ({ locationId: home, here: false }));
+    expect(d).toMatchObject({ action: 'eating', targetLocationId: home });
+  });
+
+  it('does not pull someone off their shift until hunger is below the work threshold', () => {
+    const meal = () => ({ locationId: undefined, here: true });
+    const peckish = subject(HUNGER_INTERRUPTS_WORK + 5, 'working');
+    expect(checkEmergency(peckish.agent, peckish.needs, [], [], [], undefined, meal)).toBeNull();
+    const starving = subject(HUNGER_INTERRUPTS_WORK - 1, 'working');
+    expect(checkEmergency(starving.agent, starving.needs, [], [], [], undefined, meal)).toMatchObject({ action: 'eating' });
+  });
+});
+
+describe('meal edge cases', () => {
+  beforeEach(() => { clearPurchaseTracking(); setClock(); });
+
+  it('needsTick and economyTick in the same tick charge a shop meal once', () => {
+    const home = loc('home', HOME_SERVICES);
+    const owner = agent(home, { money: 0, inventory: stock({ food_raw: 10 }) });
+    const shop = loc('shop', SHOP_SERVICES, owner);
+    const a = agent(home, { money: 100 });
+    act(a, { type: 'eating', locationId: shop }, shop);
+    for (let i = 0; i < 5; i++) { needsTick(); economyTick(); }
+    expect(purchasesBy(a)).toHaveLength(1);
+    expect(count(owner, 'food_raw')).toBeLessThanOrEqual(9);
+  });
+
+  it('a closed vendor does not serve (someone lingering after closing)', () => {
+    const home = loc('home', HOME_SERVICES);
+    const owner = agent(home, { money: 0, inventory: stock({ food_raw: 10 }) });
+    const shop = loc('shop', SHOP_SERVICES, owner, 0, { open: 8, close: 11 });
+    const a = agent(home, { money: 100 });
+    act(a, { type: 'eating', locationId: shop }, shop);
+    ticks(5);
+    expect(purchasesBy(a)).toHaveLength(0);
+  });
+
+  it('the pantry only feeds at home', () => {
+    const home = loc('home', HOME_SERVICES);
+    const park = loc('park', []);
+    const a = agent(home, { money: 0, hunger: 20 });
+    act(a, { type: 'eating', locationId: park }, park);
+    ticks(20);
+    expect(needsOf(a).hunger).toBeLessThan(20);
+  });
+
+  it('a baker eats bread at home and keeps the food_raw for baking', () => {
+    const home = loc('home', HOME_SERVICES);
+    const baker = agent(home, { inventory: stock({ food_raw: 3, bread: 2 }) });
+    db.update(economy).set({ job: 'baker' }).where(eq(economy.agent_id, baker)).run();
+    act(baker, { type: 'eating', locationId: home }, home);
+    ticks(5);
+    expect(count(baker, 'food_raw')).toBe(3);
+    expect(count(baker, 'bread')).toBe(1);
+  });
+
+  it('a prisoner is fed by the jail', () => {
+    const home = loc('home', HOME_SERVICES);
+    const prison = loc('prison', []);
+    const a = agent(home, { money: 0, hunger: 10 });
+    db.insert(agentStates).values({
+      agent_id: a, type: 'arrested', severity: 1, started_at: 0, duration: 99999, source: 'test', metadata: null,
+    }).run();
+    act(a, { type: 'eating', locationId: prison }, prison);
+    ticks(30);
+    expect(needsOf(a).hunger).toBeGreaterThan(10);
   });
 });
