@@ -63,17 +63,9 @@ export const TRADE_RULES: Record<string, TradeRule> = {
   clinic:  { locationType: 'clinic',  sells: ['medicine'],                            buys: [],                                      entertainmentCost: 0 },
 };
 
-export interface LivingCost {
-  type: 'food' | 'housing' | 'entertainment';
-  amount: number;
-  frequency: 'per_meal' | 'per_day' | 'per_visit';
-}
-
-export const LIVING_COSTS: LivingCost[] = [
-  { type: 'housing', amount: 3, frequency: 'per_day' },
-  { type: 'food', amount: 4, frequency: 'per_day' },
-  { type: 'entertainment', amount: 2, frequency: 'per_day' },
-];
+// Daily living costs are the treasury upkeep now (CONFIG.ECONOMY.UPKEEP,
+// server/lib/townTreasury.ts): paid to the town instead of burned, and without
+// the flat food/entertainment charges that meals and venue fees replaced.
 
 export const SEASON_PRICE_MODIFIERS: Record<string, number> = {
   spring: 0.9,

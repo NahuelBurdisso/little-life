@@ -70,7 +70,30 @@ export const CONFIG = {
     STARTING_MONEY: 50,
     DAILY_EXPENSES: { min: 2, max: 5 }, // legacy fallback
     TAX_RATE: 0.05,
-    TARGET_PER_CAPITA_MONEY: 50,
+    // Healthy money per resident: the default cast starts at ~$70 average and
+    // is paid ~$22/day, so a few days of meals in hand. At 50 a freshly
+    // created town already read 1.64 on day 1 — "inflation" before anything
+    // happened — and the balancer taxed it from the first night.
+    TARGET_PER_CAPITA_MONEY: 75,
+    // Daily settlement at day change (server/lib/townTreasury.ts): every
+    // resident pays BASE + LIFESTYLE_RATE × (cash − SAVINGS_ALLOWANCE) to the
+    // treasury, which pays wages and the stipend. BASE (rent, utilities)
+    // replaces the old $3 housing cost; the old $4 "food" and $2
+    // "entertainment" charges are gone because meals and venue visits are paid
+    // when they happen (G2). The lifestyle share caps a top earner's savings
+    // near $60 + surplus/rate, and the balancer scales its rate with the money
+    // supply, which keeps the supply flat whatever the cast earns.
+    UPKEEP: { BASE: 4, SAVINGS_ALLOWANCE: 60, LIFESTYLE_RATE: 0.35 },
+    // The stipend tops anyone below this up at settlement: ~3 meals at $5-6.
+    STIPEND_FLOOR: 18,
+    // A shop owner pays their staff only while keeping this much in the till.
+    EMPLOYER_CASH_FLOOR: 50,
+    // Treasury reserve a new town starts with, per resident: the wage bill
+    // leaves before the upkeep arrives, and without it the pool sat at about
+    // -$140 by day 5 of a soak. Anything above CAP per resident at settlement
+    // is retired (money that entered from outside the loop).
+    TREASURY_START_PER_CAPITA: 30,
+    TREASURY_CAP_PER_CAPITA: 50,
     INFLATION_THRESHOLD: 1.5,
     DEFLATION_THRESHOLD: 0.5,
     MIN_PAYDAY_INTERVAL_HOURS: 6,

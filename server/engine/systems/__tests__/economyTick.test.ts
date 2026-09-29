@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { db } from '../../../db';
 import { activityLog, agents, economy, economyTransactions, locations, worldState } from '../../../db/schema';
-import { and, eq, like } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
+import { CONFIG } from '../../../lib/constants';
 import {
   economyTick,
   clearPurchaseTracking,
   WHOLESALE_STOCK_TARGET,
   WHOLESALE_MAX_CASH_FRACTION,
   wholesaleBuyerOrder,
+  settleTreasury,
 } from '../economy';
 import { TRADE_RULES } from '../../../data/economyData';
 import { simEvents } from '../../../lib/simEvents';
@@ -562,5 +564,113 @@ describe('sales tax', () => {
     const tax = Math.round(sale.amount * 0.05 * 100) / 100;
     expect(tax).toBeGreaterThan(0);
     expect(db.select().from(worldState).get()!.tax_pool).toBeCloseTo(pool0 + tax, 2);
+  });
+});
+
+/**
+ * E1: salaries were minted at shift end. They now come out of the treasury
+ * (tax_pool), or out of the employer's till for staff of someone else's shop,
+ * so a payday moves money instead of creating it.
+ */
+describe('who pays the wage', () => {
+  const pool = () => db.select().from(worldState).get()!.tax_pool;
+
+  function staffed(ownerMoney: number) {
+    n++;
+    const home = insertLocation(`wage home ${n}`, 'home', null);
+    const owner = insertAgent(`Owner ${n}`, home);
+    const clerk = insertAgent(`Clerk ${n}`, home); // shift ends at 20:00
+    // A clinic: a business that buys no wholesale stock, so the till only moves by the wage.
+    const shop = insertLocation(`wage clinic ${n}`, 'clinic', owner);
+    insertEconomy(owner, ownerMoney, []);
+    insertEconomy(clerk, 10, []);
+    db.update(economy).set({ salary: 20 }).where(eq(economy.agent_id, clerk)).run();
+    // The owner's own payday must not land in this tick.
+    db.update(economy).set({ last_payday: 11 * 1440 + 20 * 60 }).where(eq(economy.agent_id, owner)).run();
+    db.update(agents).set({ workplace: shop }).where(eq(agents.id, clerk)).run();
+    return { owner, clerk, shop };
+  }
+
+  beforeAll(() => {
+    ensureWorld(11, 19, 0);
+    // Earlier scenes' workers share the 20:00 shift end; pay them first so this
+    // block's paydays are the only ones in the ticks below.
+    ensureWorld(11, 20, 0);
+    economyTick();
+  });
+
+  it('a public wage comes out of the treasury', () => {
+    n++;
+    const home = insertLocation(`wage home ${n}`, 'home', null);
+    const clerk = insertAgent(`Public servant ${n}`, home);
+    insertEconomy(clerk, 10, []);
+    db.update(economy).set({ salary: 25 }).where(eq(economy.agent_id, clerk)).run();
+    const before = pool();
+
+    economyTick();
+
+    expect(econ(clerk).money).toBe(35);
+    expect(pool()).toBeCloseTo(before - 25, 2);
+  });
+
+  it('staff of a shop are paid from the owner\'s till, not the treasury', () => {
+    const { owner, clerk } = staffed(200);
+    const before = pool();
+
+    economyTick();
+
+    expect(econ(clerk).money).toBe(30);
+    expect(econ(owner).money).toBe(180);
+    expect(pool()).toBeCloseTo(before, 2);
+    const row = db.select().from(economyTransactions).where(and(
+      eq(economyTransactions.to_agent, clerk), eq(economyTransactions.reason, 'salary'),
+    )).get()!;
+    expect(row.from_agent).toBe(owner);
+  });
+
+  it('the treasury covers staff when the till is too thin', () => {
+    const { owner, clerk } = staffed(60);
+    const before = pool();
+
+    economyTick();
+
+    expect(econ(clerk).money).toBe(30);
+    expect(econ(owner).money).toBe(60);
+    expect(pool()).toBeCloseTo(before - 20, 2);
+  });
+});
+
+/** E1/E5: the nightly settlement — upkeep into the treasury, stipend out of it. */
+describe('treasury settlement', () => {
+  it('charges upkeep, tops the broke up to the floor, and creates no money', () => {
+    ensureWorld(12, 0, 0);
+    n++;
+    const home = insertLocation(`settle home ${n}`, 'home', null);
+    const rich = insertAgent(`Saver ${n}`, home);
+    const poor = insertAgent(`Broke ${n}`, home);
+    insertEconomy(rich, 160, []);
+    insertEconomy(poor, 2, []);
+    const world = db.select().from(worldState).get()!;
+    const pool0 = world.tax_pool;
+    const residents = db.select().from(agents).where(inArray(agents.id, [rich, poor])).all();
+    const econByAgent = new Map([rich, poor].map((id) => [id, econ(id)]));
+
+    settleTreasury(world, residents, econByAgent, 0);
+
+    const { UPKEEP, STIPEND_FLOOR } = CONFIG.ECONOMY;
+    const richUpkeep = UPKEEP.BASE + UPKEEP.LIFESTYLE_RATE * (160 - UPKEEP.SAVINGS_ALLOWANCE);
+    expect(econ(rich).money).toBeCloseTo(160 - richUpkeep, 2);
+    expect(econ(rich).daily_expenses).toBeCloseTo(richUpkeep, 2);
+    // Paid the $2 they had, then topped up to the floor.
+    expect(econ(poor).money).toBe(STIPEND_FLOOR);
+    // Conservation: what the residents lost, the treasury gained.
+    const pool1 = db.select().from(worldState).get()!.tax_pool;
+    expect(pool1 + econ(rich).money + econ(poor).money).toBeCloseTo(pool0 + 162, 2);
+    expect(db.select().from(economyTransactions).where(and(
+      eq(economyTransactions.to_agent, poor), eq(economyTransactions.reason, 'town:stipend'),
+    )).all()).toHaveLength(1);
+    const feed = db.select().from(activityLog).where(eq(activityLog.type, 'system')).all()
+      .map((r) => String((r.template_data as any)?.message ?? ''));
+    expect(feed.some((m) => m.includes(`stipend to Broke ${n}`))).toBe(true);
   });
 });

@@ -7,18 +7,19 @@ import type { Season } from '../../lib/types';
 import { emitter } from '../emitter';
 import { createFact } from '../../lib/gossip';
 import { isFood, getRecipeForJob, getMarketPrice, getCheapestFoodPrice, getInventoryCount, addToInventory, removeFromInventory, getTradeRuleForLocation, setEventPriceModifiers, getEventProductionMultiplier } from '../../lib/economyEngine';
-import { SEASON_PRODUCTION_MODIFIERS, LIVING_COSTS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
+import { SEASON_PRODUCTION_MODIFIERS, TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { simEvents } from '../../lib/simEvents';
 import { getReputationPriceModifier } from '../../lib/reputationEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { gameMinutes, isOpenAt } from '../../lib/gameClock';
 import { getAgentStates } from '../../lib/states';
+import { dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, treasuryExcess } from '../../lib/townTreasury';
 
 // --- Module-level state for batching and milestones ---
 
 const productionThisTick = new Map<number, { item: string; qty: number }>();
 
-let dailyLivingCostMultiplier = 1.0;
+let dailyUpkeepMultiplier = 1.0;
 let dailyTaxRateMultiplier = 1.0;
 
 const lastMilestoneLevel = new Map<number, number>();
@@ -197,6 +198,9 @@ export function serveMeal(
   const season = world.time!.season as string;
   const serve = (meal: Meal): Meal => {
     mealThisAction.set(agent.id, { actionKey, meal });
+    // Once per meal (the cache above makes later calls return early). The soak
+    // counts pantry meals from this; nothing in the sim listens.
+    simEvents.emit('economy:meal', { agentId: agent.id, source: meal.source, money: eaterEcon.money });
     return meal;
   };
 
@@ -499,6 +503,89 @@ function wholeUnitsOf(total: number): number {
   return Math.floor(total + 1e-9);
 }
 
+// --- Treasury settlement ---
+
+/**
+ * The day-change half of the treasury loop (server/lib/townTreasury.ts):
+ * every active resident pays upkeep into the treasury, then anyone left below
+ * the stipend floor is topped up from it. Replaces the flat $9 living cost that
+ * was burned (and was charged to dead residents' empty accounts too).
+ *
+ * One ledger row per payment (`upkeep`, `town:stipend`, treasury side null)
+ * and one feed line naming the stipend recipients: the town looking after its
+ * poorest is part of the story; the daily upkeep is not.
+ */
+export function settleTreasury(
+  world: typeof worldState.$inferSelect,
+  activeAgents: readonly (typeof agents.$inferSelect)[],
+  econByAgent: Map<number, EconRecord>,
+  now: number,
+): void {
+  const { UPKEEP, STIPEND_FLOOR } = CONFIG.ECONOMY;
+  let pool = world.tax_pool;
+  const ledger = (from: number | null, to: number | null, amount: number, reason: string) =>
+    db.insert(economyTransactions).values({
+      from_agent: from, to_agent: to, amount, reason, items_exchanged: null, location_id: null, timestamp: now,
+    }).run();
+
+  for (const agent of activeAgents) {
+    const econ = econByAgent.get(agent.id);
+    if (!econ) continue;
+    const upkeep = dailyUpkeep(econ.money, {
+      base: UPKEEP.BASE, allowance: UPKEEP.SAVINGS_ALLOWANCE, rate: UPKEEP.LIFESTYLE_RATE,
+      multiplier: dailyUpkeepMultiplier,
+    });
+    econ.money = Math.round((econ.money - upkeep) * 100) / 100;
+    pool += upkeep;
+    db.update(economy).set({ money: econ.money, daily_expenses: upkeep }).where(eq(economy.id, econ.id)).run();
+    if (upkeep > 0) ledger(agent.id, null, upkeep, 'upkeep');
+    checkMilestone(agent.id, econ.money);
+
+    if (econ.money < 10) {
+      createFact('financial', agent.id, null, 1, [agent.id], 'observed');
+      simEvents.emit('economy:distress', { agentId: agent.id });
+    }
+  }
+
+  const helped: string[] = [];
+  let paidOut = 0;
+  for (const agent of activeAgents) {
+    const econ = econByAgent.get(agent.id);
+    if (!econ) continue;
+    const stipend = stipendFor(econ.money, STIPEND_FLOOR);
+    if (stipend <= 0) continue;
+    econ.money = Math.round((econ.money + stipend) * 100) / 100;
+    pool -= stipend;
+    paidOut += stipend;
+    db.update(economy).set({ money: econ.money }).where(eq(economy.id, econ.id)).run();
+    ledger(null, agent.id, stipend, 'town:stipend');
+    checkMilestone(agent.id, econ.money);
+    helped.push(agent.name);
+  }
+
+  // Money that came from outside the loop (player gifts, shoplifting, an old
+  // save's minted inflation) ends up here via the upkeep; above the cap it is
+  // retired so the pool can't grow without bound. A diagnostic, not a story.
+  const retired = treasuryExcess(pool, activeAgents.length, CONFIG.ECONOMY.TREASURY_CAP_PER_CAPITA);
+  if (retired > 0) {
+    pool -= retired;
+    console.log(`[economy] treasury over its cap: retired $${retired.toFixed(2)}`);
+  }
+
+  pool = Math.round(pool * 100) / 100;
+  db.update(worldState).set({ tax_pool: pool }).where(eq(worldState.id, world.id)).run();
+  world.tax_pool = pool;
+
+  if (helped.length > 0) {
+    const names = helped.length === 1 ? helped[0]
+      : `${helped.slice(0, -1).join(', ')} and ${helped[helped.length - 1]}`;
+    logActivity({
+      type: 'system',
+      templateData: { message: `The town paid a stipend to ${names} ($${Math.round(paidOut)}) so no one goes hungry` },
+    });
+  }
+}
+
 // --- Main tick ---
 
 export function economyTick(): void {
@@ -724,6 +811,30 @@ export function economyTick(): void {
         effectiveSalary = Math.floor(econ.salary * 0.7);
       }
     }
+    // Who pays (E1): wages used to be minted here. Staff of someone else's
+    // business are paid from that owner's till; everyone else by the town
+    // treasury, which the daily upkeep refills (settleTreasury below).
+    const workplace = agent.workplace != null ? allLocations.find((l) => l.id === agent.workplace) : undefined;
+    const payer = wagePayer({
+      agentId: agent.id,
+      workplaceOwner: workplace?.owner,
+      workplaceIsBusiness: !!workplace && !!TRADE_RULES[workplace.type],
+      employerCash: workplace?.owner != null && activeAgents.some((a) => a.id === workplace.owner)
+        ? econByAgent.get(workplace.owner)?.money
+        : undefined,
+      wage: effectiveSalary,
+      employerFloor: CONFIG.ECONOMY.EMPLOYER_CASH_FLOOR,
+    });
+    if (payer.kind === 'employer') {
+      const employerEcon = econByAgent.get(payer.employerId)!;
+      db.update(economy).set({ money: employerEcon.money - effectiveSalary }).where(eq(economy.id, employerEcon.id)).run();
+      employerEcon.money -= effectiveSalary;
+      checkMilestone(payer.employerId, employerEcon.money);
+    } else {
+      db.update(worldState).set({ tax_pool: world.tax_pool - effectiveSalary }).where(eq(worldState.id, world.id)).run();
+      world.tax_pool -= effectiveSalary;
+    }
+
     const newMoney = econ.money + effectiveSalary;
     db.update(economy).set({
       money: newMoney,
@@ -732,9 +843,9 @@ export function economyTick(): void {
     econ.money = newMoney;
     econ.last_payday = nowGameMinute;
 
-    // Log transaction
+    // Log transaction (from_agent null = the treasury)
     db.insert(economyTransactions).values({
-      from_agent: null,
+      from_agent: payer.kind === 'employer' ? payer.employerId : null,
       to_agent: agent.id,
       amount: effectiveSalary,
       reason: 'salary',
@@ -911,44 +1022,25 @@ export function economyTick(): void {
     venueVisitPaid.set(agent.id, at);
   }
 
-  // ========== 4. LIVING COSTS (data-driven) ==========
-  if (dayChanged) {
-    for (const cost of LIVING_COSTS) {
-      if (cost.frequency !== 'per_day') continue;
-      for (const econ of allEcon) {
-        const newMoney = Math.max(0, econ.money - cost.amount * dailyLivingCostMultiplier);
-        db.update(economy).set({ money: newMoney, daily_expenses: cost.amount })
-          .where(eq(economy.id, econ.id)).run();
-        econ.money = newMoney;
-        checkMilestone(econ.agent_id, newMoney);
-
-        if (newMoney < 10) {
-          createFact('financial', econ.agent_id, null, 1, [econ.agent_id], 'observed');
-          simEvents.emit('economy:distress', { agentId: econ.agent_id });
-        }
-      }
-    }
-  }
+  // ========== 4. TREASURY SETTLEMENT (on day change) ==========
+  if (dayChanged) settleTreasury(world, activeAgents, econByAgent, now);
 
   // ========== 5. MONEY SUPPLY BALANCER (on day change) ==========
+  // With wages paid out of the treasury the daily cycle no longer creates
+  // money. The multiplier set here steers tomorrow night's lifestyle share
+  // (balancerMultipliers), which holds the ratio near 1; the crisis events
+  // below (ratio > 2) now answer money that really entered from outside the
+  // loop — player gifts, an old inflated save — instead of firing in every
+  // soak from day 4.
   if (dayChanged) {
     const totalMoney = allEcon.reduce((sum, e) => sum + e.money, 0);
     const targetTotal =
       activeAgents.length * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
     const ratio = targetTotal > 0 ? totalMoney / targetTotal : 1;
 
-    if (ratio > 1.5) {
-      // Exponential scaling — punishes runaway inflation hard
-      const excess = ratio - 1.0;
-      dailyLivingCostMultiplier = 1.0 + excess * excess * 0.5;
-      dailyTaxRateMultiplier = 1.0 + excess * excess * 0.8;
-    } else if (ratio < 0.5) {
-      dailyLivingCostMultiplier = Math.max(0.3, ratio);
-      dailyTaxRateMultiplier = 0.5;
-    } else {
-      dailyLivingCostMultiplier = 1.0;
-      dailyTaxRateMultiplier = 1.0;
-    }
+    const mult = balancerMultipliers(ratio);
+    dailyUpkeepMultiplier = mult.upkeep;
+    dailyTaxRateMultiplier = mult.tax;
 
     // ── ECONOMIC CRISIS EVENTS (ratio > 2.0) ──
     if (ratio > 2.0) {
@@ -1007,7 +1099,7 @@ export function economyTick(): void {
         }
       } else if (crisisRoll < 0.75) {
         // PRICE GOUGING: random agent hoards and everyone pays more next day
-        dailyLivingCostMultiplier *= 1.5;
+        dailyUpkeepMultiplier *= 1.5;
         const hoarder = sortedByWealth[Math.floor(Math.random() * Math.min(3, sortedByWealth.length))];
         const hoarderAgent = activeAgents.find(a => a.id === hoarder?.agent_id);
         if (hoarderAgent) {

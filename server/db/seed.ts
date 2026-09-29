@@ -29,6 +29,7 @@ import { startingNeeds } from '../lib/startingNeeds';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
+import { startingTreasury } from '../lib/townTreasury';
 import { queueMaxWait } from '../lib/conversationPacing';
 import { gameMinutes } from '../lib/gameClock';
 import { eq, and } from 'drizzle-orm';
@@ -412,7 +413,7 @@ function seed() {
     current_tick_phase: 0,
     tick_id: "init",
     pending_transitions: [],
-    tax_pool: 0,
+    tax_pool: startingTreasury(AGENT_SEEDS.length, CONFIG.ECONOMY.TREASURY_START_PER_CAPITA),
     map_width: genResult.dimensions.width,
     map_height: genResult.dimensions.height,
     collision_grid: genResult.collisionGrid,
