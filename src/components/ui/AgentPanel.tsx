@@ -238,7 +238,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
                   }`}>
                     {reputation.label}
                   </span>
-                  <span className="text-[10px] text-ui-muted">({reputation.score > 0 ? '+' : ''}{reputation.score})</span>
+                  <span className="text-[10px] text-ui-muted">({Math.round(reputation.score) > 0 ? '+' : ''}{Math.round(reputation.score)})</span>
                 </div>
               </div>
             )}
