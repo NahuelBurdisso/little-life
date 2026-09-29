@@ -224,12 +224,14 @@ export async function gameTick(): Promise<void> {
   };
 
   // 7. Run the system phases sequentially
+  const phaseMs: Array<[string, number]> = [];
   for (let i = 0; i < SYSTEM_PHASES.length; i++) {
     const phase = SYSTEM_PHASES[i];
     const phaseNumber = i + 1;
     const phaseStart = performance.now();
 
     await runSystemPhase(phase, worldWithNewTime, phaseNumber);
+    phaseMs.push([phase.name, performance.now() - phaseStart]);
 
     // Only the autoplay analyzer drains these samples, and it only runs when
     // AUTOPLAY is enabled — recording unconditionally accumulated ~950k phase
@@ -270,6 +272,11 @@ export async function gameTick(): Promise<void> {
     runGuarded('loneliness', () => lonelinessCheck(nowMinutes));
     runGuarded('confrontation', () => confrontationCheck(totalTicks));
   }
+
+  // A tick longer than the loop interval slows the game clock itself (the next
+  // tick waits for this one): at 4x a 3 s tick runs the town at ~1.3x. Say
+  // which phase ate the time, at most once a minute.
+  reportSlowTick(performance.now() - tickStart, phaseMs);
 
   // Record tick timing + LLM slot state for the autoplay profiler. Both the
   // samples and these two DB round-trips are pure overhead while autoplay is
@@ -376,6 +383,21 @@ export async function gameTick(): Promise<void> {
 // ─── Tick loop ────────────────────────────────────────────────────────────────
 
 let running = false;
+let lastSlowTickReport = 0;
+let slowTicksSinceReport = 0;
+
+function reportSlowTick(totalMs: number, phaseMs: Array<[string, number]>): void {
+  if (totalMs <= CONFIG.TICK_INTERVAL_MS) return;
+  slowTicksSinceReport++;
+  const now = Date.now();
+  if (now - lastSlowTickReport < 60_000) return;
+  lastSlowTickReport = now;
+  const top = [...phaseMs].sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([name, ms]) => `${name} ${Math.round(ms)} ms`).join(', ');
+  console.warn(`[tick] ${slowTicksSinceReport} slow tick(s) in the last minute; latest ${Math.round(totalMs)} ms (${top})`);
+  slowTicksSinceReport = 0;
+}
+
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
 let tickInFlight: Promise<void> | null = null;
 
