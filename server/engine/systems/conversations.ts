@@ -33,7 +33,7 @@ import { clearConversationCache, fallbackDetector } from '../../helpers/conversa
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { interpolateTemplate, recordScriptUsage, scriptLastUsed } from '../../ai/templates';
-import { WRAP_UP_FAREWELLS } from '../../data/templates';
+import { WRAP_UP_FAREWELLS } from '../../data/wrapUpFarewells';
 import { composeTemplateChat } from '../../lib/templateChat';
 import { buildTemplateChatContext } from '../../helpers/templateChatContext';
 import {

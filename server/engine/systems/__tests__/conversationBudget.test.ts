@@ -31,7 +31,7 @@ import { taskRunner } from '../../../ai/taskRunner';
 import { addMessage } from '../../../helpers/conversationHelpers';
 import { CONFIG } from '../../../lib/constants';
 import { gameMinutes } from '../../../lib/gameClock';
-import { WRAP_UP_FAREWELLS } from '../../../data/templates';
+import { WRAP_UP_FAREWELLS } from '../../../data/wrapUpFarewells';
 import {
   conversationBudgetGameMinutes,
   queueMaxWait,

@@ -8,7 +8,6 @@ import {
   memories,
   locations,
   worldState,
-  templates,
   shared_knowledge,
   aspirations,
 } from '../db/schema';
@@ -19,7 +18,6 @@ import { getRelationshipSeeds } from '../data/relationships';
 import { buildStartingTies, foldStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
 import { getMemorySeeds } from '../data/memories';
-import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { startingTreasury, moneyTargetFor } from '../lib/townTreasury';
 import { queueMaxWait } from '../lib/conversationPacing';
@@ -355,17 +353,8 @@ function seed() {
   }
   console.log(`[seed] Inserted ${memSeeds.length} memories.`);
 
-  // 7. Insert templates
-  console.log('[seed] Inserting templates...');
-  for (const tmpl of CONVERSATION_TEMPLATES) {
-    db.insert(templates).values({
-      category: tmpl.category,
-      conditions: tmpl.conditions,
-      variants: tmpl.variants,
-      cooldown_per_pair: tmpl.cooldownPerPair,
-    }).run();
-  }
-  console.log(`[seed] Inserted ${CONVERSATION_TEMPLATES.length} templates.`);
+  // 7. (no template rows: chats are played from data/smallTalkScripts.ts and nothing
+  //    reads the `templates` table any more — see the note on it in schema.ts.)
 
   // 8. Create worldState singleton — start mid-morning for immediate activity
   console.log('[seed] Creating worldState...');

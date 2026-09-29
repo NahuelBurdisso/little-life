@@ -423,6 +423,13 @@ export const worldEvents = sqliteTable(
 );
 
 // ─── 14. templates ────────────────────────────────────────────────────────────
+//
+// LEGACY, unused (B19). This held the old per-category chat-line catalog, copied in at seed/setup
+// but never read: template chats are played from topic scripts (data/smallTalkScripts.ts,
+// lib/templateChat.ts) and their cooldowns live in `template_usage`. Nothing writes it now and the
+// catalog is gone. The definition stays only so old databases (which still have the table and its
+// rows) and the ALL_TABLES clear in db/worldTables.ts keep working; a world replace empties it.
+// It can be dropped for good together with a `DROP TABLE` migration once old saves are not a concern.
 
 export const templates = sqliteTable('templates', {
   id: integer('id').primaryKey({ autoIncrement: true }),

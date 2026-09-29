@@ -13,13 +13,11 @@ import {
   memories,
   locations,
   worldState,
-  templates,
   shared_knowledge,
   aspirations,
 } from '../db/schema';
 import { ALL_TABLES } from '../db/worldTables';
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
-import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
 import { startingTreasury, moneyTargetFor } from '../lib/townTreasury';
 import { queueMaxWait } from '../lib/conversationPacing';
@@ -830,15 +828,8 @@ function seedWorld(
     }
   }
 
-  // 8. Insert conversation templates
-  for (const tmpl of CONVERSATION_TEMPLATES) {
-    db.insert(templates).values({
-      category: tmpl.category,
-      conditions: tmpl.conditions,
-      variants: tmpl.variants,
-      cooldown_per_pair: tmpl.cooldownPerPair,
-    }).run();
-  }
+  // 8. (no conversation-template rows: chats are played from data/smallTalkScripts.ts and
+  //    nothing reads the `templates` table any more — see the note on it in schema.ts.)
 
   // 9. Create worldState. The rules are read back from `setup_config` (below),
   // through lib/worldRules.ts: a copy in the clock JSON would not survive the

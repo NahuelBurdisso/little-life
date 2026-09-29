@@ -6,8 +6,8 @@
  * This module owns their per-pair cooldowns in `template_usage`: one row per
  * chat, `template_category` = `script:<id>`, stamped in GAME minutes. The old
  * per-category picker (selectTemplate) chose each line from an unrelated
- * category and is gone; its catalog (server/data/templates.ts) is only still
- * copied into the write-only `templates` table at seed/setup.
+ * category and is gone, and so is its catalog: nothing writes or reads the
+ * legacy `templates` table any more (see the note on it in db/schema.ts).
  */
 
 import { and, eq, like } from "drizzle-orm";
