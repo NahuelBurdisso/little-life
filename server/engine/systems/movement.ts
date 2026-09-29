@@ -10,7 +10,6 @@ import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { simEvents } from '../../lib/simEvents';
 import { getInteriorGrid, zoneOccupancy, occupancyKey, getOpenAreaTerrainCosts } from '../../lib/interiorGrid';
-import { INTERIOR_ZONES } from '../../data/interiors';
 import { executeZoneAction } from './zoneActions';
 import { ENCLOSED_BUILDING_TYPES } from '../../lib/worldgen/buildingTemplates';
 
@@ -149,19 +148,6 @@ function getMinDuration(actionType: string): number {
 }
 
 /**
- * Action duration for an arrival that plays the 5-tick interior lerp first.
- *
- * Durations are game minutes (see isActionComplete in decisions.ts), but the
- * lerp in tick() advances one step per TICK, so the padding is worth
- * 5 × tick_speed game minutes. Rounded up: at 0.5x that is 2.5, and
- * `action_duration` is an INTEGER column compared against whole game minutes —
- * rounding down would cut the lerp short by a tick.
- */
-export function interiorTransitionDuration(minDuration: number, tickSpeed: number): number | null {
-  return minDuration > 0 ? minDuration + Math.ceil(5 * tickSpeed) : null;
-}
-
-/**
  * The enclosed building whose footprint contains `pt`, if any.
  *
  * Geometric on purpose, not `agent.current_location`: that comes from
@@ -272,50 +258,9 @@ export function planRoute(
   return path;
 }
 
-/**
- * Compute an interior A* path from a relative pixel start to a zone center,
- * then convert all waypoints back to world coordinates.
- */
-function computeInteriorPath(
-  relStartX: number,
-  relStartY: number,
-  targetZoneCenter: [number, number],
-  interiorGrid: { collisionString: string; width: number; height: number },
-  buildingPosX: number,
-  buildingPosY: number,
-  buildingType: string,
-): number[][] | null {
-  const TILE_SIZE = CONFIG.MOVEMENT.TILE_SIZE;
-  const [zoneGridX, zoneGridY] = targetZoneCenter;
-  const relEndX = zoneGridX * TILE_SIZE + TILE_SIZE / 2;
-  const relEndY = zoneGridY * TILE_SIZE + TILE_SIZE / 2;
-
-  const interiorPath = computeAStarPath(
-    { x: relStartX, y: relStartY },
-    { x: relEndX, y: relEndY },
-    interiorGrid.collisionString,
-    interiorGrid.width,
-    interiorGrid.height,
-    TILE_SIZE,
-    undefined,
-    buildingType,
-  );
-
-  if (!interiorPath || interiorPath.length === 0) return null;
-
-  // Convert interior-relative pixel coords to world coords
-  return interiorPath.map(([px, py]) => [px + buildingPosX, py + buildingPosY]);
-}
-
-
-
 // --- Arrival Handler ---
 
-function handleArrival(
-  agent: AgentRow,
-  world: WorldRow,
-  allLocations: LocationRow[],
-): void {
+function handleArrival(agent: AgentRow, world: WorldRow): void {
   // A walk over to talk to someone (conversations.ts staging) replaces whatever
   // walk the agent was on but leaves its `action_queue` alone. Popping that
   // queue here started the interrupted errand wherever the chat happened: a
@@ -338,141 +283,82 @@ function handleArrival(
   }
 
   const queue = [...agent.action_queue];
-  const nextAction = queue.shift() ?? null;
+  let next: Record<string, any> = queue.shift() ?? { type: 'idle' };
 
-  const actionType = (nextAction as any)?.type ?? 'idle';
-  const minDuration = getMinDuration(actionType);
-
-  // Two-phase interior movement: if the queued action carries zone coordinates,
-  // the agent needs to move to the zone position inside the building.
-  const zoneX = (nextAction as any)?.zoneX as number | undefined;
-  const zoneY = (nextAction as any)?.zoneY as number | undefined;
-  const targetZoneId = (nextAction as any)?.targetZone as string | undefined;
-  const targetBuildingType = (nextAction as any)?.targetBuildingType as string | undefined;
-
-  if (zoneX !== undefined && zoneY !== undefined) {
-    // Try interior A* for non-home buildings with interior grids
-    const interiorGrid = targetBuildingType ? getInteriorGrid(targetBuildingType) : null;
-
-    if (interiorGrid && targetBuildingType) {
-      // Find the building location to get its world position
-      const building = agent.current_location != null
-        ? allLocations.find(l => l.id === agent.current_location)
-        : null;
-      const buildingPos = building?.position;
-
-      if (buildingPos) {
-        // Agent is at the door (entry_point). Convert to interior-relative coords.
-        const relStartX = agent.position.x - buildingPos.x;
-        const relStartY = agent.position.y - buildingPos.y;
-
-        // Find the target zone definition to get its grid-coord center
-        const zones = INTERIOR_ZONES[targetBuildingType] ?? [];
-        const targetZoneDef = targetZoneId
-          ? zones.find(z => z.id === targetZoneId)
-          : zones.find(z => z.allowedActions?.includes(actionType));
-
-        if (targetZoneDef) {
-          const interiorPath = computeInteriorPath(
-            relStartX, relStartY,
-            targetZoneDef.center,
-            interiorGrid,
-            buildingPos.x, buildingPos.y,
-            targetBuildingType,
-          );
-
-          if (interiorPath && interiorPath.length > 0) {
-            // Set the agent walking along the interior path to the zone.
-            // The A* target is the bare zone center, which every occupant of a
-            // multi-occupant zone shares; `zoneX/zoneY` is that same point plus
-            // the agent's slot offset, so land on it instead of stacking.
-            const finalWp: number[] = [zoneX, zoneY];
-            interiorPath[interiorPath.length - 1] = finalWp;
-            // Strip zone metadata from the action — it will be set as the queued action on inner arrival
-            const { zoneX: _zx, zoneY: _zy, targetZone: _tz, targetBuildingType: _tb, ...cleanAction } = nextAction as any;
-            const interiorAction = {
-              ...cleanAction,
-              _interiorArrivalZone: targetZoneDef.id,
-              _interiorArrivalBuilding: targetBuildingType,
-            };
-
-            db.update(agents)
-              .set({
-                current_destination: { x: finalWp[0], y: finalWp[1] },
-                current_path: interiorPath,
-                current_action: { type: 'walking', to: { x: finalWp[0], y: finalWp[1] } },
-                action_started: gameMinutes(world.time),
-                action_duration: null,
-                action_queue: [interiorAction],
-              })
-              .where(eq(agents.id, agent.id))
-              .run();
-            return;
-          }
-        }
-      }
-    }
-
-    // Fallback for homes or buildings without interior grids:
-    // Smooth interior transition (lerp over 5 ticks)
-    const transitionAction = {
-      ...(nextAction ?? { type: 'idle' }),
-      _transitioning: true,
-      _transitionTicks: 0,
-      _fromX: agent.position.x,
-      _fromY: agent.position.y,
-      _toX: zoneX,
-      _toY: zoneY,
+  // Compat for queues saved before walks went straight to the spot: those
+  // carried the spot as `zoneX/zoneY` for a second walk (indoors) or a 5-tick
+  // lerp (open areas) started here. Walk there now, the modern way; nothing
+  // new writes these fields.
+  if (next.zoneX !== undefined && next.zoneY !== undefined) {
+    const { zoneX, zoneY, targetZone, targetBuildingType, ...rest } = next;
+    next = {
+      ...rest,
+      ...(targetZone && targetBuildingType ? { _arrivalZone: targetZone, _arrivalBuilding: targetBuildingType } : {}),
     };
-    db.update(agents)
-      .set({
-        current_destination: null,
-        current_path: null,
-        current_action: transitionAction,
-        action_started: gameMinutes(world.time),
-        action_duration: interiorTransitionDuration(minDuration, world.tick_speed),
-        action_queue: queue,
-      })
-      .where(eq(agents.id, agent.id))
-      .run();
-  } else {
-    // Check if this is an interior A* arrival (agent walked to zone center)
-    const interiorZoneId = (nextAction as any)?._interiorArrivalZone as string | undefined;
-    const interiorBuilding = (nextAction as any)?._interiorArrivalBuilding as string | undefined;
-    if (interiorZoneId && interiorBuilding) {
-      zoneOccupancy.enter(agent.id, occupancyKey(interiorBuilding, agent.current_location), interiorZoneId);
-      // Strip interior metadata from the action
-      const { _interiorArrivalZone, _interiorArrivalBuilding, ...cleanAction } = nextAction as any;
-      const resolvedAction = cleanAction.type ? cleanAction : { type: 'idle' };
-      // Execute zone-specific effects (need deltas, item production).
-      // Keyed on the zone ACTIVITY ('fish', 'garden', ...), not the action type —
-      // zone activities all ride on `type: 'idle'` with the intent in `zoneActivity`.
-      executeZoneAction(resolvedAction.zoneActivity ?? resolvedAction.type, agent.id);
+    if (distance(agent.position, { x: zoneX, y: zoneY }) >= CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX) {
       db.update(agents)
         .set({
-          current_destination: null,
+          current_destination: { x: zoneX, y: zoneY },
           current_path: null,
-          current_action: resolvedAction,
+          current_action: { type: 'walking', to: { x: zoneX, y: zoneY } },
           action_started: gameMinutes(world.time),
-          action_duration: minDuration > 0 ? minDuration : null,
-          action_queue: queue,
+          action_duration: null,
+          action_queue: [next, ...queue],
         })
         .where(eq(agents.id, agent.id))
         .run();
-    } else {
-      db.update(agents)
-        .set({
-          current_destination: null,
-          current_path: null,
-          current_action: nextAction ?? { type: 'idle' },
-          action_started: gameMinutes(world.time),
-          action_duration: minDuration > 0 ? minDuration : null,
-          action_queue: queue,
-        })
-        .where(eq(agents.id, agent.id))
-        .run();
+      return;
     }
   }
+
+  startQueuedAction(agent.id, agent.current_location, next, queue, world.time);
+}
+
+/**
+ * Start an action the agent has reached (or already stands at): the one place
+ * that turns a queued action into `current_action`.
+ *
+ * - `_arrivalZone`/`_arrivalBuilding` (decisions.ts, any matched zone): run the
+ *   zone's effects — keyed on the zone ACTIVITY ('fish', 'garden', ...), not
+ *   the action type, since zone activities ride on `type: 'idle'` — and, for a
+ *   building with an interior grid, take a place in the zone's occupancy.
+ *   Open areas never registered occupancy (their arrivals were a lerp) and
+ *   still don't: the farm's and square's capacities were never enforced.
+ *   Indoors-only markers used to skip the effects in open areas entirely, so a
+ *   fish at the park caught nothing.
+ * - `_duration`: the length decisions chose (a sleep that ends at the wake
+ *   time, a 120-minute mope); otherwise the type's minimum.
+ * `_interiorArrival*` is the pre-rename spelling, still read for saved queues.
+ */
+export function startQueuedAction(
+  agentId: number,
+  locationId: number | null,
+  action: Record<string, any>,
+  queue: Record<string, any>[],
+  time: { day: number; hour: number; minute: number },
+): void {
+  const {
+    _arrivalZone, _arrivalBuilding, _interiorArrivalZone, _interiorArrivalBuilding, _duration, ...clean
+  } = action;
+  const resolved: Record<string, any> = clean.type ? clean : { type: 'idle' };
+  const zone: string | undefined = _arrivalZone ?? _interiorArrivalZone;
+  const building: string | undefined = _arrivalBuilding ?? _interiorArrivalBuilding;
+  if (zone && building) {
+    if (getInteriorGrid(building)) zoneOccupancy.enter(agentId, occupancyKey(building, locationId), zone);
+    executeZoneAction(resolved.zoneActivity ?? resolved.type, agentId);
+  }
+  const min = getMinDuration(resolved.type);
+  db.update(agents)
+    .set({
+      current_destination: null,
+      current_path: null,
+      current_action: resolved,
+      action_started: gameMinutes(time),
+      action_duration: typeof _duration === 'number' ? _duration : min > 0 ? min : null,
+      action_queue: queue,
+    })
+    .where(eq(agents.id, agentId))
+    .run();
 }
 
 /**
@@ -485,7 +371,7 @@ function completeArrival(
   world: WorldRow,
   allLocations: LocationRow[],
 ): void {
-  handleArrival(agent, world, allLocations);
+  handleArrival(agent, world);
 
   // Handle zone transition on arrival
   const oldLocationId = agent.current_location;
@@ -557,32 +443,14 @@ export function tick(world: WorldRow): void {
   let dirty = false;
 
   for (const agent of activeAgents) {
-    // Handle smooth interior transitions
+    // Compat: an agent saved mid-way through the old 5-tick open-area lerp.
+    // Finish it on the spot; nothing new starts one (walks go to the spot).
     const action = agent.current_action as any;
     if (action?._transitioning) {
-      const ticks = (action._transitionTicks ?? 0) + 1;
-      const t = Math.min(1, ticks / 5);
-      const newX = action._fromX + (action._toX - action._fromX) * t;
-      const newY = action._fromY + (action._toY - action._fromY) * t;
-
-      if (t >= 1) {
-        // Transition complete — remove transition metadata
-        const { _transitioning, _transitionTicks, _fromX, _fromY, _toX, _toY, ...cleanAction } = action;
-        // Execute zone-specific effects on transition completion
-        const zoneKey = cleanAction.zoneActivity ?? cleanAction.type;
-        if (zoneKey) {
-          executeZoneAction(zoneKey, agent.id);
-        }
-        db.update(agents).set({
-          position: { x: action._toX, y: action._toY },
-          current_action: cleanAction,
-        }).where(eq(agents.id, agent.id)).run();
-      } else {
-        db.update(agents).set({
-          position: { x: newX, y: newY },
-          current_action: { ...action, _transitionTicks: ticks },
-        }).where(eq(agents.id, agent.id)).run();
-      }
+      const { _transitioning, _transitionTicks, _fromX, _fromY, _toX, _toY, ...cleanAction } = action;
+      executeZoneAction(cleanAction.zoneActivity ?? cleanAction.type, agent.id);
+      db.update(agents).set({ position: { x: _toX, y: _toY }, current_action: cleanAction })
+        .where(eq(agents.id, agent.id)).run();
       dirty = true;
       continue;
     }
