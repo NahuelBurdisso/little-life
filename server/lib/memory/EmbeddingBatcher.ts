@@ -8,6 +8,7 @@ import {
   WRITE_BATCH_MAX_SIZE,
   EMBEDDING_DIMENSIONS,
   EMBED_KEEP_ALIVE,
+  asRetrievalQuery,
 } from './constants';
 import { QueryCache } from './QueryCache';
 import { acquireEmbeddingSlot, type LLMPriority } from '../../ai/llmSemaphore';
@@ -94,7 +95,7 @@ export class EmbeddingBatcher implements EmbeddingProvider {
     if (existing) return existing;
 
     // 3. Direct call
-    const promise = this.withSlot(READ_PRIORITY, () => this.directEmbed(text)).then(
+    const promise = this.withSlot(READ_PRIORITY, () => this.directEmbed(asRetrievalQuery(text))).then(
       (vec) => {
         this.textCache.set(text, vec);
         this.inFlight.delete(text);

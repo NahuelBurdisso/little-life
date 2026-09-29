@@ -41,3 +41,14 @@ export const OLLAMA_EMBED_MODEL = CONFIG.AI.EMBEDDING_MODEL;
  * happened to finish loading it.
  */
 export const EMBED_KEEP_ALIVE = CONFIG.AI.KEEP_ALIVE;
+
+/**
+ * Qwen3-Embedding is trained with an instruction on the query side (documents
+ * are embedded as-is); without it retrieval quality drops noticeably. Other
+ * models get the plain text.
+ */
+export function asRetrievalQuery(text: string, model: string = OLLAMA_EMBED_MODEL): string {
+  return model.startsWith('qwen3-embedding')
+    ? `Instruct: Given a person's thought or question, retrieve their memories that are relevant to it\nQuery: ${text}`
+    : text;
+}
