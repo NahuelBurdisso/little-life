@@ -14,13 +14,12 @@ import { getReputation, getReputationLabel } from '../reputationEngine';
 import { getMoodMomentum } from '../moodMomentum';
 import { describeEvent } from '../memory/descriptionTemplates';
 import {
-  gameMinuteOf,
   reportPlanningBug,
   type BackoffStep,
-  type GameClock,
   type PlanLLMGate,
 } from './PlanLLMGate';
 import { joinForFeed, shortenForFeed } from '../factText';
+import { gameMinutes, type ClockTime } from '../gameClock';
 
 /** Run an optional context lookup; on failure log it and plan without it. */
 async function bestEffort<T>(what: string, fn: () => Promise<T[]>): Promise<T[]> {
@@ -133,8 +132,8 @@ export class PlanGenerator {
    * agent is inside an LLM-failure backoff, and while the global breaker is
    * open. Returns whether a job was actually queued.
    */
-  queueGeneration(agentId: number, time: GameClock): boolean {
-    const ticket = this.gate.tryAcquire(agentId, gameMinuteOf(time));
+  queueGeneration(agentId: number, time: ClockTime): boolean {
+    const ticket = this.gate.tryAcquire(agentId, gameMinutes(time));
     if (!ticket) return false;
     const accepted = this.queue.enqueue(
       agentId,

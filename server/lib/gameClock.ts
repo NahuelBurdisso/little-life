@@ -25,9 +25,22 @@ export interface ClockTime {
 export const MINUTES_PER_HOUR = 60;
 export const MINUTES_PER_DAY = 1440;
 
-/** Absolute game minutes since day 0, 00:00. Monotonic, unlike `minute`/`hour`. */
+/**
+ * Absolute whole game minutes since day 0, 00:00. Monotonic, unlike
+ * `minute`/`hour`, and the one conversion every system uses (the planning
+ * layer's former `gameMinuteOf` counted from day 1; its stamps are in-memory
+ * and relative, so the one-day shift is invisible).
+ *
+ * Floored: at tick_speed 0.5 the clock's `minute` is fractional, and these
+ * values are stored in INTEGER columns (`agents.action_started`,
+ * `agent_states.started_at`, `world_events.started_at`, `needs.last_updated`).
+ * SQLite would quietly keep 90.5 as a REAL under INTEGER affinity, so nothing
+ * broke, but the column types would lie. Durations lose nothing: at 0.5x two
+ * consecutive ticks share a minute, and elapsed time is still exact at every
+ * whole minute.
+ */
 export function gameMinutes(time: ClockTime): number {
-  return time.day * MINUTES_PER_DAY + time.hour * MINUTES_PER_HOUR + time.minute;
+  return Math.floor(time.day * MINUTES_PER_DAY + time.hour * MINUTES_PER_HOUR + time.minute);
 }
 
 /**

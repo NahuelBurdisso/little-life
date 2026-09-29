@@ -17,9 +17,8 @@ import {
   PLAN_OUTAGE_THRESHOLD,
   PLAN_OUTAGE_PROBE_SECONDS,
   PLAN_PROBE_EXPIRY_MS,
-  gameMinuteOf,
-  type GameClock,
 } from '../PlanLLMGate';
+import { gameMinutes, type ClockTime } from '../../gameClock';
 import { PlanGenerator } from '../PlanGenerator';
 import { PlanLLMQueue } from '../PlanLLMQueue';
 import { PlanExecutor } from '../PlanExecutor';
@@ -108,8 +107,8 @@ const memory = {
 };
 
 /** Mutable game clock shared by the generator's `now` and the queue calls. */
-let clock: GameClock;
-const at = (hour: number, minute = 0): GameClock => ({ day: 1, hour, minute });
+let clock: ClockTime;
+const at = (hour: number, minute = 0): ClockTime => ({ day: 1, hour, minute });
 /** Mutable wall clock (ms). */
 let wall: number;
 /** RNG fed to the jitter; 0.5 means "no jitter". */
@@ -121,7 +120,7 @@ let gate: PlanLLMGate;
 function setup() {
   const cache = makeCache();
   const queue = new PlanLLMQueue();
-  gate = new PlanLLMGate(() => gameMinuteOf(clock), {
+  gate = new PlanLLMGate(() => gameMinutes(clock), {
     wallNow: () => wall,
     random: () => rand,
   });
@@ -131,7 +130,7 @@ function setup() {
 
 /** Advance both clocks well past any per-agent backoff and breaker window. */
 function farLater() {
-  const m = gameMinuteOf(clock) + 24 * 60 - 1;
+  const m = gameMinutes(clock) + 24 * 60 - 1;
   clock = { day: Math.floor(m / 1440) + 1, hour: Math.floor((m % 1440) / 60), minute: m % 60 };
   wall += 3600_000;
 }
@@ -142,7 +141,7 @@ function farLater() {
  * Observed through `tryAcquire` only, with the wall clock pushed far ahead so
  * the real-time floor and breaker window don't mask the game-time answer.
  */
-function retryAt(id: number, from = gameMinuteOf(clock)): number | null {
+function retryAt(id: number, from = gameMinutes(clock)): number | null {
   const saved = wall;
   wall += 24 * 3600_000;
   try {
@@ -165,7 +164,7 @@ function retryAt(id: number, from = gameMinuteOf(clock)): number | null {
  * one probe gets through.
  */
 function breakerClosed(a: number, b: number): boolean {
-  const m = gameMinuteOf(clock);
+  const m = gameMinutes(clock);
   const t1 = gate.tryAcquire(a, m);
   const t2 = gate.tryAcquire(b, m);
   if (t1) gate.release(t1);
@@ -240,7 +239,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       expect(gen.queueGeneration(agentId, at(8, m))).toBe(false);
     }
     expect(callOllamaChat).toHaveBeenCalledTimes(1);
-    expect(retryAt(agentId)).toBe(gameMinuteOf(at(8)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
+    expect(retryAt(agentId)).toBe(gameMinutes(at(8)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
   });
 
   it('treats unparseable output as a failure too', async () => {
@@ -308,7 +307,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       expect(gen.queueGeneration(agentId, clock)).toBe(true);
       await settled(queue);
       expected = PLAN_RETRY_BACKOFF_MINUTES[Math.min(i, PLAN_RETRY_BACKOFF_MINUTES.length - 1)];
-      expect(retryAt(agentId)).toBe(gameMinuteOf(clock) + expected);
+      expect(retryAt(agentId)).toBe(gameMinutes(clock) + expected);
     }
   });
 
@@ -320,7 +319,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
       fail();
       gen.queueGeneration(agentId, clock);
       await settled(queue);
-      waits.push(retryAt(agentId)! - gameMinuteOf(clock));
+      waits.push(retryAt(agentId)! - gameMinutes(clock));
     }
     expect(waits).toEqual([PLAN_RETRY_BACKOFF_MINUTES[0] * 0.8, PLAN_RETRY_BACKOFF_MINUTES[0] * 1.2]);
   });
@@ -333,7 +332,7 @@ describe('PlanGenerator when the LLM fails (B6)', () => {
     });
     gen.queueGeneration(agentId, at(8));
     await settled(queue);
-    expect(retryAt(agentId, gameMinuteOf(at(8)))).toBe(gameMinuteOf(at(9)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
+    expect(retryAt(agentId, gameMinutes(at(8)))).toBe(gameMinutes(at(9)) + PLAN_RETRY_BACKOFF_MINUTES[0]);
   });
 
   it('forgets backoffs on clear() (world replace)', async () => {
@@ -534,7 +533,7 @@ describe('PlanLLMGate probe expiry', () => {
     setup();
     for (const id of ids.slice(0, PLAN_OUTAGE_THRESHOLD)) gate.recordFailure(id, 'down');
     wall += PLAN_OUTAGE_PROBE_SECONDS * 1000;
-    const m = gameMinuteOf(clock);
+    const m = gameMinutes(clock);
 
     // A probe goes out and is never released (its job was dropped).
     expect(gate.tryAcquire(ids[3], m)).not.toBeNull();
@@ -575,7 +574,7 @@ describe('PlanGenerator replan under failure', () => {
     const { cache, queue, gen } = setup();
     const plan = withActivePlan(cache);
     fail('timed out');
-    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
+    gen.queueReplan(agentId, event, 10, gameMinutes(at(10)), 22);
     await replanSettled(queue);
 
     expect(plan.blocks[1].status).toBe('active');
@@ -583,7 +582,7 @@ describe('PlanGenerator replan under failure', () => {
     expect(retryAt(agentId)).not.toBeNull();
 
     // Inside the backoff, further replans don't reach the LLM.
-    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10, 5)), 22);
+    gen.queueReplan(agentId, event, 10, gameMinutes(at(10, 5)), 22);
     await replanSettled(queue);
     expect(callOllamaChat).toHaveBeenCalledTimes(1);
   });
@@ -595,7 +594,7 @@ describe('PlanGenerator replan under failure', () => {
     vi.mocked(callOllamaChat).mockImplementationOnce(
       () => new Promise((resolve) => { release = () => resolve({ text: REPLAN_OUTPUT } as never); }),
     );
-    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
+    gen.queueReplan(agentId, event, 10, gameMinutes(at(10)), 22);
     await vi.waitFor(() => expect(release).toBeTypeOf('function'));
     gate.clear();
     release();
@@ -607,7 +606,7 @@ describe('PlanGenerator replan under failure', () => {
     const { cache, queue, gen } = setup();
     withActivePlan(cache);
     vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: REPLAN_OUTPUT }) as never);
-    gen.queueReplan(agentId, event, 10, gameMinuteOf(at(10)), 22);
+    gen.queueReplan(agentId, event, 10, gameMinutes(at(10)), 22);
     await replanSettled(queue);
     expect(cache.get(agentId)!.blocks.map((b) => b.broad_action)).toEqual(['Breakfast', 'Sulk at home', 'Walk it off', 'Read']);
     expect(retryAt(agentId)).toBeNull();
@@ -617,7 +616,7 @@ describe('PlanGenerator replan under failure', () => {
     const { cache, queue, gen } = setup();
     withActivePlan(cache);
     vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: '20:00-22:00 | Stew on it | Home' }) as never);
-    gen.queueReplan(agentId, event, 20, gameMinuteOf(at(20)), 22);
+    gen.queueReplan(agentId, event, 20, gameMinutes(at(20)), 22);
     await replanSettled(queue);
     // Both earlier blocks have ended by 20:00, so they are kept as history.
     expect(cache.get(agentId)!.blocks.map((b) => b.broad_action)).toEqual(['Breakfast', 'Bake bread', 'Stew on it']);

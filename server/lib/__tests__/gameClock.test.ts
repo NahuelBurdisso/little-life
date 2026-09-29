@@ -70,6 +70,16 @@ describe('hourly and daily gates', () => {
     }
   }
 
+  it('stays whole and fires once per game hour at 0.5x', () => {
+    // 0.5x makes `minute` fractional; the stamps land in INTEGER columns.
+    let time = at(1, 8, 15);
+    for (let i = 0; i < 7; i++) {
+      time = advanceClock(time, 0.5);
+      expect(Number.isInteger(gameMinutes(time))).toBe(true);
+    }
+    expect(run(at(1, 8, 15), 0.5, (3 * 60) / 0.5)).toMatchObject({ hour: 3, tenMinutes: 18 });
+  });
+
   it('fires once per game day at 4x', () => {
     // `currentTick % 1440 < 2` fired twice per 1440 TICKS — every 4 game days at 4x.
     const fired = run(at(1, 7, 15), 4, (3 * 1440) / 4);

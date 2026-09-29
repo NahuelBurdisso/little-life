@@ -1127,8 +1127,7 @@ async function finishCompletedConversation(
       }
       const newFun = clamp(agentNeeds.fun + funBoost, 0, 100);
 
-      const currentTime =
-        time.day * 24 * 60 + time.hour * 60 + time.minute;
+      const currentTime = gameMinutes(time);
       let moodModifierDuration: number = CONFIG.NEEDS.MOOD_MODIFIER_DURATION_GAME_MINUTES;
       if (personality && personality.neuroticism > 60) {
         moodModifierDuration = Math.round(moodModifierDuration * 1.5);

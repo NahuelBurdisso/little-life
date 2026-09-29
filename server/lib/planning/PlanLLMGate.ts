@@ -1,27 +1,11 @@
 import { logActivity } from '../activityLogger';
 import { CONFIG } from '../constants';
 
-// ---------------------------------------------------------------------------
-// Game clock
-// ---------------------------------------------------------------------------
-
-export interface GameClock {
-  day: number;
-  hour: number;
-  minute: number;
-}
-
-/**
- * Absolute game minutes since day 1, 00:00.
- *
- * Backoffs and cooldowns in the planning layer are measured in game time rather
- * than `totalTicks` (one tick is `tick_speed` game minutes, so tick counts
- * drift when the sim runs fast) or wall-clock alone (a paused or slowed world
- * would burn through the wait without the town living through it).
- */
-export function gameMinuteOf(t: GameClock): number {
-  return ((t.day - 1) * 24 + t.hour) * 60 + t.minute;
-}
+// Backoffs and cooldowns in the planning layer are measured in game minutes
+// (`gameMinutes` in lib/gameClock.ts) rather than `totalTicks` (one tick is
+// `tick_speed` game minutes, so tick counts drift when the sim runs fast) or
+// wall-clock alone (a paused or slowed world would burn through the wait
+// without the town living through it).
 
 // ---------------------------------------------------------------------------
 // Retry policy
@@ -145,7 +129,7 @@ export class PlanLLMGate {
 
   constructor(
     /**
-     * Current absolute game minute (see `gameMinuteOf`). Read when a request
+     * Current absolute game minute (see `gameMinutes`). Read when a request
      * fails, not when it is admitted: an LLM timeout can take a long time of
      * game time at high tick speeds, and a backoff measured from the queue
      * time could already have expired by the time the failure lands.

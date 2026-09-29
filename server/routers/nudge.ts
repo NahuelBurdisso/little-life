@@ -18,6 +18,7 @@ import { CONFIG } from '../lib/constants';
 import { zoneOccupancy } from '../lib/interiorGrid';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
+import { gameMinutes } from '../lib/gameClock';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -98,10 +99,7 @@ export const nudgeRouter = router({
       // CLOCK: GAME MINUTES (day*1440 + hour*60 + minute) — the unit `needs.last_updated`
       // and `agents.action_started` are written and read in. Not interchangeable with `now`: the two only agree at
       // tick_speed 1 with startDay 0.
-      const nowGameMinutes =
-        (world.time as any).day * 1440 +
-        (world.time as any).hour * 60 +
-        (world.time as any).minute;
+      const nowGameMinutes = gameMinutes(world.time);
 
       switch (action.type) {
         // ─── suggest_talk ──────────────────────────────────────────────────

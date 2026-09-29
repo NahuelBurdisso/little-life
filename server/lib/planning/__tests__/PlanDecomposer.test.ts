@@ -14,8 +14,8 @@ import {
   PLAN_OUTAGE_THRESHOLD,
   PLAN_RETRY_BACKOFF_MINUTES,
   PLAN_RETRY_FLOOR_SECONDS,
-  gameMinuteOf,
 } from '../PlanLLMGate';
+import { gameMinutes } from '../../gameClock';
 import { PlanLLMQueue } from '../PlanLLMQueue';
 import { PlanDecomposer } from '../PlanDecomposer';
 import { PlanExecutor } from '../PlanExecutor';
@@ -98,7 +98,7 @@ let wall: number;
 function setup() {
   const cache = makeCache();
   const queue = new PlanLLMQueue();
-  const gate = new PlanLLMGate(() => gameMinuteOf({ day: 1, hour, minute }), {
+  const gate = new PlanLLMGate(() => gameMinutes({ day: 1, hour, minute }), {
     wallNow: () => wall,
     random: () => 0.5,
   });
@@ -118,7 +118,7 @@ function backingOff(gate: PlanLLMGate, id: number): boolean {
   const saved = wall;
   wall += 24 * 3600_000;
   try {
-    const ticket = gate.tryAcquire(id, gameMinuteOf({ day: 1, hour, minute }));
+    const ticket = gate.tryAcquire(id, gameMinutes({ day: 1, hour, minute }));
     if (ticket) gate.release(ticket);
     return ticket === null;
   } finally {
@@ -227,7 +227,7 @@ describe('plan execution when block decomposition fails', () => {
     // Had the unusable answer counted, this would be the third failure in a
     // row and the breaker would now refuse a second concurrent agent.
     gate.recordFailure(otherIds[0], 'down');
-    const m = gameMinuteOf({ day: 1, hour, minute });
+    const m = gameMinutes({ day: 1, hour, minute });
     const a = gate.tryAcquire(agentId + 1000, m);
     const b = gate.tryAcquire(agentId + 1001, m);
     expect(a).not.toBeNull();
@@ -248,7 +248,7 @@ describe('plan execution when block decomposition fails', () => {
     // Counted as a transport failure it would have been the third in a row and
     // opened the breaker; instead the streak was reset.
     gate.recordFailure(otherIds[0], 'down');
-    const m = gameMinuteOf({ day: 1, hour, minute });
+    const m = gameMinutes({ day: 1, hour, minute });
     expect(gate.tryAcquire(agentId + 1000, m)).not.toBeNull();
     expect(gate.tryAcquire(agentId + 1001, m)).not.toBeNull();
   });
@@ -345,7 +345,7 @@ describe('decomposition when a DB lookup throws', () => {
       const reported = vi.mocked(logActivity).mock.calls.filter(([p]) => p.type === 'error');
       expect(reported).toHaveLength(1);
       // Our bug, not an outage: another agent is still admitted.
-      const other = gate.tryAcquire(agentId + 1000, gameMinuteOf({ day: 1, hour, minute }));
+      const other = gate.tryAcquire(agentId + 1000, gameMinutes({ day: 1, hour, minute }));
       expect(other).not.toBeNull();
     } finally {
       db.update(agents).set({ traits: ['kind'] }).where(eq(agents.id, agentId)).run();

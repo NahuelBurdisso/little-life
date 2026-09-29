@@ -36,7 +36,7 @@ interface AgentSchedule {
 export const REPLAN_COOLDOWN_MINUTES = 30;
 
 export class ReplanEvaluator {
-  /** Absolute game minute (see `gameMinuteOf`) of each agent's last replan. */
+  /** Absolute game minute (see `gameMinutes`) of each agent's last replan. */
   private lastReplanAt = new Map<number, number>();
 
   constructor(

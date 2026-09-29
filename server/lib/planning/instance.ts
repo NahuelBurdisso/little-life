@@ -4,7 +4,8 @@ import { PlanGenerator } from './PlanGenerator';
 import { PlanDecomposer } from './PlanDecomposer';
 import { PlanExecutor } from './PlanExecutor';
 import { ReplanEvaluator } from './ReplanEvaluator';
-import { PlanLLMGate, gameMinuteOf } from './PlanLLMGate';
+import { PlanLLMGate } from './PlanLLMGate';
+import { gameMinutes } from '../gameClock';
 import { memoryService } from '../memory/instance';
 import { db } from '../../db';
 import { worldState } from '../../db/schema';
@@ -18,7 +19,7 @@ function worldTime(): { day?: number; hour?: number; minute?: number } | undefin
 
 function currentGameMinute(): number {
   const t = worldTime();
-  return gameMinuteOf({ day: t?.day ?? 1, hour: t?.hour ?? 0, minute: t?.minute ?? 0 });
+  return gameMinutes({ day: t?.day ?? 1, hour: t?.hour ?? 0, minute: t?.minute ?? 0 });
 }
 
 /** One gate for every planning LLM call: plans, decompositions and replans. */

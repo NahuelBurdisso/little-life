@@ -1,5 +1,5 @@
 import type { DailyPlan, PlanBlock, PlanExecutionState } from './types';
-import { gameMinuteOf } from './PlanLLMGate';
+import { gameMinutes } from '../gameClock';
 
 /** The PlanDecomposer surface the executor uses. */
 interface IPlanDecomposer {
@@ -75,7 +75,7 @@ export class PlanExecutor {
     const block = this._resolveBlock(plan, agentId, currentHour);
     if (!block) return null;
 
-    const gameMinute = gameMinuteOf({
+    const gameMinute = gameMinutes({
       day: currentDay ?? plan.day,
       hour: currentHour,
       minute: currentMinute,
