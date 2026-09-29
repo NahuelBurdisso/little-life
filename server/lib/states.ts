@@ -1,5 +1,5 @@
 import { PersonalityProfile } from './personality';
-import { db, getAgentStatesWriteVersion, verifyAgentStatesWriteHook } from '../db';
+import { db, getAgentStatesRowVersion, getAgentStatesWriteVersion, verifyAgentStatesWriteHook } from '../db';
 import { agentStates, agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -213,6 +213,78 @@ export function clearAgentStatesCache(): void {
  */
 export function invalidateAgentStatesCache(): void {
   agentStatesCacheVersion = -1;
+}
+
+// ─── Whole-row agent_states snapshot ──────────────────────────────────────────
+
+export type AgentStateRow = typeof agentStates.$inferSelect;
+
+const NO_STATE_ROWS: readonly AgentStateRow[] = Object.freeze([]);
+
+/**
+ * Every agent_states row, grouped by agent, re-read in ONE query only when the
+ * table has been written since the last read (`getAgentStatesRowVersion`).
+ *
+ * The states phase used to re-select an agent's rows after each step that might
+ * have changed them — expiry, conditional exits, triggers, effective personality,
+ * side effects, the death check — about six queries per agent per tick, plus a
+ * point lookup for every "does X already have state Y" check. Most ticks write
+ * nothing, so nearly all of those were the same answer read again. A snapshot
+ * keyed on the write counter answers them from memory and still sees every write
+ * the moment it lands, including ones made by simEvents listeners (the cascade
+ * engine inserts states from inside other phases' events).
+ *
+ * Order matches the per-agent query it replaces: `WHERE agent_id = ?` walks
+ * idx_agent_states_agent_id, i.e. rowid order, and a full scan grouped by agent
+ * keeps rowid order within each agent. `find` returns the lowest rowid of that
+ * type, as `WHERE agent_id = ? AND type = ?` ... `.get()` does. Order matters:
+ * effective personality clamps per state, so it is order-sensitive at the bounds.
+ *
+ * Scope one instance to one phase call. Like the type cache it cannot see a
+ * ROLLBACK, and a phase that throws discards its snapshot along with its
+ * transaction. The returned rows and arrays are shared — read them, never
+ * mutate them (every caller builds a new metadata object before writing).
+ */
+export class AgentStateRowsSnapshot {
+  private version = -1;
+  private byAgent = new Map<number, AgentStateRow[]>();
+  private rows: AgentStateRow[] = [];
+
+  /** Rows of one agent, oldest first. */
+  forAgent(agentId: number): readonly AgentStateRow[] {
+    this.refresh();
+    return this.byAgent.get(agentId) ?? NO_STATE_ROWS;
+  }
+
+  /** The agent's oldest row of `type`, if any. */
+  find(agentId: number, type: string): AgentStateRow | undefined {
+    return this.forAgent(agentId).find((s) => s.type === type);
+  }
+
+  /** Every row of every agent, in rowid order. */
+  all(): readonly AgentStateRow[] {
+    this.refresh();
+    return this.rows;
+  }
+
+  private refresh(): void {
+    const version = getAgentStatesRowVersion();
+    if (version === this.version) return;
+    // Version first (see rebuildAgentStatesCache): a write landing between the
+    // two would then force another read instead of being absorbed.
+    this.version = version;
+    // `id` is the rowid alias, so the ORDER BY costs nothing on a table scan and
+    // pins the order the per-agent index walk used to give.
+    this.rows = db.select().from(agentStates).orderBy(agentStates.id).all();
+    // A fresh map every time: a caller still iterating an array from the last
+    // read (1a deletes rows while looping over them) keeps a stable list.
+    this.byAgent = new Map();
+    for (const row of this.rows) {
+      const list = this.byAgent.get(row.agent_id);
+      if (list) list.push(row);
+      else this.byAgent.set(row.agent_id, [row]);
+    }
+  }
 }
 
 // ─── Helper Accessors ─────────────────────────────────────────────────────────

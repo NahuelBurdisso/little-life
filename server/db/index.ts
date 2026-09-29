@@ -198,13 +198,25 @@ function migrateSchema() {
 // uncommitted row, and the phase then throws, the snapshot keeps a state that no
 // longer exists. Whoever catches a rolled-back transaction must therefore call
 // `invalidateAgentStatesCache()` (lib/states.ts) — the tick's phase runner does.
+//
+// A second counter, `agentStatesRowVersion`, also moves on updates that only
+// touch a row's content (severity, duration, metadata). The type snapshot does
+// not care about those — rebuilding it for every metadata write would be waste —
+// but a snapshot of whole rows (`AgentStateRowsSnapshot`, lib/states.ts) does.
+// Every write that bumps the first counter bumps this one too.
 let agentStatesWriteVersion = 0;
+let agentStatesRowVersion = 0;
 sqlite.function('ll_agent_states_written', { deterministic: false }, () => {
   agentStatesWriteVersion++;
+  agentStatesRowVersion++;
+  return null;
+});
+sqlite.function('ll_agent_states_row_written', { deterministic: false }, () => {
+  agentStatesRowVersion++;
   return null;
 });
 
-const AGENT_STATES_TRIGGERS = ['ll_agent_states_ai', 'll_agent_states_ad', 'll_agent_states_au'];
+const AGENT_STATES_TRIGGERS = ['ll_agent_states_ai', 'll_agent_states_ad', 'll_agent_states_au', 'll_agent_states_au_row'];
 
 let agentStatesHookInstalled = false;
 function installAgentStatesWriteHook(): boolean {
@@ -217,6 +229,8 @@ function installAgentStatesWriteHook(): boolean {
         BEGIN SELECT ll_agent_states_written(); END;
       CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_au AFTER UPDATE OF agent_id, type ON main.agent_states
         BEGIN SELECT ll_agent_states_written(); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS ll_agent_states_au_row AFTER UPDATE ON main.agent_states
+        BEGIN SELECT ll_agent_states_row_written(); END;
     `);
     agentStatesHookInstalled = true;
   } catch (err) {
@@ -249,6 +263,7 @@ export function verifyAgentStatesWriteHook(): void {
   if (present.n === AGENT_STATES_TRIGGERS.length) return;
   agentStatesHookInstalled = false;
   agentStatesWriteVersion++;
+  agentStatesRowVersion++;
   installAgentStatesWriteHook();
 }
 
@@ -264,6 +279,16 @@ export function verifyAgentStatesWriteHook(): void {
 export function getAgentStatesWriteVersion(): number {
   if (!installAgentStatesWriteHook()) return ++agentStatesWriteVersion;
   return agentStatesWriteVersion;
+}
+
+/**
+ * Like `getAgentStatesWriteVersion`, but also moves when an update changes only
+ * a row's content (severity, duration, metadata, ...). For caches that hold
+ * whole rows. Same rollback blind spot, same never-trust-without-a-hook rule.
+ */
+export function getAgentStatesRowVersion(): number {
+  if (!installAgentStatesWriteHook()) return ++agentStatesRowVersion;
+  return agentStatesRowVersion;
 }
 
 /**
