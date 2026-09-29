@@ -5,6 +5,14 @@ interface InteractionCallbacks {
   onAgentSelect: (agentId: string) => void;
   onAgentHover: (agentId: string | null, screenPos?: { x: number; y: number }) => void;
   onAgentContextMenu: (agentId: string, screenPos: { x: number; y: number }) => void;
+  /**
+   * Resolves a world-pixel point to the location under it (buildings and open areas),
+   * or null on bare ground. Supplied by GameCanvas from the locations query, so this
+   * layer stays free of data.
+   */
+  locationAt?: (worldX: number, worldY: number) => number | null;
+  /** A click that hit a location and no agent. `null` = a click on bare ground. */
+  onLocationSelect?: (locationId: number | null) => void;
 }
 
 /**
@@ -63,11 +71,22 @@ export class InteractionLayer {
       this._clickStart = null;
       if (dx * dx + dy * dy > 25) return; // moved more than 5px — it's a drag
 
+      // Agents win over buildings: sprites stand inside the footprints, and a click
+      // on someone in a bakery must select them, not open the bakery.
       const hit = this.hitTest(e);
       if (hit) {
         this.callbacks.onAgentSelect(hit);
+        return;
+      }
+      const world = this.toWorld(e);
+      const locationId = world ? (this.callbacks.locationAt?.(world.x, world.y) ?? null) : null;
+      if (locationId != null) {
+        // Keep the current agent selected: the location panel offers "Send <agent> here".
+        this.callbacks.onLocationSelect?.(locationId);
       } else {
+        // Bare ground: deselect the agent as before, and close the location panel.
         this.callbacks.onAgentSelect("");
+        this.callbacks.onLocationSelect?.(null);
       }
     };
     this._onPointerUp = onPointerUp;
@@ -130,19 +149,22 @@ export class InteractionLayer {
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
   }
 
+  /** Screen mouse position to world pixels, accounting for pan (container position) and zoom (scale). */
+  private toWorld(e: MouseEvent | PointerEvent): { x: number; y: number } | null {
+    if (!this.canvas || !this.worldContainer) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const wc = this.worldContainer;
+    return {
+      x: (e.clientX - rect.left - wc.x) / wc.scale.x,
+      y: (e.clientY - rect.top - wc.y) / wc.scale.y,
+    };
+  }
+
   /** Convert screen mouse position to world coordinates and find the closest agent. */
   private hitTest(e: MouseEvent | PointerEvent): string | null {
-    if (!this.canvas || !this.worldContainer) return null;
-
-    const rect = this.canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
-
-    // Convert screen coordinates to world coordinates
-    // Account for world container position (pan) and scale (zoom)
-    const wc = this.worldContainer;
-    const worldX = (screenX - wc.x) / wc.scale.x;
-    const worldY = (screenY - wc.y) / wc.scale.y;
+    const world = this.toWorld(e);
+    if (!world) return null;
+    const { x: worldX, y: worldY } = world;
 
     // Check all sprites — find closest within hit radius
     const HIT_RADIUS = 20; // pixels in world space

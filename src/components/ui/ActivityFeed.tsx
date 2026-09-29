@@ -16,6 +16,7 @@ const EVENT_CATEGORIES = {
   world_event:  { icon: '~',  color: '#4080a0', label: 'World' },
   goal:         { icon: '▶',  color: '#c07840', label: 'Goals' },
   aspiration:   { icon: '★',  color: '#9b7ab0', label: 'Dreams' },
+  player:       { icon: '✦',  color: '#c8a84b', label: 'You' },
   system:       { icon: '⚙',  color: '#504838', label: 'System' },
   error:        { icon: '✕',  color: '#a03028', label: 'Errors' },
   planning:     { icon: '▷',  color: '#c8a84b', label: 'Plans' },
@@ -43,6 +44,7 @@ function getCategory(type: string): EventCategory {
   if (type === 'drama' || type === 'theft_caught' || type === 'affair_discovery' || type === 'interaction_resolved') return 'drama';
   if (type === 'confrontation' || type === 'tavern_drunk') return 'drama';
   if (type === 'gift' || type === 'secret_shared' || type === 'birthday' || type === 'tavern_tipsy' || type === 'hobby_levelup') return 'relationship';
+  if (type.startsWith('player_')) return 'player';
   if (type === 'world_event') return 'world_event';
   if (type === 'goal_ambition_shifted' || type === 'goal_ambition_generated' || type.startsWith('aspiration')) return 'aspiration';
   if (type.startsWith('goal_')) return 'goal';
@@ -92,6 +94,7 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
     world_event: true,
     goal: true,
     aspiration: true,
+    player: true,
     system: true,
     error: true,
     planning: true,
@@ -523,7 +526,10 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
               const isGoal = cat === 'goal';
               const isAspiration = cat === 'aspiration';
               const isError = cat === 'error';
-              const isBold = isDrama || isAspiration;
+              // The player's own actions get the gold "✦ You" treatment so they stand
+              // out from the town's ambient chatter (they used to fall into "System").
+              const isPlayer = cat === 'player';
+              const isBold = isDrama || isAspiration || isPlayer;
               const subjectId = item.agent_ids?.[0];
               const clickable = onSelectAgent != null && subjectId != null;
               const message = renderMessage(item);
@@ -532,7 +538,7 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
                 : '';
               const rowStyle = {
                 borderLeftColor: color,
-                borderLeftWidth: isDrama || isAspiration ? 3 : isState || isGoal ? 2 : 1,
+                borderLeftWidth: isDrama || isAspiration || isPlayer ? 3 : isState || isGoal ? 2 : 1,
               };
               const rowClass = `w-full text-left text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5 ${
                 isBold ? 'font-semibold' : ''
@@ -546,6 +552,7 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
                     isAspiration ? 'text-[#9b7ab0]' :
                     isGoal ? 'text-[#c07840]' :
                     isError ? 'text-[#a03028]' :
+                    isPlayer ? 'text-[#c8a84b]' :
                     'text-[#a09070]'
                   }>
                     {message}
