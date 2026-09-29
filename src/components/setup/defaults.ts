@@ -1,8 +1,10 @@
 import type { AgentConfig, RelationshipConfig } from './types';
 import { AGENT_SEEDS } from '../../../server/data/agents';
 
-// Default agents — hardcoded summary of the 13 agents from server/data/agents.ts
-// (We can't import server code in the frontend, so this is a client-side copy)
+// Default agents — a wizard-facing copy of the 13 agents in server/data/agents.ts.
+// The client CAN import pure-data server modules (getDefaultRelationships below
+// reads AGENT_SEEDS directly); this list is still a hand-kept copy, so check it
+// against agents.ts when either changes.
 // Backstory memories include personal history + relationship context from agents.ts
 export function getDefaultAgents(): AgentConfig[] {
   return [
