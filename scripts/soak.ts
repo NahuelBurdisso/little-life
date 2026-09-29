@@ -105,6 +105,13 @@ async function main(): Promise<void> {
   const { TRADE_RULES } = await import('../server/data/economyData');
   // Registers the gift / jealousy listeners the server gets from index.ts.
   await import('../server/lib/giftEngine');
+  // Food made per day (farm output, bread, drinks): meals are real food now, so
+  // supply is part of the economy picture.
+  const { simEvents } = await import('../server/lib/simEvents');
+  const produced = new Map<string, number>();
+  simEvents.on('economy:production', (p: { item: string; quantity: number }) => {
+    produced.set(p.item, (produced.get(p.item) ?? 0) + p.quantity);
+  });
 
   const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, needs } = schema;
 
@@ -243,7 +250,8 @@ async function main(): Promise<void> {
       `${(100 * eatingSamples / Math.max(1, needSamples)).toFixed(1)}%`.padStart(7),
       `${mealCount('home')}/${mealCount('out')}/${mealCount('other')}`.padStart(15),
       String(died.length).padStart(6) + (died.length ? ` (${died.map((id) => nameOf.get(id)).join(', ')})` : ''),
-    ].join(' | '));
+    ].join(' | ') + `  | made: ${[...produced].map(([k, v]) => `${k} ${v}`).join(', ') || '-'}`);
+    produced.clear();
     out([
       String(dayStart.day).padStart(3),
       String(active.length).padStart(6),
