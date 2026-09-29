@@ -6,6 +6,11 @@ import { eq, inArray, like, sql } from 'drizzle-orm';
 vi.mock('../../../ai/taskRunner', () => ({
   taskRunner: { startConversation: vi.fn(() => true) },
 }));
+// Pass-through, so a test can make one completion throw halfway.
+vi.mock('../../../lib/conversationEvaluator', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/conversationEvaluator')>();
+  return { ...actual, evaluateConversation: vi.fn(actual.evaluateConversation) };
+});
 
 import { db } from '../../../db';
 import {
@@ -21,6 +26,7 @@ import {
   worldState,
 } from '../../../db/schema';
 import { taskRunner } from '../../../ai/taskRunner';
+import { evaluateConversation } from '../../../lib/conversationEvaluator';
 import { conversationsTick } from '../conversations';
 
 /**
@@ -109,6 +115,40 @@ function enqueue(
     queued_at: queuedAt,
     max_wait: 10000,
   }).returning({ id: conversationQueue.id }).get().id;
+}
+
+/**
+ * A live LLM conversation: an `active` row the scheduler tracks, with both
+ * agents `talking` in it. `tracked: false` leaves it out of the scheduler, which
+ * is what an orphan looks like.
+ */
+function startLive(
+  participants: number[],
+  { tracked = true, startedAt = Date.now(), turns = 0 }: { tracked?: boolean; startedAt?: number; turns?: number } = {},
+): number {
+  const id = db.insert(conversations).values({
+    participants,
+    messages: Array.from({ length: turns }, (_, i) => ({
+      speakerId: participants[i % 2], text: `line ${i}`, sentiment: 0.1, topics: [], timestamp: i,
+    })),
+    trigger_reason: `${TAG} live`,
+    topic: null,
+    status: 'active',
+    started_at: startedAt,
+    ended_at: null,
+    sentiment: 0,
+    max_turns: 4,
+  }).returning({ id: conversations.id }).get().id;
+  db.update(agents).set({ current_action: { type: 'talking', conversationId: id } })
+    .where(inArray(agents.id, participants)).run();
+  if (tracked) {
+    const sched = db.select().from(conversationSchedulerState).get()!;
+    db.update(conversationSchedulerState)
+      .set({ active_llm_conversations: [...(sched.active_llm_conversations as any[]), { conversationId: id, startedAt }] })
+      .where(eq(conversationSchedulerState.id, sched.id))
+      .run();
+  }
+  return id;
 }
 
 function startedConversations() {
@@ -255,17 +295,7 @@ describe('conversationsTick — one conversation per agent', () => {
   });
 
   it('keeps an entry queued while a participant is in a live conversation', async () => {
-    db.insert(conversations).values({
-      participants: [a, d],
-      messages: [],
-      trigger_reason: `${TAG} live`,
-      topic: null,
-      status: 'active',
-      started_at: Date.now(),
-      ended_at: null,
-      sentiment: 0,
-      max_turns: 4,
-    }).run();
+    startLive([a, d]);
     enqueue([a, b], 'template');
     enqueue([a, c], 'llm_standard');
 
@@ -277,22 +307,51 @@ describe('conversationsTick — one conversation per agent', () => {
   });
 
   it('drops a timed-out entry whose participant is busy instead of templating it', async () => {
-    db.insert(conversations).values({
-      participants: [a, d],
-      messages: [],
-      trigger_reason: `${TAG} live`,
-      topic: null,
-      status: 'active',
-      started_at: Date.now(),
-      ended_at: null,
-      sentiment: 0,
-      max_turns: 4,
-    }).run();
+    startLive([a, d]);
     enqueue([a, b], 'llm_standard', { queuedAt: Date.now() - 60_000 });
 
     await conversationsTick();
 
     expect(startedConversations().map((x) => x.participants)).toEqual([[a, d]]);
     expect(db.select().from(conversationQueue).all()).toHaveLength(0);
+  });
+
+  it('sweeps an orphaned active row and frees its participants', async () => {
+    // Untracked by the scheduler and older than any conversation may run: the
+    // leftover of a completion that crashed. It used to lock Sofia and Lena out.
+    const orphan = startLive([a, d], { tracked: false, startedAt: Date.now() - 10_000_000 });
+    enqueue([a, b], 'llm_standard');
+
+    await conversationsTick();
+
+    const row = db.select().from(conversations).where(eq(conversations.id, orphan)).get()!;
+    expect(row.status).toBe('ended');
+    const lena = db.select().from(agents).where(eq(agents.id, d)).get()!;
+    expect(lena.current_action).toEqual({ type: 'idle' });
+    // ...and Sofia is free to talk again this very tick.
+    expect(startedConversations().filter((x) => x.status === 'active').map((x) => x.participants))
+      .toEqual([[a, b]]);
+  });
+
+  it('does not sweep a recent row, nor treat an untracked one as busy', async () => {
+    const fresh = startLive([a, d], { tracked: false });
+    enqueue([a, b], 'llm_standard');
+
+    await conversationsTick();
+
+    expect(db.select().from(conversations).where(eq(conversations.id, fresh)).get()!.status).toBe('active');
+    expect(taskRunner.startConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends the row and frees the agents even when completion throws', async () => {
+    const id = startLive([a, b], { turns: 4 });
+    vi.mocked(evaluateConversation).mockImplementationOnce(() => { throw new Error('boom'); });
+
+    await conversationsTick();
+
+    expect(db.select().from(conversations).where(eq(conversations.id, id)).get()!.status).toBe('ended');
+    for (const agent of db.select().from(agents).where(inArray(agents.id, [a, b])).all()) {
+      expect(agent.current_action).toEqual({ type: 'idle' });
+    }
   });
 });

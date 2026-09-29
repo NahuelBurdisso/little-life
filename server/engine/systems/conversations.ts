@@ -186,6 +186,19 @@ export async function conversationsTick(): Promise<void> {
     const llmConversationTimeoutMs = schedulerState.max_turns_deep * MS_PER_LLM_TURN;
     const now = Date.now();
 
+    // Who is tied up in a conversation this tick — see "Participant claims" below.
+    // Built from the scheduler's OWN entries, not from every `active` row: a row
+    // whose completion crashed stayed `active` forever, and reading busy-ness off
+    // the table locked its participants out of every future conversation.
+    // Entries Step A completes this tick still count (they're processed after the
+    // transaction, and their participants are still `talking` until then).
+    const busyAgents = new Set<number>();
+    const livePairs = new Set<string>();
+    const registerLive = (participants: number[]): void => {
+      for (const id of participants) busyAgents.add(id);
+      livePairs.add(conversationPairKey(participants));
+    };
+
     for (const entry of activeLLM) {
       const conversation = db
         .select()
@@ -214,6 +227,8 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
+      registerLive(conversation.participants as number[]);
+
       const messages = conversation.messages as ConversationMessage[];
       // WALL-CLOCK MS on both sides — `entry.startedAt` is a `Date.now()` stamp,
       // so no tick_speed conversion applies here.
@@ -236,6 +251,30 @@ export async function conversationsTick(): Promise<void> {
       (e) => !toRemove.has(e.conversationId),
     );
 
+    // --- Step B: Sweep orphaned `active` rows ---
+    // A conversation row is `active` only while the scheduler tracks it. One the
+    // scheduler has dropped without it ever reaching `ended` (a completion that
+    // threw, a crash between dispatch and bookkeeping) was never cleaned up and
+    // left its participants `talking` for good. Anything untracked and older than
+    // the longest a conversation may run is ended here and its agents released.
+    // Rows in `activeLLM` (including those Step A is completing) are skipped: their
+    // completion runs after this transaction.
+    const trackedIds = new Set(activeLLM.map((e) => e.conversationId));
+    for (const orphan of db
+      .select()
+      .from(conversations)
+      .where(and(eq(conversations.status, 'active'), lt(conversations.started_at, now - llmConversationTimeoutMs)))
+      .all()) {
+      if (trackedIds.has(orphan.id)) continue;
+      db.update(conversations)
+        .set({ status: 'ended', ended_at: now })
+        .where(eq(conversations.id, orphan.id))
+        .run();
+      if (releaseTalkingParticipants(orphan)) agentsReleased = true;
+      clearConversationCache(orphan.id);
+      changed = true;
+    }
+
     // --- Participant claims ---
     // Nothing downstream stopped one agent from being in two conversations at
     // once: the queue can hold [A,B] and [B,A] (both decided to socialize with
@@ -243,20 +282,7 @@ export async function conversationsTick(): Promise<void> {
     // turned every entry into a conversation independently — four started in the
     // same millisecond in one playtest. Every path that starts a conversation now
     // claims its participants first; an agent can be claimed once per pass, and
-    // never while a live conversation still holds them. Conversations Step A just
-    // finished stay `active` until processed after this transaction, so their
-    // participants read as busy for the rest of this tick — that is deliberate.
-    const busyAgents = new Set<number>();
-    const livePairs = new Set<string>();
-    for (const c of db
-      .select({ participants: conversations.participants })
-      .from(conversations)
-      .where(eq(conversations.status, 'active'))
-      .all()) {
-      const p = c.participants as number[];
-      for (const id of p) busyAgents.add(id);
-      livePairs.add(conversationPairKey(p));
-    }
+    // never while a live conversation (`busyAgents`, from Step A) still holds them.
     const claimedAgents = new Set<number>();
     /**
      * 'duplicate': this exact pair already has a live conversation or one started
@@ -567,6 +593,27 @@ async function processCompletedConversation(
   conversation: ConversationRow,
   world: WorldRow,
   truncated: boolean = false,
+): Promise<void> {
+  try {
+    await finishCompletedConversation(conversation, world, truncated);
+  } finally {
+    // Step A has already dropped this conversation from the scheduler, so if the
+    // completion threw anywhere before its own `ended` write, nothing would ever
+    // end the row: it stayed `active` with both agents `talking`. End it and hand
+    // the participants back regardless (a no-op when the normal path finished).
+    const res = db.update(conversations)
+      .set({ status: 'ended', ended_at: Date.now() })
+      .where(and(eq(conversations.id, conversation.id), eq(conversations.status, 'active')))
+      .run();
+    if (res.changes > 0) emitter.markDirty('conversations');
+    if (releaseTalkingParticipants(conversation)) emitter.markDirty('agents.all');
+  }
+}
+
+async function finishCompletedConversation(
+  conversation: ConversationRow,
+  world: WorldRow,
+  truncated: boolean,
 ): Promise<void> {
   // Evict first, so every exit path below is covered. This is the terminal step
   // for the conversation — no further turns will be generated for it — and it
