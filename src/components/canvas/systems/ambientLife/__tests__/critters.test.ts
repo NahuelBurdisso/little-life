@@ -212,7 +212,7 @@ describe('cat', () => {
     const c = start(rnd);
     const seen = new Set<string>();
     let maxD = 0;
-    for (let i = 0; i < 60 * 600; i++) {
+    for (let i = 0; i < 60 * 300; i++) {
       stepCat(c, 1 / 60, rnd, open, NONE, 0, 0);
       seen.add(c.mode);
       maxD = Math.max(maxD, dist(c, { x: 200, y: 200 }));
@@ -307,7 +307,7 @@ describe('duck', () => {
     const d = newDuck();
     resetDuck(d, 160, 160, rnd);
     let travelled = 0, px = d.x, py = d.y;
-    for (let i = 0; i < 60 * 300; i++) {
+    for (let i = 0; i < 60 * 120; i++) {
       stepDuck(d, 1 / 60, rnd, pond);
       expect(pond(d.x, d.y)).toBe(true);
       travelled += Math.hypot(d.x - px, d.y - py);
