@@ -24,6 +24,7 @@ import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges, type SocialRelationship } from '../lib/worldgen/social';
 import { getRelationshipSeeds } from '../data/relationships';
+import { startingNeeds } from '../lib/startingNeeds';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
@@ -246,11 +247,8 @@ function seed() {
 
     db.insert(needs).values({
       agent_id: agentId,
-      hunger: 50 + Math.floor(Math.random() * 40),
-      energy: isHighEnergy ? 85 + Math.floor(Math.random() * 10) : 55 + Math.floor(Math.random() * 30),
-      social: 30 + Math.floor(Math.random() * 40),
-      comfort: 50 + Math.floor(Math.random() * 30),
-      fun: 30 + Math.floor(Math.random() * 40),
+      ...startingNeeds(),
+      ...(isHighEnergy ? { energy: 85 + Math.floor(Math.random() * 10) } : {}),
       mood: isLowMood ? 30 + Math.floor(Math.random() * 20) : 55 + Math.floor(Math.random() * 25),
       stress: isLowMood ? 40 + Math.floor(Math.random() * 20) : 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },

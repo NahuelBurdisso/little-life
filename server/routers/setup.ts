@@ -47,6 +47,7 @@ import { emitter } from '../engine/emitter';
 import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges } from '../lib/worldgen/social';
+import { startingNeeds } from '../lib/startingNeeds';
 import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
 import { resetCascade } from '../lib/cascade';
 import { invalidateCostMap, clearMovementState } from '../engine/systems/movement';
@@ -522,11 +523,7 @@ function seedWorld(
 
     db.insert(needs).values({
       agent_id: agentId,
-      hunger: 50 + Math.floor(Math.random() * 40),
-      energy: 55 + Math.floor(Math.random() * 35),
-      social: 30 + Math.floor(Math.random() * 40),
-      comfort: 50 + Math.floor(Math.random() * 30),
-      fun: 30 + Math.floor(Math.random() * 40),
+      ...startingNeeds(),
       mood: scenarioMood?.mood ?? 55 + Math.floor(Math.random() * 25),
       stress: scenarioMood?.stress ?? 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },

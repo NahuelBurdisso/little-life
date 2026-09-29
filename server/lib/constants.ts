@@ -39,6 +39,21 @@ export const CONFIG = {
       fun: 3.6,
     },
     THRESHOLDS: { critical: 15, low: 35, satisfied: 70 },
+    // A fresh town's needs, drawn uniformly from [min, max) per agent
+    // (lib/startingNeeds.ts). The town has been living here for years; it should
+    // open near its own steady state, not in a deficit nobody earned. Social and
+    // fun used to be drawn from 30-70: a third of the cast opened under 45 social
+    // at 09:00, which the 3.2/h decay takes under the lonely line (20) by early
+    // afternoon — before most of them had a chance to talk to anyone — and a
+    // low social + low fun pair is two of the three low needs that trip
+    // `stressed`. Soaks put the day-4+ level at social ~50-60 and fun 80+.
+    STARTING_RANGES: {
+      hunger: [50, 90],
+      energy: [55, 90],
+      social: [50, 80],
+      comfort: [50, 80],
+      fun: [50, 80],
+    },
     // CLOCK: GAME MINUTES, not ticks. This is added to `needs.last_updated`
     // (`day*1440 + hour*60 + minute`) to produce `mood_modifiers[].expiresAt`, which
     // `needsTick` compares against the same game-minute clock. Ticks equal game
