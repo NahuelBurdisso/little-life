@@ -507,6 +507,9 @@ export class GoalReviewer {
         initiator: agentId,
         templateData: { name: agent.name, ambition: parsed.description },
       });
+      // A first ambition can name a trade as surely as a changed one
+      // (lib/vacancies.ts turns either into a career move).
+      simEvents.emit('goal:ambition_generated', { agentId, agentName: agent.name, description: parsed.description });
 
       return { id: inserted.id, type: parsed.category, description: parsed.description };
     } catch (err) {

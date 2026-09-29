@@ -15,7 +15,9 @@ import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
-import { retireResident } from './residents';
+import { passOwnedPlaces, retireResident } from './residents';
+import { heirsOf, type HeirKind } from './heirs';
+import { memoryService } from './memory/instance';
 import { chancePerTick } from './gameClock';
 import { numberMapToRecord, restoreIdNumberMap, type SnapshotStore } from '../engine/snapshotCodec';
 
@@ -250,65 +252,84 @@ function triggerGrieving(ctx: DeathEffectContext): void {
   }
 }
 
+/**
+ * The estate — money, belongings and the places they owned — goes to the
+ * first heir (lib/heirs.ts: the spouse, then children once the town has them,
+ * then the closest friend). It used to go to the closest friend whatever the
+ * marriage, and the places to a friend by a second rule in residents.ts. With
+ * no heir the money goes to the town, the belongings are lost and the places
+ * stand unowned until someone takes up the trade (lib/careers.ts).
+ */
 function processInheritance(ctx: DeathEffectContext): void {
   const deceasedEcon = db.select().from(economy).where(eq(economy.agent_id, ctx.agentId)).get();
+  const money = Math.max(0, deceasedEcon?.money ?? 0);
+  const items = (deceasedEcon?.inventory as Array<{ itemId: string; quantity: number; acquiredAt: number }> | undefined) ?? [];
+
+  const heir = heirsOf(ctx.agentId)[0] ?? null;
+  const inheritorEcon = heir ? db.select().from(economy).where(eq(economy.agent_id, heir.agentId)).get() : undefined;
+  // An heir without an economy row (a malformed test world) can't hold money: treat as none.
+  const heirId = heir && inheritorEcon ? heir.agentId : null;
+  const places = passOwnedPlaces(ctx.agentId, heirId);
   if (!deceasedEcon) return;
-  if (deceasedEcon.money <= 0 && (deceasedEcon.inventory as any[]).length === 0) return;
+  if (money <= 0 && items.length === 0 && places.length === 0) return;
 
-  // Find closest living friend
-  const rels = db.select().from(relationships).where(
-    or(eq(relationships.agent_a, ctx.agentId), eq(relationships.agent_b, ctx.agentId))
-  ).all();
-
-  let bestFriend: { id: number; friendship: number } | null = null;
-  for (const rel of rels) {
-    const otherId = rel.agent_a === ctx.agentId ? rel.agent_b : rel.agent_a;
-    const isA = rel.agent_a === otherId;
-    const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
-    const other = db.select({ is_active: agents.is_active }).from(agents).where(eq(agents.id, otherId)).get();
-    if (!other?.is_active) continue;
-    if (friendship > 30 && (!bestFriend || friendship > bestFriend.friendship)) {
-      bestFriend = { id: otherId, friendship };
+  if (heir && inheritorEcon) {
+    let inv = inheritorEcon.inventory as Array<{ itemId: string; quantity: number; acquiredAt: number }>;
+    for (const item of items) {
+      const existing = inv.find((i) => i.itemId === item.itemId);
+      inv = existing
+        ? inv.map((i) => (i.itemId === item.itemId ? { ...i, quantity: i.quantity + item.quantity } : i))
+        : [...inv, item];
     }
-  }
+    db.update(economy).set({ money: inheritorEcon.money + money, inventory: inv })
+      .where(eq(economy.agent_id, heir.agentId)).run();
 
-  if (bestFriend) {
-    const inheritorEcon = db.select().from(economy).where(eq(economy.agent_id, bestFriend.id)).get();
-    if (inheritorEcon) {
-      // Transfer money
-      db.update(economy).set({ money: inheritorEcon.money + deceasedEcon.money })
-        .where(eq(economy.agent_id, bestFriend.id)).run();
-      // Transfer inventory
-      let inv = inheritorEcon.inventory as any[];
-      for (const item of deceasedEcon.inventory as any[]) {
-        const existing = inv.find((i: any) => i.itemId === item.itemId);
-        if (existing) {
-          inv = inv.map((i: any) => i.itemId === item.itemId ? { ...i, quantity: i.quantity + item.quantity } : i);
-        } else {
-          inv = [...inv, item];
-        }
-      }
-      db.update(economy).set({ inventory: inv }).where(eq(economy.agent_id, bestFriend.id)).run();
-
-      const inheritorName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, bestFriend.id)).get()?.name ?? 'someone';
-      logActivity({
-        type: 'drama',
-        initiator: ctx.agentId,
-        target: bestFriend.id,
-        templateData: { description: `${ctx.agentName}'s possessions were inherited by ${inheritorName}.` },
-      });
-    }
-  } else {
-    // No inheritor — money goes to tax pool
+    const heirRow = db.select({ name: agents.name, gender: agents.gender }).from(agents).where(eq(agents.id, heir.agentId)).get();
+    logActivity({
+      type: 'drama',
+      initiator: ctx.agentId,
+      target: heir.agentId,
+      templateData: { description: estateLine(ctx.agentName, heirRow?.name ?? 'someone', heir.kind, heirRow?.gender ?? null, money, items.length > 0, places) },
+      metadata: { beat: 'inheritance' },
+    });
+    memoryService.record(heir.agentId, 'observation',
+      `${ctx.agentName} left me ${[money > 0 ? 'their savings' : '', items.length > 0 ? 'their belongings' : '', ...places].filter(Boolean).join(', ') || 'what little they had'}. I'd give it all back to have them here.`,
+      { subtype: 'inheritance', related_agents: [ctx.agentId] }, -0.3, 6);
+  } else if (money > 0) {
     const world = db.select().from(worldState).get();
     if (world) {
-      db.update(worldState).set({ tax_pool: world.tax_pool + deceasedEcon.money })
+      db.update(worldState).set({ tax_pool: world.tax_pool + money })
         .where(eq(worldState.id, world.id)).run();
     }
   }
 
-  // Zero out deceased economy
   db.update(economy).set({ money: 0, inventory: [] }).where(eq(economy.agent_id, ctx.agentId)).run();
+}
+
+/**
+ * "Rosa's estate — savings ($120), belongings and the General Store — went to
+ * Tom, the widower." The dash list reads for any mix (a place alone would
+ * otherwise come out as "Rosa's the General Store").
+ */
+function estateLine(
+  deceased: string,
+  heirName: string,
+  kind: HeirKind,
+  heirGender: string | null,
+  money: number,
+  hasItems: boolean,
+  places: readonly string[],
+): string {
+  const parts = [
+    money > 0 ? `savings ($${Math.round(money)})` : '',
+    hasItems ? 'belongings' : '',
+    ...places,
+  ].filter(Boolean);
+  const what = parts.length <= 1 ? parts[0] ?? '' : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  const who = kind === 'spouse'
+    ? `the ${heirGender === 'female' ? 'widow' : heirGender === 'male' ? 'widower' : 'surviving spouse'}`
+    : kind === 'child' ? 'their child' : 'a close friend';
+  return `${deceased}'s estate${what ? ` — ${what} —` : ''} went to ${heirName}, ${who}.`;
 }
 
 function createFuneralEvent(ctx: DeathEffectContext): void {

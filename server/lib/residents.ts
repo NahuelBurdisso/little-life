@@ -33,6 +33,8 @@ import { buildStartingTies, type StartingTieAgent } from './startingTies';
 import { nameHomes } from './homeNames';
 import { jobSalary } from '../data/jobs';
 import { workplaceForJob } from './jobWorkplace';
+import { takesOverWorkplace } from './careers';
+import { heirsOf } from './heirs';
 import { gameMinutes } from './gameClock';
 import { zoneOccupancy } from './interiorGrid';
 import { planCache } from './planning/PlanCache';
@@ -132,9 +134,6 @@ export function townEdgePoint(world: { map_width: number; map_height: number; ro
 }
 
 // ─── createResident ──────────────────────────────────────────────────────────
-
-/** Workplaces a newcomer takes over when nobody runs them (setup.ts `ownerJobs`, minus 'retired'). */
-const OWNER_JOBS = new Set(['shopkeeper', 'doctor', 'mayor', 'farmer', 'baker', 'bartender', 'handyperson', 'constable']);
 
 /** Aspirations a newcomer may bring (goalPrompts AMBITION_CATEGORIES, minus the dark ones). */
 const NEWCOMER_ASPIRATIONS = ['wealth', 'love', 'freedom', 'knowledge', 'legacy', 'pleasure'] as const;
@@ -317,10 +316,10 @@ export function createResident(opts: CreateResidentOptions): CreateResidentResul
       trigger: 'initial',
     }).run();
 
-    // A town nobody runs: the newcomer who came to fill the trade takes it on.
-    if (workplace && OWNER_JOBS.has(job)) {
-      const owner = workplace.owner != null ? living.find((a) => a.id === workplace.owner) : undefined;
-      if (!owner) db.update(locations).set({ owner: agentId }).where(eq(locations.id, workplace.id)).run();
+    // A place nobody in the trade runs (no owner, a dead one, an heir who
+    // works elsewhere): the newcomer who came to fill the trade takes it on.
+    if (workplace && takesOverWorkplace(job, workplace, agentId)) {
+      db.update(locations).set({ owner: agentId }).where(eq(locations.id, workplace.id)).run();
     }
 
     // Starting ties: the same structural rule as the seeded cast, lightened.
@@ -430,7 +429,8 @@ export type RetireReason = 'death' | 'left' | 'removed';
  *     set idle) and queued conversations dropped;
  *   - today's plan dropped (DB and cache) so no pending decomposition acts on
  *     them;
- *   - places they owned handed to their closest living friend (or nobody).
+ *   - places they owned handed to their first heir (or nobody) — except on a
+ *     death, where they go with the estate (lifeEventsEngine `processInheritance`).
  *
  * Their home frees itself: residency is counted from the living only
  * (`residentsByHome`). The house keeps its name — "Rosa's cottage" still
@@ -488,7 +488,9 @@ export function retireResident(agentId: number, reason: RetireReason): boolean {
     .map((q) => q.id);
   if (queued.length > 0) db.delete(conversationQueue).where(inArray(conversationQueue.id, queued)).run();
 
-  handOverOwnedPlaces(agentId);
+  // A death's places go with the rest of the estate (lifeEventsEngine
+  // `processInheritance`), so the one feed line can name them with the money.
+  if (reason !== 'death') passOwnedPlaces(agentId, heirsOf(agentId)[0]?.agentId ?? null);
 
   if (reason !== 'death') {
     simEvents.emit('life:departed', { agentId, name: agent.name, reason, homeId: agent.home });
@@ -499,34 +501,19 @@ export function retireResident(agentId: number, reason: RetireReason): boolean {
 }
 
 /**
- * Places the resident owned go to their closest living friend, or to nobody
- * (a newcomer in the trade takes an unowned workplace, see createResident).
- * Was death-only (`handleJobVacancy`); a shopkeeper who moved away left the
- * shop owned by someone who no longer existed, so its till and wages went
- * nowhere.
+ * Places the resident owned go to their first heir (lib/heirs.ts: spouse,
+ * then closest friend), or to nobody — whoever takes up the trade then runs
+ * the place (lib/careers.ts `changeJob`, a newcomer in createResident). Was
+ * death-only (`handleJobVacancy`); a shopkeeper who moved away left the shop
+ * owned by someone who no longer existed, so its till and wages went nowhere.
+ * Returns the names of the places passed on.
  */
-function handOverOwnedPlaces(agentId: number): void {
-  const owned = db.select({ id: locations.id }).from(locations).where(eq(locations.owner, agentId)).all();
-  if (owned.length === 0) return;
-
-  const rels = db.select().from(relationships).where(
-    or(eq(relationships.agent_a, agentId), eq(relationships.agent_b, agentId)),
-  ).all();
-  let heir: number | null = null;
-  let best = 0;
-  for (const rel of rels) {
-    const otherId = rel.agent_a === agentId ? rel.agent_b : rel.agent_a;
-    // The other's feeling toward the one leaving.
-    const friendship = rel.agent_a === otherId ? rel.friendship_ab : rel.friendship_ba;
-    if (friendship <= best) continue;
-    const other = db.select({ is_active: agents.is_active }).from(agents).where(eq(agents.id, otherId)).get();
-    if (!other?.is_active) continue;
-    heir = otherId;
-    best = friendship;
-  }
+export function passOwnedPlaces(agentId: number, heirId: number | null): string[] {
+  const owned = db.select({ id: locations.id, name: locations.name }).from(locations).where(eq(locations.owner, agentId)).all();
   for (const loc of owned) {
-    db.update(locations).set({ owner: heir }).where(eq(locations.id, loc.id)).run();
+    db.update(locations).set({ owner: heirId }).where(eq(locations.id, loc.id)).run();
   }
+  return owned.map((l) => l.name);
 }
 
 /** Both halves of a relationship row as seen from `agentId` (their feeling toward the other, and back). */

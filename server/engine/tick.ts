@@ -31,6 +31,7 @@ import { agingTick } from '../lib/agingEngine';
 import { milestonesTick } from '../lib/milestonesEngine';
 import { populationFlowDaily, populationFlowTick } from '../lib/populationFlow';
 import { runChallengeChecks } from '../lib/challenges/evaluate';
+import { careerMovesTick, vacanciesDaily } from '../lib/vacancies';
 import { saveWorldCaches } from './worldCaches';
 import { tickHealth } from './tickHealth';
 import { refreshHealth } from '../lib/health';
@@ -350,6 +351,8 @@ export async function gameTick(): Promise<void> {
     runGuarded('milestones', () => db.transaction(() => milestonesTick(newTime, nowMinutes)));
     // Newcomers walking in, leavers setting off and reaching the edge (lib/populationFlow.ts).
     runGuarded('populationFlowTick', () => db.transaction(() => populationFlowTick(newTime, nowMinutes)));
+    // Residents taking up the trade their new ambition named (lib/vacancies.ts).
+    runGuarded('careerMoves', () => db.transaction(() => careerMovesTick(nowMinutes)));
   }
   // Loneliness and confrontation once per game hour.
   if (hourChanged(transitions)) {
@@ -453,6 +456,9 @@ export async function gameTick(): Promise<void> {
     runGuarded('moodMomentum', () => processAllMoodMomentum());
     // Who thinks of leaving, who goes, whether a stranger comes (after mood
     // momentum, so yesterday counts toward a bad streak).
+    // Trades nobody holds: promote, hire, or post them — before the population
+    // flow, which reads the posted ones to pick a newcomer (lib/vacancies.ts).
+    runGuarded('vacancies', () => db.transaction(() => vacanciesDaily()));
     runGuarded('populationFlow', () => db.transaction(() => populationFlowDaily(newTime, nowMinutes)));
     // Check for birthdays and handle aging
     runGuarded('aging', () => agingTick(newTime.day));

@@ -196,7 +196,7 @@ function titleOf(job: string): string {
  * baker starts at 5, the bartender works 15–23, the retired have no shift.
  * A job nobody in the catalog holds (or 'unemployed') gets the retired day.
  */
-function scheduleFor(job: string): Omit<ResidentSchedule, 'freeTimePreferences'> & { salary: number } {
+export function scheduleFor(job: string): Omit<ResidentSchedule, 'freeTimePreferences'> & { salary: number } {
   const seed = AGENT_SEEDS.find((s) => s.job === job) ?? AGENT_SEEDS.find((s) => s.job === 'retired');
   const s = seed?.schedule ?? { wakeTime: 7, sleepTime: 22, workStart: 0, workEnd: 0, lunchTime: 12 };
   const jobless = !seed || seed.job !== job;

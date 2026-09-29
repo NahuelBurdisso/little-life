@@ -51,6 +51,7 @@ import { chooseTier, conversationBacklog, hasDramaticState } from '../../lib/con
 import { isAnyWatched } from '../../lib/spotlight';
 import { getLLMBacklog } from '../../ai/llmSemaphore';
 import { queueMaxWait, turnLatencyEstimateMs } from '../../lib/conversationPacing';
+import { healerInTown } from '../../lib/careers';
 import {
   PROPOSAL_SEEK_SCORE, canSeekPartner, inNoProposalState, pendingProposalPartner, queuePendingProposalNow,
   type SeekParty,
@@ -615,7 +616,10 @@ function checkSchedule(
     const sickState = db.select().from(agentStates)
       .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'sick')))
       .get();
-    if (sickState && sickState.severity > 0.4) {
+    // Only while someone alive can treat them: with the doctor and assistant
+    // dead, the clinic is an empty room, and bed at home is where they get
+    // better (states.ts HOME_REST_RECOVERY).
+    if (sickState && sickState.severity > 0.4 && healerInTown()) {
       const clinic = nearestLocation(agent.position, allLocations, 'clinic');
       if (clinic) {
         return { action: 'idle', score: 9999, targetLocationId: clinic.id };

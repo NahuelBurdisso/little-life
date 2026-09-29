@@ -38,6 +38,7 @@ import { foodCount } from '../../lib/economyEngine';
 import { itemPhrase } from '../../data/economyData';
 import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { gameMinutesToMs } from '../../lib/worldClock';
+import { HEALER_JOBS } from '../../lib/careers';
 import {
   asRecord,
   listMapToRecord,
@@ -128,7 +129,17 @@ function createStatesTickContext(): StatesTickContext {
   };
 }
 
-const isHealerJob = (job: string | undefined) => job === 'doctor' || job === 'medical_assistant';
+const isHealerJob = (job: string | undefined) => job != null && HEALER_JOBS.includes(job);
+
+/**
+ * Recovery of a sick resident resting at home while nobody in town can treat
+ * them, per game minute: severity down, and this share of the time left
+ * taken off. Below a healer's no-medicine rate (0.01 and 2%) — a doctor is
+ * still worth having — but the illness is kept moving: when the doctor died
+ * the sick used to walk to the empty clinic and wait there for someone who
+ * would never come.
+ */
+export const HOME_REST_RECOVERY = { SEVERITY_PER_MINUTE: 0.004, REMAINING_SHARE_PER_MINUTE: 0.008 } as const;
 
 /** The columns the romance checks read from a relationship row. */
 const PAIR_ROMANCE = {
@@ -1697,6 +1708,19 @@ function processStateEffects(
             }).run();
             meta.lastHealEvent = nowMinutes;
           }
+        } else if (agent.current_location === agent.home && !allAgents.some((a) => isHealerJob(ctx.jobOf(a.id)))) {
+          // No one left to treat them: bed rest at home (HOME_REST_RECOVERY).
+          // Same shape as the no-medicine treatment above, at a lower rate.
+          const newSeverity = Math.max(0.1, state.severity - HOME_REST_RECOVERY.SEVERITY_PER_MINUTE * tickSpeed);
+          const remaining = Math.max(0, (state.started_at + state.duration) - nowMinutes);
+          const reducedDuration = Math.max(
+            1,
+            state.duration - Math.floor(remaining * chancePerTick(HOME_REST_RECOVERY.REMAINING_SHARE_PER_MINUTE, tickSpeed)),
+          );
+          db.update(agentStates)
+            .set({ severity: newSeverity, duration: reducedDuration })
+            .where(eq(agentStates.id, state.id))
+            .run();
         }
 
         // Write accumulated co-location counters once after loop
