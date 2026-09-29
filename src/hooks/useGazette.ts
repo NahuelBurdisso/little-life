@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { trpc } from '../lib/trpc';
 
 const SEEN_KEY = 'littlelife.gazette.lastSeenId';
@@ -16,7 +16,7 @@ function readSeen(): number {
  * The subscription refreshes every gazette query when an edition is printed
  * (there is no other refresh: refetchOnWindowFocus is off).
  */
-export function useGazette() {
+export function useGazette(isOpen: boolean) {
   const utils = trpc.useUtils();
   const { data: latest } = trpc.gazette.list.useQuery({ limit: 1 });
   const [seenId, setSeenId] = useState(readSeen);
@@ -38,9 +38,14 @@ export function useGazette() {
     }
   }, [latestId]);
 
+  // An edition printed while the paper is open has been seen.
+  useEffect(() => {
+    if (isOpen && latestId > 0) markSeen();
+  }, [isOpen, latestId, markSeen]);
+
   // "Different", not "greater": a replaced world restarts ids at 1, and its
   // first edition must still count as new.
   const hasNew = latestId > 0 && latestId !== seenId;
 
-  return { hasNew, markSeen };
+  return { hasNew };
 }

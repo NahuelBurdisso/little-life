@@ -76,7 +76,7 @@ export function Gazette({ isOpen, onClose }: GazetteProps) {
           >
             <span>{issue ? `Day ${issue.day}` : "—"}</span>
             <span>{issue ? `${issue.season} edition` : ""}</span>
-            <span>{issues ? `No. ${issues.length - Math.max(index, 0)}` : ""}</span>
+            <span>{issue && issues && index >= 0 ? `No. ${issues.length - index}` : ""}</span>
           </div>
         </div>
 

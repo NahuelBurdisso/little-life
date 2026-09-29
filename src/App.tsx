@@ -40,7 +40,7 @@ export default function App() {
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
   const [showGazette, setShowGazette] = useState(false);
-  const gazette = useGazette();
+  const gazette = useGazette(showGazette);
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
@@ -225,7 +225,7 @@ export default function App() {
         }).length}
         onShowEvents={() => setShowEventMenu(true)}
         onShowStats={() => setShowTownStats(true)}
-        onShowGazette={() => { setShowGazette(true); gazette.markSeen(); }}
+        onShowGazette={() => setShowGazette(true)}
         hasNewGazette={gazette.hasNew}
         onWorldReplaced={handleWorldReplaced}
       />
@@ -335,7 +335,7 @@ export default function App() {
       />
       <Gazette
         isOpen={showGazette}
-        onClose={() => { setShowGazette(false); gazette.markSeen(); }}
+        onClose={() => setShowGazette(false)}
       />
       <TownStats
         isOpen={showTownStats}
