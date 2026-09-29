@@ -8,6 +8,8 @@ import type { PersonalityProfile } from '../personality';
 import { gameMinutes, type ClockTime } from '../gameClock';
 import { CONFIG } from '../constants';
 import { queueMaxWait } from '../conversationPacing';
+import { isAnyWatched } from '../spotlight';
+import { TIER_BUDGET, watchedPriority } from '../conversationTier';
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
@@ -430,7 +432,17 @@ export class PerceptionSystem {
 
           if (!observerBusy && !targetBusy) {
             const tier = reaction.conversation_tier ?? 'template';
-            const priority = Math.round(bestScore);
+            // The spotlight budget (lib/conversationTier.ts) only reached the
+            // socialize/encounter producers. A perception reaction for a pair on
+            // screen queued with the ordinary priority and 10-minute wait, so when
+            // either was still finishing another chat it aged out into a template
+            // exchange in front of the player (playtest #3: a watched crush
+            // "flirt" became four lines about the wind). Same head start and
+            // longer wait as chooseTier gives a watched pair.
+            const watched = isAnyWatched([observer.id, target.id]);
+            const priority = watched ? watchedPriority(Math.round(bestScore)) : Math.round(bestScore);
+            const waitGameMin = CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES
+              * (watched ? TIER_BUDGET.WATCHED_WAIT_FACTOR : 1);
 
             db.insert(conversationQueue)
               .values({
@@ -440,7 +452,7 @@ export class PerceptionSystem {
                 trigger_reason: reaction.trigger_reason,
                 topic: reaction.conversation_topic,
                 queued_at: Date.now(),
-                max_wait: queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES),
+                max_wait: queueMaxWait(waitGameMin),
               })
               .run();
 
