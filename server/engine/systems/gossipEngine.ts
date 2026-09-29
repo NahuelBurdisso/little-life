@@ -27,7 +27,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
-import { isOwnSecret } from '../../lib/gossip';
+import { isOwnSecret, rumorReachedSubject } from '../../lib/gossip';
 
 interface AgentInfo {
   id: number;
@@ -214,6 +214,8 @@ export function gossipTick(nowMinutes: number): void {
 
       const fact = shareable[Math.floor(Math.random() * shareable.length)];
       addKnowers(fact, [target.id]);
+      // Telling someone a rumor about themselves: they know who said it.
+      rumorReachedSubject(fact, agent.id, target.id);
 
       if (fact.sensitivity >= 2) {
         logActivity({

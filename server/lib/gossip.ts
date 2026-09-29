@@ -6,6 +6,7 @@ import { PersonalityProfile } from './personality';
 import { simEvents } from './simEvents';
 import { cliqueIdOf } from './cliques';
 import { thatSentence } from './factText';
+import { gameMinutesNow } from './worldClock';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -376,6 +377,80 @@ export function getShareableFacts(
   return shareable.slice(0, 3);
 }
 
+// ─── Rumor backlash ───────────────────────────────────────────────────────────
+
+/** How long the subject stays angry at whoever told them: past the 480-minute grudge mark in states.ts. */
+const BACKLASH_ANGER_MINUTES = 600;
+
+/**
+ * The subject of an unverified rumor just heard it — from `tellerId`. They get
+ * angry at the teller (the messenger is who's in front of them), and the angry
+ * state's own effect in states.ts turns that into a lasting `grudge` after 480
+ * game minutes, which in turn feeds confrontations (confrontationEngine). A
+ * relationship event knocks trust and friendship now, so the sting shows before
+ * the grudge does. Confirmed facts (a theft someone saw) don't do this: being
+ * told the truth about yourself is a different scene.
+ *
+ * Called by every path where a fact moves from one agent to another by being
+ * told: the gossip tick's active sharing and `spreadGossip` in conversations.
+ */
+export function rumorReachedSubject(
+  fact: { id: number; subject_id: number; reliability: string | null; content: string },
+  tellerId: number,
+  listenerId: number,
+): void {
+  if (fact.reliability !== 'unverified') return;
+  if (listenerId !== fact.subject_id || tellerId === listenerId) return;
+
+  const subjectName = getAgentName(listenerId);
+  const tellerName = getAgentName(tellerId);
+  const [a, b] = [Math.min(listenerId, tellerId), Math.max(listenerId, tellerId)];
+  const fromA = listenerId === a;
+  db.insert(relationshipEvents).values({
+    agent_a: a,
+    agent_b: b,
+    event_type: 'rumor_backlash',
+    description: `${subjectName} heard ${tellerName} repeating a rumor about them`,
+    friendship_delta_ab: fromA ? -10 : 0,
+    friendship_delta_ba: fromA ? 0 : -10,
+    romance_delta_ab: 0,
+    romance_delta_ba: 0,
+    trust_delta_ab: fromA ? -25 : 0,
+    trust_delta_ba: fromA ? 0 : -25,
+    sentiment: -0.6,
+    processed: false,
+    timestamp: Date.now(),
+  }).run();
+
+  const alreadyAngry = db.select({ id: agentStates.id }).from(agentStates)
+    .where(and(eq(agentStates.agent_id, listenerId), eq(agentStates.type, 'angry'))).get();
+  if (!alreadyAngry) {
+    db.insert(agentStates).values({
+      agent_id: listenerId,
+      type: 'angry',
+      severity: 0.7,
+      started_at: gameMinutesNow(),
+      duration: BACKLASH_ANGER_MINUTES,
+      target_agent_id: tellerId,
+      source: 'gossip:rumor_about_self',
+      metadata: { factId: fact.id },
+    }).run();
+    simEvents.emit('state:triggered', {
+      agentId: listenerId,
+      state: 'angry',
+      cause: `heard ${tellerName} spreading lies about them`,
+    });
+  }
+
+  logActivity({
+    type: 'drama',
+    initiator: listenerId,
+    target: tellerId,
+    severity: 0.4,
+    templateData: { description: `${subjectName} heard what ${tellerName} has been saying about them and is furious.` },
+  });
+}
+
 // ─── spreadGossip ─────────────────────────────────────────────────────────────
 
 export function spreadGossip(
@@ -403,6 +478,7 @@ export function spreadGossip(
     const speakerName = getAgentName(_speakerId);
     simEvents.emit('gossip:learned', { agentId: listenerId, sourceName: speakerName, content: fact.content });
     simEvents.emit('gossip:shared', { agentId: _speakerId, otherName: getAgentName(listenerId), content: fact.content });
+    rumorReachedSubject(fact, _speakerId, listenerId);
 
     if (fact.sensitivity >= 2) {
       const listenerName = getAgentName(listenerId);

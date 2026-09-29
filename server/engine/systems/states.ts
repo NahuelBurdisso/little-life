@@ -1002,6 +1002,18 @@ function evaluateTriggers(
 
 // ─── checkConditionalExits ────────────────────────────────────────────────────
 
+/**
+ * Whether a state's natural exit is on hold (`metadata.holdUntil`, game minutes).
+ * A feeling the player stirred (lib/godPowers.ts) holds for a while before its
+ * exit condition applies: a stirred crush on someone the agent barely likes has
+ * romance < 40 from the start and would otherwise vanish the moment the grace
+ * period ends, before it could color a single conversation.
+ */
+export function isHeld(metadata: unknown, nowMinutes: number): boolean {
+  const holdUntil = (metadata as Record<string, unknown> | null)?.holdUntil;
+  return typeof holdUntil === 'number' && nowMinutes < holdUntil;
+}
+
 function checkConditionalExits(
   stateRows: Array<typeof agentStates.$inferSelect>,
   agentNeeds: typeof needsTable.$inferSelect | undefined,
@@ -1018,6 +1030,7 @@ function checkConditionalExits(
     // `stressed` (arrest, blackmail, humiliation, ...) to an agent whose needs
     // happened to be fine. Give every conditional state a minimum lifetime.
     if (nowMinutes - state.started_at < CONDITIONAL_EXIT_GRACE_MINUTES) continue;
+    if (isHeld(state.metadata, nowMinutes)) continue;
 
     let shouldExit = false;
 
