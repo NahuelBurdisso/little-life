@@ -1,5 +1,6 @@
 import React from "react";
 import { COLORS } from "../../lib/constants";
+import { EmptyState } from "./EmptyState";
 
 interface RelationshipEntry {
   relationship: {
@@ -22,6 +23,8 @@ interface RelationshipEntry {
 interface RelationshipListProps {
   relationships: RelationshipEntry[];
   selectedAgentId?: string;
+  /** Makes each row a button that selects + focuses that resident. */
+  onSelectAgent?: (agentId: string) => void;
 }
 
 function strengthIndicator(value: number, max = 100): number {
@@ -42,7 +45,7 @@ function renderDots(count: number, color: string): React.ReactElement {
           key={i}
           className="inline-block w-1.5 h-1.5 rounded-full"
           style={{
-            backgroundColor: i < count ? color : "#4b5563",
+            backgroundColor: i < count ? color : "var(--ui-border)",
           }}
         />
       ))}
@@ -52,14 +55,14 @@ function renderDots(count: number, color: string): React.ReactElement {
 
 function statusBadge(status: string): React.ReactElement | null {
   const styles: Record<string, string> = {
-    friends: "bg-blue-900/50 text-blue-300",
-    close_friends: "bg-blue-800/50 text-blue-200",
-    best_friends: "bg-blue-700/50 text-blue-100",
+    friends: "bg-ui-blue/15 text-ui-blue",
+    close_friends: "bg-ui-blue/25 text-ui-blue",
+    best_friends: "bg-ui-blue/40 text-ui-text",
     dating: "bg-pink-900/50 text-pink-300",
     partners: "bg-pink-800/50 text-pink-200",
     rivals: "bg-red-900/50 text-red-300",
     enemies: "bg-red-800/50 text-red-200",
-    acquaintances: "bg-gray-700/50 text-gray-400",
+    acquaintances: "bg-ui-raised/50 text-ui-dim",
   };
 
   const style = styles[status];
@@ -67,7 +70,7 @@ function statusBadge(status: string): React.ReactElement | null {
 
   return (
     <span
-      className={`text-[10px] px-1.5 py-0.5 rounded ${style ?? "bg-gray-700/50 text-gray-400"}`}
+      className={`text-[10px] px-1.5 py-0.5 rounded ${style ?? "bg-ui-raised/50 text-ui-dim"}`}
     >
       {status.replace(/_/g, " ")}
     </span>
@@ -77,16 +80,20 @@ function statusBadge(status: string): React.ReactElement | null {
 export function RelationshipList({
   relationships,
   selectedAgentId,
+  onSelectAgent,
 }: RelationshipListProps) {
   if (relationships.length === 0) {
     return (
-      <div className="px-3 py-2 border-b border-gray-700">
-        <div className="text-xs text-gray-500 font-medium mb-1">
+      <div className="px-3 py-2 border-b border-ui-line">
+        <div className="text-xs text-ui-dim font-medium mb-1">
           Relationships
         </div>
-        <div className="text-xs text-gray-600 italic">
-          No relationships yet.
-        </div>
+        <EmptyState
+          compact
+          icon="🤝"
+          title="Hasn't met anyone yet."
+          hint="Friendships, crushes and rivalries appear here as they form."
+        />
       </div>
     );
   }
@@ -107,11 +114,11 @@ export function RelationshipList({
     });
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700">
-      <div className="text-xs text-gray-500 font-medium mb-1.5">
+    <div className="px-3 py-2 border-b border-ui-line">
+      <div className="text-xs text-ui-dim font-medium mb-1.5">
         Relationships
       </div>
-      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+      <div className="space-y-0.5 max-h-40 overflow-y-auto">
         {sorted.map((entry) => {
           const { relationship: rel, otherAgent } = entry;
           if (!otherAgent) return null;
@@ -121,13 +128,10 @@ export function RelationshipList({
           const friendship = isA ? rel.friendship_ab : rel.friendship_ba;
           const romance = isA ? rel.romance_ab : rel.romance_ba;
 
-          return (
-            <div
-              key={otherAgent.id}
-              className="flex items-center justify-between gap-2"
-            >
+          const rowBody = (
+            <>
               <div className="flex-1 min-w-0">
-                <div className="text-xs text-white truncate">
+                <div className="text-xs text-ui-text truncate">
                   {otherAgent.name}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
@@ -145,6 +149,29 @@ export function RelationshipList({
                 </div>
               </div>
               <div className="flex-shrink-0">{statusBadge(rel.status)}</div>
+              {onSelectAgent && (
+                <span aria-hidden="true" className="text-ui-faint group-hover:text-ui-gold transition-colors text-xs">
+                  ›
+                </span>
+              )}
+            </>
+          );
+
+          // A button only when there is somewhere to go, so a read-only list
+          // isn't announced as a set of dead buttons.
+          return onSelectAgent ? (
+            <button
+              key={otherAgent.id}
+              type="button"
+              onClick={() => onSelectAgent(String(otherAgent.id))}
+              title={`Go to ${otherAgent.name}`}
+              className="group w-full text-left flex items-center justify-between gap-2 px-1.5 py-1 -mx-1.5 rounded-sm cursor-pointer hover:bg-ui-hover focus-visible:bg-ui-hover focus-visible:outline focus-visible:outline-1 focus-visible:outline-ui-gold transition-colors"
+            >
+              {rowBody}
+            </button>
+          ) : (
+            <div key={otherAgent.id} className="flex items-center justify-between gap-2 px-1.5 py-1">
+              {rowBody}
             </div>
           );
         })}

@@ -1,3 +1,5 @@
+import { EmptyState } from "./EmptyState";
+
 interface PlanBlock {
   id: string | number;
   start_hour: number;
@@ -34,11 +36,14 @@ function formatHour(h: number): string {
 export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
   if (!dailyPlan || !dailyPlan.blocks || dailyPlan.blocks.length === 0) {
     return (
-      <div className="px-3 py-2 border-b border-gray-700">
-        <div className="text-xs text-gray-500 font-medium mb-1">Today's Plan</div>
-        <p className="text-[11px] text-gray-600 italic">
-          No plan yet — agent hasn't woken up today.
-        </p>
+      <div className="px-3 py-2 border-b border-ui-line">
+        <div className="text-xs text-ui-dim font-medium mb-1">Today's Plan</div>
+        <EmptyState
+          compact
+          icon="🗓"
+          title="No plan for today yet."
+          hint="Each morning they sketch out the day — the blocks show up here and tick off as they go."
+        />
       </div>
     );
   }
@@ -51,8 +56,8 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
   const isFallback = dailyPlan.source === "fallback";
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700">
-      <div className="text-xs text-gray-500 font-medium mb-1 flex items-center gap-1.5">
+    <div className="px-3 py-2 border-b border-ui-line">
+      <div className="text-xs text-ui-dim font-medium mb-1 flex items-center gap-1.5">
         <span>Today's Plan (Day {dailyPlan.day})</span>
         {isFallback && (
           <span
@@ -69,15 +74,15 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
             return (
               <div
                 key={block.id}
-                className="text-[11px] flex items-baseline gap-1.5 py-0.5 px-1 text-gray-500 italic"
+                className="text-[11px] flex items-baseline gap-1.5 py-0.5 px-1 text-ui-muted italic"
               >
-                <span className="text-gray-600 shrink-0 not-italic">·</span>
-                <span className="text-gray-600 shrink-0 not-italic">
+                <span className="text-ui-muted shrink-0 not-italic">·</span>
+                <span className="text-ui-muted shrink-0 not-italic">
                   {formatHour(block.start_hour)}–{formatHour(block.end_hour)}
                 </span>
                 <span className="flex-1 min-w-0">{block.broad_action}</span>
                 {block.location_hint && (
-                  <span className="text-gray-600 shrink-0 text-[10px] not-italic">
+                  <span className="text-ui-muted shrink-0 text-[10px] not-italic">
                     {block.location_hint}
                   </span>
                 )}
@@ -93,34 +98,34 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
 
           const rowClass = [
             "text-[11px] flex items-baseline gap-1.5 py-0.5 rounded px-1",
-            isActive ? "border border-blue-500/50 bg-blue-900/10" : "",
+            isActive ? "border border-ui-line-accent bg-ui-gold/10" : "",
           ]
             .filter(Boolean)
             .join(" ");
 
           const iconClass = isActive
-            ? "text-blue-400 shrink-0"
+            ? "text-ui-gold shrink-0"
             : isInterrupted
-            ? "text-red-400 shrink-0"
+            ? "text-ui-bad shrink-0"
             : isReplanned
-            ? "text-amber-400 shrink-0"
+            ? "text-ui-warn shrink-0"
             : isCompleted
-            ? "text-gray-500 shrink-0"
-            : "text-gray-500 shrink-0";
+            ? "text-ui-muted shrink-0"
+            : "text-ui-muted shrink-0";
 
           const timeClass = isCompleted
-            ? "text-gray-600 shrink-0"
-            : "text-gray-500 shrink-0";
+            ? "text-ui-muted shrink-0"
+            : "text-ui-muted shrink-0";
 
           const actionClass = [
             "flex-1 min-w-0",
-            isActive ? "text-white font-semibold" : "",
-            isInterrupted ? "text-red-400 line-through" : "",
-            isReplanned ? "text-amber-300 italic" : "",
+            isActive ? "text-ui-text font-semibold" : "",
+            isInterrupted ? "text-ui-bad line-through" : "",
+            isReplanned ? "text-ui-warn italic" : "",
             !isActive && !isInterrupted && !isReplanned
               ? isCompleted
-                ? "text-gray-600"
-                : "text-gray-300"
+                ? "text-ui-muted"
+                : "text-ui-text"
               : "",
           ]
             .filter(Boolean)
@@ -135,7 +140,7 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
                 </span>
                 <span className={actionClass}>{block.broad_action}</span>
                 {block.location_hint && (
-                  <span className="text-gray-600 shrink-0 text-[10px]">
+                  <span className="text-ui-muted shrink-0 text-[10px]">
                     {block.location_hint}
                   </span>
                 )}
@@ -149,12 +154,12 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
                     {block.decomposed_actions.map((da, i) => (
                       <div
                         key={i}
-                        className="text-[10px] text-gray-400 flex gap-1"
+                        className="text-[10px] text-ui-dim flex gap-1"
                       >
-                        <span className="text-gray-600">•</span>
+                        <span className="text-ui-muted">•</span>
                         <span>
                           {da.action}{" "}
-                          <span className="text-gray-600">({da.duration_min}min)</span>
+                          <span className="text-ui-muted">({da.duration_min}min)</span>
                         </span>
                       </div>
                     ))}

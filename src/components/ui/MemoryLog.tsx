@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { timeAgo } from "../../lib/formatters";
+import { EmptyState } from "./EmptyState";
 
 interface Memory {
   id: number;
@@ -19,13 +20,13 @@ interface MemoryLogProps {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  observation: "bg-blue-900/50 text-blue-300",
+  observation: "bg-ui-blue/20 text-ui-blue",
   social: "bg-purple-900/50 text-purple-300",
   emotional: "bg-pink-900/50 text-pink-300",
   work: "bg-yellow-900/50 text-yellow-300",
   conversation: "bg-green-900/50 text-green-300",
   event: "bg-orange-900/50 text-orange-300",
-  routine: "bg-gray-700/50 text-gray-400",
+  routine: "bg-ui-raised/50 text-ui-dim",
   reflection: "bg-purple-900/50 text-purple-300",
   plan: "bg-amber-900/50 text-amber-300",
   experience: "bg-teal-900/50 text-teal-300",
@@ -42,7 +43,7 @@ function importanceDots(importance: number): React.ReactElement {
       {Array.from({ length: count }, (_, i) => (
         <span
           key={i}
-          className="inline-block w-1 h-1 rounded-full bg-amber-400"
+          className="inline-block w-1 h-1 rounded-full bg-ui-gold"
         />
       ))}
     </span>
@@ -50,9 +51,9 @@ function importanceDots(importance: number): React.ReactElement {
 }
 
 function valenceColor(valence: number): string {
-  if (valence > 0.3) return "border-l-green-600";
-  if (valence < -0.3) return "border-l-red-600";
-  return "border-l-gray-600";
+  if (valence > 0.3) return "border-l-ui-good";
+  if (valence < -0.3) return "border-l-ui-bad";
+  return "border-l-ui-line";
 }
 
 const TYPE_FILTER_BUTTONS: { label: string; value: string | null }[] = [
@@ -74,16 +75,21 @@ export function MemoryLog({ memories, worldTick, tickSpeed, isPaused }: MemoryLo
 
   if (memories.length === 0) {
     return (
-      <div className="px-3 py-2 border-b border-gray-700">
-        <div className="text-xs text-gray-500 font-medium mb-1">Memories</div>
-        <div className="text-xs text-gray-600 italic">No memories yet.</div>
+      <div className="px-3 py-2 border-b border-ui-line">
+        <div className="text-xs text-ui-dim font-medium mb-1">Memories</div>
+        <EmptyState
+          compact
+          icon="💭"
+          title="No memories yet."
+          hint="What they see, say and feel gets written down here as the day goes on."
+        />
       </div>
     );
   }
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700">
-      <div className="text-xs text-gray-500 font-medium mb-1.5">
+    <div className="px-3 py-2 border-b border-ui-line">
+      <div className="text-xs text-ui-dim font-medium mb-1.5">
         Memories ({filteredMemories.length})
       </div>
       <div className="flex gap-1 mb-1.5 flex-wrap">
@@ -93,8 +99,8 @@ export function MemoryLog({ memories, worldTick, tickSpeed, isPaused }: MemoryLo
             onClick={() => setTypeFilter(value)}
             className={`text-[10px] px-1.5 py-px rounded ${
               typeFilter === value
-                ? "bg-gray-600 text-gray-200"
-                : "bg-gray-800 text-gray-500 hover:text-gray-400"
+                ? "bg-ui-hover text-ui-text"
+                : "bg-ui-raised text-ui-muted hover:text-ui-text"
             }`}
           >
             {label}
@@ -114,16 +120,16 @@ export function MemoryLog({ memories, worldTick, tickSpeed, isPaused }: MemoryLo
                 {memory.type}
               </span>
               {importanceDots(memory.importance)}
-              <span className="text-[10px] text-gray-600 ml-auto">
+              <span className="text-[10px] text-ui-muted ml-auto">
                 {timeAgo(memory.created_at, worldTick, tickSpeed, isPaused)}
               </span>
             </div>
-            <div className={`text-[11px] leading-tight ${memory.type === 'reflection' ? 'text-purple-300 italic' : 'text-gray-300'}`}>
+            <div className={`text-[11px] leading-tight ${memory.type === 'reflection' ? 'text-purple-300 italic' : 'text-ui-text'}`}>
               {memory.description}
             </div>
             {memory.type === 'reflection' &&
               (memory.metadata as any)?.citation_ids?.length > 0 && (
-                <div className="text-[10px] text-gray-500 mt-0.5">
+                <div className="text-[10px] text-ui-muted mt-0.5">
                   ── based on {(memory.metadata as any).citation_ids.length} memories
                 </div>
               )}

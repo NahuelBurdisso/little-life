@@ -10,18 +10,21 @@ interface ConversationViewerProps {
     sentiment: number;
   };
   agentNames: Map<string, string>;
+  /** Makes speaker names buttons that select + focus that resident. */
+  onSelectAgent?: (agentId: string) => void;
 }
 
 function sentimentBorderColor(sentiment: number | undefined): string {
-  if (sentiment === undefined) return "border-gray-600";
-  if (sentiment > 0.2) return "border-green-600";
-  if (sentiment < -0.2) return "border-red-600";
-  return "border-gray-600";
+  if (sentiment === undefined) return "border-ui-line";
+  if (sentiment > 0.2) return "border-ui-good/60";
+  if (sentiment < -0.2) return "border-ui-bad/60";
+  return "border-ui-line";
 }
 
 export function ConversationViewer({
   conversation,
   agentNames,
+  onSelectAgent,
 }: ConversationViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -33,7 +36,7 @@ export function ConversationViewer({
 
   if (conversation.messages.length === 0) {
     return (
-      <div className="px-3 py-2 text-xs text-gray-600 italic">
+      <div className="px-3 py-2 text-xs text-ui-muted italic">
         Conversation starting...
       </div>
     );
@@ -43,19 +46,19 @@ export function ConversationViewer({
   const leftSpeaker = conversation.participants[0];
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700">
+    <div className="px-3 py-2 border-b border-ui-line">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs text-gray-500 font-medium">Conversation</span>
+        <span className="text-xs text-ui-dim font-medium">Conversation</span>
         {conversation.topic && (
-          <span className="text-[10px] text-gray-600 italic truncate ml-2">
+          <span className="text-[10px] text-ui-muted italic truncate ml-2">
             {conversation.topic}
           </span>
         )}
         <span
           className={`text-[10px] px-1.5 py-0.5 rounded ${
             conversation.status === "active"
-              ? "bg-green-900/50 text-green-300"
-              : "bg-gray-700/50 text-gray-400"
+              ? "bg-ui-good/15 text-ui-good"
+              : "bg-ui-raised/50 text-ui-dim"
           }`}
         >
           {conversation.status}
@@ -75,7 +78,7 @@ export function ConversationViewer({
           // line: show it as italic narration instead of a speech bubble.
           if (msg.fallback) {
             return (
-              <div key={i} className="text-center text-[10px] italic text-gray-500">
+              <div key={i} className="text-center text-[10px] italic text-ui-muted">
                 {msg.text}
               </div>
             );
@@ -86,12 +89,23 @@ export function ConversationViewer({
               key={i}
               className={`flex flex-col ${isLeft ? "items-start" : "items-end"}`}
             >
-              <span className="text-[10px] text-gray-500 mb-0.5">{name}</span>
+              {onSelectAgent && agentNames.has(speakerKey) ? (
+                <button
+                  type="button"
+                  onClick={() => onSelectAgent(speakerKey)}
+                  title={`Go to ${name}`}
+                  className="text-[10px] text-ui-dim mb-0.5 cursor-pointer underline-offset-2 hover:text-ui-gold hover:underline focus-visible:text-ui-gold focus-visible:underline transition-colors"
+                >
+                  {name}
+                </button>
+              ) : (
+                <span className="text-[10px] text-ui-dim mb-0.5">{name}</span>
+              )}
               <div
                 className={`text-[11px] leading-tight px-2 py-1 rounded-lg max-w-[85%] border ${sentimentBorderColor(msg.sentiment)} ${
                   isLeft
-                    ? "bg-gray-700 text-gray-200 rounded-tl-none"
-                    : "bg-gray-600 text-gray-100 rounded-tr-none"
+                    ? "bg-ui-raised text-ui-text rounded-tl-none"
+                    : "bg-ui-hover text-ui-text rounded-tr-none"
                 }`}
               >
                 {msg.text}

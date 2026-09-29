@@ -7,6 +7,9 @@ import { formatMoney } from "../../lib/formatters";
 import { AgentPortrait } from "./AgentPortrait";
 import { NeedsBars } from "./NeedsBars";
 import { ConversationViewer } from "./ConversationViewer";
+import { EmptyState } from "./EmptyState";
+import { MemorialCard } from "./MemorialCard";
+import { Skeleton, SkeletonSection } from "./Skeleton";
 import { RelationshipList } from "./RelationshipList";
 import { PlanTimeline } from "./PlanTimeline";
 import { ThoughtsTab } from "./ThoughtsTab";
@@ -18,6 +21,8 @@ type TabId = "profile" | "social" | "mind" | "thoughts";
 interface AgentPanelProps {
   agentId: string;
   onClose: () => void;
+  /** Select + focus another resident (relationship rows, conversation speakers). */
+  onSelectAgent?: (agentId: string) => void;
 }
 
 const PERSONALITY_AXES: (keyof PersonalityProfile)[] = [
@@ -35,7 +40,7 @@ const PERSONALITY_AXES: (keyof PersonalityProfile)[] = [
 
 function PersonalityAxes({ personality }: { personality: PersonalityProfile | null | undefined }) {
   if (!personality) {
-    return <p className="text-xs text-gray-600 italic">No personality data.</p>;
+    return <EmptyState compact icon="🧩" title="No personality profile." />;
   }
   return (
     <div className="space-y-1.5">
@@ -43,14 +48,14 @@ function PersonalityAxes({ personality }: { personality: PersonalityProfile | nu
         const value = Math.round(personality[axis] ?? 0);
         return (
           <div key={axis} className="flex items-center gap-2 text-xs">
-            <span className="w-24 text-gray-400 capitalize">{axis}</span>
-            <div className="flex-1 bg-gray-700 h-2 rounded overflow-hidden">
+            <span className="w-24 text-ui-dim capitalize">{axis}</span>
+            <div className="flex-1 bg-ui-raised h-2 rounded overflow-hidden">
               <div
-                className="bg-blue-400 h-2 rounded transition-all duration-300"
+                className="bg-ui-blue h-2 rounded transition-all duration-300"
                 style={{ width: `${value}%` }}
               />
             </div>
-            <span className="w-6 text-right text-gray-500">{value}</span>
+            <span className="w-6 text-right text-ui-muted">{value}</span>
           </div>
         );
       })}
@@ -58,7 +63,7 @@ function PersonalityAxes({ personality }: { personality: PersonalityProfile | nu
   );
 }
 
-export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
+export function AgentPanel({ agentId, onClose, onSelectAgent }: AgentPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
 
   // Reset tab when agent changes
@@ -88,9 +93,9 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
   if (status === "error") {
     return (
-      <div className="h-full bg-gray-800 border-l border-gray-700 flex flex-col items-center justify-center gap-2 p-3">
-        <p className="text-sm text-gray-400">Couldn't load this resident.</p>
-        <button onClick={onClose} className="text-xs text-gray-400 hover:text-white underline">
+      <div className="h-full bg-ui-panel border-l border-ui-line flex flex-col items-center justify-center gap-2 p-3">
+        <p className="text-sm text-ui-dim">Couldn't load this resident.</p>
+        <button onClick={onClose} className="text-xs text-ui-dim hover:text-ui-text underline">
           Close
         </button>
       </div>
@@ -99,8 +104,24 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
   if (status !== "ready" || !data?.agent) {
     return (
-      <div className="h-full bg-gray-800 border-l border-gray-700 flex items-center justify-center">
-        <p className="text-sm text-gray-400">Loading...</p>
+      <div className="h-full bg-ui-panel border-l border-ui-line flex flex-col overflow-hidden" role="status" aria-label="Loading resident">
+        <div className="p-3 border-b border-ui-line flex items-center gap-3">
+          <Skeleton className="w-12 h-12" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-3.5 w-32" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        </div>
+        <div className="flex border-b border-ui-line">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="flex-1 py-2.5 flex justify-center">
+              <Skeleton className="h-2.5 w-10" />
+            </div>
+          ))}
+        </div>
+        <SkeletonSection rows={5} />
+        <SkeletonSection rows={3} />
+        <SkeletonSection rows={4} />
       </div>
     );
   }
@@ -109,27 +130,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
   // Deceased agent view
   if (!agent.is_active) {
-    return (
-      <div className="h-full bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
-        <div className="p-3 border-b border-gray-700 flex justify-between items-start flex-shrink-0">
-          <div>
-            <div className="text-sm font-bold text-gray-500 line-through">{agent.name}</div>
-            <div className="text-xs text-red-400 font-medium">☠ Deceased</div>
-            {economy && <div className="text-[10px] text-gray-600 mt-0.5">{economy.job_title}</div>}
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">✕</button>
-        </div>
-        <div className="px-3 py-3 text-xs text-gray-500 italic border-b border-gray-700">
-          {agent.name} has passed away. Their memory lives on in the town.
-        </div>
-        {agent.bio && (
-          <div className="px-3 py-2 border-b border-gray-700">
-            <div className="text-xs text-gray-600 font-medium mb-1">Bio</div>
-            <p className="text-[11px] text-gray-500 leading-relaxed">{agent.bio}</p>
-          </div>
-        )}
-      </div>
-    );
+    return <MemorialCard agent={agent} economy={economy} memories={memories ?? []} world={world} onClose={onClose} />;
   }
   const worldTick = world?.time?.totalTicks ?? 0;
   const tickSpeed = world?.tick_speed ?? 1;
@@ -150,9 +151,9 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
   ];
 
   return (
-    <div className="h-full bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
+    <div className="h-full bg-ui-panel border-l border-ui-line flex flex-col overflow-hidden">
       {/* Header: portrait + close button */}
-      <div className="p-3 border-b border-gray-700 flex justify-between items-start flex-shrink-0">
+      <div className="p-3 border-b border-ui-line flex justify-between items-start flex-shrink-0">
         <AgentPortrait
           agent={agent}
           economy={economy}
@@ -161,22 +162,22 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
         />
         <button
           onClick={onClose}
-          className="text-gray-400 hover:text-white text-lg leading-none ml-2 flex-shrink-0"
+          className="text-ui-dim hover:text-ui-text text-lg leading-none ml-2 flex-shrink-0"
         >
           ✕
         </button>
       </div>
 
       {/* Tab bar */}
-      <div className="flex border-b border-gray-700 flex-shrink-0">
+      <div className="flex border-b border-ui-line flex-shrink-0">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 py-2 text-[11px] font-medium transition-colors ${
+            className={`flex-1 min-w-0 px-1 py-2 text-[10px] whitespace-nowrap font-medium transition-colors ${
               activeTab === tab.id
-                ? "text-white border-b-2 border-blue-400"
-                : "text-gray-400 hover:text-gray-200"
+                ? "text-ui-gold border-b-2 border-ui-gold bg-ui-raised/40"
+                : "text-ui-dim hover:text-ui-text"
             }`}
           >
             {tab.label}
@@ -195,9 +196,9 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
             {/* Economy info */}
             {economy && (
-              <div className="px-3 py-2 border-b border-gray-700 text-sm">
-                <span className="text-yellow-400">{formatMoney(economy.money)}</span>
-                <span className="text-gray-400 ml-2">
+              <div className="px-3 py-2 border-b border-ui-line text-sm">
+                <span className="text-ui-gold">{formatMoney(economy.money)}</span>
+                <span className="text-ui-dim ml-2">
                   • {economy.job_title}
                 </span>
               </div>
@@ -205,13 +206,13 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
             {/* Traits */}
             {agent.traits && agent.traits.length > 0 && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1.5">Traits</div>
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1.5">Traits</div>
                 <div className="flex flex-wrap gap-1">
                   {agent.traits.map((trait: string) => (
                     <span
                       key={trait}
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-ui-raised text-ui-text"
                     >
                       {trait}
                     </span>
@@ -222,24 +223,24 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
 
             {/* Reputation */}
             {reputation && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1">Reputation</div>
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1">Reputation</div>
                 <div className="flex items-center gap-2">
                   <span className={`text-sm font-medium ${
                     reputation.score >= 30 ? 'text-green-400' :
-                    reputation.score <= -30 ? 'text-red-400' : 'text-gray-300'
+                    reputation.score <= -30 ? 'text-red-400' : 'text-ui-text'
                   }`}>
                     {reputation.label}
                   </span>
-                  <span className="text-[10px] text-gray-500">({reputation.score > 0 ? '+' : ''}{reputation.score})</span>
+                  <span className="text-[10px] text-ui-muted">({reputation.score > 0 ? '+' : ''}{reputation.score})</span>
                 </div>
               </div>
             )}
 
             {/* Hobbies */}
             {hobbies && hobbies.length > 0 && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1.5">Hobbies</div>
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1.5">Hobbies</div>
                 <div className="flex flex-wrap gap-1">
                   {hobbies.map((h: any) => (
                     <span
@@ -254,8 +255,8 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
             )}
 
             {/* Personality axes */}
-            <div className="px-3 py-2 border-b border-gray-700">
-              <div className="text-xs text-gray-500 font-medium mb-2">
+            <div className="px-3 py-2 border-b border-ui-line">
+              <div className="text-xs text-ui-dim font-medium mb-2">
                 Personality
               </div>
               <PersonalityAxes personality={agent.personality} />
@@ -269,25 +270,27 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
             <RelationshipList
               relationships={relationships ?? []}
               selectedAgentId={agentId}
+              onSelectAgent={onSelectAgent}
             />
 
             {/* Active conversation */}
             {activeConvo && (
-              <div className="border-b border-gray-700">
-                <div className="px-3 pt-2 text-xs text-gray-500 font-medium">
+              <div className="border-b border-ui-line">
+                <div className="px-3 pt-2 text-xs text-ui-dim font-medium">
                   Active Conversation
                 </div>
                 <ConversationViewer
                   conversation={activeConvo}
                   agentNames={agentNameMap}
+                  onSelectAgent={onSelectAgent}
                 />
               </div>
             )}
 
             {/* Recent conversation history */}
             {recentConvos.length > 0 && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1.5">
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1.5">
                   Recent Conversations ({recentConvos.length})
                 </div>
                 <div className="space-y-2">
@@ -296,6 +299,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
                       key={convo.id}
                       conversation={convo}
                       agentNames={agentNameMap}
+                      onSelectAgent={onSelectAgent}
                     />
                   ))}
                 </div>
@@ -303,9 +307,11 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
             )}
 
             {!activeConvo && recentConvos.length === 0 && (
-              <div className="px-3 py-4 text-xs text-gray-600 italic">
-                No conversations yet.
-              </div>
+              <EmptyState
+                icon="💬"
+                title="No conversations yet."
+                hint="Chats with neighbours will show up here, with who said what."
+              />
             )}
           </div>
         )}
@@ -315,35 +321,35 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
           <div>
             {/* Self-Concept (evolving, generated from memories) */}
             {(agent as any).self_description && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1">Self-Concept</div>
-                <p className="text-[11px] text-blue-300 leading-relaxed italic">{(agent as any).self_description}</p>
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1">Self-Concept</div>
+                <p className="text-[11px] text-ui-blue leading-relaxed italic">{(agent as any).self_description}</p>
               </div>
             )}
 
             {/* Bio (static backstory) */}
             {agent.bio && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1">Backstory</div>
-                <p className="text-[11px] text-gray-300 leading-relaxed">{agent.bio}</p>
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1">Backstory</div>
+                <p className="text-[11px] text-ui-text leading-relaxed">{agent.bio}</p>
               </div>
             )}
 
             {/* Schedule */}
             {agent.schedule && (
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs text-gray-500 font-medium mb-1.5">Daily Schedule</div>
+              <div className="px-3 py-2 border-b border-ui-line">
+                <div className="text-xs text-ui-dim font-medium mb-1.5">Daily Schedule</div>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
-                  <span className="text-gray-400">Wake</span>
-                  <span className="text-gray-300">{(agent.schedule as any).wakeTime}:00</span>
-                  <span className="text-gray-400">Work</span>
-                  <span className="text-gray-300">
+                  <span className="text-ui-dim">Wake</span>
+                  <span className="text-ui-text">{(agent.schedule as any).wakeTime}:00</span>
+                  <span className="text-ui-dim">Work</span>
+                  <span className="text-ui-text">
                     {agent.workplace ? `${(agent.schedule as any).workStart}:00 - ${(agent.schedule as any).workEnd}:00` : 'No job'}
                   </span>
-                  <span className="text-gray-400">Lunch</span>
-                  <span className="text-gray-300">{(agent.schedule as any).lunchTime}:00</span>
-                  <span className="text-gray-400">Sleep</span>
-                  <span className="text-gray-300">{(agent.schedule as any).sleepTime}:00</span>
+                  <span className="text-ui-dim">Lunch</span>
+                  <span className="text-ui-text">{(agent.schedule as any).lunchTime}:00</span>
+                  <span className="text-ui-dim">Sleep</span>
+                  <span className="text-ui-text">{(agent.schedule as any).sleepTime}:00</span>
                 </div>
               </div>
             )}

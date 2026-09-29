@@ -1,4 +1,6 @@
 import { trpc } from "../../lib/trpc";
+import { EmptyState } from "./EmptyState";
+import { SkeletonSection } from "./Skeleton";
 
 interface GoalsViewProps {
   agentId: number;
@@ -10,7 +12,7 @@ const AMBITION_COLORS: Record<string, string> = {
   wealth: "text-yellow-400",
   love: "text-pink-400",
   power: "text-red-400",
-  knowledge: "text-blue-400",
+  knowledge: "text-ui-blue",
   adventure: "text-green-400",
   family: "text-orange-300",
   friendship: "text-cyan-400",
@@ -24,7 +26,7 @@ const AMBITION_BG: Record<string, string> = {
   wealth: "bg-yellow-900/20 border-yellow-800/30",
   love: "bg-pink-900/20 border-pink-800/30",
   power: "bg-red-900/20 border-red-800/30",
-  knowledge: "bg-blue-900/20 border-blue-800/30",
+  knowledge: "bg-ui-blue/20 border-blue-800/30",
   adventure: "bg-green-900/20 border-green-800/30",
   family: "bg-orange-900/20 border-orange-800/30",
   friendship: "bg-cyan-900/20 border-cyan-800/30",
@@ -48,8 +50,8 @@ const GOAL_TYPE_LABELS: Record<string, string> = {
 };
 
 const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
-  reactive: { label: "reactive", className: "bg-gray-700 text-gray-400" },
-  llm: { label: "autonomous", className: "bg-blue-900/40 text-blue-300" },
+  reactive: { label: "reactive", className: "bg-ui-raised text-ui-dim" },
+  llm: { label: "autonomous", className: "bg-ui-blue/20 text-ui-blue" },
   event: { label: "event", className: "bg-orange-900/40 text-orange-300" },
   relationship: { label: "social", className: "bg-pink-900/40 text-pink-300" },
 };
@@ -65,63 +67,67 @@ export function GoalsView({ agentId, nowMinutes }: GoalsViewProps) {
   const { data, isLoading } = trpc.agents.getAgentThoughts.useQuery({ agentId });
 
   if (isLoading) {
-    return (
-      <div className="px-3 py-2 border-b border-gray-700">
-        <div className="text-xs text-gray-500 font-medium mb-1">Ambition & Goals</div>
-        <p className="text-[11px] text-gray-600 italic">Loading...</p>
-      </div>
-    );
+    return <SkeletonSection rows={4} />;
   }
 
   const { goals = [], ambition } = data ?? {};
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700">
-      <div className="text-xs text-gray-500 font-medium mb-2">Ambition & Goals</div>
+    <div className="px-3 py-2 border-b border-ui-line">
+      <div className="text-xs text-ui-dim font-medium mb-2">Ambition & Goals</div>
 
       {/* Life ambition */}
       {ambition ? (
         <div
           className={`rounded px-2 py-1.5 border mb-2.5 ${
-            AMBITION_BG[ambition.type] ?? "bg-gray-700/40 border-gray-600/40"
+            AMBITION_BG[ambition.type] ?? "bg-ui-raised/40 border-ui-line/40"
           }`}
         >
           <div className="flex items-center justify-between mb-0.5">
             <span
               className={`text-xs font-semibold capitalize ${
-                AMBITION_COLORS[ambition.type] ?? "text-gray-300"
+                AMBITION_COLORS[ambition.type] ?? "text-ui-text"
               }`}
             >
               {ambition.type} ambition
             </span>
-            <span className="text-[10px] text-gray-500">
+            <span className="text-[10px] text-ui-muted">
               intensity {Math.round(ambition.intensity * 100)}%
             </span>
           </div>
           {ambition.description ? (
-            <p className="text-[11px] text-gray-300 leading-relaxed">
+            <p className="text-[11px] text-ui-text leading-relaxed">
               {ambition.description}
             </p>
           ) : (
-            <p className="text-[11px] text-gray-500 italic">
+            <p className="text-[11px] text-ui-muted italic">
               Driven by a deep desire for {ambition.type}.
             </p>
           )}
           {ambition.trigger && (
-            <div className="text-[10px] text-gray-600 mt-0.5">
+            <div className="text-[10px] text-ui-muted mt-0.5">
               Triggered by: {ambition.trigger.replace(/_/g, " ")}
             </div>
           )}
         </div>
       ) : (
-        <div className="text-[11px] text-gray-600 italic mb-2">
-          No life ambition yet.
-        </div>
+        <EmptyState
+          compact
+          icon="🌟"
+          title="No life ambition yet."
+          hint="Big moments — love, loss, a windfall — can spark one."
+          className="mb-1"
+        />
       )}
 
       {/* Active goals */}
       {goals.length === 0 ? (
-        <p className="text-[11px] text-gray-600 italic">No active goals.</p>
+        <EmptyState
+          compact
+          icon="🎯"
+          title="No active goals."
+          hint="Short-term goals like making a friend or earning money will be tracked here."
+        />
       ) : (
         <div className="space-y-2">
           {goals.map((goal) => {
@@ -131,15 +137,15 @@ export function GoalsView({ agentId, nowMinutes }: GoalsViewProps) {
             const typeLabel = GOAL_TYPE_LABELS[goal.type] ?? goal.type.replace(/_/g, " ");
 
             return (
-              <div key={goal.id} className="bg-gray-700/30 rounded px-2 py-1.5">
+              <div key={goal.id} className="bg-ui-raised/30 rounded px-2 py-1.5">
                 {/* Goal header */}
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] text-gray-200 font-medium capitalize">
+                  <span className="text-[11px] text-ui-text font-medium capitalize">
                     {typeLabel}
                   </span>
                   <div className="flex items-center gap-1.5">
                     {days > 0 && (
-                      <span className="text-[9px] text-gray-600">
+                      <span className="text-[9px] text-ui-muted">
                         {days}d
                       </span>
                     )}
@@ -153,20 +159,20 @@ export function GoalsView({ agentId, nowMinutes }: GoalsViewProps) {
 
                 {/* Description */}
                 {goal.description && (
-                  <p className="text-[10px] text-gray-400 leading-relaxed mb-1">
+                  <p className="text-[10px] text-ui-dim leading-relaxed mb-1">
                     {goal.description}
                   </p>
                 )}
 
                 {/* Progress bar */}
                 <div className="flex items-center gap-1.5">
-                  <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div className="flex-1 h-1.5 bg-ui-raised rounded-full overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-blue-500/70 transition-all duration-300"
+                      className="h-full rounded-full bg-ui-blue/70 transition-all duration-300"
                       style={{ width: `${progress}%` }}
                     />
                   </div>
-                  <span className="text-[10px] text-gray-500 w-7 text-right">
+                  <span className="text-[10px] text-ui-muted w-7 text-right">
                     {Math.round(progress)}%
                   </span>
                 </div>
