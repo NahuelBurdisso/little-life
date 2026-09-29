@@ -53,6 +53,8 @@ if (SEASON && !['spring', 'summer', 'autumn', 'winter'].includes(SEASON)) {
 }
 const KEEP = flag('keep');
 const VERBOSE = flag('verbose');
+// --trace "Name": print every action change of one agent (time, action, place).
+const TRACE = arg('trace');
 
 // ─── Throwaway database ───────────────────────────────────────────────────────
 
@@ -238,6 +240,9 @@ async function main(): Promise<void> {
   type WalkCat = 'trip' | 'same-place' | 'hop' | 'approach';
   const walkCat = new Map<number, WalkCat>();
   const lastPos = new Map<number, { x: number; y: number }>();
+  const nameById = new Map(db.select({ id: agents.id, name: agents.name }).from(agents).all().map((a) => [a.id, a.name]));
+  const locName = new Map(allLocs.map((l) => [l.id, `${l.type}#${l.id}`]));
+  let traceLast = '';
   const jobOf = new Map(db.select({ id: economy.agent_id, job: economy.job }).from(economy).all().map((e) => [e.id, e.job]));
 
   const maxId = (table: any) => Number(db.select({ m: sql<number>`coalesce(max(id), 0)` }).from(table).get()?.m ?? 0);
@@ -313,6 +318,7 @@ async function main(): Promise<void> {
         dest: agents.current_destination, pos: agents.position, schedule: agents.schedule,
         workplace: agents.workplace, queue: agents.action_queue,
       }).from(agents).where(eq(agents.is_active, true)).all();
+      const needByAgent = new Map(db.select().from(needs).all().map((n) => [n.agent_id, n]));
       const clock = worldRow().time;
       const hourF = clock.hour + clock.minute / 60;
       const inWindow = (from: number, to: number) => from <= to ? hourF >= from && hourF < to : hourF >= from || hourF < to;
@@ -335,6 +341,20 @@ async function main(): Promise<void> {
           }
           shift.set(r.id, s);
         }
+        if (TRACE && nameById.get(r.id) === TRACE) {
+          const a = r.action as any;
+          const q = (r.queue as any[])?.[0];
+          const desc = type === 'walking'
+            ? `walking${a?.reason ? `(${a.reason})` : ''} -> ${q?.type ?? '?'}${q?.source ? `/${q.source}` : ''} @ ${locName.get((r.dest as any)?.locationId) ?? 'point'}`
+            : `${type}${a?.source ? `/${a.source}` : ''}${a?.zoneActivity ? `/${a.zoneActivity}` : ''}`;
+          const line = `${desc} [at ${locName.get(r.loc as number) ?? 'outside'}]`;
+          if (line !== traceLast) {
+            const n = needByAgent.get(r.id);
+            out(`  trace d${clock.day} ${String(clock.hour).padStart(2, '0')}:${String(Math.floor(clock.minute)).padStart(2, '0')} ${line}`
+              + (n ? `  h${n.hunger.toFixed(0)} e${n.energy.toFixed(0)} s${n.social.toFixed(0)}` : ''));
+            traceLast = line;
+          }
+        }
         if (type !== 'walking') { walkKey.delete(r.id); continue; }
         walkMin.set(r.id, (walkMin.get(r.id) ?? 0) + tickSpeed);
         if (r.schedule && inWindow(r.schedule.sleepTime, r.schedule.wakeTime)) {
@@ -352,7 +372,6 @@ async function main(): Promise<void> {
         }
         walkByCat[walkCat.get(r.id) ?? 'hop'] += tickSpeed;
       }
-      const needByAgent = new Map(db.select().from(needs).all().map((n) => [n.agent_id, n]));
       for (const st of db.select({ agent: agentStates.agent_id, type: agentStates.type }).from(agentStates)
         .where(inArray(agentStates.type, ['stressed', 'lonely'])).all()) {
         stateHolders[st.type as 'stressed' | 'lonely'].add(st.agent);
@@ -497,7 +516,8 @@ async function main(): Promise<void> {
         (tilesWalked / n).toFixed(0).padStart(5),
         `${h(Math.max(0, ...nights))}`.padStart(7),
         `${h(sumK('atWork') / Math.max(1, all.length))}/${h(sumK('shift') / Math.max(1, all.length))}`.padStart(8),
-        `${fallbackDay.get('unroutable-destination') ?? 0}/${fallbackDay.get('no-route') ?? 0}`.padStart(9),
+        `${fallbackDay.get('unroutable-destination') ?? 0}/${fallbackDay.get('no-route') ?? 0}`.padStart(7)
+          + ` (${(fallbackDay.get('snapped-destination') ?? 0) + (fallbackDay.get('snapped-start') ?? 0)})`,
       ].join(' | '));
       workRows.push(`${String(dayStart.day).padStart(3)} | ` + [...byJob.entries()].sort()
         .map(([job, j]) => `${job}x${j.n} ${h(j.atWork / j.n)}/${h(j.shift / j.n)} (w ${h(j.working / j.n)})`).join(' · '));
@@ -598,8 +618,9 @@ async function main(): Promise<void> {
   out('Movement, per agent per day. trips = walks started, t/s/h/a: trip to another place / same-place (a walk to');
   out('the door of the place the agent is already in) / hop (interior walk to a zone) / approach (walking over to');
   out('talk). walk h split the same way. tiles = distance walked. night h = max h one agent walked in its sleep');
-  out('window. at work = h at the workplace during the shift / shift h. fallback = unroutable dest / no route.');
-  out('day | walk h | max walk h     |   trips t/s/h/a    |  walk h t/s/h/a    | tiles | night h | at work  | fallback u/n');
+  out('window. at work = h at the workplace during the shift / shift h. fallback = straight lines: unroutable');
+  out('destination / no route (in brackets: routes snapped to the nearest open tile, not straight lines).');
+  out('day | walk h | max walk h     |   trips t/s/h/a    |  walk h t/s/h/a    | tiles | night h | at work  | fallback u/n (s)');
   out('----+--------+----------------+--------------------+--------------------+-------+---------+----------+-------------');
   for (const r of moveRows) out(r);
   out('');
@@ -607,7 +628,7 @@ async function main(): Promise<void> {
   for (const r of workRows) out(r);
   out('');
   if (fallbackWhere.size) {
-    out('Straight-line fallbacks by reason and destination (whole run):');
+    out('Path fallbacks and snaps by reason and destination (whole run):');
     for (const [k, v] of [...fallbackWhere.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) out(`  x${v}  ${k}`);
     out('');
   }
