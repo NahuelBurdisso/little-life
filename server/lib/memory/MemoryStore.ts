@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { memories } from '../../db/schema';
+import { memories, agents } from '../../db/schema';
 import { eq, and, desc, inArray } from 'drizzle-orm';
 import type { Memory, MemoryType } from './types';
 
@@ -37,6 +37,14 @@ function rowToMemory(row: MemoryRow): Memory {
 }
 
 export class MemoryStore {
+  /** Which of these agent ids still have a row (memories reference agents by FK). */
+  existingAgentIds(ids: number[]): Set<number> {
+    if (ids.length === 0) return new Set();
+    return new Set(
+      db.select({ id: agents.id }).from(agents).where(inArray(agents.id, ids)).all().map((r) => r.id),
+    );
+  }
+
   /**
    * Batch insert memories in a single transaction. Returns inserted rows.
    */

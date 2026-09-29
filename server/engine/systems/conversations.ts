@@ -790,6 +790,12 @@ export async function conversationsTick(): Promise<void> {
         const dx = firstParticipant.position.x - secondParticipant.position.x;
         const dy = firstParticipant.position.y - secondParticipant.position.y;
         if (dx * dx + dy * dy > 64 * 64) {
+          // A player's nudge walks both agents to a meeting point, so on its
+          // first pass the pair is almost always still apart. Deleting it here
+          // lost every confrontation/"make them talk" between people in
+          // different places without a word; it waits for them instead, and
+          // if they never meet it ages out through Step C (reported as 'apart').
+          if (isProtected) continue;
           // Too far apart — remove from queue, they'll re-queue when close
           db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
           continue;
