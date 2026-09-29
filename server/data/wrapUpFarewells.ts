@@ -15,6 +15,8 @@
  * replaced and which was deleted together with its write-only copy into the
  * `templates` table (B19).
  */
+import { firstName } from '../ai/names';
+
 export const WRAP_UP_FAREWELLS: Record<'budget' | 'sleep' | 'energy' | 'hunger', Array<{ text: string; sentiment: number }>> = {
   budget: [
     { text: "Oh, look at the time. I should get going, {other.name}.", sentiment: 0.2 },
@@ -34,3 +36,14 @@ export const WRAP_UP_FAREWELLS: Record<'budget' | 'sleep' | 'energy' | 'hunger',
     { text: "My stomach won't let me think. I need to eat something.", sentiment: -0.1 },
   ],
 };
+
+/**
+ * A farewell addressed to the partner by first name, as the model addresses
+ * people. The caller used to pass the full name, so a tired baker said
+ * "Sorry, Dr. Sofia Petrov, I'm starving." (playtest #3) one line after
+ * calling her "Sofia".
+ */
+export function farewellText(text: string, otherFullName: string | null | undefined): string {
+  const name = otherFullName ? firstName(otherFullName) : '';
+  return text.replace(/\{other\.name\}/g, name || 'friend');
+}
