@@ -93,6 +93,12 @@ interface GameCanvasProps {
    * selection change it belongs to.
    */
   followRequest?: { nonce: number; mode: 'start' | 'toggle' } | null;
+  /**
+   * The player moved the camera by hand (pan, zoom, or the Follow button). The
+   * director listens to step back for a while. Programmatic moves — focus and
+   * follow requests, the director's own cuts — never fire it.
+   */
+  onUserCameraInput?: () => void;
 }
 
 export const GameCanvas = React.memo(function GameCanvas({
@@ -110,8 +116,13 @@ export const GameCanvas = React.memo(function GameCanvas({
   selectedAgentId,
   focusNonce,
   followRequest,
+  onUserCameraInput,
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
+  // Read through a ref: the camera is built once in the init effect, and its
+  // pan hook must call whatever callback the latest render passed.
+  const onUserCameraInputRef = useRef(onUserCameraInput);
+  onUserCameraInputRef.current = onUserCameraInput;
   const activity = useCanvasActivity();
   const { brewing } = useBrewing();
 
@@ -415,6 +426,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     // not whenever React gets around to committing the state update.
     camera.onUserPan = () => {
       setFollow(false);
+      onUserCameraInputRef.current?.();
     };
     cameraRef.current = camera;
 
@@ -938,7 +950,10 @@ export const GameCanvas = React.memo(function GameCanvas({
       {selectedAgentId && agents.some(a => String(a.id) === selectedAgentId) && (
         <button
           type="button"
-          onClick={() => setFollow(!following)}
+          onClick={() => {
+            setFollow(!following);
+            onUserCameraInput?.();
+          }}
           className={`absolute top-2 left-2 z-20 px-2 py-1 text-[11px] rounded border shadow transition-colors ${
             following
               ? "bg-[#c8a84b] text-[#1a1814] border-[#c8a84b]"
