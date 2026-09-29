@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 124 files / 1459 tests passing.
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 126 files / 1464 tests passing.
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -121,8 +121,9 @@ Evidence in the session scratchpad; line numbers approximate.
   the fallback when LLM slots are full (`SMALL_TALK_TIER`, `planConversation`).
 - **G6 [L]** Some openers still "how are you doing today" (topic labels are now intents,
   `topicIntent` in `prompts.ts`).
-- **G7 [M]** Gossip residue: 2 self-gossip cases via a third party's sighting ("Diego told Marco that
-  Yuki spotted Diego…"); 8 contentless "confided something personal" rumors.
+- **G7 [L]** Gossip residue: 2 self-gossip cases via a third party's sighting ("Diego told Marco that
+  Yuki spotted Diego…"). (Contentless "confided something personal" rumors fixed: the shared
+  secret's text is stored.)
 - **G8 [L]** Saved plan blocks all show `pending` (status lives in the in-memory cache). Plans now
   arrive in ~7 s, so the 4x "plan after the day started" symptom is gone.
 - **L1 [L]** Plans occasionally mention things the town doesn't have ("Stare at Marco's social
@@ -246,7 +247,9 @@ before merging.
   markdown), G7's goodbye-as-memory (conversation takeaways), inverted hunger label in plan prompts,
   embedding model unloading (every retrieval failing after 5 idle min), zero query vectors cached
   for good, replans after pleasant small talk, agents idling at block edges (next block prefetched),
-  "lash out" snaps becoming breakdowns, listener addressed by full name.
+  "lash out" snaps becoming breakdowns, listener addressed by full name, speech bubbles cut
+  mid-word at 60 chars (now whole sentences / word boundary, 84 chars), shared secrets stored
+  without their content. The tick loop now warns when ticks overrun the interval (`[tick] … slow`).
 
 ## Next steps (suggested order)
 
