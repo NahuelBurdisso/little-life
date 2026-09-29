@@ -1,5 +1,5 @@
 import { router, publicProcedure } from '../trpc';
-import { db } from '../db';
+import { db, sqlite } from '../db';
 import {
   agents,
   needs,
@@ -33,6 +33,7 @@ import { nightSkip } from '../engine/nightSkip';
 import { workplaceForJob } from '../lib/jobWorkplace';
 import { generateNewResident } from '../lib/newResident';
 import { perceptionSystem } from '../lib/perception/instance';
+import { nameHomes } from '../lib/homeNames';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -506,6 +507,10 @@ export const nudgeRouter = router({
             .run();
 
           const agentId = Number(result.lastInsertRowid);
+
+          // The house is named after who lives there: a cottage of one becomes
+          // a family's house, and an empty `Home N` gets a name at last.
+          nameHomes(sqlite, { homeIds: [availableHome.id] });
 
           // Add agent to home occupants
           const occupants = availableHome.current_occupants as number[];

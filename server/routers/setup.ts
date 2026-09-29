@@ -38,6 +38,7 @@ import { startingNeeds } from '../lib/startingNeeds';
 import { saveWorldCaches } from '../engine/worldCaches';
 import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
 import { randomUUID } from 'crypto';
+import { nameHomes } from '../lib/homeNames';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -988,7 +989,11 @@ async function replaceWorld(
     return sqlite.transaction(() => {
       sqlite.exec('PRAGMA defer_foreign_keys = ON;');
       deleteAllRows();
-      return seedWorld(config, genResult, scenario);
+      const seeded = seedWorld(config, genResult, scenario);
+      // After the seed, which places people by the worldgen labels: name the
+      // houses after who lives in them (ids unchanged; lib/homeNames.ts).
+      nameHomes(sqlite);
+      return seeded;
     })();
   } finally {
     // Everything before `startTickLoop()` is wrapped so that nothing in here can

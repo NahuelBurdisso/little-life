@@ -198,9 +198,23 @@ describe('social home placement through initialize', () => {
     throw new Error('no seed in social-db-0..19 relabels the homes');
   }
 
-  const dbHomes = () => homesOf(
-    db.select({ name: locations.name, type: locations.type, position: locations.position })
-      .from(locations).all());
+  /**
+   * The DB's locations with each home under its worldgen label again. Start
+   * renames houses after their residents (lib/homeNames.ts), so a house is
+   * mapped back through who lives in it: `Test Agent n` was placed in `Home n`.
+   * A vacant house keeps its label.
+   */
+  const dbLocations = () => {
+    const labelOf = new Map(MINIMAL_AGENTS.map((a) => [a.name, a.homeName]));
+    const residents = db.select({ name: agents.name, home: agents.home }).from(agents).all();
+    return db.select({ id: locations.id, name: locations.name, type: locations.type, position: locations.position })
+      .from(locations).all()
+      .map((l) => {
+        const resident = l.type === 'home' ? residents.find((r) => r.home === l.id) : undefined;
+        return { ...l, name: (resident && labelOf.get(resident.name)) ?? l.name };
+      });
+  };
+  const dbHomes = () => homesOf(dbLocations());
 
   /**
    * A world saved before social placement existed has no `socialPlacement` key.
@@ -324,8 +338,7 @@ describe('social home placement through initialize', () => {
       worldgen: cfg(seed),
     } as any);
 
-    const rows = db.select({ name: locations.name, type: locations.type, position: locations.position })
-      .from(locations).all();
+    const rows = dbLocations();
     expect(homesOf(rows)).toEqual(homesOf(placed.locations));
 
     // The wizard preview, given the same cast and relationships, shows the

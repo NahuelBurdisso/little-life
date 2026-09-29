@@ -6,7 +6,7 @@ import { LLMEmptyReplyError } from '../../ai/llmErrors';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
 import { buildDecompositionPrompt, type PlanPrompt } from './planPrompts';
-import { parseDecomposedActions, isUnparsedDecomposition } from './planParser';
+import { parseDecomposedActions, isUnparsedDecomposition, isOwnHomeWord } from './planParser';
 import type { DailyPlan, PlanBlock } from './types';
 import { reportPlanningBug, type PlanLLMGate } from './PlanLLMGate';
 import { decomposeDeterministically, type DeterministicContext } from './deterministicDecompose';
@@ -34,6 +34,8 @@ interface DecompositionContext {
   validAgentNames: string[];
   locationIdMap: Map<string, number>;
   agentIdMap: Map<string, number>;
+  /** The agent's own house: where "home" in the model's answer goes. */
+  homeId: number | null;
 }
 
 /** Queue dedupe key for one block's decomposition. */
@@ -185,7 +187,7 @@ export class PlanDecomposer {
       return;
     }
     if (!prep) return;
-    const { agentName, prompt, validLocations, validAgentNames, locationIdMap, agentIdMap } = prep;
+    const { agentName, prompt, validLocations, validAgentNames, locationIdMap, agentIdMap, homeId } = prep;
 
     // 8. Call LLM. Only this call's errors count towards the outage breaker
     //    (see PlanLLMGate); the executor yields to the utility layer meanwhile
@@ -247,8 +249,8 @@ export class PlanDecomposer {
     for (const action of actions) {
       if (action.target_location) {
         const key = action.target_location.toLowerCase();
-        // Try exact match first
-        let resolvedId = locationIdMap.get(key);
+        // Try exact match first ("home" is the agent's own; see isOwnHomeWord)
+        let resolvedId = isOwnHomeWord(key) && homeId != null ? homeId : locationIdMap.get(key);
         if (resolvedId == null) {
           // Try substring match
           for (const [locName, locId] of locationIdMap) {
@@ -290,6 +292,7 @@ export class PlanDecomposer {
         name: agents.name,
         traits: agents.traits,
         personality: agents.personality,
+        home: agents.home,
       })
       .from(agents)
       .where(eq(agents.id, agentId))
@@ -371,6 +374,7 @@ export class PlanDecomposer {
       validAgentNames,
       locationIdMap,
       agentIdMap,
+      homeId: agentRow.home ?? null,
     };
   }
 }
