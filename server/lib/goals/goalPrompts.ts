@@ -229,7 +229,7 @@ Reply with JSON: {"description":"...","category":"${AMBITION_CATEGORIES.join('|'
     user,
     format: {
       type: 'object',
-      properties: { description: SHORT(140), category: { type: 'string', enum: AMBITION_CATEGORIES }, reason: SHORT(200) },
+      properties: { description: SHORT(200), category: { type: 'string', enum: AMBITION_CATEGORIES }, reason: SHORT(200) },
       required: ['description', 'category', 'reason'],
     },
   };

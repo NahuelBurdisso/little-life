@@ -136,9 +136,9 @@ export const CONFIG = {
   // AI / LLM
   AI: {
     // Heavy model — conversations, reflections, snap resolution (needs personality/depth)
-    CHAT_MODEL: process.env.CHAT_MODEL ?? "huihui_ai/gemma-4-abliterated:e4b",
+    CHAT_MODEL: process.env.CHAT_MODEL ?? "gemma4:26b-a4b-it-mtp-q4_K_M",
     // Light model — planning, decomposition, goals, self-descriptions (structured output, speed)
-    LIGHT_MODEL: process.env.LIGHT_MODEL ?? "huihui_ai/gemma-4-abliterated:e4b",
+    LIGHT_MODEL: process.env.LIGHT_MODEL ?? "gemma4:26b-a4b-it-mtp-q4_K_M",
     EMBEDDING_MODEL: process.env.EMBEDDING_MODEL ?? "mxbai-embed-large",
     // Backend: "ollama" (default) or "openai" (llama-server, vLLM, etc.)
     BACKEND: (process.env.LLM_BACKEND ?? "ollama") as "ollama" | "openai",
