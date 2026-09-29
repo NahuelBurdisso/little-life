@@ -1,4 +1,4 @@
-import { thatSentence } from '../factText';
+import { thatSentence, endSentence } from '../factText';
 
 type TemplateContext = Record<string, string | number>;
 
@@ -90,7 +90,8 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I spent $${ctx.price} on ${ctx.item}.`,
   ],
   economy_production: [
-    (ctx) => `I produced ${ctx.quantity} ${ctx.item} at work today.`,
+    // `made` is a counted phrase ("2 loaves of bread", itemCountPhrase).
+    (ctx) => `I produced ${ctx.made} at work today.`,
   ],
   economy_blackmail: [
     (ctx) => `I had to pay $${ctx.amount} in blackmail money again.`,
@@ -109,9 +110,14 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
   economy_milestone_down: [
     (ctx) => `My money dropped below $${ctx.amount}. Things are getting tight.`,
   ],
+  // `name` is a title ("Heavy Storm"), `description` one or more whole
+  // sentences, possibly player-written without a full stop. Splicing
+  // "<name>: <description>" into "There's {event} happening in town." gave
+  // "There's Heavy Storm: A heavy storm is battering the town. Best stay
+  // indoors! happening in town." (G9), so each keeps its own sentence.
   world_event: [
-    (ctx) => `There's ${ctx.event} happening in town.`,
-    (ctx) => `I noticed ${ctx.event} going on.`,
+    (ctx) => `Word around town: ${endSentence(String(ctx.name))} ${endSentence(String(ctx.description))}`,
+    (ctx) => `Something's going on in town: ${endSentence(String(ctx.name))} ${endSentence(String(ctx.description))}`,
   ],
   interaction_completed: [
     (ctx) => `I ${ctx.action} with ${ctx.other}.`,

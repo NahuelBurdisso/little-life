@@ -9,6 +9,10 @@ import { gameMinutesNow } from '../worldClock';
 import { CONFIG } from '../constants';
 import { summarizeConversation, MIN_SUMMARY_LINES, type SummaryLine } from './conversationSummary';
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
+import { getImportance } from './ImportanceScorer';
+import { goalClause } from '../goalText';
+import { itemPhrase, itemCountPhrase } from '../../data/economyData';
+import { endSentence } from '../factText';
 
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
@@ -43,14 +47,18 @@ export function clearPerceptionDedup(): void {
 }
 
 export function initMemoryObserver(memoryService: MemoryService): void {
+  // Movement. These events never fired before B21 (movement.ts compared the
+  // destination with itself), so this is the first time they reach memory, and
+  // every walk that changes place is one of each: a dozen or more a day per
+  // agent, each costing an embedding and feeding the reflection trigger. So:
+  // only the arrival is stored (it says where the agent went; the departure
+  // only repeats the previous arrival), at the importance ImportanceScorer
+  // gives `moved_to_location`, and once per place per perception window — back
+  // and forth to the same shop is one trip worth remembering, not four.
   simEvents.on('agent:arrived', ({ agentId, locationName }: { agentId: number; locationName: string }) => {
+    if (!shouldRecordPerception(agentId, `arrival|${locationName}`, gameMinutesNow())) return;
     const description = describeEvent('arrival', { location: locationName });
-    memoryService.record(agentId, 'observation', description, { subtype: 'movement' });
-  });
-
-  simEvents.on('agent:departed', ({ agentId, locationName }: { agentId: number; locationName: string }) => {
-    const description = describeEvent('departure', { location: locationName });
-    memoryService.record(agentId, 'observation', description, { subtype: 'movement' });
+    memoryService.record(agentId, 'observation', description, { subtype: 'movement' }, 0, getImportance('moved_to_location'));
   });
 
   simEvents.on('conversation:started', ({ agentId, otherName }: { agentId: number; otherName: string }) => {
@@ -255,9 +263,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', description, { subtype: 'economy' });
   });
 
-  simEvents.on('event:world', ({ agentId, event }: { agentId: number; event: string }) => {
-    const description = describeEvent('world_event', { event, location: 'town' });
-    memoryService.record(agentId, 'observation', description, { subtype: 'event', event });
+  simEvents.on('event:world', ({ agentId, name, description }: { agentId: number; name: string; description: string }) => {
+    const text = description?.trim()
+      ? describeEvent('world_event', { name, description })
+      : `Word around town: ${endSentence(name)}`;
+    memoryService.record(agentId, 'observation', text, { subtype: 'event', event: name });
   });
 
   simEvents.on(
@@ -276,8 +286,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', describeEvent('economy_purchase', { item, price: String(Math.round(price)), location: locationName }), { subtype: 'economy' });
   });
 
+  // Economy events carry inventory ids ("food_raw"); memories get the item's
+  // prose (itemPhrase), not the id (G9). Prose already sent ("$12", "a drink")
+  // passes through unchanged.
   simEvents.on('economy:production', ({ agentId, item, quantity }: { agentId: number; item: string; quantity: number }) => {
-    memoryService.record(agentId, 'observation', describeEvent('economy_production', { item, quantity: String(quantity) }), { subtype: 'economy' });
+    memoryService.record(agentId, 'observation', describeEvent('economy_production', { made: itemCountPhrase(item, quantity) }), { subtype: 'economy' });
   });
 
   simEvents.on('economy:blackmail_paid', ({ agentId, amount }: { agentId: number; amount: number }) => {
@@ -285,11 +298,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   simEvents.on('economy:theft_success', ({ agentId, item, locationName }: { agentId: number; item: string; locationName: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('economy_theft_success', { item, location: locationName }), { subtype: 'economy' }, -0.3, 7);
+    memoryService.record(agentId, 'observation', describeEvent('economy_theft_success', { item: itemPhrase(item), location: locationName }), { subtype: 'economy' }, -0.3, 7);
   });
 
   simEvents.on('economy:theft_caught', ({ agentId, item, locationName }: { agentId: number; item: string; locationName: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('economy_theft_caught', { item, location: locationName }), { subtype: 'economy' }, -0.7, 8);
+    memoryService.record(agentId, 'observation', describeEvent('economy_theft_caught', { item: itemPhrase(item), location: locationName }), { subtype: 'economy' }, -0.7, 8);
   });
 
   simEvents.on('economy:milestone', ({ agentId, amount, direction }: { agentId: number; amount: number; direction: 'up' | 'down' }) => {
@@ -309,25 +322,29 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', describeEvent(templateKey, { target: targetName }), { subtype: 'perception', targetName });
   });
 
-  // Goals
+  // Goals. The goal text is either a registry key or an LLM imperative with
+  // its own punctuation (goalText.ts), so it goes after a colon, normalised:
+  // "I've decided to ${desc}." stored "I've decided to Assess the situation
+  // with Marco....." (G9).
   simEvents.on('goal:created', ({ agentId, goalType, description }: { agentId: number; goalType: string; description?: string }) => {
-    const desc = description ?? goalType;
-    memoryService.record(agentId, 'observation', `I've decided to ${desc}.`, { subtype: 'goal' }, 0, 5);
+    const goal = goalClause(description ?? goalType);
+    memoryService.record(agentId, 'observation', endSentence(`I set myself a new goal: ${goal}`), { subtype: 'goal' }, 0, 5);
   });
 
   simEvents.on('goal:completed', ({ agentId, goalType, description }: { agentId: number; goalType: string; description?: string }) => {
-    const desc = description ?? goalType;
-    memoryService.record(agentId, 'observation', `I accomplished my goal: ${desc}.`, { subtype: 'goal' }, 0.5, 7);
+    const goal = goalClause(description ?? goalType);
+    memoryService.record(agentId, 'observation', endSentence(`I accomplished my goal: ${goal}`), { subtype: 'goal' }, 0.5, 7);
   });
 
   simEvents.on('goal:abandoned', ({ agentId, goalType, description, reason }: { agentId: number; goalType: string; description?: string; reason?: string }) => {
-    const desc = description ?? goalType;
-    const reasonText = reason ? ` ${reason}.` : '';
-    memoryService.record(agentId, 'observation', `I gave up on ${desc}.${reasonText}`, { subtype: 'goal' }, -0.2, 4);
+    const goal = goalClause(description ?? goalType);
+    const reasonText = reason?.trim() ? ` ${endSentence(reason)}` : '';
+    memoryService.record(agentId, 'observation', `${endSentence(`I gave up on my goal: ${goal}`)}${reasonText}`, { subtype: 'goal' }, -0.2, 4);
   });
 
   simEvents.on('goal:pivoted', ({ agentId, description, newStrategy }: { agentId: number; description: string; newStrategy: string }) => {
-    memoryService.record(agentId, 'observation', `My approach to ${description} wasn't working. I'm going to try: ${newStrategy}.`, { subtype: 'goal' }, 0, 5);
+    const goal = goalClause(description);
+    memoryService.record(agentId, 'observation', `My approach to my goal (${goal}) wasn't working. ${endSentence(`I'm going to try: ${newStrategy.trim()}`)}`, { subtype: 'goal' }, 0, 5);
   });
 
   simEvents.on('goal:ambition_shifted', ({ agentId, from, to, reason }: { agentId: number; from: string; to: string; reason: string }) => {
@@ -401,7 +418,7 @@ export interface GiftGivenPayload {
  * drunk evening's handout would feed reflection the wrong self-image.
  */
 export function describeGiftForGiver(receiverName: string, p: GiftGivenPayload): string {
-  const what = p.amount != null ? `$${p.amount}` : (p.item ?? 'a gift');
+  const what = p.amount != null ? `$${p.amount}` : p.item ? itemPhrase(p.item) : 'a gift';
   switch (p.reason) {
     case 'drunk_gift':
       return `I'd had a few too many and pressed ${what} on ${receiverName}. I hope I don't regret that tomorrow.`;

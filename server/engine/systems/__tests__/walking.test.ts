@@ -14,6 +14,7 @@ import { sleepDurationMinutes, effectiveSleepWindow } from '../../../lib/sleepSc
 import { isPastBedtime } from '../../../lib/conversationPacing';
 import { tick as movementTick, invalidateCostMap } from '../movement';
 import { CONFIG } from '../../../lib/constants';
+import { simEvents } from '../../../lib/simEvents';
 import { zoneSlotOffset } from '../../../lib/interiorGrid';
 import { INTERIOR_ZONES } from '../../../data/interiors';
 
@@ -158,6 +159,72 @@ describe('arrival', () => {
     const a = row(id);
     expect(a.current_action).toEqual({ type: 'idle' });
     expect(a.action_queue).toEqual([]);
+    db.update(agents).set({ is_active: false }).where(eq(agents.id, id)).run();
+  });
+});
+
+describe('arrival and departure events', () => {
+  // B21: the walk loop moved `current_location` tick by tick, so by the time
+  // completeArrival compared the old location with the new one they were the
+  // same and neither event ever fired: nobody remembered going anywhere.
+  function listen(id: number): { seen: string[]; stop: () => void } {
+    const seen: string[] = [];
+    const arrived = (p: { agentId: number; locationName: string }) => {
+      if (p.agentId === id) seen.push(`arrived ${p.locationName}`);
+    };
+    const departed = (p: { agentId: number; locationName: string }) => {
+      if (p.agentId === id) seen.push(`departed ${p.locationName}`);
+    };
+    simEvents.on('agent:arrived', arrived);
+    simEvents.on('agent:departed', departed);
+    return {
+      seen,
+      stop: () => {
+        simEvents.off('agent:arrived', arrived);
+        simEvents.off('agent:departed', departed);
+      },
+    };
+  }
+  function walkTo(id: number, spot: { x: number; y: number }, locationId: number): void {
+    db.update(agents).set({
+      current_action: { type: 'walking' }, current_destination: { ...spot, locationId },
+      current_path: [[spot.x, spot.y]], action_queue: [{ type: 'idle' }], action_duration: null,
+    }).where(eq(agents.id, id)).run();
+    for (let i = 0; i < 60 && (row(id).current_action as { type?: string })?.type === 'walking'; i++) {
+      movementTick(world(10));
+    }
+    expect(row(id).current_action).not.toMatchObject({ type: 'walking' });
+  }
+
+  it('fire once each for a walk from home to the farm', () => {
+    const id = farmer({ position: { x: OX + 21.5 * T, y: 3.5 * T }, current_location: homeId, current_action: { type: 'idle' } });
+    const events = listen(id);
+    walkTo(id, { x: OX + 3 * T, y: 2 * T }, farmId);
+    events.stop();
+    expect(events.seen).toEqual([`departed ${tag} Home`, `arrived ${tag} Farm`]);
+    db.update(agents).set({ is_active: false }).where(eq(agents.id, id)).run();
+  });
+
+  it('do not fire for a walk between two spots of the same place', () => {
+    const id = farmer({ position: { x: OX + 2 * T, y: 2 * T }, current_location: farmId, current_action: { type: 'idle' } });
+    const events = listen(id);
+    walkTo(id, { x: OX + 8 * T, y: 5 * T }, farmId);
+    events.stop();
+    expect(events.seen).toEqual([]);
+    db.update(agents).set({ is_active: false }).where(eq(agents.id, id)).run();
+  });
+
+  it('leave from where the agent really was after being moved without a walk', () => {
+    const id = farmer({ position: { x: OX + 21.5 * T, y: 3.5 * T }, current_location: homeId, current_action: { type: 'idle' } });
+    walkTo(id, { x: OX + 3 * T, y: 2 * T }, farmId);
+    // Carried somewhere else (arrest, a nudge): the next walk starts there.
+    db.update(agents).set({ position: { x: OX + 21.5 * T, y: 3.5 * T }, current_location: homeId })
+      .where(eq(agents.id, id)).run();
+    movementTick(world(10));
+    const events = listen(id);
+    walkTo(id, { x: OX + 33 * T, y: 3 * T }, parkId);
+    events.stop();
+    expect(events.seen).toEqual([`departed ${tag} Home`, `arrived ${tag} Park`]);
     db.update(agents).set({ is_active: false }).where(eq(agents.id, id)).run();
   });
 });
