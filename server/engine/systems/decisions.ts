@@ -117,6 +117,12 @@ function pairKey(a: number, b: number): string {
  * of the subtraction, which is fine at tick_speed 1 but at 4x turned a 360-minute
  * night into 360 ticks = 24 game hours: the whole town slept round the clock.
  */
+/** Whether a conversation queue entry still includes this agent. */
+function isQueuedToTalk(agentId: number): boolean {
+  return db.select({ participants: conversationQueue.participants }).from(conversationQueue).all()
+    .some((q) => (q.participants as number[]).includes(agentId));
+}
+
 export function isActionComplete(agent: AgentRow, nowMinutes: number): boolean {
   if (agent.current_action == null) return true;
 
@@ -140,6 +146,15 @@ export function isActionComplete(agent: AgentRow, nowMinutes: number): boolean {
       if (agentNeeds.hunger < critical || agentNeeds.energy < critical) {
         return true; // interrupt conversation for emergency
       }
+    }
+    // A placeholder with no conversation behind it: the "talk to X" a player
+    // nudge (suggest_talk / force_confront) queues after the walk to the
+    // meeting point. It holds only while that queue entry is alive; once the
+    // entry opens a conversation the action is replaced, and once it is dropped
+    // or times out nothing would ever end the placeholder — both agents stood
+    // frozen at the meeting point until hunger or energy went critical.
+    if ((agent.current_action as { conversationId?: unknown }).conversationId == null) {
+      return !isQueuedToTalk(agent.id);
     }
     return false;
   }
