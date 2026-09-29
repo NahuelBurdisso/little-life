@@ -94,10 +94,6 @@ export function setSavesDir(dir: string): void {
   savesDir = path.resolve(dir);
 }
 
-export function getSavesDir(): string {
-  return savesDir;
-}
-
 /** Lowercase, digits and dashes: nothing that can climb out of the directory. */
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,95}$/;
 
