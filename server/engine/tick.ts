@@ -132,7 +132,7 @@ const SYSTEM_PHASES: Array<{
   { name: 'decisions',     run: (w) => decisionsTick(w) },
   { name: 'movement',      run: (w) => movementTick(w) },
   { name: 'events',        run: () => eventsTick() },
-  { name: 'gossip',        run: (w) => gossipTick(gameMinutes(w.time)) },
+  { name: 'gossip',        run: (w) => gossipTick(gameMinutes(w.time), w.tick_speed) },
   { name: 'cascade',       run: () => cascadeTick() },
 ];
 
