@@ -103,7 +103,7 @@ describe('buildSocialEdges — classification', () => {
   });
 
   // The pool's own values (server/data/romancePool.ts), not idealised ones.
-  it('mutual_crush (50/45) → lovers; unrequited (55/0) → nothing', () => {
+  it('mutual_crush (50/45) and love_triangle A/B (45/40) → lovers; unrequited (55/0) → nothing', () => {
     const thread = (template_id: string, ab: number, ba: number): SocialScenario => ({
       romanceThreads: [{
         template_id,
@@ -112,6 +112,9 @@ describe('buildSocialEdges — classification', () => {
       rivalPairs: [],
     });
     expect(buildSocialEdges([], thread('mutual_crush', 50, 45), CAST))
+      .toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
+    // Exactly on the bar.
+    expect(buildSocialEdges([], thread('love_triangle', 45, 40), CAST))
       .toEqual([{ a: 'Ann', b: 'Bob', kind: 'lovers' }]);
     expect(buildSocialEdges([], thread('unrequited', 55, 0), CAST)).toEqual([]);
   });

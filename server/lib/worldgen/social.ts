@@ -72,7 +72,8 @@ const FRIENDS_THRESHOLD = 50;
  * friendship bar because romance runs on a lower scale: at 50 the kind was
  * dead — no romance template reaches it both ways (mutual_crush is 50/45) and
  * the default cast's one couple, Lucia/Diego at 45/55, only registered as
- * friends. 40 takes both while still excluding the one-sided shapes
+ * friends. 40 takes both — and love_triangle's A/B pair (45/40) lands exactly
+ * on the bar, so it counts too — while still excluding the one-sided shapes
  * (unrequited 55/0, jealousy_seed 40/0) and the slow starters (emerging_tension
  * 15/10, slow_burn 8/5).
  */

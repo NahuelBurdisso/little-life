@@ -155,21 +155,24 @@ const SetupConfigSchema = z.object({
 });
 
 /**
- * The lenient agent shapes `previewWorld` validates against, instead of the full
+ * What social home placement reads from an agent — the first of the lenient
+ * agent shapes `previewWorld` validates against, instead of the full
  * `AgentConfigSchema`. The preview runs on every wizard edit, and validating the
  * whole config there turned an unrelated field — a blank or 501-character bio —
  * into a raw Zod error on the World Layout step, which the wizard then held on
  * to as a Start blocker. The preview only needs what it reads; `initialize`
  * still validates everything.
  */
-/** What social home placement reads from an agent. */
 const PlacementAgentSchema = z.object({
-  name: z.string().min(1),
+  // Same bounds as AgentConfigSchema.name: an agent the preview places is one
+  // Start can seed.
+  name: z.string().min(1).max(50),
   homeName: z.string(),
   workplaceName: z.string().nullable().optional(),
 });
-/** Plus what `buildScenario` reads. Strict on these, so a scenario built for
- *  the preview is the one `initialize` would build from the same agents. */
+/** Plus what `buildScenario` reads, typed like `AgentConfigSchema` on these
+ *  fields (so a well-typed cast builds the same scenario `initialize` would);
+ *  their bounds are left to `initialize`. */
 const ScenarioAgentSchema = PlacementAgentSchema.extend({
   age: z.number(),
   salary: z.number(),
@@ -1128,7 +1131,8 @@ export const setupRouter = router({
       if (!agents) return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
 
       // An agent without a usable name can't be placed socially: preview the
-      // homes alone rather than fail. Start will report the real problem.
+      // homes alone rather than fail. Start validates the full config, and the
+      // wizard shows its error in the footer next to the Start button.
       const placement = z.array(PlacementAgentSchema).safeParse(agents);
       if (!placement.success) {
         return generateWorld(cfg, agentCount, {

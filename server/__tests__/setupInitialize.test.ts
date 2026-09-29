@@ -261,6 +261,56 @@ describe('social home placement through initialize', () => {
     expect(homesOf(fallback.locations)).toEqual(homesOf(base.locations));
   });
 
+  /**
+   * A scenario seed whose romance threads / rival pairs change the placement
+   * relative to the relationship rows alone, so the two tests below can tell
+   * "scenario applied" from "scenario dropped".
+   */
+  async function scenarioThatMatters(seed: string) {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const preview = (scenario?: object, agents: unknown[] = MINIMAL_AGENTS) => caller.previewWorld({
+      ...cfg(seed),
+      agentCount: MINIMAL_AGENTS.length,
+      agents: agents as any,
+      relationships: RIVALS,
+      ...(scenario ? { scenario: scenario as any } : {}),
+    });
+    const rowsOnly = homesOf((await preview()).locations);
+    for (let i = 0; i < 20; i++) {
+      // trust 0 → rival pairs; romance 100 → as many threads as the cast allows.
+      const scenario = { drama: 50, romance: 100, crime: 50, trust: 0, seed: `scn-${i}` };
+      const withScenario = homesOf((await preview(scenario)).locations);
+      if (JSON.stringify(withScenario) !== JSON.stringify(rowsOnly)) {
+        return { caller, preview, scenario, rowsOnly, withScenario };
+      }
+    }
+    throw new Error('no scenario seed in scn-0..19 changes the placement');
+  }
+
+  it('preview with a scenario matches what Start seeds', async () => {
+    const { seed } = await relabellingSeed();
+    const { caller, scenario, withScenario } = await scenarioThatMatters(seed);
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: cfg(seed),
+      scenario,
+    } as any);
+    expect(dbHomes()).toEqual(withScenario);
+  });
+
+  it('previewWorld places by the rows alone when the scenario fields fail', async () => {
+    const { seed } = await relabellingSeed();
+    const { preview, scenario, rowsOnly } = await scenarioThatMatters(seed);
+    // Placement fields are fine; `personality` is not what buildScenario needs.
+    const noPersonality = MINIMAL_AGENTS.map((a, i) =>
+      (i === 1 ? { ...a, personality: { warmth: 'high' } } : a));
+    expect(homesOf((await preview(scenario, noPersonality)).locations)).toEqual(rowsOnly);
+  });
+
   it('seeds the rivals into the placed homes', async () => {
     const { seed, placed } = await relabellingSeed();
 
