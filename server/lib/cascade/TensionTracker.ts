@@ -1,6 +1,7 @@
 // server/lib/cascade/TensionTracker.ts
 import type { PersonalityProfile } from '../personality';
 import type { TensionState } from './cascadeTypes';
+import { asId, asNumber, asRecord, decodeStamp, encodeStamp } from '../../engine/snapshotCodec';
 
 const MAX_SOURCES = 5;
 /** Game minutes an agent must wait after snapping before they can snap again. */
@@ -121,6 +122,54 @@ export class TensionTracker {
 
   cleanupAgent(agentId: number): void {
     this.states.delete(agentId);
+  }
+
+  // ─── Persistence ─────────────────────────────────────────────────────────────
+  // Tension builds over game days toward a snap; see `tensionSnapshotStore` in
+  // ./index.ts. Shape: { [agentId]: { value, sources, lastSnapMinute, snapCount } }
+  // with a never-snapped stamp written as null (JSON has no -Infinity).
+
+  serialize(): Record<string, Omit<TensionState, 'lastSnapMinute'> & { lastSnapMinute: number | null }> {
+    const out: ReturnType<TensionTracker['serialize']> = {};
+    for (const [agentId, s] of this.states) {
+      out[agentId] = {
+        value: s.value,
+        sources: s.sources.map((src) => ({ ...src })),
+        lastSnapMinute: encodeStamp(s.lastSnapMinute),
+        snapCount: s.snapCount,
+      };
+    }
+    return out;
+  }
+
+  /** Replace every agent's state with `data`; malformed entries are skipped. */
+  restore(data: unknown): void {
+    this.states.clear();
+    for (const [key, raw] of Object.entries(asRecord(data) ?? {})) {
+      const agentId = asId(key);
+      const s = asRecord(raw);
+      const value = asNumber(s?.value);
+      if (agentId === null || value === null) continue;
+      const rawSources = s?.sources;
+      const sources: TensionState['sources'] = [];
+      for (const src of Array.isArray(rawSources) ? rawSources : []) {
+        const r = asRecord(src);
+        const tick = asNumber(r?.tick);
+        if (!r || typeof r.event !== 'string' || typeof r.description !== 'string' || tick === null) continue;
+        sources.push({
+          event: r.event,
+          description: r.description,
+          tick,
+          ...(typeof r.agentInvolved === 'string' ? { agentInvolved: r.agentInvolved } : {}),
+        });
+      }
+      this.states.set(agentId, {
+        value,
+        sources: sources.slice(-MAX_SOURCES),
+        lastSnapMinute: decodeStamp(s?.lastSnapMinute),
+        snapCount: asNumber(s?.snapCount) ?? 0,
+      });
+    }
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────────

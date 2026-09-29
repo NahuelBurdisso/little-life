@@ -4,7 +4,8 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { applyWSSHandler } from '@trpc/server/adapters/ws';
 import { appRouter } from './router';
-import { startTickLoop, stopTickLoop } from './engine/tick';
+import { startTickLoop, stopTickLoopAndWait } from './engine/tick';
+import { restoreWorldCaches, saveWorldCaches } from './engine/worldCaches';
 import { warmUpModels } from './ai/warmup';
 import { runEmbeddingBackfill } from './lib/memory/embeddingBackfill';
 import { endOrphanedLLMConversations } from './engine/systems/conversations';
@@ -83,6 +84,13 @@ console.log('Planning system initialized');
 // Initialize cascade system (ripple effects, tension, snap resolution)
 initCascade();
 
+// Bring back the in-memory sim state the previous process checkpointed
+// (hobbies, favors, tension, momentum, drift baselines, trackers). After
+// initCascade only for tidiness — the tension store holds a restore that
+// arrives before its tracker exists. Never throws; a fresh DB has no rows.
+const restoredStores = restoreWorldCaches();
+if (restoredStores > 0) console.log(`Restored ${restoredStores} sim state snapshot(s)`);
+
 // Reconstruct zone occupancy from agent positions (singleton is in-memory only)
 try {
   const activeAgents = db
@@ -143,18 +151,38 @@ server.listen(PORT, () => {
 });
 
 // Graceful shutdown
+//
+// The sim state checkpoint is written twice: once as soon as the in-flight tick
+// has finished (so it cannot capture half a tick), and again after the task
+// runner drains, since LLM tasks finishing during the drain still move state
+// (a snap resolved, a conversation ended with a favor). The first save is the
+// one that matters when the drain is cut short — Windows gives a closing
+// console only a few seconds. Both are cheap, synchronous and never throw.
+let shuttingDown = false;
 function shutdown() {
+  // A second signal while the drain is still waiting on the LLM: the user
+  // wants out now. The first checkpoint has normally been written by then.
+  if (shuttingDown) process.exit(1);
+  shuttingDown = true;
   console.log('Shutting down...');
-  stopTickLoop();
   handler.broadcastReconnectNotification();
   wss.close();
   server.close();
-  taskRunner.drain().then(() => {
-    sqlite.close();
-    console.log('Shutdown complete.');
-    process.exit(0);
-  });
+  void stopTickLoopAndWait()
+    .then(() => {
+      saveWorldCaches();
+      return taskRunner.drain();
+    })
+    .then(() => {
+      saveWorldCaches();
+      sqlite.close();
+      console.log('Shutdown complete.');
+      process.exit(0);
+    });
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+// Closing the console window on Windows (start-game.bat) sends SIGHUP, not
+// SIGINT; without a handler the process died without its final checkpoint.
+process.on('SIGHUP', shutdown);

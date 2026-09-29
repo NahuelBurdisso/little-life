@@ -33,6 +33,15 @@ import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
 import { foodCount } from '../../lib/economyEngine';
 import { gameMinutesToMs } from '../../lib/worldClock';
+import {
+  asRecord,
+  listMapToRecord,
+  numberMapToRecord,
+  restoreIdListMap,
+  restoreIdNumberMap,
+  restoreKeyNumberMap,
+  type SnapshotStore,
+} from '../snapshotCodec';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -97,6 +106,49 @@ export function clearStatesTrackers(): void {
   brokeSince.clear();
   gamblingHistory.clear();
 }
+
+/**
+ * Checkpoint of the trackers above (server/engine/simSnapshots.ts).
+ *
+ * The ones that matter are the multi-day ones: drunk and gambling histories
+ * (alcoholism and gambling addiction are detected over days of episodes),
+ * alcohol recovery (relapse window), broke-since (in_debt after days of being
+ * broke) and sickness immunity. A restart used to wipe all of them, so an agent
+ * one binge away from alcoholism was reset to a clean slate. The hour-scale
+ * ones (stress re-trigger, low mood/social durations, gambling pair cooldowns)
+ * ride along because they share the file and the format; every value is a game
+ * minute, and the game clock is itself persisted, so they stay valid.
+ *
+ * Not saved: `previouslyActiveAgents`, which is rebuilt from the agents table on
+ * the first tick (an empty set just means no removals are reported that tick).
+ */
+export const statesTrackersSnapshotStore: SnapshotStore = {
+  key: 'stateTrackers',
+  version: 1,
+  serialize: () => ({
+    stressRemovedAt: numberMapToRecord(stressRemovedAt),
+    gamblingCooldowns: numberMapToRecord(gamblingCooldowns),
+    lowMoodSince: numberMapToRecord(lowMoodSince),
+    lowSocialSince: numberMapToRecord(lowSocialSince),
+    sickRecoveredAt: numberMapToRecord(sickRecoveredAt),
+    drunkHistory: listMapToRecord(drunkHistory),
+    alcoholRecoveredAt: numberMapToRecord(alcoholRecoveredAt),
+    brokeSince: numberMapToRecord(brokeSince),
+    gamblingHistory: listMapToRecord(gamblingHistory),
+  }),
+  restore(data) {
+    const d = asRecord(data) ?? {};
+    restoreIdNumberMap(stressRemovedAt, d.stressRemovedAt);
+    restoreKeyNumberMap(gamblingCooldowns, d.gamblingCooldowns);
+    restoreIdNumberMap(lowMoodSince, d.lowMoodSince);
+    restoreIdNumberMap(lowSocialSince, d.lowSocialSince);
+    restoreIdNumberMap(sickRecoveredAt, d.sickRecoveredAt);
+    restoreIdListMap(drunkHistory, d.drunkHistory);
+    restoreIdNumberMap(alcoholRecoveredAt, d.alcoholRecoveredAt);
+    restoreIdNumberMap(brokeSince, d.brokeSince);
+    restoreIdListMap(gamblingHistory, d.gamblingHistory);
+  },
+};
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 

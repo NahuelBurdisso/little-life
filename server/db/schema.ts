@@ -639,3 +639,29 @@ export const gazetteIssues = sqliteTable('gazette_issues', {
   /** Real ms. */
   created_at: integer('created_at').notNull(),
 });
+
+// ─── 25. simSnapshots ─────────────────────────────────────────────────────────
+// Checkpoints of the simulation state that lives in module memory rather than
+// in a table (hobby skills, favors, tension, mood momentum, personality drift
+// baselines, state trackers — see server/engine/simSnapshots.ts). One row per
+// store, JSON blob, rewritten every game hour and on graceful shutdown, read
+// back at boot. Created at runtime by CREATE TABLE IF NOT EXISTS in
+// server/db/index.ts.
+
+export const simSnapshots = sqliteTable('sim_snapshots', {
+  /** Store name, e.g. 'hobbies'. One row per store: the DB holds one world. */
+  key: text('key').primaryKey(),
+  /**
+   * `world_state.id` of the world that wrote it. That id is AUTOINCREMENT, so
+   * unlike agent ids it is not reused by a later world: a row whose world_id
+   * is not the current world's is a leftover and is ignored on load.
+   */
+  world_id: integer('world_id').notNull(),
+  /** The store's own format version; a mismatch is dropped, not misread. */
+  version: integer('version').notNull(),
+  /** Game minute (`gameMinutes`) of the world clock when it was written. */
+  game_minute: integer('game_minute').notNull(),
+  data: text('data', { mode: 'json' }).notNull().$type<unknown>(),
+  /** Real ms. */
+  saved_at: integer('saved_at').notNull(),
+});

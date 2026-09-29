@@ -90,6 +90,18 @@ function migrateSchema() {
   // made the stored vectors — see lib/memory/embeddingBackfill.ts).
   sqlite.exec('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 
+  // Checkpoints of in-memory sim state (server/engine/simSnapshots.ts). The rows
+  // belong to one world, so the table is in both ALL_TABLES lists and a world
+  // replace wipes it together with everything else.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS sim_snapshots (
+    key TEXT PRIMARY KEY NOT NULL,
+    world_id INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    game_minute INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    saved_at INTEGER NOT NULL
+  )`);
+
   // Goals table extensions
   addColumnIfMissing('goals', 'description', 'TEXT');
   addColumnIfMissing('goals', 'strategy', 'TEXT');

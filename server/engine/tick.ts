@@ -28,6 +28,7 @@ import { tavernTick } from '../lib/tavernEngine';
 import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
+import { saveWorldCaches } from './worldCaches';
 import crypto from 'crypto';
 import { autoPlayer } from '../autoplay';
 import { conversationQueue, conversationSchedulerState } from '../db/schema';
@@ -368,6 +369,15 @@ export async function gameTick(): Promise<void> {
     runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents());
     // Cap the conversation archive (each row holds its full transcript)
     runGuarded('pruneEndedConversations', () => pruneEndedConversations());
+  }
+
+  // Checkpoint the in-memory sim state (hobbies, favors, tension, momentum,
+  // drift baselines, trackers — see worldCaches.ts) once per game hour, so a
+  // crash costs at most an hour of it. Game time, so the cadence holds at every
+  // speed; after the day-change block, so the midnight checkpoint already holds
+  // the new day's mood momentum.
+  if (hourChanged(transitions)) {
+    runGuarded('simSnapshots', () => { saveWorldCaches(); });
   }
 
   // 8. Finalize tick

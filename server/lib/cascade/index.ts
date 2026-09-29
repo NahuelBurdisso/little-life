@@ -9,6 +9,7 @@ import { agents, agentStates, goals, worldState } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import type { PersonalityProfile } from '../personality';
 import { gameMinutes } from '../gameClock';
+import type { SnapshotStore } from '../../engine/snapshotCodec';
 
 // ─── Singleton instances ────────────────────────────────────────────────────
 
@@ -19,6 +20,32 @@ let snapResolver: SnapResolver | null = null;
 
 /** Agents already counted as asleep, so `onSleep` relief fires once per sleep. */
 const sleepingAgents = new Set<number>();
+
+/**
+ * A checkpoint handed to `tensionSnapshotStore.restore` before `initCascade`
+ * has created the tracker. Held here and applied by `initCascade`, so the
+ * boot order in server/index.ts (restore after init) is a convenience rather
+ * than a trap that silently drops every agent's tension.
+ */
+let pendingTensionRestore: unknown = undefined;
+
+/**
+ * Tension checkpoint (server/engine/simSnapshots.ts). Tension builds over game
+ * days toward a snap — the town's big dramatic release — and a restart used to
+ * reset every agent to zero, defusing all of them at once. The snap cooldown
+ * stamp goes along so a restart cannot license an immediate second snap.
+ */
+export const tensionSnapshotStore: SnapshotStore = {
+  key: 'tension',
+  version: 1,
+  // No tracker yet: skip the write rather than overwrite a good checkpoint
+  // with an empty one.
+  serialize: () => tensionTracker ? tensionTracker.serialize() : pendingTensionRestore,
+  restore(data) {
+    if (tensionTracker) tensionTracker.restore(data);
+    else pendingTensionRestore = data;
+  },
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -35,6 +62,11 @@ export function initCascade(): void {
   witnessAmplifier = new WitnessAmplifier();
   snapResolver = new SnapResolver();
   rippleEngine = new RippleEngine(); // registers simEvents listeners in constructor
+
+  if (pendingTensionRestore !== undefined) {
+    tensionTracker.restore(pendingTensionRestore);
+    pendingTensionRestore = undefined;
+  }
 
   // Wire sub-systems into engine
   rippleEngine.setTensionTracker(tensionTracker);
@@ -214,5 +246,6 @@ export function resetCascade(): void {
   if (tensionTracker) {
     tensionTracker.reset();
   }
+  pendingTensionRestore = undefined;
   sleepingAgents.clear();
 }
