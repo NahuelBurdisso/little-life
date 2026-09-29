@@ -157,6 +157,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
           agent={agent}
           economy={economy}
           mood={needs?.mood}
+          states={agentStates}
         />
         <button
           onClick={onClose}
