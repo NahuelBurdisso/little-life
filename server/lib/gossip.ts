@@ -542,6 +542,7 @@ export function spreadGossip(
         initiator: listenerId,
         target: fact.subject_id,
         templateData: { description: thatSentence(`${listener.name} learned`, fact.content, [listener]) },
+        metadata: { beat: 'gossip' },
       });
     }
   }

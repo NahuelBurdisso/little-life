@@ -128,7 +128,7 @@ export class SnapResolver {
           _cascade: metadata,
         });
         logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} snapped and confronted someone!` } });
+          templateData: { description: `${agentName} snapped and confronted someone!` }, metadata: { beat: 'snap' } });
         break;
       }
       case 'flee': {
@@ -193,7 +193,7 @@ export class SnapResolver {
           _cascade: metadata,
         });
         logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} snapped and lashed out at those nearby!` } });
+          templateData: { description: `${agentName} snapped and lashed out at those nearby!` }, metadata: { beat: 'snap' } });
         break;
       }
       case 'self_destruct': {

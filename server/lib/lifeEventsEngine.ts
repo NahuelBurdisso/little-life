@@ -438,6 +438,7 @@ function logDeath(ctx: DeathEffectContext): void {
     type: 'drama',
     initiator: ctx.agentId,
     templateData: { description: `${ctx.agentName} has died. ${ctx.causeDescription}. The town mourns.` },
+    metadata: { beat: 'death' },
   });
   emitter.markDirty('agents.all');
 }

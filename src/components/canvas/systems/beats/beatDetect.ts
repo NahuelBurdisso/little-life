@@ -7,8 +7,10 @@
  * the server's real log wording. The state object is mutated by `detectBeats`; the caller
  * keeps one per canvas.
  *
- * Why this is text matching: the server logs every `drama` row with no subtype, so the
- * description is the only discriminator. The phrasings below are the ones in
+ * Classification prefers the explicit `metadata.beat` subtype the server tags `drama` rows with
+ * (server/data/dramaBeats.ts), so a reworded template can no longer silently drop its animation.
+ * Rows logged before that field existed (old saves) and emit sites that never got a tag fall
+ * back to matching the English description. The phrasings below are the ones in
  * server/lib/confrontationEngine.ts, engine/systems/conversations.ts, lib/cascade/
  * SnapResolver.ts, lib/secretSharing.ts, engine/systems/gossipEngine.ts, lib/gossip.ts,
  * engine/systems/decisions.ts, lib/lifeEventsEngine.ts, lib/agingEngine.ts and
@@ -17,6 +19,7 @@
  */
 
 import { weddingCouple } from '../townEvents/eventDecor';
+import { DRAMA_BEAT_KIND, isDramaBeat } from '../../../../../server/data/dramaBeats';
 
 export type BeatKind =
   | 'fight' | 'gift' | 'romance' | 'heartbreak' | 'arrest'
@@ -40,6 +43,8 @@ export interface ActivityRow {
   target_id?: number | null;
   agent_ids?: number[] | null;
   template_data?: { description?: string; status?: string; [k: string]: unknown } | null;
+  /** `beat` is the server's explicit drama subtype (server/data/dramaBeats.ts); absent on old rows. */
+  metadata?: { beat?: string; [k: string]: unknown } | null;
   real_timestamp?: number;
 }
 
@@ -156,20 +161,32 @@ export function classifyActivity(row: ActivityRow): { kind: BeatKind; agentIds: 
   }
   if (row.type !== 'drama') return null;
 
-  const d = row.template_data?.description;
-  if (typeof d !== 'string' || d.length === 0) return null;
   const ids = pairOf(row);
+  // A tagged row is authoritative even when its kind is `null` (theft: nothing to draw), so
+  // its wording is never consulted — that is what keeps gossip that merely mentions a fight
+  // from playing one.
+  const tagged = row.metadata?.beat;
+  const kind = isDramaBeat(tagged) ? DRAMA_BEAT_KIND[tagged] : kindFromWording(row.template_data?.description);
+  if (kind === null || ids.length === 0) return null;
 
-  if (GOSSIP_LEAD.test(d) || CONFIDED.test(d)) return ids.length > 0 ? { kind: 'secret', agentIds: ids } : null;
-  if (DEATH.test(d)) return ids.length > 0 ? { kind: 'death', agentIds: ids.slice(0, 1) } : null;
-  if (BIRTHDAY.test(d)) return ids.length > 0 ? { kind: 'birthday', agentIds: ids.slice(0, 1) } : null;
-  if (ARREST.test(d)) {
+  if (kind === 'death' || kind === 'birthday') return { kind, agentIds: ids.slice(0, 1) };
+  if (kind === 'arrest') {
     // Logged as (constable → arrested); the beat lists the arrested one first.
-    return ids.length === 2 ? { kind: 'arrest', agentIds: [ids[1], ids[0]] } : null;
+    return ids.length === 2 ? { kind, agentIds: [ids[1], ids[0]] } : null;
   }
-  if (HEARTBREAK.test(d)) return ids.length > 0 ? { kind: 'heartbreak', agentIds: ids } : null;
-  if (FIGHT.test(d)) return ids.length > 0 ? { kind: 'fight', agentIds: ids } : null;
-  if (ROMANCE.test(d)) return ids.length > 0 ? { kind: 'romance', agentIds: ids } : null;
+  return { kind, agentIds: ids };
+}
+
+/** The pre-tag classifier: which beat family a `drama` description reads as, if any. */
+function kindFromWording(d: unknown): Exclude<BeatKind, 'gift' | 'levelup'> | null {
+  if (typeof d !== 'string' || d.length === 0) return null;
+  if (GOSSIP_LEAD.test(d) || CONFIDED.test(d)) return 'secret';
+  if (DEATH.test(d)) return 'death';
+  if (BIRTHDAY.test(d)) return 'birthday';
+  if (ARREST.test(d)) return 'arrest';
+  if (HEARTBREAK.test(d)) return 'heartbreak';
+  if (FIGHT.test(d)) return 'fight';
+  if (ROMANCE.test(d)) return 'romance';
   return null;
 }
 

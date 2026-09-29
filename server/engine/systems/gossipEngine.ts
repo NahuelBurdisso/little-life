@@ -157,6 +157,7 @@ export function gossipTick(nowMinutes: number): void {
               initiator: eavesdropper.id,
               target: fact.subject_id,
               templateData: { description: thatSentence(`${eavesdropper.name} overheard`, fact.content, [eavesdropper]) },
+              metadata: { beat: 'gossip' },
             });
           }
               }
@@ -230,6 +231,7 @@ export function gossipTick(nowMinutes: number): void {
           target: target.id,
           agents: [agent.id, target.id, fact.subject_id],
           templateData: { description: thatSentence(`${agent.name} told ${target.name}`, fact.content, [agent, target]) },
+          metadata: { beat: 'gossip' },
         });
       }
       }
@@ -261,6 +263,7 @@ export function gossipTick(nowMinutes: number): void {
         initiator: agent.id,
         target: fact.subject_id,
         templateData: { description: thatSentence(`${agent.name} discovered`, fact.content, [agent]) },
+        metadata: { beat: 'gossip' },
       });
       }
   }

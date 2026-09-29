@@ -124,6 +124,7 @@ function resolveConfrontation(
       templateData: {
         description: `${agentA.name} and ${agentB.name} had a heated argument but managed to clear the air`,
       },
+      metadata: { beat: 'reconciliation' },
     });
 
     db.insert(relationshipEvents).values({
@@ -151,6 +152,7 @@ function resolveConfrontation(
       templateData: {
         description: `${agentA.name} and ${agentB.name} had a public shouting match!`,
       },
+      metadata: { beat: 'fight' },
     });
 
     db.insert(relationshipEvents).values({
@@ -181,6 +183,7 @@ function resolveConfrontation(
       templateData: {
         description: `${agentA.name} and ${agentB.name} got into a physical fight in public!`,
       },
+      metadata: { beat: 'fight' },
     });
 
     db.insert(relationshipEvents).values({

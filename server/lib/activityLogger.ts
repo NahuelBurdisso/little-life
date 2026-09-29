@@ -3,6 +3,7 @@ import { activityLog, worldState } from '../db/schema';
 import { and, inArray, lt } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
+import type { DramaBeat } from '../data/dramaBeats';
 import { gameDaysToTicks, gameMinutes, type ClockTime } from './gameClock';
 
 interface LogActivityParams {
@@ -15,7 +16,12 @@ interface LogActivityParams {
   sourceId?: number;
   severity?: number;
   templateData: Record<string, string | number>;
-  metadata?: { chainId?: string; chainDepth?: number; ruleId?: string } | null;
+  /**
+   * `beat` tags a `drama` row with what it was about so the canvas needn't parse the
+   * description (see data/dramaBeats.ts). It lives in this JSON column rather than a new one,
+   * so old databases need no ALTER and old rows simply lack it.
+   */
+  metadata?: { chainId?: string; chainDepth?: number; ruleId?: string; beat?: DramaBeat } | null;
 }
 
 export function logActivity(params: LogActivityParams): void {

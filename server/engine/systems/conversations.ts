@@ -1211,6 +1211,7 @@ async function finishCompletedConversation(
           templateData: {
             description: `${aggressorAgent?.name} insulted ${targetAgent?.name} during a heated argument`,
           },
+          metadata: { beat: 'insult' },
         });
       }
       // Low morality + very negative + drunk → confrontation
@@ -1230,6 +1231,7 @@ async function finishCompletedConversation(
           templateData: {
             description: `${aggressorAgent?.name} started a fight with ${targetAgent?.name}`,
           },
+          metadata: { beat: 'fight' },
         });
       }
     }
@@ -1256,6 +1258,7 @@ async function finishCompletedConversation(
         templateData: {
           description: `${p1.name} flirted with ${p2.name} after their conversation`,
         },
+        metadata: { beat: 'flirt' },
       });
     }
   }
@@ -1622,6 +1625,7 @@ async function finishCompletedConversation(
       initiator: pid,
       target: otherId,
       templateData: { description: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}.` },
+      metadata: { beat: 'confession' },
     });
   }
 
@@ -1669,6 +1673,7 @@ async function finishCompletedConversation(
         initiator: pid,
         target: otherId,
         templateData: { description: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} have reconciled.` },
+        metadata: { beat: 'reconciliation' },
       });
     }
   }
@@ -1760,6 +1765,7 @@ async function finishCompletedConversation(
         initiator: pid,
         target: otherId,
         templateData: { description: `${participants.find(p => p.id === pid)?.name} discovered ${participants.find(p => p.id === otherId)?.name}'s affair and broke up!` },
+        metadata: { beat: 'breakup' },
       });
     } else if (pidPersonality.loyalty > 60) {
       // Forgiveness path: trust drop but keep partnership

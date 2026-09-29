@@ -508,6 +508,7 @@ export function tick(
           templateData: {
             description: `${nameA} and ${nameB} are estranged for good — neither will ever forgive the other.`,
           },
+          metadata: { beat: 'estrangement' },
         });
       }
     }

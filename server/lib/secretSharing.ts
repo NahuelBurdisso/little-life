@@ -112,6 +112,7 @@ function initSecretSharing(): void {
       templateData: {
         description: `${sharerName} confided a personal secret to ${listenerName}`,
       },
+      metadata: { beat: 'confession' },
     });
 
     // Boost trust and friendship from the intimate moment

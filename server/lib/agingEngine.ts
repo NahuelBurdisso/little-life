@@ -80,6 +80,7 @@ export function agingTick(currentDay: number): void {
         templateData: {
           description: `Happy birthday to ${agent.name}! They turned ${newAge} today!`,
         },
+        metadata: { beat: 'birthday' },
       });
 
       simEvents.emit('agent:birthday', { agentId: agent.id, age: newAge });

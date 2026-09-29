@@ -1932,10 +1932,10 @@ export function tick(world: WorldRow): void {
                 item: `$${stolenAmount}`, locationName: victimAgent.name,
               });
               logActivity({ type: 'drama', initiator: thief.id, target: decision.targetAgentId,
-                templateData: { description: `${thief.name} was caught pickpocketing $${stolenAmount} from ${victimAgent.name}!` } });
+                templateData: { description: `${thief.name} was caught pickpocketing $${stolenAmount} from ${victimAgent.name}!` }, metadata: { beat: 'theft' } });
             } else {
               logActivity({ type: 'drama', initiator: thief.id,
-                templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` } });
+                templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` }, metadata: { beat: 'theft' } });
               simEvents.emit('economy:theft_success', {
                 agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount,
                 item: `$${stolenAmount}`, locationName: victimAgent.name,
@@ -1960,10 +1960,10 @@ export function tick(world: WorldRow): void {
               item: `$${taken} worth of goods`, locationName: shop?.name ?? 'the shop',
             });
             logActivity({ type: 'drama', initiator: thief.id,
-              templateData: { description: `${thief.name} was caught shoplifting $${taken} worth of goods!` } });
+              templateData: { description: `${thief.name} was caught shoplifting $${taken} worth of goods!` }, metadata: { beat: 'theft' } });
           } else {
             logActivity({ type: 'drama', initiator: thief.id,
-              templateData: { description: `${thief.name} shoplifted $${taken} worth of goods` } });
+              templateData: { description: `${thief.name} shoplifted $${taken} worth of goods` }, metadata: { beat: 'theft' } });
           }
         }
       }
@@ -2163,6 +2163,7 @@ export function tick(world: WorldRow): void {
           initiator: agentId,
           target: targetId,
           templateData: { description: `${agent.name} and ${targetAgent.name} are on a date` },
+          metadata: { beat: 'date' },
         });
       }
     }
@@ -2348,6 +2349,7 @@ export function tick(world: WorldRow): void {
         templateData: {
           description: `${agent.name} arrested ${other.name}! Sentence: ${Math.round(sentence / 60)} hours.`,
         },
+        metadata: { beat: 'arrest' },
       });
 
       // Create arrest gossip fact

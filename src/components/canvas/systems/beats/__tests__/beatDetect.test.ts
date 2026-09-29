@@ -101,6 +101,51 @@ describe('classifyActivity — drama descriptions', () => {
   });
 });
 
+describe('classifyActivity — explicit metadata.beat subtype', () => {
+  const tagged = (beat: string, description: string, over: Partial<ActivityRow> = {}) =>
+    row({ description, metadata: { beat }, ...over });
+
+  it('classifies by the tag even when the wording is something no regex knows', () => {
+    // The whole point: a reworded template keeps its animation.
+    expect(classifyActivity(tagged('fight', 'Ana and Bo came to blows behind the smithy'))?.kind).toBe('fight');
+    expect(classifyActivity(tagged('insult', 'Ana said something unforgivable to Bo'))?.kind).toBe('fight');
+    expect(classifyActivity(tagged('snap', 'Ana lost her temper'))?.kind).toBe('fight');
+    expect(classifyActivity(tagged('date', 'Ana and Bo went out together'))?.kind).toBe('romance');
+    expect(classifyActivity(tagged('flirt', 'Ana batted her eyes at Bo'))?.kind).toBe('romance');
+    expect(classifyActivity(tagged('reconciliation', 'Ana and Bo buried the hatchet'))?.kind).toBe('romance');
+    expect(classifyActivity(tagged('confession', 'Ana unburdened herself to Bo'))?.kind).toBe('secret');
+    expect(classifyActivity(tagged('gossip', 'Ana whispered about Cy to Bo'))?.kind).toBe('secret');
+    expect(classifyActivity(tagged('breakup', 'Ana walked out on Bo'))?.kind).toBe('heartbreak');
+    expect(classifyActivity(tagged('estrangement', 'Ana and Bo are done'))?.kind).toBe('heartbreak');
+  });
+
+  it('works with no description at all', () => {
+    expect(classifyActivity(row({ metadata: { beat: 'fight' } }))?.kind).toBe('fight');
+  });
+
+  it('the tag wins over misleading wording (gossip that mentions a fight)', () => {
+    const r = tagged('gossip', 'Ana told Bo that Cy got into a physical fight in public.');
+    expect(classifyActivity(r)?.kind).toBe('secret');
+    // ... and a tag with nothing to draw suppresses the wording fallback entirely.
+    expect(classifyActivity(tagged('theft', 'Ana started a fight with the shopkeeper over a stolen loaf'))).toBeNull();
+  });
+
+  it('keeps the arrest / death / birthday agent shaping', () => {
+    expect(classifyActivity(tagged('arrest', 'x', { initiator_id: 2, target_id: 1 }))).toEqual({ kind: 'arrest', agentIds: [1, 2] });
+    expect(classifyActivity(tagged('death', 'x'))).toEqual({ kind: 'death', agentIds: [1] });
+    expect(classifyActivity(tagged('birthday', 'x'))).toEqual({ kind: 'birthday', agentIds: [1] });
+  });
+
+  it('an unknown tag falls back to the wording (older/newer client-server skew)', () => {
+    expect(classifyActivity(tagged('brand_new_beat', 'Ana started a fight with Bo'))?.kind).toBe('fight');
+    expect(classifyActivity(tagged('brand_new_beat', 'nothing to see'))).toBeNull();
+  });
+
+  it('untagged rows still classify by wording (old saves)', () => {
+    expect(classifyActivity(row({ description: 'Ana started a fight with Bo', metadata: null }))?.kind).toBe('fight');
+  });
+});
+
 describe('classifyActivity — typed rows', () => {
   it('gift: initiator gives, target receives', () => {
     const r = row({ type: 'gift', initiator_id: 5, target_id: 6, agent_ids: [5, 6], description: 'Ana gave a rose to Bo as a gift' });
