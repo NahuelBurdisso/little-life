@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gameMinutesToMs } from '../worldClock';
+import { chancePerTick } from '../gameClock';
 import { dailyChancePerTick } from '../../engine/systems/goals';
 import { ReflectionTrigger } from '../memory/ReflectionTrigger';
 
@@ -24,6 +25,27 @@ describe('goal abandonment chance per game day', () => {
       expect(1 - Math.pow(1 - perTick, ticksPerDay)).toBeCloseTo(0.3, 10);
     });
   }
+});
+
+describe('chancePerTick (per-game-minute hazards)', () => {
+  it('is the authored chance, bit for bit, at 1x', () => {
+    for (const p of [0.0001, 0.005, 0.01, 0.02, 0.3]) expect(chancePerTick(p, 1)).toBe(p);
+  });
+
+  for (const speed of [0.5, 2, 4]) {
+    it(`gives the same odds per game hour at ${speed}x as at 1x`, () => {
+      const p = 0.01;
+      const ticksPerHour = 60 / speed;
+      const perHour = 1 - Math.pow(1 - chancePerTick(p, speed), ticksPerHour);
+      expect(perHour).toBeCloseTo(1 - Math.pow(1 - p, 60), 10);
+    });
+  }
+
+  it('rolls nothing while paused and saturates at certainty', () => {
+    expect(chancePerTick(0.5, 0)).toBe(0);
+    expect(chancePerTick(0, 4)).toBe(0);
+    expect(chancePerTick(1, 4)).toBe(1);
+  });
 });
 
 describe('ReflectionTrigger cooldown', () => {

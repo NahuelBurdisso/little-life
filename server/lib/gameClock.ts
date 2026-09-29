@@ -67,6 +67,24 @@ export function crossedBoundary(
   return Math.floor((nowMinutes - offset) / period) !== Math.floor((prevMinutes - offset) / period);
 }
 
+/**
+ * The chance to roll on one tick for something authored as `chancePerMinute`
+ * per GAME MINUTE: the probability it happens at least once in the tick's
+ * `tickSpeed` game minutes, 1 - (1 - p)^tickSpeed.
+ *
+ * Hazards rolled straight once per tick ("1% per tick" contagion, a 0.7%
+ * chance to start drinking) happened a quarter as often per game hour at 4x and
+ * twice as often at 0.5x. Returns `chancePerMinute` unchanged at 1x — not the
+ * float-rounded 1 - (1 - p) — so behaviour at the default speed is identical.
+ * Speed 0 (paused, no phase runs) rolls nothing.
+ */
+export function chancePerTick(chancePerMinute: number, tickSpeed: number): number {
+  if (tickSpeed === 1) return chancePerMinute;
+  if (chancePerMinute <= 0 || tickSpeed <= 0) return 0;
+  if (chancePerMinute >= 1) return 1;
+  return 1 - Math.pow(1 - chancePerMinute, tickSpeed);
+}
+
 type Transitions = ReadonlyArray<{ type?: unknown }> | null | undefined;
 
 /**

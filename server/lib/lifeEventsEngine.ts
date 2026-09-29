@@ -16,6 +16,7 @@ import { createFact } from './gossip';
 import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
 import { zoneOccupancy } from './interiorGrid';
+import { chancePerTick } from './gameClock';
 
 // --- Types ---
 
@@ -23,6 +24,8 @@ export interface AgentDeathContext {
   agent: { id: number; name: string; age: number };
   /** CLOCK: GAME MINUTES, like `agentStates.started_at` (states.ts). */
   nowMinutes: number;
+  /** Game minutes this tick covers: the hazards below are per game minute. */
+  tickSpeed: number;
   season: string;
   /** Game minutes hunger has sat at 0 without a break. */
   hungerZeroMinutes: number;
@@ -121,7 +124,9 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
       // ~50 counted as 80+ and became eligible for old age.
       const simAge = ctx.agent.age;
       if (simAge < 80) return false;
-      return Math.random() < 0.0001 * (simAge - 80);
+      // Per game minute, rolled per tick: a straight per-tick roll made the
+      // elderly live four times as many game days at 4x.
+      return Math.random() < chancePerTick(0.0001 * (simAge - 80), ctx.tickSpeed);
     },
   },
   {
@@ -132,7 +137,7 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
       if (ctx.currentAction !== 'working') return false;
       const riskyJobs = ['farmer', 'farmhand', 'handyperson'];
       if (!riskyJobs.includes(ctx.job)) return false;
-      return Math.random() < 0.00005;
+      return Math.random() < chancePerTick(0.00005, ctx.tickSpeed); // per game minute at work
     },
   },
 ];
@@ -408,10 +413,12 @@ export function checkDeathTriggers(
   currentAction: string,
   isOutdoors: boolean,
   season: string,
+  tickSpeed: number,
 ): string | null {
   const ctx: AgentDeathContext = {
     agent,
     nowMinutes,
+    tickSpeed,
     season,
     hungerZeroMinutes: hungerZeroMinutes.get(agent.id) ?? 0,
     activeStates: statesArr,

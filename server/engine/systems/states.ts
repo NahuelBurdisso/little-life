@@ -30,7 +30,7 @@ import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
-import { dayChanged, gameMinutes } from '../../lib/gameClock';
+import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
 import { gameMinutesToMs } from '../../lib/worldClock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -268,7 +268,7 @@ export function statesTick() {
 
     const deathCause = checkDeathTriggers(
       { id: agent.id, name: agent.name, age: agent.age },
-      nowMinutes, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season,
+      nowMinutes, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season, world.tick_speed,
     );
 
     if (deathCause && !diedThisTick.has(agent.id)) {
@@ -329,9 +329,10 @@ function evaluateTriggers(
         .from(locations)
         .where(eq(locations.id, agent.current_location))
         .get();
-      // Chance per visit session (~1% base scaled by impulsiveness), not per tick.
-      // Using /10000 so a 70-impulsiveness agent has ~0.7% chance per tick to start drinking.
-      if (loc?.type === 'tavern' && Math.random() < personality.impulsiveness / 10000) {
+      // impulsiveness / 10000 per GAME MINUTE at the tavern: a 70-impulsiveness
+      // agent has ~0.7% a minute to start drinking. Rolled per tick through
+      // chancePerTick so an hour at the tavern carries the same risk at any speed.
+      if (loc?.type === 'tavern' && Math.random() < chancePerTick(personality.impulsiveness / 10000, tickSpeed)) {
         const severity = clamp(0.3 + (personality.impulsiveness / 100) * 0.7, 0, 1);
         const duration = Math.floor(120 + Math.random() * 120); // 2-4 hours
         db.insert(agentStates)
@@ -370,8 +371,8 @@ function evaluateTriggers(
       const weatherMult = weather === 'rainy' || weather === 'stormy' ? 2 : 1;
       const seasonMult = season === 'winter' ? 1.5 : 1;
       const energyMult = agentNeeds && agentNeeds.energy < 25 ? 1.5 : 1;
-      const sickChance = 0.0001 * weatherMult * seasonMult * energyMult;
-      if (Math.random() < sickChance) {
+      const sickChance = 0.0001 * weatherMult * seasonMult * energyMult; // per game minute
+      if (Math.random() < chancePerTick(sickChance, tickSpeed)) {
         const severity = 0.3 + Math.random() * 0.4;
         const duration = Math.floor(480 + Math.random() * 960); // 8-24 hours (shorter)
         db.insert(agentStates)
@@ -409,8 +410,8 @@ function evaluateTriggers(
 
       if (inRelapseWindow) {
         // Within relapse window: tavern visit has chance of re-triggering
-        const relapseChance = personality.neuroticism > 60 ? 0.5 : 0.3;
-        if (Math.random() < relapseChance) {
+        const relapseChance = personality.neuroticism > 60 ? 0.5 : 0.3; // per game minute
+        if (Math.random() < chancePerTick(relapseChance, tickSpeed)) {
           const severity = clamp(0.3 + (recentDrunkCount - 3) * 0.15, 0.3, 1.0);
           db.insert(agentStates).values({
             agent_id: agent.id,
@@ -931,7 +932,7 @@ function evaluateTriggers(
     if (!shouldDepress && personality.neuroticism > 60) {
       // Re-evaluate with doubled probability for lonely/low_mood sub-conditions
       if (lonelyState && nowMinutes - lonelyState.started_at > 2160) {
-        shouldDepress = Math.random() < 0.5;
+        shouldDepress = Math.random() < chancePerTick(0.5, tickSpeed);
         depressSource = 'cascade:lonely_neurotic';
       }
     }
@@ -1084,7 +1085,7 @@ function checkConditionalExits(
           // path 2 had already granted, so past the two-day mark a recovered
           // agent was pushed back into depression 95% of the time and the state
           // became effectively permanent.
-          shouldExit = shouldExit || Math.random() < 0.05; // 5% per tick after 2 days
+          shouldExit = shouldExit || Math.random() < chancePerTick(0.05, tickSpeed); // 5% per game minute after 2 days
         }
         break;
       }
@@ -1136,7 +1137,7 @@ function checkConditionalExits(
           const hasFood = (eco.inventory as any[]).some(
             (i: any) => ['food_raw', 'food_prepared'].includes(i.itemId) && i.quantity > 0
           );
-          if (!hasFood && Math.random() < 0.01) {
+          if (!hasFood && Math.random() < chancePerTick(0.01, tickSpeed)) { // 1% per game minute
             shouldExit = true;
           }
         }
@@ -1185,7 +1186,7 @@ function checkConditionalExits(
         // Safety valve: jealousy fades after ~1.5 game days even if romance is still high
         if (!shouldExit) {
           const elapsed = nowMinutes - state.started_at;
-          if (elapsed > 2160 && Math.random() < 0.03) shouldExit = true;
+          if (elapsed > 2160 && Math.random() < chancePerTick(0.03, tickSpeed)) shouldExit = true; // 3%/game minute
         }
         break;
       }
@@ -1386,7 +1387,7 @@ function processStateEffects(
       // ── Drunk: random gift purchase near others ──────────────────────────
       case 'drunk': {
         if (agent.current_location == null) break;
-        if (Math.random() > 0.30) break;
+        if (Math.random() > chancePerTick(0.30, tickSpeed)) break; // 30% per game minute
 
         const nearbyAgents = allAgents.filter(
           (a) => a.id !== agent.id && a.current_location === agent.current_location,
@@ -1428,8 +1429,9 @@ function processStateEffects(
           meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + tickSpeed;
           const coLocMinutes = meta[coLocKey] as number;
 
-          // Contagion: 1% chance per tick after 30 minutes together — low enough to prevent epidemics
-          if (coLocMinutes > 30 && Math.random() < 0.01) {
+          // Contagion: 1% chance per game minute after 30 minutes together — low
+          // enough to prevent epidemics (rolled per tick via chancePerTick).
+          if (coLocMinutes > 30 && Math.random() < chancePerTick(0.01, tickSpeed)) {
             // Spread sick only if other doesn't already have it
             const alreadySick = db
               .select()
@@ -1470,9 +1472,11 @@ function processStateEffects(
           );
 
           if (hasMedicine) {
-            // Use medicine: much faster healing (severity -0.05/tick, duration halved)
-            const newSeverity = Math.max(0, state.severity - 0.05);
-            const reducedDuration = Math.max(1, Math.floor(state.duration * 0.5));
+            // Use medicine: much faster healing (severity -0.05 and duration halved
+            // per GAME MINUTE — scaled by the tick's minutes, as the rates were
+            // per tick and healed four times slower per game hour at 4x).
+            const newSeverity = Math.max(0, state.severity - 0.05 * tickSpeed);
+            const reducedDuration = Math.max(1, Math.floor(state.duration * Math.pow(0.5, tickSpeed)));
             db.update(agentStates)
               .set({ severity: newSeverity, duration: reducedDuration })
               .where(eq(agentStates.id, state.id))
@@ -1494,10 +1498,16 @@ function processStateEffects(
               });
             }
           } else {
-            // No medicine: slower healing (original rate)
-            const newSeverity = Math.max(0.1, state.severity - 0.01);
+            // No medicine: slower healing (original rate): severity -0.01 and 2% of
+            // the remaining time per GAME MINUTE. The 2% compounds over the tick's
+            // minutes — the same 1 - (1 - f)^n as a per-minute chance, and exactly
+            // 0.02 at 1x.
+            const newSeverity = Math.max(0.1, state.severity - 0.01 * tickSpeed);
             const remainingDuration = (state.started_at + state.duration) - nowMinutes;
-            const reducedDuration = Math.max(1, state.duration - Math.floor(remainingDuration * 0.02));
+            const reducedDuration = Math.max(
+              1,
+              state.duration - Math.floor(remainingDuration * chancePerTick(0.02, tickSpeed)),
+            );
             db.update(agentStates)
               .set({ severity: newSeverity, duration: reducedDuration })
               .where(eq(agentStates.id, state.id))
@@ -1577,7 +1587,7 @@ function processStateEffects(
       // ── Euphoric: random generosity ───────────────────────────────────────
       case 'euphoric': {
         if (agent.current_location == null) break;
-        if (Math.random() > 0.30) break;
+        if (Math.random() > chancePerTick(0.30, tickSpeed)) break; // 30% per game minute
 
         const nearbyAgents = allAgents.filter(
           (a) => a.id !== agent.id && a.current_location === agent.current_location,
@@ -1825,7 +1835,7 @@ function processStateEffects(
         const moralityThreshold = desperationUnlocked ? 50 : 40;
 
         if (personality.morality >= moralityThreshold) break;
-        if (Math.random() > 0.05) break;
+        if (Math.random() > chancePerTick(0.05, tickSpeed)) break; // 5% per game minute
 
         const loc = db.select().from(locations).where(eq(locations.id, agent.current_location)).get();
         if (!loc?.owner || loc.owner === agent.id) break;
@@ -1978,7 +1988,7 @@ function processStateEffects(
         // Rumor about rival if low morality + dishonest
         if (rivalId && personality && personality.morality < 40 && personality.honesty < 30) {
           const elapsed = nowMinutes - state.started_at;
-          if (elapsed > 720 && Math.random() < 0.005) {
+          if (elapsed > 720 && Math.random() < chancePerTick(0.005, tickSpeed)) { // 0.5%/game minute
             // Name the love interest the jealousy is about, so the rumor says
             // something; without one it stays the generic "rumors about X".
             const loveInterestId = meta.loveInterestId as number | undefined;
@@ -2017,7 +2027,7 @@ function processStateEffects(
 
           // Treat alcoholism: consume medicine, trigger recovery
           const alcoholicState = patientStates.find(s => s.type === 'alcoholic');
-          if (alcoholicState && Math.random() < 0.02) { // 2% per tick
+          if (alcoholicState && Math.random() < chancePerTick(0.02, tickSpeed)) { // 2% per game minute
             const alcMeta = { ...((alcoholicState.metadata as any) ?? {}), recoveryTriggered: true };
             db.update(agentStates).set({ metadata: alcMeta }).where(eq(agentStates.id, alcoholicState.id)).run();
 
@@ -2048,7 +2058,7 @@ function processStateEffects(
 
           // Treat depression: consume medicine, remove depressed state
           const depressedState = patientStates.find(s => s.type === 'depressed');
-          if (depressedState && Math.random() < 0.03) { // 3% per tick
+          if (depressedState && Math.random() < chancePerTick(0.03, tickSpeed)) { // 3% per game minute
             db.delete(agentStates).where(eq(agentStates.id, depressedState.id)).run();
 
             // Consume medicine
@@ -2092,7 +2102,7 @@ function processStateEffects(
     // Zone gate: gambling requires tavern:tables zone
     const gamblerZone = zoneOccupancy.findAgentZone(agent.id);
     const atTables = gamblerZone?.building === 'tavern' && gamblerZone.zone === 'tables';
-    if (loc?.type === 'tavern' && atTables && Math.random() < 0.08) {
+    if (loc?.type === 'tavern' && atTables && Math.random() < chancePerTick(0.08, tickSpeed)) { // 8%/game minute
       const agentEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
       if (agentEcon && agentEcon.money > 10) {
         const nearbyAgents = allAgents.filter(
@@ -2199,7 +2209,7 @@ function processStateEffects(
 
   // ── Seduction: manipulative flirting for personal gain ──────────────────
   if (personality && personality.sensuality > 70 && personality.morality < 40 && agent.current_location != null) {
-    if (Math.random() < 0.02) {
+    if (Math.random() < chancePerTick(0.02, tickSpeed)) { // 2% per game minute
       const nearbyTargets = allAgents.filter(a => {
         if (a.id === agent.id || a.current_location !== agent.current_location) return false;
         const tp = a.personality as PersonalityProfile | null;
@@ -2238,7 +2248,7 @@ function processStateEffects(
 
   // ── Manipulation: dishonest + curious agents fabricate rumors ──────────
   if (personality && personality.honesty < 30 && personality.curiosity > 60) {
-    if (Math.random() < 0.005) { // 0.5% per tick — very rare
+    if (Math.random() < chancePerTick(0.005, tickSpeed)) { // 0.5% per game minute — very rare
       // Pick a target to spread rumors about (not a close friend)
       const agentRels = db.select().from(relationships)
         .where(or(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, agent.id))).all();
