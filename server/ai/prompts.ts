@@ -8,7 +8,7 @@
 import { PersonalityProfile } from '../lib/personality';
 import { generateVoiceDirective } from './voiceDirective';
 import { selectConversationContext, ContextItem } from './contextSelector';
-import { isFallbackMessage } from './sanitizeDialogue';
+import { BANNED_OPENERS, isFallbackMessage } from './sanitizeDialogue';
 import { firstName } from './names';
 import { TOWN_SETTING } from './setting';
 
@@ -271,7 +271,7 @@ export function topicIntent(topic: string, other: string): string {
   const t = topic.trim().toLowerCase();
   const gossip = topic.trim().match(/^gossip about (.+)$/i);
   if (gossip) return `You heard something about ${gossip[1]} and can't keep it to yourself.`;
-  if (t.startsWith('checking on')) return `You want to see how ${other} is really doing — mention something specific you know about them.`;
+  if (t.startsWith('checking on')) return `You want to see how ${other} is really doing — ask about the specific thing you know is going on with them, not a general "how are you".`;
   const intents: Record<string, string> = {
     'flirting': `You're drawn to ${other}. Flirt a little: tease, compliment something specific, or hint at how you feel.`,
     'romance': `You're drawn to ${other}. Let it show.`,
@@ -287,7 +287,7 @@ export function topicIntent(topic: string, other: string): string {
     'town news': `Share a piece of town news you know.`,
     'local rumors': `Share a rumor you've heard around town.`,
     'asking questions': `You're curious about ${other}'s life or work — ask something specific.`,
-    'checking in': `You want to see how ${other} is really doing — mention something specific you know about them.`,
+    'checking in': `You want to see how ${other} is really doing — ask about the specific thing you know is going on with them, not a general "how are you".`,
     'offering help': `You think ${other} could use a hand — offer something concrete.`,
     'offering comfort': `You sense ${other} is having a hard time and want to comfort them.`,
     'complimenting': `Compliment ${other} on something specific.`,
@@ -299,15 +299,27 @@ export function topicIntent(topic: string, other: string): string {
     'spontaneous idea': `You just had a spontaneous idea and want ${other} in on it.`,
     'wild story': `Tell ${other} a wild story, true or a bit exaggerated.`,
     'dare': `Dare ${other} to do something.`,
-    'catching up': `Ask what's new with ${other} and share a bit of your own news.`,
+    // "Ask what's new" produced exactly the "what's new with you?" opener the
+    // opener rule bans (G6); name the thing instead.
+    'catching up': `Ask about one specific thing going on in ${other}'s life, and share a bit of your own news.`,
     'inside joke': `Bring up a joke only the two of you would get.`,
-    'friendly greeting': `Greet ${other} the way you would, and say one thing on your mind.`,
-    'casual greeting': `Greet ${other} the way you would, and say one thing on your mind.`,
+    'friendly greeting': `Say hello to ${other} in a word or two, then the one thing on your mind — something that happened, a person, a plan.`,
+    'casual greeting': `Say hello to ${other} in a word or two, then the one thing on your mind — something that happened, a person, a plan.`,
   };
   if (intents[t]) return intents[t];
   const smallTalk = ['weather', 'daily life', 'food', 'work', 'weekend plans', 'memories', 'the farm'];
   if (smallTalk.includes(t)) return `Make small talk about ${t}, with one specific detail from your day.`;
   return `You want to talk about ${topic} — bring it up naturally, as if it's been on your mind.`;
+}
+
+/**
+ * Whether a conversation topic gives the opener something to say beyond hello.
+ * Greetings and an absent topic don't: for those a plain "Good to see you,
+ * Yuki!" is the conversation, and regenerating it would only spend a slot.
+ */
+export function hasConcreteTopic(topic: string | null | undefined): boolean {
+  const t = (topic ?? '').trim().toLowerCase();
+  return t !== '' && t !== 'friendly greeting' && t !== 'casual greeting';
 }
 
 function buildTurnInstruction(
@@ -339,6 +351,13 @@ function buildTurnInstruction(
     // celebrate something soon", "we should catch up properly sometime"):
     // nothing for the other side to answer and nothing for the chronicle.
     parts.push('Say something concrete — a person, place or event from your [Memory] entries — not a vague "we should catch up sometime".');
+    // Playtest #2 (G6): openers still led with "how are you doing today" even
+    // with a concrete topic. Named outright, the model stops reaching for them;
+    // generateResponse strips any that slip through (stripGenericOpener).
+    // A first meeting keeps its greeting: introducing yourself IS the topic.
+    if (!isFirstMeeting) {
+      parts.push(`Skip the small talk: don't open with ${BANNED_OPENERS.map((o) => `"${o}"`).join(', ')} or the like — start with the thing itself.`);
+    }
   } else if (messageCount >= maxTurns - 2) {
     // Wrapping up
     parts.push(`Start wrapping up naturally. Say goodbye, make plans to meet again, or leave a lasting impression.`);

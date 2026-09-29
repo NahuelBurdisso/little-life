@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../ollama', () => ({ callOllamaChat: vi.fn() }));
 vi.mock('../prompts', () => ({
   buildConversationPrompt: () => ({ system: 'sys', messages: [{ role: 'user', content: 'hi' }] }),
+  hasConcreteTopic: (t: string | null) => !!t && !/greeting/.test(t),
+  topicIntent: () => 'Share the news about the mill.',
 }));
 vi.mock('../../helpers/conversationHelpers', () => ({
   getConversationContext: vi.fn(),
@@ -125,6 +127,79 @@ describe('generateResponse', () => {
 
     const caps = vi.mocked(callOllamaChat).mock.calls.map((c) => c[0].options?.num_predict);
     expect(caps).toEqual([CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL, CONFIG.AI.CHAT_MAX_TOKENS_SITUATIONAL]);
+  });
+
+  describe('generic openers (G6)', () => {
+    // Acquainted (familiarity >= 5), talking about something concrete.
+    function opener(topic: string | null, messages: unknown[] = []) {
+      return {
+        ...(context() as object),
+        conversation: { id: 1, participants: [1, 2], messages, status: 'active', topic, max_turns: 6 },
+        relationship: { familiarity: 40 },
+      } as never;
+    }
+
+    it('trims a leading pleasantry for free when something concrete follows', async () => {
+      vi.mocked(getConversationContext).mockResolvedValue(opener('town news'));
+      vi.mocked(callOllamaChat).mockResolvedValueOnce({
+        text: 'Hey Lucia, how are you doing today? Did you hear the mill wheel cracked last night?',
+      } as never);
+
+      await generateResponse(1, 1);
+
+      expect(callOllamaChat).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Did you hear the mill wheel cracked last night?');
+    });
+
+    it('regenerates a pure pleasantry once when there is a real topic', async () => {
+      vi.mocked(getConversationContext).mockResolvedValue(opener('town news'));
+      vi.mocked(callOllamaChat)
+        .mockResolvedValueOnce({ text: 'Good morning, Lucia! How are you doing today?' } as never)
+        .mockResolvedValueOnce({ text: 'The mill wheel cracked last night, Lucia. Half the flour is ruined.' } as never);
+
+      await generateResponse(1, 1);
+
+      expect(callOllamaChat).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(callOllamaChat).mock.calls[1][0].purpose).toBe('conversation.retry');
+      expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('The mill wheel cracked last night, Lucia. Half the flour is ruined.');
+      expect(vi.mocked(addMessage).mock.calls[0][6]).toBe(false);
+    });
+
+    it('keeps the first pleasantry, not a canned fallback, when the regeneration is no better', async () => {
+      vi.mocked(getConversationContext).mockResolvedValue(opener('town news'));
+      vi.mocked(callOllamaChat)
+        .mockResolvedValueOnce({ text: 'Good morning, Lucia! How are you doing today?' } as never)
+        .mockResolvedValueOnce({ text: "How's your day going?" } as never);
+
+      await generateResponse(1, 1);
+
+      expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Good morning, Lucia! How are you doing today?');
+      expect(vi.mocked(addMessage).mock.calls[0][6]).toBe(false);
+    });
+
+    it('leaves greetings, first meetings and later turns alone', async () => {
+      // A greeting topic: the hello is the conversation.
+      vi.mocked(getConversationContext).mockResolvedValue(opener('friendly greeting'));
+      vi.mocked(callOllamaChat).mockResolvedValue({ text: 'Good to see you, Lucia!' } as never);
+      await generateResponse(1, 1);
+      expect(callOllamaChat).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Good to see you, Lucia!');
+
+      // A later turn is never checked.
+      vi.mocked(getConversationContext).mockResolvedValue(opener('town news', [{ speakerId: 2, text: 'The mill!' }]));
+      vi.mocked(callOllamaChat).mockResolvedValue({ text: 'How are you doing today? The mill, yes.' } as never);
+      await generateResponse(1, 1);
+      expect(callOllamaChat).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(addMessage).mock.calls[1][2]).toBe('How are you doing today? The mill, yes.');
+
+      // A first meeting (no relationship row) keeps its greeting.
+      vi.mocked(getConversationContext).mockResolvedValue({
+        ...(opener('town news') as object), relationship: null,
+      } as never);
+      vi.mocked(callOllamaChat).mockResolvedValue({ text: "Hello there! I'm Rosa, from the bakery." } as never);
+      await generateResponse(1, 1);
+      expect(vi.mocked(addMessage).mock.calls[2][2]).toBe("Hello there! I'm Rosa, from the bakery.");
+    });
   });
 
   it('does not call the LLM for a conversation that already ended', async () => {

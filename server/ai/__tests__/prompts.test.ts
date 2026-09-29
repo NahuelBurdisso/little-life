@@ -125,6 +125,22 @@ describe('buildConversationPrompt', () => {
     expect(userMsg).not.toContain('discuss confrontation');
   });
 
+  it('bans the stock pleasantries in the opener, except at a first meeting (G6)', () => {
+    const acquainted = {
+      ...baseParams,
+      relationship: { ...baseParams.relationship!, familiarity: 40 },
+    };
+    const opener = buildConversationPrompt(acquainted).messages.at(-1)!.content;
+    expect(opener).toContain('"how are you doing today"');
+    expect(opener).toContain('start with the thing itself');
+
+    const strangers = {
+      ...baseParams,
+      relationship: { ...baseParams.relationship!, familiarity: 0 },
+    };
+    expect(buildConversationPrompt(strangers).messages.at(-1)!.content).not.toContain('how are you doing today');
+  });
+
   it('passes unknown topics through as a subject', () => {
     expect(topicIntent('the missing ledger', 'Rosa')).toContain('talk about the missing ledger');
     expect(topicIntent('gossip about Marco Rivera', 'Rosa')).toBe("You heard something about Marco Rivera and can't keep it to yourself.");

@@ -1,8 +1,9 @@
 import { callOllamaChat } from './ollama';
-import { buildConversationPrompt, ConversationPromptParams } from './prompts';
+import { buildConversationPrompt, ConversationPromptParams, hasConcreteTopic, topicIntent } from './prompts';
 import { analyzeSentiment } from './sentiment';
 import { extractTopics } from './topics';
-import { sanitizeDialogue, fallbackReply } from './sanitizeDialogue';
+import { sanitizeDialogue, fallbackReply, stripGenericOpener } from './sanitizeDialogue';
+import { firstName } from './names';
 import {
   getConversationContext,
   addMessage,
@@ -77,6 +78,25 @@ export async function generateResponse(
     truncated,
   });
 
+  // G6: an opener that is nothing but "how are you doing today" gets its
+  // pleasantry trimmed (free) when something concrete follows it. When the
+  // WHOLE line is pleasantry and the conversation has a real topic, the line is
+  // regenerated once through the nudge retry below — the only extra call, and
+  // only on openers. A first meeting keeps its greeting: that is the scene.
+  const isOpener = conversation.messages.length === 0;
+  const firstMeeting = relationship ? relationship.familiarity < 5 : true;
+  const checkOpener = isOpener && !firstMeeting;
+  let genericOpener = false;
+  const trimOpener = (text: string): string => {
+    if (!checkOpener || !text) return text;
+    const stripped = stripGenericOpener(text, otherAgent.name);
+    if (stripped) return stripped;
+    // Nothing but pleasantry: worth one regeneration when there is something
+    // concrete to say instead; otherwise the greeting IS the conversation.
+    if (hasConcreteTopic(conversation.topic)) genericOpener = true;
+    return text;
+  };
+
   // Situational prompts (begging, jealousy, affair discovery) get a bigger cap.
   // One value for both the first call and the nudge retry: the retry used the
   // normal cap, so a dramatic reply the validator rejected came back cut short.
@@ -136,7 +156,7 @@ export async function generateResponse(
         },
       });
       rawText = result.text;
-      responseText = clean(result.text, result.truncated);
+      responseText = trimOpener(clean(result.text, result.truncated));
       // Only autoplay's analyze() drains perf records, so recording while it is
       // disabled just grows an array that is never reset.
       if (CONFIG.AUTOPLAY.ENABLED) {
@@ -190,7 +210,11 @@ export async function generateResponse(
     );
   };
   if (rawText !== null && responseText !== null) {
-    if (isInvalid(responseText)) {
+    const retryForOpener = genericOpener && !isInvalid(responseText);
+    // A pure pleasantry still beats a canned "X smiled and nodded." if the
+    // regeneration fails or comes back as another pleasantry.
+    const keepIfRetryFails = retryForOpener ? responseText : null;
+    if (isInvalid(responseText) || retryForOpener) {
       // One retry with nudge. The rejection is booked against this real call
       // instead of a synthetic { durationMs: 0, success: true } record — that
       // record counted as a completed request and pulled avgResponseMs and
@@ -208,7 +232,12 @@ export async function generateResponse(
           messages: [
             ...promptMessages,
             { role: 'assistant' as const, content: rawText.trim() },
-            { role: 'user' as const, content: `Please respond in character as ${speaker.name}. Say something natural in 1-2 sentences — only the words you say aloud, no actions or parentheses.` },
+            {
+              role: 'user' as const,
+              content: retryForOpener
+                ? `That's just a pleasantry. As ${speaker.name}, skip the "how are you" and get straight to what's on your mind (${topicIntent(conversation.topic ?? '', firstName(otherAgent.name))}) in 1-2 sentences — only the words you say aloud.`
+                : `Please respond in character as ${speaker.name}. Say something natural in 1-2 sentences — only the words you say aloud, no actions or parentheses.`,
+            },
           ],
           priority: 'critical',
           signal,
@@ -223,13 +252,21 @@ export async function generateResponse(
         // faces the same validator as the first reply: a nudge that came back
         // as "Ok" or a repeat of the last line used to be saved as is.
         const cleaned = nudge.text ? clean(nudge.text, nudge.truncated) : '';
-        if (!isInvalid(cleaned)) {
-          responseText = cleaned;
+        // On the opener, the retry gets the same trim. A retry that is still
+        // pure pleasantry is only refused when the retry was FOR that (the
+        // first line is then kept); on the ordinary invalid-reply retry a
+        // pleasantry is better than the canned fallback.
+        const usable = checkOpener && cleaned
+          ? stripGenericOpener(cleaned, otherAgent.name) || (retryForOpener ? '' : cleaned)
+          : cleaned;
+        if (usable && !isInvalid(usable)) {
+          responseText = usable;
           nudgeSucceeded = true;
         }
       } catch {
         // nudge failed, fall through to fallback
       }
+      if (responseText === null && keepIfRetryFails) responseText = keepIfRetryFails;
       const nudgeDurationMs = performance.now() - nudgeStart;
       if (CONFIG.AUTOPLAY.ENABLED) {
         autoPlayer.perf.recordLlmCall({

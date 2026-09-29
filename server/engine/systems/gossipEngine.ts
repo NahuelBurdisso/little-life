@@ -27,11 +27,12 @@ import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
-import { isOwnSecret, rumorReachedSubject } from '../../lib/gossip';
+import { isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
 
 interface AgentInfo {
   id: number;
   name: string;
+  gender: string | null;
   current_location: number | null;
   personality: PersonalityProfile | null;
 }
@@ -76,6 +77,7 @@ export function gossipTick(nowMinutes: number): void {
   const allAgents: AgentInfo[] = db.select({
     id: agents.id,
     name: agents.name,
+    gender: agents.gender,
     current_location: agents.current_location,
     personality: agents.personality,
   }).from(agents).where(eq(agents.is_active, true)).all() as AgentInfo[];
@@ -154,7 +156,7 @@ export function gossipTick(nowMinutes: number): void {
               type: 'drama',
               initiator: eavesdropper.id,
               target: fact.subject_id,
-              templateData: { description: thatSentence(`${eavesdropper.name} overheard`, fact.content) },
+              templateData: { description: thatSentence(`${eavesdropper.name} overheard`, fact.content, [eavesdropper]) },
             });
           }
               }
@@ -190,6 +192,10 @@ export function gossipTick(nowMinutes: number): void {
         // secret, so without this Marco would "tell" the town that he is
         // secretly in love with Carlos (see isOwnSecret for pair facts).
         if (isOwnSecret(f, agent.id)) return false;
+        // Nor to someone a confirmed fact is about (mayBeToldTo): Marco
+        // telling Diego "Yuki spotted Diego" is not gossip. Unverified rumors
+        // still reach their subject — that is the backlash scene.
+        if (!mayBeToldTo(f, target.id)) return false;
         // Loyalty gate: loyal agents don't share shared_knowledge about friends
         if (loyalty > 60) {
           const rel = db.select({ friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })
@@ -223,7 +229,7 @@ export function gossipTick(nowMinutes: number): void {
           initiator: agent.id,
           target: target.id,
           agents: [agent.id, target.id, fact.subject_id],
-          templateData: { description: thatSentence(`${agent.name} told ${target.name}`, fact.content) },
+          templateData: { description: thatSentence(`${agent.name} told ${target.name}`, fact.content, [agent, target]) },
         });
       }
       }
@@ -254,7 +260,7 @@ export function gossipTick(nowMinutes: number): void {
         type: 'drama',
         initiator: agent.id,
         target: fact.subject_id,
-        templateData: { description: thatSentence(`${agent.name} discovered`, fact.content) },
+        templateData: { description: thatSentence(`${agent.name} discovered`, fact.content, [agent]) },
       });
       }
   }
