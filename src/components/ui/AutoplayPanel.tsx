@@ -35,15 +35,18 @@ function Toggle({
   onChange,
   label,
   hint,
+  inactive = false,
 }: {
   checked: boolean;
   pending: boolean;
   onChange: (next: boolean) => void;
   label: string;
   hint: string;
+  /** The setting is kept but does nothing right now (its parent switch is off). */
+  inactive?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className={`flex items-center justify-between gap-3 transition-opacity ${inactive ? "opacity-45" : ""}`}>
       <div className="min-w-0">
         <div className="text-xs text-ui-text">{label}</div>
         <div className="text-[10px] text-ui-muted leading-snug">{hint}</div>
@@ -232,7 +235,11 @@ export function AutoplayPanel({ isOpen, onClose }: AutoplayPanelProps) {
                   pending={pending}
                   onChange={(next) => configure.mutate({ autoNudge: next })}
                   label="Nudge when bored"
-                  hint="Starts a conversation or event if boredom crosses the threshold."
+                  // Nudges come out of the window report, so without watching there is nothing to act on.
+                  inactive={!config.ENABLED}
+                  hint={config.ENABLED
+                    ? "Starts a conversation or event if boredom crosses the threshold."
+                    : "Needs \"Watch the town\" on — nudges act on its reports."}
                 />
                 <div className="flex flex-wrap gap-1.5 pt-0.5">
                   {[
