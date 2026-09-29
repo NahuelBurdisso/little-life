@@ -203,8 +203,13 @@ export class RippleEngine {
     } else if (requires.coLocatedWith !== undefined) {
       // 'perpetrator' | 'victim'. Without these branches the requirement passed
       // unconditionally, so `drunk_fight` picked fights with nobody.
+      // 'perpetrator' means "the other party this is about". When the event's
+      // perpetrator is the agent themself (goal events name the achiever as
+      // actor and the goal's target as victim), that other party is the victim —
+      // otherwise drunk_fight after a failed goal had nobody left to fight.
+      const perpetratorId = payload?.perpetratorId ?? null;
       const otherId = requires.coLocatedWith === 'perpetrator'
-        ? payload?.perpetratorId ?? null
+        ? (perpetratorId != null && perpetratorId !== agentId ? perpetratorId : payload?.victimId ?? null)
         : payload?.victimId ?? null;
       if (otherId == null || otherId === agentId) return false;
       if (!ctx.agentsAtLocation.some(a => a.id === otherId)) return false;
@@ -501,14 +506,15 @@ export class RippleEngine {
    *
    * Jealousy is special-cased: `jealousy_gossip` fires on the jealous agent's own
    * `state:triggered`, so the default subject was the jealous agent themself —
-   * a rumor about the gossip, by the gossip. The state row knows the rival.
+   * a rumor about the gossip, by the gossip. The state row knows the rival; with
+   * no rival there is nobody to gossip about, so it returns 'skip' rather than
+   * falling through to that self-rumor.
    */
   private describeRumor(
     rule: RippleRule,
     agentId: number,
-    metadata: CascadeMetadata,
     payload: any,
-  ): { subjectId: number; targetId: number | null; context: FactContext | undefined } | null {
+  ): { subjectId: number; targetId: number | null; context: FactContext | undefined } | 'skip' | null {
     if (rule.source === 'state:triggered' && payload?.state === 'jealous') {
       const jealous = db.select({ target: agentStates.target_agent_id, metadata: agentStates.metadata })
         .from(agentStates)
@@ -517,7 +523,7 @@ export class RippleEngine {
         .get();
       const meta = (jealous?.metadata ?? {}) as { rivalId?: number; loveInterestId?: number };
       const rivalId = meta.rivalId ?? jealous?.target ?? null;
-      if (rivalId == null || rivalId === agentId) return null;
+      if (rivalId == null || rivalId === agentId) return 'skip';
       const loveId = meta.loveInterestId ?? null;
       return {
         subjectId: rivalId,
@@ -526,10 +532,9 @@ export class RippleEngine {
       };
     }
 
-    const victimId = metadata.victimId ?? null;
-    const act = describeWitnessedAct(rule.source, payload, victimId != null ? getAgentName(victimId) : undefined);
-    if (!act) return null;
-    return { subjectId: metadata.perpetratorId ?? agentId, targetId: victimId, context: { detail: act } };
+    const seen = describeWitnessedAct(rule.source, payload, getAgentName);
+    if (!seen) return null;
+    return { subjectId: seen.actorId, targetId: seen.otherId, context: { detail: seen.act } };
   }
 
   // ─── DB helper methods ────────────────────────────────────────────────────────
@@ -726,10 +731,30 @@ export class RippleEngine {
     }
 
     // createFact
-    const rumor = fx.createFact === 'rumor' ? this.describeRumor(rule, agentId, metadata, payload) : null;
-    if (rumor) {
+    const rumor = fx.createFact === 'rumor' ? this.describeRumor(rule, agentId, payload) : null;
+    if (rumor === 'skip') {
+      // Nobody to talk about — no rumor at all.
+    } else if (rumor) {
       // Only the teller knows it at first; the rumor is theirs to spread.
       createFact('rumor', rumor.subjectId, rumor.targetId, 2, [agentId], `cascade:${rule.id}`, rumor.context);
+    } else if (fx.createFact && rule.target === 'witness') {
+      // A witness report (theft_witness_report, arrest_gossip,
+      // confrontation_witness_gossip) is about what the witness saw someone
+      // else do. The generic branch below made the *witness* the subject —
+      // "Ray was caught stealing from Priya" when Ray only watched — and the
+      // own-secret gossip filter then stopped Ray from telling anyone.
+      const subjectId = metadata.perpetratorId;
+      if (subjectId != null && subjectId !== agentId) {
+        const otherId = metadata.victimId != null && metadata.victimId !== subjectId ? metadata.victimId : null;
+        createFact(
+          fx.createFact,
+          subjectId,
+          otherId,
+          2,
+          [agentId, subjectId, ...(otherId != null ? [otherId] : [])],
+          `cascade:${rule.id}`,
+        );
+      }
     } else if (fx.createFact) {
       const targetId = metadata.perpetratorId ?? metadata.victimId ?? null;
       createFact(

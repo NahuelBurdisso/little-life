@@ -1,16 +1,26 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { db } from '../db';
 import { agents, goals, locations, relationships } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import { goalEventCast } from '../engine/systems/goals';
 import { RippleEngine } from '../lib/cascade/RippleEngine';
 import { rippleRules } from '../lib/cascade/rippleRules';
+import { simEvents } from '../lib/simEvents';
+import { initFavorTracking, getNetFavorBalance } from '../lib/favorEngine';
+import type { PersonalityProfile } from '../lib/personality';
 
 /**
  * goal:completed used to send the goal's target as `perpetratorId` and the
- * achiever as `victimId`. These pin the corrected cast through the cascade
- * rules that consume it.
+ * achiever as `victimId`. These drive the corrected cast through the real
+ * listeners — the cascade engine and favorEngine — by emitting the event.
  */
+
+// Aggressive enough for every personality gate on the rules under test; the
+// probability rolls are pinned below so the gates only scale, never block.
+const PERSONALITY: PersonalityProfile = {
+  honesty: 50, aggression: 80, warmth: 50, impulsiveness: 80, vanity: 50,
+  curiosity: 50, loyalty: 50, morality: 50, sensuality: 50, neuroticism: 80,
+};
 
 function insertHome(): number {
   return db.insert(locations).values({
@@ -32,7 +42,7 @@ function insertAgent(name: string, home: number): number {
     name,
     bio: 'test',
     traits: [],
-    personality: null,
+    personality: PERSONALITY,
     age: 30,
     gender: 'female',
     sprite_sheet: 'x',
@@ -68,17 +78,13 @@ function insertRelationship(x: number, y: number): void {
   }).run();
 }
 
-const rule = (id: string) => rippleRules.find((r) => r.id === id)!;
-
-/** The metadata evaluateAndFire derives from a payload. */
-function metadataFor(payload: { agentId: number; perpetratorId?: number; victimId?: number }) {
-  return {
-    chainId: 'test',
-    chainDepth: 1,
-    perpetratorId: payload.perpetratorId ?? payload.agentId,
-    victimId: payload.victimId,
-  };
-}
+const RULES = [
+  'revenge_breeds_revenge',
+  'undermine_victim_retaliation',
+  'protect_gratitude',
+  'goal_failure_drinking',
+  'drunk_fight',
+].map((id) => rippleRules.find((r) => r.id === id)!);
 
 describe('goalEventCast', () => {
   it('puts the goal target in the other-party slot and never names it perpetrator', () => {
@@ -87,59 +93,72 @@ describe('goalEventCast', () => {
   });
 });
 
-describe('cascade rules consuming goal:completed', () => {
+describe('goal events through their listeners', () => {
   let home: number;
-  const engine = new RippleEngine();
 
   beforeAll(() => {
     home = insertHome();
+    // Listens on simEvents like the real one (initCascade), limited to the
+    // rules under test so unrelated rules can't muddy the assertions.
+    new RippleEngine({ rules: RULES });
+    initFavorTracking();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
   });
+
+  afterAll(() => {
+    vi.restoreAllMocks();
+  });
+
+  const goalRow = (agentId: number, ruleId: string) => db.select().from(goals)
+    .where(and(eq(goals.agent_id, agentId), eq(goals.motivation, `cascade:${ruleId}`)))
+    .get();
 
   it('revenge_breeds_revenge: the revenge target retaliates against the achiever', () => {
     const avenger = insertAgent('Cast Avenger', home);
     const wronged = insertAgent('Cast Wronged', home);
-    const payload = { agentId: avenger, goalType: 'revenge', ...goalEventCast({ target_id: wronged }) };
-    const r = rule('revenge_breeds_revenge');
 
-    const retaliator = (engine as any).resolveTargetAgent(r, payload);
-    expect(retaliator).toBe(wronged);
+    simEvents.emit('goal:completed', { agentId: avenger, goalType: 'revenge', ...goalEventCast({ target_id: wronged }) });
 
-    (engine as any).executeEffects(r, retaliator, metadataFor(payload), payload);
-    const goal = db.select().from(goals)
-      .where(and(eq(goals.agent_id, wronged), eq(goals.motivation, 'cascade:revenge_breeds_revenge')))
-      .get();
-    expect(goal?.type).toBe('revenge');
-    expect(goal?.target_id).toBe(avenger);
+    expect(goalRow(wronged, 'revenge_breeds_revenge')?.target_id).toBe(avenger);
+    expect(goalRow(avenger, 'revenge_breeds_revenge')).toBeUndefined();
   });
 
   it('undermine_victim_retaliation: the undermined target investigates the achiever', () => {
     const schemer = insertAgent('Cast Schemer', home);
     const mark = insertAgent('Cast Mark', home);
-    const payload = { agentId: schemer, goalType: 'undermine', ...goalEventCast({ target_id: mark }) };
-    const r = rule('undermine_victim_retaliation');
 
-    const target = (engine as any).resolveTargetAgent(r, payload);
-    expect(target).toBe(mark);
+    simEvents.emit('goal:completed', { agentId: schemer, goalType: 'undermine', ...goalEventCast({ target_id: mark }) });
 
-    (engine as any).executeEffects(r, target, metadataFor(payload), payload);
-    const goal = db.select().from(goals)
-      .where(and(eq(goals.agent_id, mark), eq(goals.motivation, 'cascade:undermine_victim_retaliation')))
-      .get();
-    expect(goal?.target_id).toBe(schemer);
+    expect(goalRow(mark, 'undermine_victim_retaliation')?.target_id).toBe(schemer);
   });
 
-  it('protect_gratitude: the bond grows toward the protected person', () => {
+  it('protect: the bond grows toward the protected person and the favor is owed by them', () => {
     const guardian = insertAgent('Cast Guardian', home);
     const ward = insertAgent('Cast Ward', home);
     insertRelationship(guardian, ward);
-    const payload = { agentId: guardian, goalType: 'protect', ...goalEventCast({ target_id: ward }) };
 
-    (engine as any).executeEffects(rule('protect_gratitude'), guardian, metadataFor(payload), payload);
+    simEvents.emit('goal:completed', { agentId: guardian, goalType: 'protect', ...goalEventCast({ target_id: ward }) });
 
     const [a, b] = guardian < ward ? [guardian, ward] : [ward, guardian];
     const rel = db.select().from(relationships)
       .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).get()!;
-    const fromGuardian = guardian === a ? rel.friendship_ab : rel.friendship_ba;
-    expect(fromGuardian).toBe(25);
+    expect(guardian === a ? rel.friendship_ab : rel.friendship_ba).toBe(25);
+    // favorEngine: guardian gave, ward received — not a favor to themself.
+    expect(getNetFavorBalance(guardian, ward)).toBe(2);
+    expect(getNetFavorBalance(ward, guardian)).toBe(-2);
+    expect(getNetFavorBalance(guardian, guardian)).toBe(0);
+  });
+
+  it('drunk_fight after a failed goal still finds its opponent', () => {
+    const loser = insertAgent('Cast Loser', home);
+    const rival = insertAgent('Cast Rival', home);
+    const fights: Array<{ agentId: number; victimId?: number; action?: string }> = [];
+    const onInteraction = (p: any) => { if (p?.action === 'confrontation') fights.push(p); };
+    simEvents.on('interaction:completed', onInteraction);
+
+    simEvents.emit('goal:abandoned', { agentId: loser, goalType: 'befriend', ...goalEventCast({ target_id: rival }) });
+
+    simEvents.off('interaction:completed', onInteraction);
+    expect(fights).toEqual([expect.objectContaining({ agentId: loser, victimId: rival })]);
   });
 });

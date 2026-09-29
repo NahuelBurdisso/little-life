@@ -58,25 +58,41 @@ function rumorsAbout(subjectId: number) {
     .all();
 }
 
+const NAMES: Record<number, string> = { 1: 'Xavi', 2: 'Tom' };
+const nameOf = (id: number) => NAMES[id] ?? `#${id}`;
+
 describe('describeWitnessedAct', () => {
   it('describes an interaction by its action, naming the victim', () => {
-    expect(describeWitnessedAct('interaction:completed', { action: 'insult' }, 'Tom'))
-      .toBe('publicly insulted Tom');
+    expect(describeWitnessedAct('interaction:completed', { agentId: 1, perpetratorId: 1, victimId: 2, action: 'insult' }, nameOf))
+      .toEqual({ actorId: 1, otherId: 2, act: 'publicly insulted Tom' });
   });
 
   it('matches free-text actions by keyword', () => {
-    expect(describeWitnessedAct('interaction:completed', { action: 'stole bread from the bakery' }))
+    expect(describeWitnessedAct('interaction:completed', { agentId: 1, action: 'stole bread from the bakery' }, nameOf)?.act)
       .toBe('was seen stealing');
   });
 
   it('describes visible states', () => {
-    expect(describeWitnessedAct('state:triggered', { state: 'drunk' })).toBe('was stumbling around drunk');
+    expect(describeWitnessedAct('state:triggered', { agentId: 2, state: 'drunk' }, nameOf)?.act)
+      .toBe('was stumbling around drunk');
+  });
+
+  it('attributes a state to its owner, not to the perpetrator the chain carried along', () => {
+    // X (1) insulted Y (2); Y's anger arrives as state:triggered with
+    // perpetratorId still X. The rage is Y's.
+    expect(describeWitnessedAct('state:triggered', { agentId: 2, state: 'angry', perpetratorId: 1, victimId: 2 }, nameOf))
+      .toEqual({ actorId: 2, otherId: null, act: 'flew into a rage' });
+  });
+
+  it('attributes a deed to the perpetrator when the parties are distinct', () => {
+    expect(describeWitnessedAct('economy:theft_caught', { agentId: 1, perpetratorId: 1, victimId: 2 }, nameOf))
+      .toEqual({ actorId: 1, otherId: 2, act: 'was caught stealing from Tom' });
   });
 
   it('returns null when nothing visible happened', () => {
-    expect(describeWitnessedAct('goal:completed', { goalType: 'befriend' })).toBeNull();
-    expect(describeWitnessedAct('state:triggered', { state: 'lonely' })).toBeNull();
-    expect(describeWitnessedAct('interaction:completed', { action: 'wave' })).toBeNull();
+    expect(describeWitnessedAct('goal:completed', { agentId: 1, goalType: 'befriend' }, nameOf)).toBeNull();
+    expect(describeWitnessedAct('state:triggered', { agentId: 1, state: 'lonely' }, nameOf)).toBeNull();
+    expect(describeWitnessedAct('interaction:completed', { agentId: 1, action: 'wave' }, nameOf)).toBeNull();
   });
 });
 

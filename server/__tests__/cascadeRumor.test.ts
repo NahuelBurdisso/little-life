@@ -106,13 +106,15 @@ describe('cascade rumor content', () => {
     expect(rumor.known_by).toEqual([jealous]);
   });
 
-  it('keeps the generic line when the event names nobody to talk about', () => {
+  it('starts no rumor when the jealousy names no rival', () => {
+    // Falling through to the generic branch used to make the jealous agent
+    // the subject of their own rumor.
     const loner = insertAgent('Rumor Loner', home);
 
     fireEffects('jealousy_gossip', loner, { perpetratorId: loner },
       { agentId: loner, state: 'jealous', cause: 'rival_romance' });
 
-    expect(rumorsAbout(loner).map((r) => r.content)).toEqual(['There are rumors going around about Rumor Loner']);
+    expect(rumorsAbout(loner)).toHaveLength(0);
   });
 
   it('announce_rumor_spread says what was done', () => {

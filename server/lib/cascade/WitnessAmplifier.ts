@@ -62,38 +62,76 @@ const STATE_PHRASES: Record<string, ActPhrase> = {
   grieving: () => 'broke down in grief',
 };
 
-const SOURCE_PHRASES: Record<string, (payload: any) => ActPhrase | null> = {
-  'economy:theft_caught': () => (v) => `was caught stealing${v ? ` from ${v}` : ''}`,
-  'economy:theft_success': () => () => 'was seen stealing',
-  'confrontation:occurred': () => (v) => (v ? `got into a heated confrontation with ${v}` : 'caused an ugly scene'),
-  'crime:arrested': () => () => 'was dragged off by the constable',
-  'economy:gambling': (p) => () => `was gambling at the tavern${p?.won === false ? ' and lost' : ''}`,
-  'economy:distress': () => () => 'looked desperate for money',
-  'jealousy:triggered': () => () => 'was seething with jealousy',
-  'state:triggered': (p) => STATE_PHRASES[String(p?.state)] ?? null,
-  'interaction:completed': (p) => {
-    const action = typeof p?.action === 'string' ? p.action : '';
-    return ACTION_PHRASES.find(([keyword]) => action.includes(keyword))?.[1] ?? null;
+/**
+ * Whose act an event describes. It is not always the perpetrator: cascade
+ * events carry the chain's perpetrator forward, so when X insults Y and Y's
+ * anger fires `anger_lash_out`, that `state:triggered` has agentId Y but
+ * perpetratorId X — and a rumor keyed on the perpetrator said "X flew into a
+ * rage". States and moods belong to `agentId`; deeds done to someone belong
+ * to the perpetrator.
+ */
+type Actor = 'agent' | 'perpetrator';
+
+const SOURCE_PHRASES: Record<string, { actor: Actor; phrase: (payload: any) => ActPhrase | null }> = {
+  'economy:theft_caught': { actor: 'perpetrator', phrase: () => (v) => `was caught stealing${v ? ` from ${v}` : ''}` },
+  'economy:theft_success': { actor: 'perpetrator', phrase: () => () => 'was seen stealing' },
+  'confrontation:occurred': {
+    actor: 'perpetrator',
+    phrase: () => (v) => (v ? `got into a heated confrontation with ${v}` : 'caused an ugly scene'),
+  },
+  'crime:arrested': { actor: 'perpetrator', phrase: () => () => 'was dragged off by the constable' },
+  'economy:gambling': {
+    actor: 'agent',
+    phrase: (p) => () => `was gambling at the tavern${p?.won === false ? ' and lost' : ''}`,
+  },
+  'economy:distress': { actor: 'agent', phrase: () => () => 'looked desperate for money' },
+  'jealousy:triggered': { actor: 'agent', phrase: () => () => 'was seething with jealousy' },
+  'state:triggered': { actor: 'agent', phrase: (p) => STATE_PHRASES[String(p?.state)] ?? null },
+  'interaction:completed': {
+    actor: 'perpetrator',
+    phrase: (p) => {
+      const action = typeof p?.action === 'string' ? p.action : '';
+      return ACTION_PHRASES.find(([keyword]) => action.includes(keyword))?.[1] ?? null;
+    },
   },
 };
 
+export interface WitnessedAct {
+  /** Who did it — the rumor's subject. */
+  actorId: number;
+  /** Who it was done to, when that is someone else. */
+  otherId: number | null;
+  /** Predicate for the actor: "got into a heated confrontation with Tom". */
+  act: string;
+}
+
 /**
- * Turn the event a witness just saw into a predicate for its perpetrator —
- * "got into a heated confrontation with Tom" — or null when nothing visible
- * happened (a goal completing, a conversation ending, a birthday).
+ * Turn the event a witness just saw into who did what — or null when nothing
+ * visible happened (a goal completing, a conversation ending, a birthday).
  *
  * The rumor used to carry only "witnessed by <name>", so the feed and the
  * gossip it seeded read "Rumor about Priya Sharma: witnessed by Ray Kowalski" —
  * a rumor with no content. With nothing describable, a rumor is better not
- * created at all than created empty.
+ * created at all than created empty. `nameOf` keeps this free of DB access.
  */
 export function describeWitnessedAct(
   source: string,
-  payload: unknown,
-  victimName?: string,
-): string | null {
-  const phrase = SOURCE_PHRASES[source]?.(payload);
-  return phrase ? phrase(victimName) : null;
+  payload: any,
+  nameOf: (agentId: number) => string,
+): WitnessedAct | null {
+  const describer = SOURCE_PHRASES[source];
+  const phrase = describer?.phrase(payload);
+  if (!describer || !phrase) return null;
+
+  const actorId = describer.actor === 'agent'
+    ? payload?.agentId
+    : payload?.perpetratorId ?? payload?.agentId;
+  if (typeof actorId !== 'number') return null;
+
+  // Only a deed has a second party; a mood belongs to its owner alone.
+  const victimId = describer.actor === 'perpetrator' ? payload?.victimId : undefined;
+  const otherId = typeof victimId === 'number' && victimId !== actorId ? victimId : null;
+  return { actorId, otherId, act: phrase(otherId != null ? nameOf(otherId) : undefined) };
 }
 
 export class WitnessAmplifier {
@@ -160,21 +198,18 @@ export class WitnessAmplifier {
           // Witness creates a rumor about what they saw — only when there is
           // something to say. `metadata.source`/`metadata.payload` are the
           // event that fired the rule, i.e. what actually happened in front of them.
-          if (perpetratorId == null) break;
-          const act = describeWitnessedAct(
-            String(metadata.source ?? ''),
-            metadata.payload,
-            victimId != null ? getAgentName(victimId) : undefined,
-          );
-          if (!act) break;
+          // The subject is whoever did what was seen, which is not always
+          // the chain's perpetrator (see SOURCE_PHRASES).
+          const seen = describeWitnessedAct(String(metadata.source ?? ''), metadata.payload, getAgentName);
+          if (!seen || seen.actorId === witnessId) break;
           createFact(
             'rumor',
-            perpetratorId,
-            victimId,
+            seen.actorId,
+            seen.otherId,
             2,
             [witnessId],
             'witness:fast_gossip',
-            { detail: act, witness: getAgentName(witnessId) },
+            { detail: seen.act, witness: getAgentName(witnessId) },
           );
           break;
         }
