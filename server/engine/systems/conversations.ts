@@ -645,10 +645,22 @@ export async function conversationsTick(): Promise<void> {
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
         queueTimeouts++;
         changed = true;
+        // A dropped entry is gone without a trace; for a player's nudge that
+        // used to mean a toast saying "on their way" and then silence. The
+        // player-outcome reporter (lib/playerOutcomes.ts) turns this into a feed
+        // line. 'duplicate' is not a drop from the player's point of view: the
+        // pair is already talking to each other.
+        if (peek === 'busy') {
+          simEvents.emit('conversation:queue_dropped', { entry, reason: 'busy' });
+          continue;
+        }
         if (peek !== 'ok') continue;
         // Liveness/proximity before claiming: a pair that walked apart (or died)
         // can't have the template chat, and must not claim agents on the way out.
-        if (!loadTemplatePair(entry.participants as number[])) continue;
+        if (!loadTemplatePair(entry.participants as number[])) {
+          simEvents.emit('conversation:queue_dropped', { entry, reason: 'apart' });
+          continue;
+        }
         claimParticipants(entry);
         timedOutQueue.push({ entry, world });
         templateTotal++;
@@ -1926,7 +1938,11 @@ async function processTimedOutEntry(
   const now = Date.now();
 
   const agentList = loadTemplatePair(entry.participants as number[]);
-  if (!agentList) return;
+  if (!agentList) {
+    // The pair drifted apart between the tick's check and this async run.
+    simEvents.emit('conversation:queue_dropped', { entry, reason: 'apart' });
+    return;
+  }
   const locationId = agentList[0].current_location!;
 
   // Get relationship for template conditions
@@ -2130,10 +2146,10 @@ async function processTimedOutEntry(
     max_turns: turns.length,
   };
 
-  db.insert(conversations)
+  const templateConversationId = db.insert(conversations)
     .values(conversationDoc)
     .returning({ id: conversations.id })
-    .get();
+    .get().id;
 
   // Lighter relationship event for template conversations.
   // Personalities follow orderedA/orderedB, not agentList order — the engine keys its
@@ -2195,6 +2211,11 @@ async function processTimedOutEntry(
 
     simEvents.emit('conversation:ended', {
       agentId: agent.id,
+      // Lets once-per-conversation listeners dedupe the two emits (the player-
+      // outcome reporter reports a nudge that fell back to a template chat). The
+      // memory observer's LLM summary also keys on it, but a template exchange
+      // is under its minimum line count, so it still gets the template memory.
+      conversationId: templateConversationId,
       perpetratorId: otherAgent.id,
       otherName: otherAgent.name,
       summary: conversationDoc.topic ?? '',

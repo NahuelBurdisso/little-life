@@ -510,6 +510,20 @@ export function tick(
       .where(eq(relationshipEvents.id, event.id))
       .run();
 
+    // Per event, after it is applied and any status change is logged: the one
+    // moment the before/after status of a pair is known. The player-outcome
+    // reporter (lib/playerOutcomes.ts) waits on this to say "now rivals" — a
+    // conversation's events are written unprocessed and only land here on the
+    // next relationships phase, so at `conversation:ended` the status is still
+    // the old one.
+    simEvents.emit('relationship:event_applied', {
+      eventId: event.id,
+      agentA: a,
+      agentB: b,
+      oldStatus,
+      newStatus,
+    });
+
     dirty = true;
   }
 
