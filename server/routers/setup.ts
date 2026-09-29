@@ -28,6 +28,7 @@ import {
   goals,
   aspirations,
   interactionCooldowns,
+  gazetteIssues,
 } from '../db/schema';
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
@@ -217,6 +218,7 @@ const PlacementRelationshipSchema = RelationshipConfigSchema.pick({
 // ─── Table reset order (reverse-dependency) ───────────────────────────────────
 
 const ALL_TABLES = [
+  gazetteIssues,
   interactionCooldowns,
   interactionParticipants,
   interactions,

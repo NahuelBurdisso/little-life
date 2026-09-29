@@ -616,3 +616,26 @@ export const interactionCooldowns = sqliteTable(
     uniqueIndex('idx_cooldown_pk').on(table.agent_a, table.agent_b, table.type),
   ]
 );
+
+// ─── 24. gazetteIssues ────────────────────────────────────────────────────────
+// The Town Crier, one LLM-written edition per game day (server/lib/gazette.ts).
+// Created at runtime by CREATE TABLE IF NOT EXISTS in server/db/index.ts.
+
+export interface GazetteArticle {
+  headline: string;
+  body: string;
+}
+
+export const gazetteIssues = sqliteTable('gazette_issues', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** Game day the edition reports on. */
+  day: integer('day').notNull(),
+  season: text('season').notNull(),
+  headline: text('headline').notNull(),
+  articles: text('articles', { mode: 'json' }).notNull().$type<GazetteArticle[]>(),
+  gossip: text('gossip'),
+  /** totalTicks when it was written: the next edition covers activity after this. */
+  covers_to_tick: integer('covers_to_tick').notNull(),
+  /** Real ms. */
+  created_at: integer('created_at').notNull(),
+});

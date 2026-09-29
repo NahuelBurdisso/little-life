@@ -73,6 +73,19 @@ function migrateSchema() {
     }
   };
 
+  // The Town Crier (server/lib/gazette.ts). A whole table, not a column: the
+  // migration chain is stale, so new tables are created here too.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS gazette_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day INTEGER NOT NULL,
+    season TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    articles TEXT NOT NULL,
+    gossip TEXT,
+    covers_to_tick INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+
   // Goals table extensions
   addColumnIfMissing('goals', 'description', 'TEXT');
   addColumnIfMissing('goals', 'strategy', 'TEXT');

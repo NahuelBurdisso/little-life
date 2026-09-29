@@ -229,6 +229,9 @@ export const CONFIG = {
     // Off under vitest: the observer runs inside engine tests, which must not
     // reach a real model.
     CONVERSATION_SUMMARIES: !process.env.VITEST && process.env.LLM_CONVERSATION_SUMMARIES !== '0',
+    // One LLM-written town paper per game day (server/lib/gazette.ts). Off
+    // under vitest for the same reason; LLM_GAZETTE=0 disables it.
+    GAZETTE: !process.env.VITEST && process.env.LLM_GAZETTE !== '0',
   },
 
   // Decision Engine

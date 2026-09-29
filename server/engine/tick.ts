@@ -19,6 +19,7 @@ import { CONFIG } from '../lib/constants';
 import { crossedBoundary, gameMinutes, hourChanged } from '../lib/gameClock';
 import { cacheAllAgentStates, clearAgentStatesCache, invalidateAgentStatesCache } from '../lib/states';
 import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator } from '../lib/memory/instance';
+import { writeIssue } from '../lib/gazette';
 import { perceptionSystem } from '../lib/perception/instance';
 import { refreshAllReputations } from '../lib/reputationEngine';
 import { processAllMoodMomentum } from '../lib/moodMomentum';
@@ -350,6 +351,8 @@ export async function gameTick(): Promise<void> {
         void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
       }
     });
+    // The Town Crier: yesterday's edition (async LLM call, low priority).
+    if (CONFIG.AI.GAZETTE) runGuarded('gazette', () => { void writeIssue(); });
     // Refresh community reputation scores from accumulated facts
     runGuarded('reputation', () => refreshAllReputations());
     // Process mood momentum: yesterday's mood affects today's emotional baseline

@@ -19,6 +19,7 @@ import {
   shared_knowledge,
   agentStates,
   aspirations,
+  gazetteIssues,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
@@ -36,6 +37,7 @@ import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 
 const ALL_TABLES = [
+  gazetteIssues,
   activityLog,
   templateUsage,
   templates,

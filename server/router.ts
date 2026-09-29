@@ -11,6 +11,7 @@ import { nudgeRouter } from './routers/nudge';
 import { knowledgeRouter } from './routers/knowledge';
 import { setupRouter } from './routers/setup';
 import { autoplayRouter } from './routers/autoplay';
+import { gazetteRouter } from './routers/gazette';
 
 export const appRouter = router({
   world: worldRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   knowledge: knowledgeRouter,
   setup: setupRouter,
   autoplay: autoplayRouter,
+  gazette: gazetteRouter,
 });
 
 export type AppRouter = typeof appRouter;
