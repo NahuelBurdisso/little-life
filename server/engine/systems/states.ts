@@ -1,4 +1,4 @@
-import { db } from '../../db';
+import { db, getTableWriteVersion } from '../../db';
 import {
   agents,
   agentStates,
@@ -36,6 +36,7 @@ import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
 import { foodCount } from '../../lib/economyEngine';
 import { itemPhrase } from '../../data/economyData';
+import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import {
   asRecord,
@@ -58,6 +59,7 @@ interface CascadeEntry {
 }
 
 type AgentRow = typeof agents.$inferSelect;
+type NeedsRow = typeof needsTable.$inferSelect;
 
 /**
  * Reads the states phase used to repeat per agent (and per step), answered from
@@ -67,6 +69,12 @@ type AgentRow = typeof agents.$inferSelect;
 interface StatesTickContext {
   /** agent_states rows; re-read only after a write (AgentStateRowsSnapshot). */
   states: AgentStateRowsSnapshot;
+  /**
+   * The agent's needs row, from a snapshot re-read only after a write to
+   * `needs`. Read per agent twice a tick (conditional exits, death check); the
+   * snapshot still sees a mood a cascade rule or a side effect just changed.
+   */
+  needsOf(agentId: number): NeedsRow | undefined;
   /**
    * economy.job per agent. No tick code changes a job (the setup wizard and
    * nudges create economy rows; nothing updates `job`), so one read serves the
@@ -81,8 +89,15 @@ interface StatesTickContext {
 function createStatesTickContext(): StatesTickContext {
   let jobs: Map<number, string> | null = null;
   let locationTypes: Map<number, string> | null = null;
+  // idx_needs_agent_id is UNIQUE: one row per agent, so `[0]` is the `.get()`.
+  const needs = new RowsByAgentSnapshot<NeedsRow>(
+    () => getTableWriteVersion('needs'),
+    () => db.select().from(needsTable).all(),
+    (row) => row.agent_id,
+  );
   return {
     states: new AgentStateRowsSnapshot(),
+    needsOf: (agentId) => needs.forAgent(agentId)[0],
     jobOf(agentId) {
       jobs ??= new Map(
         db.select({ agent_id: economyTable.agent_id, job: economyTable.job }).from(economyTable).all()
@@ -100,6 +115,14 @@ function createStatesTickContext(): StatesTickContext {
 }
 
 const isHealerJob = (job: string | undefined) => job === 'doctor' || job === 'medical_assistant';
+
+/** The columns the romance checks read from a relationship row. */
+const PAIR_ROMANCE = {
+  agent_a: relationships.agent_a,
+  agent_b: relationships.agent_b,
+  romance_ab: relationships.romance_ab,
+  romance_ba: relationships.romance_ba,
+};
 
 // ─── Module-level state ───────────────────────────────────────────────────────
 
@@ -233,11 +256,7 @@ export function statesTick() {
     expireTimedStates(agent, ctx.states.forAgent(agent.id), nowMinutes, pendingCascades);
 
     // 1b. Check conditional exits (stressed, lonely, depressed, infatuated)
-    const agentNeeds = db
-      .select()
-      .from(needsTable)
-      .where(eq(needsTable.agent_id, agent.id))
-      .get();
+    const agentNeeds = ctx.needsOf(agent.id);
     checkConditionalExits(ctx.states.forAgent(agent.id), agentNeeds, agent, nowMinutes, world.tick_speed);
 
     // 1c. Evaluate triggers for new states
@@ -372,9 +391,9 @@ function runDeathChecks(
   // Agents who died this tick, so the same agent is never processed twice.
   const diedThisTick = new Set<number>();
   for (const agent of allAgents) {
-    // Needs stay a per-agent read: a death (processAgentDeath) fires listeners
-    // that can touch the survivors' needs, and this loop must see that.
-    const agentNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
+    // Through the snapshot, which re-reads after any needs write: a death
+    // (processAgentDeath) fires listeners that can touch the survivors' needs.
+    const agentNeeds = ctx.needsOf(agent.id);
     if (!agentNeeds) continue;
 
     const states = ctx.states.forAgent(agent.id);
@@ -634,8 +653,16 @@ function evaluateTriggers(
     // wall clock at the current speed. A fixed ms window covered four times the
     // game time at 4x.
     const sinceWindow = Date.now() - gameMinutesToMs(60, tickSpeed);
+    // Projected (here and in the checks below): these run per agent per tick,
+    // and `select()` mapped every column of every row — descriptions, tags,
+    // whole conversation transcripts — to read two or three of them.
     const recentRomanceDrops = db
-      .select()
+      .select({
+        agent_a: relationshipEvents.agent_a,
+        agent_b: relationshipEvents.agent_b,
+        romance_delta_ab: relationshipEvents.romance_delta_ab,
+        romance_delta_ba: relationshipEvents.romance_delta_ba,
+      })
       .from(relationshipEvents)
       .where(
         and(
@@ -689,7 +716,7 @@ function evaluateTriggers(
     // game time at 4x.
     const sinceWindow = Date.now() - gameMinutesToMs(60, tickSpeed);
     const badConvos = db
-      .select()
+      .select({ participants: conversations.participants, sentiment: conversations.sentiment })
       .from(conversations)
       .where(
         and(
@@ -777,7 +804,7 @@ function evaluateTriggers(
     // game time at 4x.
     const sinceWindow = Date.now() - gameMinutesToMs(90, tickSpeed);
     const positiveConvoRows = db
-      .select()
+      .select({ participants: conversations.participants })
       .from(conversations)
       .where(
         and(
@@ -820,7 +847,7 @@ function evaluateTriggers(
     for (const removedId of removedAgentIds) {
       // Check if they had a close friendship
       const rel = db
-        .select()
+        .select({ agent_a: relationships.agent_a, friendship_ab: relationships.friendship_ab, friendship_ba: relationships.friendship_ba })
         .from(relationships)
         .where(
           or(
@@ -866,7 +893,7 @@ function evaluateTriggers(
   // ── Infatuated ────────────────────────────────────────────────────────────
   if (!activeTypes.has('infatuated') && personality.sensuality > 40) {
     const rels = db
-      .select()
+      .select(PAIR_ROMANCE)
       .from(relationships)
       .where(or(eq(relationships.agent_a, agent.id), eq(relationships.agent_b, agent.id)))
       .all();
@@ -900,7 +927,7 @@ function evaluateTriggers(
 
         // Check for affair: does the target have romance > 40 with any third agent?
         const targetRomanceRels = db
-          .select()
+          .select(PAIR_ROMANCE)
           .from(relationships)
           .where(or(eq(relationships.agent_a, targetId), eq(relationships.agent_b, targetId)))
           .all();
@@ -934,7 +961,7 @@ function evaluateTriggers(
     const infatuatedState = ctx.states.find(agent.id, 'infatuated');
     if (infatuatedState?.target_agent_id) {
       const loveInterestId = infatuatedState.target_agent_id;
-      const loveInterestRels = db.select().from(relationships)
+      const loveInterestRels = db.select(PAIR_ROMANCE).from(relationships)
         .where(or(eq(relationships.agent_a, loveInterestId), eq(relationships.agent_b, loveInterestId))).all();
       for (const rel of loveInterestRels) {
         const isA = rel.agent_a === loveInterestId;
@@ -978,7 +1005,7 @@ function evaluateTriggers(
         // (one real second per game minute); kept, only made speed-independent.
         const sinceWindow = Date.now() - gameMinutesToMs(3600, tickSpeed);
         const positiveConvoRows = db
-          .select()
+          .select({ participants: conversations.participants })
           .from(conversations)
           .where(
             and(
@@ -1759,7 +1786,7 @@ function processStateEffects(
 
         // Find if target is in a conversation with a high-sensuality agent
         const targetConvo = db
-          .select()
+          .select({ participants: conversations.participants })
           .from(conversations)
           .where(eq(conversations.status, 'active'))
           .all()

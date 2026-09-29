@@ -1,7 +1,8 @@
 import { PersonalityProfile } from './personality';
-import { db, getAgentStatesRowVersion, getAgentStatesWriteVersion, verifyAgentStatesWriteHook } from '../db';
+import { db, getAgentStatesRowVersion, getAgentStatesWriteVersion, verifyWriteHooks } from '../db';
 import { agentStates, agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { RowsByAgentSnapshot } from './rowsByAgentSnapshot';
 
 // CLOCK: `agentStates.started_at` and every `duration` are GAME MINUTES
 // (`gameMinutes(world.time)`, or `gameMinutesNow()` in lib/worldClock.ts for
@@ -178,7 +179,7 @@ let agentStatesCacheVersion = -1;
  * `rebuildAgentStatesCache()` and skip that check.
  */
 export function cacheAllAgentStates(): void {
-  verifyAgentStatesWriteHook();
+  verifyWriteHooks();
   rebuildAgentStatesCache();
 }
 
@@ -219,11 +220,10 @@ export function invalidateAgentStatesCache(): void {
 
 export type AgentStateRow = typeof agentStates.$inferSelect;
 
-const NO_STATE_ROWS: readonly AgentStateRow[] = Object.freeze([]);
-
 /**
  * Every agent_states row, grouped by agent, re-read in ONE query only when the
- * table has been written since the last read (`getAgentStatesRowVersion`).
+ * table has been written since the last read (`getAgentStatesRowVersion`; see
+ * RowsByAgentSnapshot for the mechanism and its rules).
  *
  * The states phase used to re-select an agent's rows after each step that might
  * have changed them — expiry, conditional exits, triggers, effective personality,
@@ -245,45 +245,20 @@ const NO_STATE_ROWS: readonly AgentStateRow[] = Object.freeze([]);
  * transaction. The returned rows and arrays are shared — read them, never
  * mutate them (every caller builds a new metadata object before writing).
  */
-export class AgentStateRowsSnapshot {
-  private version = -1;
-  private byAgent = new Map<number, AgentStateRow[]>();
-  private rows: AgentStateRow[] = [];
-
-  /** Rows of one agent, oldest first. */
-  forAgent(agentId: number): readonly AgentStateRow[] {
-    this.refresh();
-    return this.byAgent.get(agentId) ?? NO_STATE_ROWS;
+export class AgentStateRowsSnapshot extends RowsByAgentSnapshot<AgentStateRow> {
+  constructor() {
+    super(
+      getAgentStatesRowVersion,
+      // `id` is the rowid alias, so the ORDER BY costs nothing on a table scan
+      // and pins the order the per-agent index walk used to give.
+      () => db.select().from(agentStates).orderBy(agentStates.id).all(),
+      (row) => row.agent_id,
+    );
   }
 
   /** The agent's oldest row of `type`, if any. */
   find(agentId: number, type: string): AgentStateRow | undefined {
     return this.forAgent(agentId).find((s) => s.type === type);
-  }
-
-  /** Every row of every agent, in rowid order. */
-  all(): readonly AgentStateRow[] {
-    this.refresh();
-    return this.rows;
-  }
-
-  private refresh(): void {
-    const version = getAgentStatesRowVersion();
-    if (version === this.version) return;
-    // Version first (see rebuildAgentStatesCache): a write landing between the
-    // two would then force another read instead of being absorbed.
-    this.version = version;
-    // `id` is the rowid alias, so the ORDER BY costs nothing on a table scan and
-    // pins the order the per-agent index walk used to give.
-    this.rows = db.select().from(agentStates).orderBy(agentStates.id).all();
-    // A fresh map every time: a caller still iterating an array from the last
-    // read (1a deletes rows while looping over them) keeps a stable list.
-    this.byAgent = new Map();
-    for (const row of this.rows) {
-      const list = this.byAgent.get(row.agent_id);
-      if (list) list.push(row);
-      else this.byAgent.set(row.agent_id, [row]);
-    }
   }
 }
 
