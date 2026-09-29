@@ -28,7 +28,7 @@ function makeRule(overrides: Partial<RippleRule> = {}): RippleRule {
     source: 'test:event',
     target: 'self',
     probability: 0.5,
-    cooldownTicks: 100,
+    cooldownMinutes: 100,
     effects: {},
     ...overrides,
   };
@@ -94,10 +94,10 @@ describe('RippleEngine', () => {
 
   describe('cooldown enforcement', () => {
     it('blocks rule for same agent within cooldown period', () => {
-      // Record cooldown: lastFired=50, cooldownTicks=100
+      // Record cooldown: lastFired=50, cooldownMinutes=100
       engine.recordCooldown('cooldown_rule', 1, 50, 100);
 
-      // currentTick = 100, lastFired = 50, cooldown = 100 → 100 - 50 = 50 < 100 → still on cooldown
+      // now = 100, lastFired = 50, cooldown = 100 → 100 - 50 = 50 < 100 → still on cooldown
       expect(engine.isOnCooldown('cooldown_rule', 1, 100)).toBe(true);
     });
 

@@ -11,6 +11,7 @@ import { RelationshipList } from "./RelationshipList";
 import { PlanTimeline } from "./PlanTimeline";
 import { ThoughtsTab } from "./ThoughtsTab";
 import type { PersonalityProfile } from "../../../server/lib/personality";
+import { gameMinutes } from "../../../server/lib/gameClock";
 
 type TabId = "profile" | "social" | "mind" | "thoughts";
 
@@ -133,6 +134,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
   const worldTick = world?.time?.totalTicks ?? 0;
   const tickSpeed = world?.tick_speed ?? 1;
   const isPaused = world?.is_paused ?? false;
+  const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
 
   const agentNameMap = new Map(allAgents.map((a: any) => [String(a.id), a.name]));
   const activeConvo = activeConversations.find((c: any) =>
@@ -361,6 +363,7 @@ export function AgentPanel({ agentId, onClose }: AgentPanelProps) {
             worldTick={worldTick}
             tickSpeed={tickSpeed}
             isPaused={isPaused}
+            nowMinutes={nowMinutes}
           />
         )}
       </div>

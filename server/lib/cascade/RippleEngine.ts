@@ -9,7 +9,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { createFact, getAgentName, jealousRumorContext, type FactContext } from '../gossip';
 import { describeWitnessedAct } from './WitnessAmplifier';
 import { logActivity } from '../activityLogger';
-import { stateClockNow } from '../states';
+import { gameMinutesNow } from '../worldClock';
 import crypto from 'crypto';
 
 interface QueueItem {
@@ -35,7 +35,9 @@ function otherParty(metadata: CascadeMetadata, agentId: number): number | undefi
 
 export class RippleEngine {
   private rules: RippleRule[];
-  private cooldowns: Map<string, Map<number, { tick: number; cooldownTicks: number }>>; // ruleId → agentId → {lastFiredTick, cooldown}
+  // ruleId → agentId → {game minute last fired, cooldown}. CLOCK: GAME MINUTES —
+  // they were ticks, so at 4x an 8-hour rule cooldown lasted 32.
+  private cooldowns: Map<string, Map<number, { at: number; cooldownMinutes: number }>>;
   private tickEventCount: number;
   private eventQueue: Array<QueueItem>;
   private dryRun: boolean;
@@ -85,21 +87,21 @@ export class RippleEngine {
 
   // ─── Cooldowns ───────────────────────────────────────────────────────────────
 
-  isOnCooldown(ruleId: string, agentId: number, currentTick: number): boolean {
+  isOnCooldown(ruleId: string, agentId: number, nowMinutes: number): boolean {
     const ruleMap = this.cooldowns.get(ruleId);
     if (!ruleMap) return false;
     const entry = ruleMap.get(agentId);
     if (entry === undefined) return false;
-    return (currentTick - entry.tick) < entry.cooldownTicks;
+    return (nowMinutes - entry.at) < entry.cooldownMinutes;
   }
 
-  recordCooldown(ruleId: string, agentId: number, tick: number, cooldownTicks?: number): void {
+  recordCooldown(ruleId: string, agentId: number, nowMinutes: number, cooldownMinutes?: number): void {
     if (!this.cooldowns.has(ruleId)) {
       this.cooldowns.set(ruleId, new Map());
     }
     const effectiveCooldown =
-      cooldownTicks ?? this.rules.find(r => r.id === ruleId)?.cooldownTicks ?? 0;
-    this.cooldowns.get(ruleId)!.set(agentId, { tick, cooldownTicks: effectiveCooldown });
+      cooldownMinutes ?? this.rules.find(r => r.id === ruleId)?.cooldownMinutes ?? 0;
+    this.cooldowns.get(ruleId)!.set(agentId, { at: nowMinutes, cooldownMinutes: effectiveCooldown });
   }
 
   /**
@@ -323,7 +325,7 @@ export class RippleEngine {
   // ─── Main event handler ────────────────────────────────────────────────────────
 
   private handleEvent(source: string, payload: any): void {
-    const currentTick = this.getCurrentTick();
+    const nowMinutes = gameMinutesNow();
 
     // Find all rules matching this source
     for (const rule of this.rules) {
@@ -343,7 +345,7 @@ export class RippleEngine {
       if (agentId == null) continue;
 
       // Check cooldown
-      if (this.isOnCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), currentTick)) continue;
+      if (this.isOnCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), nowMinutes)) continue;
 
       // Generate chain metadata
       const chainId = payload?._cascade?.chainId ?? crypto.randomBytes(6).toString('hex');
@@ -424,7 +426,7 @@ export class RippleEngine {
     if (this.isTickCapReached() && !this.isExemptFromCap(depth)) return;
 
     const agentId: number = payload._resolvedAgentId;
-    const currentTick = this.getCurrentTick();
+    const nowMinutes = gameMinutesNow();
 
     // Get personality for probability calculation
     const personality = this.getAgentPersonality(agentId);
@@ -441,7 +443,7 @@ export class RippleEngine {
     if (Math.random() >= prob) return;
 
     // Record cooldown
-    this.recordCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), currentTick);
+    this.recordCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), nowMinutes);
 
     // Increment tick counter
     this.incrementTickCounter(depth);
@@ -702,8 +704,8 @@ export class RippleEngine {
           agent_id: agentId,
           type: fx.createState,
           severity: 0.5,
-          // State clock is game minutes; `currentTick` here is the cascade's tick.
-          started_at: stateClockNow(),
+          // Agent states run on game minutes (lib/states.ts).
+          started_at: gameMinutesNow(),
           duration: 120,
           target_agent_id: aboutId,
           source: `cascade:${rule.id}`,
@@ -929,7 +931,7 @@ export class RippleEngine {
         priority: 0.6,
         progress: 0,
         status: 'active',
-        created_at: currentTick,
+        created_at: gameMinutesNow(), // goals run on game minutes (systems/goals.ts)
       }).run();
 
       simEvents.emit('goal:created', {

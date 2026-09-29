@@ -321,7 +321,7 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
 
   // This runs from a simEvents handler, so no tick is threaded in; read it.
   const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  // State clock: GAME MINUTES (see stateClockNow in lib/states.ts).
+  // State clock: GAME MINUTES (see lib/worldClock.ts).
   const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
 
   // Find agents at same location with romance toward the giver

@@ -30,7 +30,8 @@ export interface RippleRule {
     needBelow?: { need: string; value: number };
     moneyBelow?: number;
   };
-  cooldownTicks: number;
+  /** Game minutes before the rule can fire again for the same agent. */
+  cooldownMinutes: number;
   effects: RippleEffects;
 }
 

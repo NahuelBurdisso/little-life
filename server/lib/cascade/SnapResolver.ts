@@ -13,7 +13,7 @@ import { agents, needs, agentStates, locations } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { simEvents } from '../simEvents';
 import { logActivity } from '../activityLogger';
-import { stateClockNow } from '../states';
+import { gameMinutesNow } from '../worldClock';
 
 export interface SnapPromptContext {
   agentName: string;
@@ -147,7 +147,7 @@ export class SnapResolver {
           // State clock is game minutes, not the cascade's tick.
           db.insert(agentStates).values({
             agent_id: agentId, type: 'angry', severity: 0.7,
-            started_at: stateClockNow(), duration: 240, source: 'snap:plot', metadata: {},
+            started_at: gameMinutesNow(), duration: 240, source: 'snap:plot', metadata: {},
           }).run();
         }
         logActivity({ type: 'drama', initiator: agentId,

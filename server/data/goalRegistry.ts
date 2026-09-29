@@ -29,7 +29,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     abandonment: [
       { condition: 'state_expired:angry', chance: 0.5 },
       { condition: 'relationship.friendship > 20', auto: true },
-      { condition: 'ticks_elapsed > 4320', chance: 0.3 },
+      { condition: 'minutes_elapsed > 4320', chance: 0.3 },
     ],
     priority_formula:
       'base(0.6) + severity(0.2) + personality.aggression(0.1) + personality.morality(-0.1)',
@@ -50,7 +50,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     abandonment: [
       { condition: 'state_expired:infatuated', chance: 0.4 },
       { condition: 'relationship.romance < 0', auto: true },
-      { condition: 'ticks_elapsed > 7200', chance: 0.2 },
+      { condition: 'minutes_elapsed > 7200', chance: 0.2 },
     ],
     priority_formula:
       'base(0.5) + personality.sensuality(0.15) + personality.impulsiveness(0.1)',
@@ -70,7 +70,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     completion_at: 1.0,
     abandonment: [
       { condition: 'economy.money > 30', auto: true },
-      { condition: 'ticks_elapsed > 2880', chance: 0.4 },
+      { condition: 'minutes_elapsed > 2880', chance: 0.4 },
     ],
     priority_formula: 'base(0.4) + need_desperation(0.3) + personality.morality(-0.15)',
     requiredZone: { shop: ['storage'] },
@@ -89,7 +89,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     completion_at: 1.0,
     abandonment: [
       { condition: 'target_recovered', auto: true },
-      { condition: 'ticks_elapsed > 4320', chance: 0.3 },
+      { condition: 'minutes_elapsed > 4320', chance: 0.3 },
     ],
     priority_formula: 'base(0.5) + personality.warmth(0.15) + personality.loyalty(0.1)',
   },
@@ -106,7 +106,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     completion_at: 1.0,
     abandonment: [
       { condition: 'fact_confirmed', auto: true },
-      { condition: 'ticks_elapsed > 2880', chance: 0.5 },
+      { condition: 'minutes_elapsed > 2880', chance: 0.5 },
     ],
     priority_formula: 'base(0.4) + personality.curiosity(0.2)',
   },
@@ -125,7 +125,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     completion_at: 1.0,
     abandonment: [
       { condition: 'relationship.friendship > 0', auto: true },
-      { condition: 'ticks_elapsed > 5760', chance: 0.3 },
+      { condition: 'minutes_elapsed > 5760', chance: 0.3 },
     ],
     priority_formula:
       'base(0.5) + personality.aggression(0.1) + personality.morality(-0.15)',
@@ -139,7 +139,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     strategy: 'none',
     progress_events: [{ condition: 'economy.money > 0', progress: 1.0 }],
     completion_at: 1.0,
-    abandonment: [{ condition: 'ticks_elapsed > 14400', chance: 0.2 }],
+    abandonment: [{ condition: 'minutes_elapsed > 14400', chance: 0.2 }],
     priority_formula: 'base(0.7) + debt_severity(0.2)',
   },
 
@@ -169,7 +169,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     abandonment: [
       { condition: 'relationship.friendship > 50', auto: true, becomes: 'completed' },
       { condition: 'relationship.friendship < -20', auto: true, becomes: 'failed' },
-      { condition: 'ticks_elapsed > 7200', chance: 0.3 },
+      { condition: 'minutes_elapsed > 7200', chance: 0.3 },
     ],
     priority_formula:
       'base(0.3) + personality.warmth(0.1) + personality.loyalty(0.1)',
@@ -184,7 +184,7 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
     completion_at: 1.0,
     abandonment: [
       { condition: 'state_expired:grieving', on_target: true, auto: true },
-      { condition: 'ticks_elapsed > 2880', chance: 0.3 },
+      { condition: 'minutes_elapsed > 2880', chance: 0.3 },
     ],
     priority_formula:
       'base(0.5) + personality.warmth(0.2) + relationship.friendship(0.1)',

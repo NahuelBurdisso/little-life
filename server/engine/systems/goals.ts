@@ -18,30 +18,36 @@ import type { GoalTriggerDef } from '../../lib/interactionConstants';
 import { simEvents } from '../../lib/simEvents';
 import { goalReviewer, pivotEvaluator } from '../../lib/goals/instance';
 import { compareOp, getRelationship, getRelField } from '../../lib/goals/relationshipConditions';
+import { gameMinutes } from '../../lib/gameClock';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getCurrentTick(): number {
-  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  return (world?.time as any)?.totalTicks ?? 0;
-}
-
-const TICKS_PER_DAY = 1440;
+// CLOCK: the goal system runs on GAME MINUTES — `goals.created_at` /
+// `completed_at`, `aspirations.adopted_at` / `shifted_at`, the trigger cooldown,
+// the registry's `minutes_elapsed` rules and the pivot/stale thresholds. They were
+// ticks, so at 4x every "12 hours" or "3 days" in here took four times as long.
+const MINUTES_PER_DAY = 1440;
 
 /**
  * Roll an abandonment rule's `chance`, which the registry authors as a
  * probability *per game day* — it sits next to thresholds written in whole days
- * (`ticks_elapsed > 4320`), and rules meant to fire immediately use `auto: true`
+ * (`minutes_elapsed > 4320`), and rules meant to fire immediately use `auto: true`
  * instead.
  *
  * Abandonment is re-evaluated on every tick, so rolling `chance` straight turned
  * "30% chance" into a near-certainty: 1 - 0.7^1440. Convert to the equivalent
- * per-tick hazard rate so a day's worth of ticks compounds back to `chance`.
+ * per-tick hazard rate so a game day's worth of ticks compounds back to
+ * `chance`. A tick covers `tickSpeed` game minutes, so a day is 1440 / tickSpeed
+ * ticks, not 1440 — at 4x the old rate compounded to a quarter of the chance.
  */
-function rollDailyChance(chance: number): boolean {
-  if (chance >= 1) return true;
-  if (chance <= 0) return false;
-  return Math.random() < 1 - Math.pow(1 - chance, 1 / TICKS_PER_DAY);
+export function dailyChancePerTick(chance: number, tickSpeed: number): number {
+  if (chance >= 1) return 1;
+  if (chance <= 0) return 0;
+  return 1 - Math.pow(1 - chance, tickSpeed / MINUTES_PER_DAY);
+}
+
+function rollDailyChance(chance: number, tickSpeed: number): boolean {
+  return Math.random() < dailyChancePerTick(chance, tickSpeed);
 }
 
 function checkPersonalityGate(personality: any, gate: Record<string, string>): boolean {
@@ -139,7 +145,7 @@ function checkTriggerCondition(
 
 function evaluateTriggers(
   agent: any,
-  currentTick: number,
+  nowMinutes: number,
   cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
   cachedRelationships: (typeof relationships.$inferSelect)[],
 ): void {
@@ -151,18 +157,18 @@ function evaluateTriggers(
   // Also load recently abandoned/completed goals to prevent create→abandon spam.
   // Without this, a persistent trigger (e.g., infatuated state) creates a goal every tick
   // that gets immediately abandoned, flooding the activity log.
-  const COOLDOWN_TICKS = 720; // ~12 game hours — prevents goal→abandon spam for persistent triggers
+  const COOLDOWN_MINUTES = 720; // 12 game hours — prevents goal→abandon spam for persistent triggers
   const recentGoals = db.select().from(goals)
     .where(eq(goals.agent_id, agent.id))
     .all()
-    .filter(g => g.status !== 'active' && (currentTick - g.created_at) < COOLDOWN_TICKS);
+    .filter(g => g.status !== 'active' && (nowMinutes - g.created_at) < COOLDOWN_MINUTES);
 
   for (const trigger of GOAL_TRIGGER_REGISTRY) {
     if (activeGoals.length >= MAX_GOALS_PER_AGENT) break;
 
     if (trigger.personality_gate && !checkPersonalityGate(personality, trigger.personality_gate)) continue;
 
-    const targetId = checkTriggerCondition(trigger, agent, currentTick, cachedKnowledge, cachedRelationships);
+    const targetId = checkTriggerCondition(trigger, agent, nowMinutes, cachedKnowledge, cachedRelationships);
     if (targetId === false) continue;
 
     // Don't duplicate: skip if agent already has this goal type targeting the same agent
@@ -183,7 +189,7 @@ function evaluateTriggers(
       priority: trigger.priority_base,
       progress: 0,
       status: 'active',
-      created_at: currentTick,
+      created_at: nowMinutes,
     }).run();
 
     activeGoals.push({ type: trigger.generates, target_id: targetId } as any);
@@ -206,8 +212,9 @@ function evaluateTriggers(
 function evaluateAbandonment(
   agent: any,
   goal: any,
-  currentTick: number,
+  nowMinutes: number,
   allAgentStates: (typeof agentStates.$inferSelect)[],
+  tickSpeed: number,
 ): void {
   const def = GOAL_REGISTRY[goal.type];
   if (!def) return;
@@ -221,7 +228,7 @@ function evaluateAbandonment(
         s => s.agent_id === agent.id && s.type === stateType,
       );
       if (hasState.length === 0) {
-        shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance));
+        shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance, tickSpeed));
       }
     } else if (rule.condition.startsWith('relationship.')) {
       if (goal.target_id) {
@@ -234,14 +241,14 @@ function evaluateAbandonment(
           const isA = rel.agent_a === agent.id;
           const actual = getRelField(rel, field, isA);
           if (compareOp(actual, op, value)) {
-            shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance));
+            shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance, tickSpeed));
           }
         }
       }
-    } else if (rule.condition.startsWith('ticks_elapsed')) {
-      const maxTicks = parseInt(rule.condition.split('> ')[1]);
-      if (currentTick - goal.created_at > maxTicks) {
-        shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance));
+    } else if (rule.condition.startsWith('minutes_elapsed')) {
+      const maxMinutes = parseInt(rule.condition.split('> ')[1]);
+      if (nowMinutes - goal.created_at > maxMinutes) {
+        shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance, tickSpeed));
       }
     } else if (rule.condition.startsWith('economy.')) {
       const econ = db.select().from(economy).where(eq(economy.agent_id, agent.id)).get();
@@ -272,7 +279,7 @@ function evaluateAbandonment(
     if (shouldAbandon) {
       const newStatus = rule.becomes ?? 'abandoned';
       db.update(goals)
-        .set({ status: newStatus, completed_at: currentTick })
+        .set({ status: newStatus, completed_at: nowMinutes })
         .where(eq(goals.id, goal.id))
         .run();
       goal.status = newStatus;
@@ -311,7 +318,7 @@ export function goalEventCast(goal: { target_id: number | null }): { victimId?: 
 
 // ─── evaluatePassiveProgress ──────────────────────────────────────────────────
 
-function evaluatePassiveProgress(agent: any, goal: any, currentTick: number): void {
+function evaluatePassiveProgress(agent: any, goal: any, nowMinutes: number): void {
   const def = GOAL_REGISTRY[goal.type];
   if (!def || def.valid_interactions.length > 0) return; // only passive goals
 
@@ -334,7 +341,7 @@ function evaluatePassiveProgress(agent: any, goal: any, currentTick: number): vo
       const newProgress = Math.min(def.completion_at, goal.progress + pe.progress);
       if (newProgress >= def.completion_at) {
         db.update(goals)
-          .set({ progress: newProgress, status: 'completed', completed_at: currentTick })
+          .set({ progress: newProgress, status: 'completed', completed_at: nowMinutes })
           .where(eq(goals.id, goal.id))
           .run();
         simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
@@ -390,8 +397,9 @@ export function goalsTick(): void {
   // Initialize conversation listener on first tick
   initGoalConversationListener();
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
-  const currentTick = getCurrentTick();
   const world = db.select().from(worldState).limit(1).all()[0];
+  const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
+  const tickSpeed = world?.tick_speed ?? 1;
   const isDayChange = world?.pending_transitions?.some(
     (t: any) => t.type === 'day_changed'
   ) ?? false;
@@ -410,25 +418,25 @@ export function goalsTick(): void {
 
     // 1. Morning LLM review (on day change only, async fire-and-forget)
     if (isDayChange) {
-      void goalReviewer.review(agent.id, currentTick, world?.time?.day ?? 1);
+      void goalReviewer.review(agent.id, nowMinutes, world?.time?.day ?? 1);
     }
 
     // 2. Evaluate abandonment on existing goals (rule-based)
     for (const goal of agentGoals) {
-      evaluateAbandonment(agent, goal, currentTick, allAgentStates);
+      evaluateAbandonment(agent, goal, nowMinutes, allAgentStates, tickSpeed);
     }
 
     // 3. Evaluate passive goal progress
     for (const goal of agentGoals) {
       if (goal.status === 'active') {
-        evaluatePassiveProgress(agent, goal, currentTick);
+        evaluatePassiveProgress(agent, goal, nowMinutes);
       }
     }
 
     // 4. Check reactive triggers for new goals
-    evaluateTriggers(agent, currentTick, allActiveKnowledge, allRelationships);
+    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships);
 
     // 5. Pivot evaluation (async fire-and-forget)
-    void pivotEvaluator.evaluate(agent.id, currentTick);
+    void pivotEvaluator.evaluate(agent.id, nowMinutes);
   }
 }

@@ -9,14 +9,14 @@ import { logActivity } from '../activityLogger';
 import { GoalMapper } from './GoalMapper';
 import { parsePivotResult } from './goalParser';
 import { buildPivotPrompt } from './goalPrompts';
-import { PIVOT_THRESHOLD_TICKS, STALE_ABANDON_TICKS } from './types';
+import { PIVOT_THRESHOLD_MINUTES, STALE_ABANDON_MINUTES } from './types';
 
-export function shouldPivot(progress: number, pivotCount: number, ticksElapsed: number): boolean {
-  return progress === 0 && pivotCount === 0 && ticksElapsed >= PIVOT_THRESHOLD_TICKS;
+export function shouldPivot(progress: number, pivotCount: number, minutesElapsed: number): boolean {
+  return progress === 0 && pivotCount === 0 && minutesElapsed >= PIVOT_THRESHOLD_MINUTES;
 }
 
-export function shouldAbandonStale(progress: number, ticksElapsed: number): boolean {
-  return progress === 0 && ticksElapsed >= STALE_ABANDON_TICKS;
+export function shouldAbandonStale(progress: number, minutesElapsed: number): boolean {
+  return progress === 0 && minutesElapsed >= STALE_ABANDON_MINUTES;
 }
 
 export function computeEmotionalImportance(
@@ -33,65 +33,65 @@ export function computeEmotionalImportance(
 export class PivotEvaluator {
   private mapper = new GoalMapper();
   private inFlight = new Set<number>(); // goal IDs currently being pivoted
-  private lastEvalTick = new Map<number, number>(); // agentId → last tick evaluated
-  private static EVAL_COOLDOWN = 60; // only evaluate once per 60 ticks (~1 game hour)
+  private lastEvalAt = new Map<number, number>(); // agentId → game minute last evaluated
+  private static EVAL_COOLDOWN = 60; // only evaluate once per game hour
 
   /**
-   * Drop per-agent state for a world replace. `lastEvalTick` holds TICK stamps and
-   * `totalTicks` restarts at 0, so a surviving stamp makes `currentTick - lastTick`
+   * Drop per-agent state for a world replace. `lastEvalAt` holds game-minute stamps
+   * and a new world's clock can start earlier, so a surviving stamp makes `nowMinutes - lastAt`
    * negative — permanently below EVAL_COOLDOWN, which silently disables pivoting and
    * stale-goal abandonment for every reused agent id. `inFlight` holds goal ids from
    * the wiped world's id space, which SQLite reuses.
    */
   clear(): void {
-    this.lastEvalTick.clear();
+    this.lastEvalAt.clear();
     this.inFlight.clear();
   }
 
-  async evaluate(agentId: number, currentTick: number): Promise<void> {
+  async evaluate(agentId: number, nowMinutes: number): Promise<void> {
     // Cooldown: don't re-evaluate same agent every tick
-    const lastTick = this.lastEvalTick.get(agentId) ?? 0;
-    if (currentTick - lastTick < PivotEvaluator.EVAL_COOLDOWN) return;
-    this.lastEvalTick.set(agentId, currentTick);
+    const lastAt = this.lastEvalAt.get(agentId) ?? 0;
+    if (nowMinutes - lastAt < PivotEvaluator.EVAL_COOLDOWN) return;
+    this.lastEvalAt.set(agentId, nowMinutes);
     const activeGoals = db.select().from(goals)
       .where(and(eq(goals.agent_id, agentId), eq(goals.status, 'active'))).all();
     const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
     if (!agent) return;
 
     for (const goal of activeGoals) {
-      const ticksElapsed = currentTick - goal.created_at;
+      const minutesElapsed = nowMinutes - goal.created_at;
 
       // Dead target check
       if (goal.target_id) {
         const target = db.select({ is_active: agents.is_active }).from(agents).where(eq(agents.id, goal.target_id)).get();
         if (target && !target.is_active) {
-          this.abandonGoal(goal, agentId, 'target is no longer around', currentTick);
+          this.abandonGoal(goal, agentId, 'target is no longer around', nowMinutes);
           continue;
         }
       }
 
       // 3-day stale safety net
-      if (shouldAbandonStale(goal.progress, ticksElapsed)) {
-        this.abandonGoal(goal, agentId, 'no progress after extended time', currentTick);
+      if (shouldAbandonStale(goal.progress, minutesElapsed)) {
+        this.abandonGoal(goal, agentId, 'no progress after extended time', nowMinutes);
         continue;
       }
 
       // Pivot (LLM goals only, skip if already in-flight)
-      if (goal.source === 'llm' && !this.inFlight.has(goal.id) && shouldPivot(goal.progress, goal.pivot_count, ticksElapsed)) {
+      if (goal.source === 'llm' && !this.inFlight.has(goal.id) && shouldPivot(goal.progress, goal.pivot_count, minutesElapsed)) {
         this.inFlight.add(goal.id);
-        await this.attemptPivot(goal, agent, currentTick).finally(() => this.inFlight.delete(goal.id));
+        await this.attemptPivot(goal, agent, nowMinutes).finally(() => this.inFlight.delete(goal.id));
       }
     }
   }
 
-  private async attemptPivot(goal: any, agent: any, currentTick: number): Promise<void> {
+  private async attemptPivot(goal: any, agent: any, nowMinutes: number): Promise<void> {
     const recentMems = db.select({ description: memories.description }).from(memories)
       .where(and(eq(memories.agent_id, agent.id), eq(memories.is_active, 1)))
       .orderBy(desc(memories.created_at)).limit(10).all();
 
     const personality = getEffectivePersonality(agent.id);
     if (!personality) return;
-    const daysActive = Math.max(1, Math.floor((currentTick - goal.created_at) / 1440));
+    const daysActive = Math.max(1, Math.floor((nowMinutes - goal.created_at) / 1440));
 
     const prompt = buildPivotPrompt({
       name: agent.name, personality,
@@ -110,7 +110,7 @@ export class PivotEvaluator {
 
       const result = parsePivotResult(response.text);
       if (!result) {
-        this.abandonGoal(goal, agent.id, 'could not find a new approach', currentTick);
+        this.abandonGoal(goal, agent.id, 'could not find a new approach', nowMinutes);
         return;
       }
 
@@ -130,13 +130,13 @@ export class PivotEvaluator {
     } catch (error: any) {
       const errMsg = error?.message ?? String(error);
       logActivity({ type: 'error', templateData: { system: 'goals', message: `Pivot LLM failed for ${agent.name}: ${errMsg}` } });
-      this.abandonGoal(goal, agent.id, 'failed to find alternative approach', currentTick);
+      this.abandonGoal(goal, agent.id, 'failed to find alternative approach', nowMinutes);
     }
   }
 
-  private abandonGoal(goal: any, agentId: number, reason: string, currentTick: number): void {
+  private abandonGoal(goal: any, agentId: number, reason: string, nowMinutes: number): void {
     db.update(goals)
-      .set({ status: 'abandoned', completed_at: currentTick })
+      .set({ status: 'abandoned', completed_at: nowMinutes })
       .where(eq(goals.id, goal.id))
       .run();
 
@@ -148,7 +148,7 @@ export class PivotEvaluator {
     if (goal.pivot_count > 0) {
       const personality = getEffectivePersonality(agentId);
       if (!personality) return;
-      const daysActive = Math.max(1, Math.floor((currentTick - goal.created_at) / 1440));
+      const daysActive = Math.max(1, Math.floor((nowMinutes - goal.created_at) / 1440));
       const importance = computeEmotionalImportance(goal.priority, daysActive, personality);
       if (importance > 0.6) {
         simEvents.emit('goal:emotional_failure', { agentId, importance, personality });

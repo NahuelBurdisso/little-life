@@ -2,9 +2,8 @@ import { trpc } from "../../lib/trpc";
 
 interface GoalsViewProps {
   agentId: number;
-  worldTick: number;
-  tickSpeed: number;
-  isPaused: boolean;
+  /** The world clock in game minutes (`gameMinutes(world.time)`). */
+  nowMinutes: number;
 }
 
 const AMBITION_COLORS: Record<string, string> = {
@@ -55,26 +54,14 @@ const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
   relationship: { label: "social", className: "bg-pink-900/40 text-pink-300" },
 };
 
-function daysActive(
-  createdAt: number,
-  worldTick: number,
-  tickSpeed: number,
-  isPaused: boolean,
-): number {
-  // `advanceClock` adds `tick_speed` minutes per tick, so a tick is a game
-  // minute only at 1x — this used to divide raw ticks by 1440 and a goal read
-  // "0 days" for four times too long at 4x. Same normalisation as `timeAgo` in
-  // src/lib/formatters.ts (see the comment there): pausing keeps the user's
-  // tick_speed rather than zeroing it, and `change_speed(0)` writes tick_speed
-  // 0 with is_paused true, so both fall back to 1 minute/tick.
-  // Kept as two lines here rather than shared; if a third caller needs it,
-  // hoist it into formatters.ts as `effectiveTickSpeed()`.
-  const speed = isPaused || tickSpeed <= 0 ? 1 : tickSpeed;
-  const minutesActive = (worldTick - createdAt) * speed;
-  return Math.max(0, Math.floor(minutesActive / 1440));
+function daysActive(createdAt: number, nowMinutes: number): number {
+  // `goals.created_at` is a game-minute stamp, so this is exact at any speed.
+  // It used to be a tick stamp scaled by the current tick_speed, which misread
+  // every goal older than the last speed change.
+  return Math.max(0, Math.floor((nowMinutes - createdAt) / 1440));
 }
 
-export function GoalsView({ agentId, worldTick, tickSpeed, isPaused }: GoalsViewProps) {
+export function GoalsView({ agentId, nowMinutes }: GoalsViewProps) {
   const { data, isLoading } = trpc.agents.getAgentThoughts.useQuery({ agentId });
 
   if (isLoading) {
@@ -139,7 +126,7 @@ export function GoalsView({ agentId, worldTick, tickSpeed, isPaused }: GoalsView
         <div className="space-y-2">
           {goals.map((goal) => {
             const progress = Math.min(100, Math.max(0, goal.progress * 100));
-            const days = daysActive(goal.created_at, worldTick, tickSpeed, isPaused);
+            const days = daysActive(goal.created_at, nowMinutes);
             const sourceBadge = SOURCE_BADGE[goal.source] ?? SOURCE_BADGE.reactive;
             const typeLabel = GOAL_TYPE_LABELS[goal.type] ?? goal.type.replace(/_/g, " ");
 

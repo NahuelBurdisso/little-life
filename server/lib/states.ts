@@ -1,22 +1,13 @@
 import { PersonalityProfile } from './personality';
 import { db, getAgentStatesWriteVersion, verifyAgentStatesWriteHook } from '../db';
-import { agentStates, agents, worldState } from '../db/schema';
-import { gameMinutes } from './gameClock';
+import { agentStates, agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
-// ─── State clock ──────────────────────────────────────────────────────────────
-
-/**
- * Now, on the clock `agentStates.started_at` is stamped in: GAME MINUTES
- * (`gameMinutes(world.time)`), and every `duration` is game minutes too. They
- * were ticks, so at tick_speed 4 every state lasted four times its game-time
- * length (a "~12 game hours" drunk spell ran two game days). For writers that
- * don't already hold the world row; states.ts computes it once per tick.
- */
-export function stateClockNow(): number {
-  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  return world?.time ? gameMinutes(world.time) : 0;
-}
+// CLOCK: `agentStates.started_at` and every `duration` are GAME MINUTES
+// (`gameMinutes(world.time)`, or `gameMinutesNow()` in lib/worldClock.ts for
+// writers without the world row). They were ticks, so at tick_speed 4 every
+// state lasted four times its game-time length (a "~12 game hours" drunk spell
+// ran two game days).
 
 // ─── Effective Personality Map ────────────────────────────────────────────────
 
@@ -244,7 +235,7 @@ export function getAgentStates(agentId: number): StateType[] {
   return states.map((s) => s.type as StateType);
 }
 
-/** `nowMinutes` is the state clock (see stateClockNow), not a tick. */
+/** `nowMinutes` is game minutes (the state clock), not a tick. */
 export function getActiveStatePrompts(agentId: number, nowMinutes?: number): string[] {
   const states = db
     .select()

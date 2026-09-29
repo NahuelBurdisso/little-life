@@ -39,6 +39,8 @@ interface ThoughtsTabProps {
   worldTick: number;
   tickSpeed: number;
   isPaused: boolean;
+  /** World clock in game minutes, for game-minute stamps (goals). */
+  nowMinutes: number;
 }
 
 function CollapsibleSection({
@@ -73,6 +75,7 @@ export function ThoughtsTab({
   worldTick,
   tickSpeed,
   isPaused,
+  nowMinutes,
 }: ThoughtsTabProps) {
   const agentId = Number(agent.id);
   const recentMemories = (memories ?? []).slice(0, 10);
@@ -89,12 +92,7 @@ export function ThoughtsTab({
       {/* Layer 2: Goals & Ambition */}
       <div className="border-t border-gray-700">
         <CollapsibleSection title="Goals & Ambition" defaultOpen={false}>
-          <GoalsView
-            agentId={agentId}
-            worldTick={worldTick}
-            tickSpeed={tickSpeed}
-            isPaused={isPaused}
-          />
+          <GoalsView agentId={agentId} nowMinutes={nowMinutes} />
         </CollapsibleSection>
       </div>
 

@@ -4,7 +4,7 @@ import {
   getComfortVisit,
   completeComfortVisit,
   clearLonelinessTracking,
-  COMFORT_VISIT_WINDOW_TICKS,
+  COMFORT_VISIT_WINDOW_MINUTES,
 } from '../lonelinessEngine';
 
 describe('comfort visits', () => {
@@ -13,14 +13,14 @@ describe('comfort visits', () => {
   it('hands the visitor their pending visit until it expires', () => {
     scheduleComfortVisit(3, 7, 1000);
 
-    expect(getComfortVisit(3, 1000)).toEqual({ lonelyAgentId: 7, expiresTick: 1000 + COMFORT_VISIT_WINDOW_TICKS });
-    expect(getComfortVisit(3, 1000 + COMFORT_VISIT_WINDOW_TICKS)).not.toBeNull();
-    expect(getComfortVisit(3, 1001 + COMFORT_VISIT_WINDOW_TICKS)).toBeNull();
+    expect(getComfortVisit(3, 1000)).toEqual({ lonelyAgentId: 7, expiresAt: 1000 + COMFORT_VISIT_WINDOW_MINUTES });
+    expect(getComfortVisit(3, 1000 + COMFORT_VISIT_WINDOW_MINUTES)).not.toBeNull();
+    expect(getComfortVisit(3, 1001 + COMFORT_VISIT_WINDOW_MINUTES)).toBeNull();
   });
 
   it('forgets an expired visit so it cannot come back', () => {
     scheduleComfortVisit(3, 7, 0);
-    getComfortVisit(3, COMFORT_VISIT_WINDOW_TICKS + 1);
+    getComfortVisit(3, COMFORT_VISIT_WINDOW_MINUTES + 1);
     expect(getComfortVisit(3, 0)).toBeNull();
   });
 

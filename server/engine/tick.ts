@@ -260,13 +260,14 @@ export async function gameTick(): Promise<void> {
   // these every 40 game minutes / 4 game hours at 4x, and nested the hourly
   // checks inside the 10-tick gate.
   const totalTicks = worldWithNewTime.time.totalTicks;
-  if (crossedBoundary(gameMinutes(oldTime), gameMinutes(newTime), 10)) {
+  const nowMinutes = gameMinutes(newTime);
+  if (crossedBoundary(gameMinutes(oldTime), nowMinutes, 10)) {
     runGuarded('perception', () => perceptionSystem.scan(worldWithNewTime));
-    runGuarded('tavern', () => tavernTick(totalTicks));
+    runGuarded('tavern', () => tavernTick(nowMinutes));
   }
   // Loneliness and confrontation once per game hour.
   if (hourChanged(transitions)) {
-    runGuarded('loneliness', () => lonelinessCheck(totalTicks));
+    runGuarded('loneliness', () => lonelinessCheck(nowMinutes));
     runGuarded('confrontation', () => confrontationCheck(totalTicks));
   }
 
@@ -315,7 +316,7 @@ export async function gameTick(): Promise<void> {
 
   // Check if any agents should reflect (async, doesn't block tick)
   runGuarded('reflection', () => {
-    const agentsToReflect = reflectionTrigger.check(totalTicks);
+    const agentsToReflect = reflectionTrigger.check(nowMinutes);
     for (const agentId of agentsToReflect) {
       reflectionRunner.queueReflection(agentId);
     }

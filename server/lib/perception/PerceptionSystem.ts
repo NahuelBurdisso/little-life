@@ -5,6 +5,7 @@ import { simEvents } from '../simEvents';
 import { PERCEPTION_REGISTRY, REACTION_TYPES } from './perceptionRegistry';
 import type { PerceptionRule } from './types';
 import type { PersonalityProfile } from '../personality';
+import { gameMinutes, type ClockTime } from '../gameClock';
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
@@ -94,35 +95,37 @@ function matchesRule(
 
 // ─── PerceptionSystem ─────────────────────────────────────────────────────────
 
-const GLOBAL_PAIR_COOLDOWN = 30; // minimum ticks between ANY perception for the same observer→target pair
+const GLOBAL_PAIR_COOLDOWN = 30; // minimum game minutes between ANY perception for the same observer→target pair
 const MAX_RULE_COOLDOWN = 180; // longest cooldown in the perception registry, used for pruning
 
 export class PerceptionSystem {
-  /** "agentId-targetId-ruleId" → lastTick when this perception fired */
+  /** "agentId-targetId-ruleId" → game minute when this perception last fired */
   private cooldowns: Map<string, number> = new Map();
-  /** "agentId-targetId" → lastTick when ANY perception fired for this pair */
+  /** "agentId-targetId" → game minute when ANY perception last fired for this pair */
   private pairCooldowns: Map<string, number> = new Map();
 
   /**
    * Remove expired cooldown entries to prevent unbounded Map growth.
    */
-  private pruneExpiredCooldowns(currentTick: number): void {
+  private pruneExpiredCooldowns(nowMinutes: number): void {
     for (const [key, lastFired] of this.cooldowns) {
-      if (currentTick - lastFired >= MAX_RULE_COOLDOWN) {
+      if (nowMinutes - lastFired >= MAX_RULE_COOLDOWN) {
         this.cooldowns.delete(key);
       }
     }
     for (const [key, lastFired] of this.pairCooldowns) {
-      if (currentTick - lastFired >= GLOBAL_PAIR_COOLDOWN) {
+      if (nowMinutes - lastFired >= GLOBAL_PAIR_COOLDOWN) {
         this.pairCooldowns.delete(key);
       }
     }
   }
 
-  scan(world: { time: { totalTicks: number } }): void {
-    const currentTick = world.time.totalTicks;
+  scan(world: { time: ClockTime }): void {
+    // CLOCK: cooldowns are GAME MINUTES. They were ticks, so at 4x a "2 hour"
+    // rule cooldown lasted 8 and the same pair noticed each other a quarter as often.
+    const nowMinutes = gameMinutes(world.time);
 
-    this.pruneExpiredCooldowns(currentTick);
+    this.pruneExpiredCooldowns(nowMinutes);
 
     // ── 1. Batch-load all data ──────────────────────────────────────────────
 
@@ -270,7 +273,7 @@ export class PerceptionSystem {
         // Global pair cooldown: skip if ANY perception fired recently for this pair
         const pairKey = `${observer.id}-${target.id}`;
         const lastPairFired = this.pairCooldowns.get(pairKey) ?? -Infinity;
-        if (currentTick - lastPairFired < GLOBAL_PAIR_COOLDOWN) continue;
+        if (nowMinutes - lastPairFired < GLOBAL_PAIR_COOLDOWN) continue;
 
         // Evaluate all rules, collect matches with scores
         let bestScore = 30; // threshold
@@ -280,7 +283,7 @@ export class PerceptionSystem {
           // Check cooldown
           const cooldownKey = `${observer.id}-${target.id}-${rule.id}`;
           const lastFired = this.cooldowns.get(cooldownKey) ?? -Infinity;
-          if (currentTick - lastFired < rule.cooldown) continue;
+          if (nowMinutes - lastFired < rule.cooldown) continue;
 
           // Handle target_is_state_target separately (needs state records)
           if (rule.observes.target_is_state_target) {
@@ -308,8 +311,8 @@ export class PerceptionSystem {
 
         // Fire the best rule
         const cooldownKey = `${observer.id}-${target.id}-${bestRule.id}`;
-        this.cooldowns.set(cooldownKey, currentTick);
-        this.pairCooldowns.set(pairKey, currentTick);
+        this.cooldowns.set(cooldownKey, nowMinutes);
+        this.pairCooldowns.set(pairKey, nowMinutes);
 
         const reaction = REACTION_TYPES[bestRule.reaction];
         if (!reaction) continue;

@@ -180,19 +180,20 @@ export class EngagementCollector {
     let goalsCompleted = 0;
     let goalsAbandoned = 0;
     let stalledGoals = 0;
+    // Goal stamps are game minutes (systems/goals.ts).
     try {
       goalsCreated = db.select({ id: goals.id }).from(goals).where(
-        gte(goals.created_at, startTick)
+        gte(goals.created_at, startMinutes)
       ).all().length;
 
       // Measured on completed_at so goals created before the window but finished
       // inside it are counted. Rows with a NULL completed_at never match.
       goalsCompleted = db.select({ id: goals.id }).from(goals).where(
-        and(eq(goals.status, 'completed'), gte(goals.completed_at, startTick))
+        and(eq(goals.status, 'completed'), gte(goals.completed_at, startMinutes))
       ).all().length;
 
       goalsAbandoned = db.select({ id: goals.id }).from(goals).where(
-        and(eq(goals.status, 'abandoned'), gte(goals.completed_at, startTick))
+        and(eq(goals.status, 'abandoned'), gte(goals.completed_at, startMinutes))
       ).all().length;
 
       // Stalled = active + zero progress + created before this window
@@ -202,7 +203,7 @@ export class EngagementCollector {
       }).from(goals).where(eq(goals.status, 'active')).all();
 
       stalledGoals = activeGoals.filter(g =>
-        g.progress < 1 && g.created_at < startTick - 120
+        g.progress < 1 && g.created_at < startMinutes - 120
       ).length;
     } catch { /* */ }
 

@@ -15,7 +15,7 @@ import { GoalReviewer, isRedundantGoal } from '../GoalReviewer';
  * friendship > 50, so it was created and completed one tick apart, daily.
  */
 
-const TICK = 5000;
+const NOW_MINUTES = 5000;
 const NAMES = ['Zephyrine Quillfeather', 'Bartholomew Oakenshaw', 'Philippa Thistlewood'];
 
 function insertAgent(name: string, home: number): number {
@@ -138,7 +138,7 @@ describe('GoalReviewer — goals that are already settled', () => {
     setFriendship(me, friend, 70);
     llmProposesBefriend(NAMES[1]);
 
-    await new GoalReviewer().review(me, TICK, 1);
+    await new GoalReviewer().review(me, NOW_MINUTES, 1);
 
     expect(callOllamaChat).toHaveBeenCalledTimes(1);
     expect(befriendGoals(me, friend)).toHaveLength(0);
@@ -148,11 +148,11 @@ describe('GoalReviewer — goals that are already settled', () => {
     setFriendship(me, friend, 20);
     db.insert(goals).values({
       agent_id: me, type: 'befriend', target_id: friend, motivation: 'test', priority: 0.5,
-      progress: 1, status: 'completed', created_at: TICK - 400, completed_at: TICK - 399, source: 'llm',
+      progress: 1, status: 'completed', created_at: NOW_MINUTES - 400, completed_at: NOW_MINUTES - 399, source: 'llm',
     }).run();
     llmProposesBefriend(NAMES[1]);
 
-    await new GoalReviewer().review(me, TICK, 1);
+    await new GoalReviewer().review(me, NOW_MINUTES, 1);
 
     expect(befriendGoals(me, friend).filter((g) => g.status === 'active')).toHaveLength(0);
   });
@@ -161,7 +161,7 @@ describe('GoalReviewer — goals that are already settled', () => {
     setFriendship(me, friend, 20);
     llmProposesBefriend(NAMES[1]);
 
-    await new GoalReviewer().review(me, TICK, 1);
+    await new GoalReviewer().review(me, NOW_MINUTES, 1);
 
     const created = befriendGoals(me, friend);
     expect(created).toHaveLength(1);
@@ -171,9 +171,9 @@ describe('GoalReviewer — goals that are already settled', () => {
   it('applies to any auto relationship rule, not just befriend', () => {
     // revenge auto-abandons at friendship > 20.
     setFriendship(me, friend, 40);
-    expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(true);
+    expect(isRedundantGoal(me, 'revenge', friend, NOW_MINUTES)).toBe(true);
     setFriendship(me, friend, 0);
-    expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(false);
+    expect(isRedundantGoal(me, 'revenge', friend, NOW_MINUTES)).toBe(false);
   });
 
   describe('recency rule', () => {
@@ -192,31 +192,31 @@ describe('GoalReviewer — goals that are already settled', () => {
     });
 
     it('only blocks the same target', () => {
-      pastGoal('befriend', friend, 'completed', TICK - 100);
-      expect(isRedundantGoal(me, 'befriend', friend, TICK)).toBe(true);
-      expect(isRedundantGoal(me, 'befriend', other, TICK)).toBe(false);
+      pastGoal('befriend', friend, 'completed', NOW_MINUTES - 100);
+      expect(isRedundantGoal(me, 'befriend', friend, NOW_MINUTES)).toBe(true);
+      expect(isRedundantGoal(me, 'befriend', other, NOW_MINUTES)).toBe(false);
     });
 
     it('lets the cooldown expire', () => {
-      pastGoal('befriend', friend, 'completed', TICK - 5 * 1440);
-      expect(isRedundantGoal(me, 'befriend', friend, TICK)).toBe(false);
+      pastGoal('befriend', friend, 'completed', NOW_MINUTES - 5 * 1440);
+      expect(isRedundantGoal(me, 'befriend', friend, NOW_MINUTES)).toBe(false);
     });
 
     it('is not triggered by an abandoned or failed goal', () => {
-      pastGoal('befriend', friend, 'abandoned', TICK - 100);
-      pastGoal('befriend', friend, 'failed', TICK - 50);
-      expect(isRedundantGoal(me, 'befriend', friend, TICK)).toBe(false);
+      pastGoal('befriend', friend, 'abandoned', NOW_MINUTES - 100);
+      pastGoal('befriend', friend, 'failed', NOW_MINUTES - 50);
+      expect(isRedundantGoal(me, 'befriend', friend, NOW_MINUTES)).toBe(false);
     });
 
     it('never applies to custom goals', () => {
-      pastGoal('custom', friend, 'completed', TICK - 100);
-      expect(isRedundantGoal(me, 'custom', friend, TICK)).toBe(false);
+      pastGoal('custom', friend, 'completed', NOW_MINUTES - 100);
+      expect(isRedundantGoal(me, 'custom', friend, NOW_MINUTES)).toBe(false);
     });
 
     it('re-opens a hostile goal after a fresh grievance', () => {
       setFriendship(me, friend, 0);
-      pastGoal('revenge', friend, 'completed', TICK - 100);
-      expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(true);
+      pastGoal('revenge', friend, 'completed', NOW_MINUTES - 100);
+      expect(isRedundantGoal(me, 'revenge', friend, NOW_MINUTES)).toBe(true);
 
       const [lo, hi] = me < friend ? [me, friend] : [friend, me];
       const meIsA = lo === me;
@@ -226,7 +226,7 @@ describe('GoalReviewer — goals that are already settled', () => {
         romance_delta_ab: 0, romance_delta_ba: 0, trust_delta_ab: 0, trust_delta_ba: 0,
         sentiment: -0.1, processed: true, timestamp: Date.now(),
       }).run();
-      expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(false);
+      expect(isRedundantGoal(me, 'revenge', friend, NOW_MINUTES)).toBe(false);
     });
   });
 });

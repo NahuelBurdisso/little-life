@@ -1,28 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import { shouldPivot, shouldAbandonStale, computeEmotionalImportance } from '../PivotEvaluator';
-import { PIVOT_THRESHOLD_TICKS, STALE_ABANDON_TICKS } from '../types';
+import { PIVOT_THRESHOLD_MINUTES, STALE_ABANDON_MINUTES } from '../types';
 
 describe('shouldPivot', () => {
   it('returns true when goal has no progress and exceeds threshold', () => {
-    expect(shouldPivot(0, 0, PIVOT_THRESHOLD_TICKS + 100)).toBe(true);
+    expect(shouldPivot(0, 0, PIVOT_THRESHOLD_MINUTES + 100)).toBe(true);
   });
   it('returns false when goal has progress', () => {
-    expect(shouldPivot(0.5, 0, PIVOT_THRESHOLD_TICKS + 100)).toBe(false);
+    expect(shouldPivot(0.5, 0, PIVOT_THRESHOLD_MINUTES + 100)).toBe(false);
   });
   it('returns false when already pivoted', () => {
-    expect(shouldPivot(0, 1, PIVOT_THRESHOLD_TICKS + 100)).toBe(false);
+    expect(shouldPivot(0, 1, PIVOT_THRESHOLD_MINUTES + 100)).toBe(false);
   });
   it('returns false when not stale enough', () => {
-    expect(shouldPivot(0, 0, PIVOT_THRESHOLD_TICKS - 100)).toBe(false);
+    expect(shouldPivot(0, 0, PIVOT_THRESHOLD_MINUTES - 100)).toBe(false);
   });
 });
 
 describe('shouldAbandonStale', () => {
   it('returns true when goal exceeds stale abandon threshold with no progress', () => {
-    expect(shouldAbandonStale(0, STALE_ABANDON_TICKS + 1)).toBe(true);
+    expect(shouldAbandonStale(0, STALE_ABANDON_MINUTES + 1)).toBe(true);
   });
   it('returns false when goal has progress', () => {
-    expect(shouldAbandonStale(0.1, STALE_ABANDON_TICKS + 1)).toBe(false);
+    expect(shouldAbandonStale(0.1, STALE_ABANDON_MINUTES + 1)).toBe(false);
   });
 });
 

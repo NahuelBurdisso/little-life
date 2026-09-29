@@ -143,7 +143,7 @@ describe('rippleRules', () => {
 
   it('all cooldowns are positive numbers', () => {
     for (const rule of rippleRules) {
-      expect(rule.cooldownTicks, `Rule "${rule.id}" cooldownTicks must be positive`).toBeGreaterThan(0);
+      expect(rule.cooldownMinutes, `Rule "${rule.id}" cooldownMinutes must be positive`).toBeGreaterThan(0);
     }
   });
 

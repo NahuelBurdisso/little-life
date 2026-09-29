@@ -17,6 +17,7 @@ export interface PerceptionRule {
     friendship_weight?: number;
     romance_weight?: number;
   };
+  /** Game minutes before the same observer→target pair can fire this rule again. */
   cooldown: number;
 }
 

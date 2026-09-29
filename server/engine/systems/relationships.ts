@@ -5,6 +5,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
 import { hourChanged } from '../../lib/gameClock';
+import { msToGameMinutes } from '../../lib/worldClock';
 import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
 import { simEvents } from '../../lib/simEvents';
@@ -464,8 +465,10 @@ export function tick(
     return;
   }
 
-  const gracePeriodMs =
-    CONFIG.RELATIONSHIPS.DECAY_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
+  // Grace period and ramp are GAME days. `last_interaction` is a Date.now()
+  // stamp, so the gap is converted at the current speed. They were real days,
+  // so decay never started inside a session (3 real days = 180 game days at 1x).
+  const gracePeriodMinutes = CONFIG.RELATIONSHIPS.DECAY_GRACE_PERIOD_DAYS * 1440;
 
   // Game hours since the *previous* decay pass, not since the previous tick:
   // the pass runs once per game hour at every speed. Section 1 above is
@@ -478,10 +481,10 @@ export function tick(
     // quietly walk the hatred back to neutral and undo the permanence.
     if (rel.tags.includes('estranged')) continue;
 
-    const timeSinceInteraction = now - rel.last_interaction;
-    if (timeSinceInteraction <= gracePeriodMs) continue;
+    const minutesSinceInteraction = msToGameMinutes(now - rel.last_interaction, world.tick_speed);
+    if (minutesSinceInteraction <= gracePeriodMinutes) continue;
 
-    const daysSinceInteraction = timeSinceInteraction / (24 * 60 * 60 * 1000);
+    const daysSinceInteraction = minutesSinceInteraction / 1440;
     const decayStrength = Math.min(
       daysSinceInteraction / CONFIG.RELATIONSHIPS.DECAY_MAX_STRENGTH_DAYS,
       1,

@@ -2,7 +2,7 @@ import { db } from '../db';
 import { agents, needs, economy, agentStates, locations } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
-import { getEffectivePersonality, stateClockNow } from './states';
+import { getEffectivePersonality } from './states';
 import { adjustReputation } from './reputationEngine';
 
 // ─── Tavern Engine ────────────────────────────────────────────────────────────
@@ -11,19 +11,23 @@ import { adjustReputation } from './reputationEngine';
 
 interface DrinkState {
   drinks: number;
-  lastDrinkTick: number;
+  lastDrinkAt: number;
   sessionStart: number;
 }
 
 const drinkTracker = new Map<number, DrinkState>();
 
-/** Drop per-agent drink state for a world replace (agent ids and ticks both reset). */
+/** Drop per-agent drink state for a world replace (agent ids and the clock both reset). */
 export function clearTavernTracking(): void {
   drinkTracker.clear();
 }
 
-/** Called each tick for agents at tavern doing socializing/idle. */
-export function tavernTick(totalTicks: number): void {
+/**
+ * Called every 10 game minutes from the tick loop. CLOCK: `nowMinutes` and the
+ * drink tracker are GAME MINUTES; they were ticks, so at 4x a drink came every
+ * two game hours and sobering up took four.
+ */
+export function tavernTick(nowMinutes: number): void {
   const allAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const allLocations = db.select().from(locations).all();
   const tavernIds = new Set(allLocations.filter(l => l.type === 'tavern').map(l => l.id));
@@ -33,10 +37,10 @@ export function tavernTick(totalTicks: number): void {
       // Agent left tavern — process sober-up
       const state = drinkTracker.get(agent.id);
       if (state && state.drinks > 0) {
-        // Gradual sober up: lose 1 drink per 60 ticks (~1 game hour)
-        if (totalTicks - state.lastDrinkTick > 60) {
+        // Gradual sober up: lose 1 drink per game hour
+        if (nowMinutes - state.lastDrinkAt > 60) {
           state.drinks = Math.max(0, state.drinks - 1);
-          state.lastDrinkTick = totalTicks;
+          state.lastDrinkAt = nowMinutes;
           if (state.drinks === 0) {
             drinkTracker.delete(agent.id);
           }
@@ -53,13 +57,13 @@ export function tavernTick(totalTicks: number): void {
 
     let state = drinkTracker.get(agent.id);
     if (!state) {
-      state = { drinks: 0, lastDrinkTick: totalTicks, sessionStart: totalTicks };
+      state = { drinks: 0, lastDrinkAt: nowMinutes, sessionStart: nowMinutes };
       drinkTracker.set(agent.id, state);
     }
 
-    // Drink probability: every ~30 ticks (~30 game minutes) at tavern
-    if (totalTicks - state.lastDrinkTick < 30) continue;
-    state.lastDrinkTick = totalTicks;
+    // Drink probability: every ~30 game minutes at tavern
+    if (nowMinutes - state.lastDrinkAt < 30) continue;
+    state.lastDrinkAt = nowMinutes;
 
     // Drinking probability based on personality
     let drinkChance = 0.3; // base 30%
@@ -113,7 +117,7 @@ export function tavernTick(totalTicks: number): void {
           severity: 0.6,
           // agentStates.started_at is in game minutes: states.ts expires with
           // `started_at + duration <= nowMinutes`.
-          started_at: stateClockNow(),
+          started_at: nowMinutes,
           duration: 720, // ~12 game hours
           source: 'tavern_drinking',
           metadata: { drinks: state.drinks },

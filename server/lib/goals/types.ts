@@ -48,6 +48,7 @@ export interface MappedGoal {
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-export const PIVOT_THRESHOLD_TICKS = 1440;
-export const STALE_ABANDON_TICKS = 4320;
+// Game minutes since `goals.created_at` (1 and 3 game days).
+export const PIVOT_THRESHOLD_MINUTES = 1440;
+export const STALE_ABANDON_MINUTES = 4320;
 export const MAX_LLM_GOALS = 3;

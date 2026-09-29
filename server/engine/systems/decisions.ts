@@ -20,6 +20,7 @@ import { cliqueSocialModifier } from '../../lib/cliques';
 import { eq, and, gt } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { gameMinutes } from '../../lib/gameClock';
+import { gameMinutesToMs } from '../../lib/worldClock';
 import { distance } from '../../lib/utils';
 import { emitter } from '../emitter';
 import {
@@ -1092,7 +1093,10 @@ export function tick(world: WorldRow): void {
   // can block a pair, so load just those and index them by pair. This used to
   // load every ended conversation ever, every tick, then filter + sort that list
   // once per candidate pair — cost grew without bound as the town talked.
-  const pairCooldownMs = CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60 * 1000;
+  // `ended_at` is Date.now(), so the game-hour cooldown is converted to wall
+  // clock at the current speed. It was `hours * 60 * 1000` ms, i.e. one real
+  // second per game minute: right at 1x, two game hours at 4x.
+  const pairCooldownMs = gameMinutesToMs(CONFIG.CONVERSATIONS.COOLDOWN_SAME_PAIR_HOURS * 60, world.tick_speed);
   const lastEndedByPair = new Map<string, number>();
   for (const c of db.select({ ended_at: conversations.ended_at, participants: conversations.participants })
     .from(conversations)
@@ -1206,7 +1210,7 @@ export function tick(world: WorldRow): void {
     // Walk to wherever they are; the social-queue block below opens the
     // conversation once the two are together.
     if (!decision) {
-      const visit = getComfortVisit(agent.id, world.time.totalTicks);
+      const visit = getComfortVisit(agent.id, nowMinutes);
       if (visit) {
         const lonely = activeAgents.find((a) => a.id === visit.lonelyAgentId);
         const lonelyAction = (lonely?.current_action as { type?: string } | null)?.type;

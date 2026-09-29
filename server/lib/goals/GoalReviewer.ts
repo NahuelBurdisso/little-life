@@ -13,29 +13,31 @@ import { CONFIG } from '../constants';
 import { GOAL_REGISTRY } from '../../data/goalRegistry';
 import { and, desc, eq, gt, or } from 'drizzle-orm';
 import { compareOp, getRelationship, getRelField } from './relationshipConditions';
+import { gameMinutesToMs } from '../worldClock';
 
-const TICKS_PER_DAY = 1440;
+const MINUTES_PER_DAY = 1440;
 
 /**
  * How long a finished goal blocks the review from re-adopting the same
  * (type, target). Several days, not one: the morning review runs daily, so a
  * one-day window would just move the churn to every other morning.
  */
-const RECREATE_COOLDOWN_TICKS = 3 * TICKS_PER_DAY;
+const RECREATE_COOLDOWN_MINUTES = 3 * MINUTES_PER_DAY;
 
 /**
- * Did something turn the agent against the target since `sinceTick`? A negative
- * relationship event (their own friendship delta < 0, or a sour exchange).
+ * Did something turn the agent against the target since game minute
+ * `sinceMinutes`? A negative relationship event (their own friendship delta < 0,
+ * or a sour exchange).
  *
- * CLOCK: relationship events carry WALL-CLOCK ms, goals carry TICKS. The goal's
- * completion is placed on the wall clock by the tick distance at the current
- * speed. Pauses make that estimate later than the real completion, which can
- * only miss a grievance (keep a goal blocked), never invent one.
+ * CLOCK: relationship events carry WALL-CLOCK ms, goals carry GAME MINUTES. The
+ * goal's completion is placed on the wall clock by its game-minute distance at
+ * the current speed (`gameMinutesToMs`). Pauses make that estimate later than
+ * the real completion, which can only miss a grievance (keep a goal blocked),
+ * never invent one.
  */
-function negativeEventSince(agentId: number, targetId: number, sinceTick: number, currentTick: number): boolean {
+function negativeEventSince(agentId: number, targetId: number, sinceMinutes: number, nowMinutes: number): boolean {
   const world = db.select({ tick_speed: worldState.tick_speed }).from(worldState).get();
-  const msPerTick = 1000 / Math.max(world?.tick_speed || 1, 0.1);
-  const sinceMs = Date.now() - (currentTick - sinceTick) * msPerTick;
+  const sinceMs = Date.now() - gameMinutesToMs(nowMinutes - sinceMinutes, world?.tick_speed ?? 1);
   const [a, b] = agentId < targetId ? [agentId, targetId] : [targetId, agentId];
   const isA = a === agentId;
   return db.select().from(relationshipEvents)
@@ -55,7 +57,7 @@ function negativeEventSince(agentId: number, targetId: number, sinceTick: number
  *  - an `auto` relationship rule in its registry entry already holds (it would
  *    complete/fail/abandon on the first goals tick), or
  *  - the agent already has the same type for the same target active, or
- *    COMPLETED one within RECREATE_COOLDOWN_TICKS. Abandoned/failed goals don't
+ *    COMPLETED one within RECREATE_COOLDOWN_MINUTES (3 game days). Abandoned/failed goals don't
  *    block: giving up isn't having done it. A hostile goal (revenge) is allowed
  *    again inside the window if the target has wronged them since.
  *  `custom` goals are exempt from the recency rule: their type says nothing
@@ -65,7 +67,8 @@ export function isRedundantGoal(
   agentId: number,
   type: string,
   targetId: number | null,
-  currentTick: number,
+  /** Game minutes, the clock `goals.completed_at` is stamped in. */
+  nowMinutes: number,
 ): boolean {
   if (targetId == null) return false;
 
@@ -92,8 +95,8 @@ export function isRedundantGoal(
     -Infinity,
     ...sameGoals.filter((g) => g.status === 'completed' && g.completed_at != null).map((g) => g.completed_at!),
   );
-  if (currentTick - lastCompleted >= RECREATE_COOLDOWN_TICKS) return false;
-  if (def?.category === 'hostile' && negativeEventSince(agentId, targetId, lastCompleted, currentTick)) return false;
+  if (nowMinutes - lastCompleted >= RECREATE_COOLDOWN_MINUTES) return false;
+  if (def?.category === 'hostile' && negativeEventSince(agentId, targetId, lastCompleted, nowMinutes)) return false;
   return true;
 }
 
@@ -101,14 +104,14 @@ export function isRedundantGoal(
 
 export class GoalReviewer {
   private mapper = new GoalMapper();
-  private agentCache: { data: { id: number; name: string }[]; tick: number } | null = null;
+  private agentCache: { data: { id: number; name: string }[]; at: number } | null = null;
   private reviewedToday = new Set<number>(); // agent IDs already reviewed this day
   private lastDay = -1;
 
   /**
-   * Drop cached world state for a world replace. `agentCache.tick` is a TICK stamp
-   * and `totalTicks` restarts at 0, so a surviving entry makes
-   * `currentTick - tick` negative — permanently under the 100-tick TTL, which feeds
+   * Drop cached world state for a world replace. `agentCache.at` is a game-minute
+   * stamp and a new world's clock can start earlier, so a surviving entry makes
+   * `nowMinutes - at` negative — permanently under the 100-minute TTL, which feeds
    * the PREVIOUS world's agent id/name list into goal-review prompts and goal target
    * mapping. `reviewedToday`/`lastDay` self-heal on the next day change, but if the
    * new world happens to start on the same day number they would suppress the first
@@ -120,18 +123,18 @@ export class GoalReviewer {
     this.lastDay = -1;
   }
 
-  private getAllAgents(currentTick: number): { id: number; name: string }[] {
-    if (this.agentCache && currentTick - this.agentCache.tick < 100) {
+  private getAllAgents(nowMinutes: number): { id: number; name: string }[] {
+    if (this.agentCache && nowMinutes - this.agentCache.at < 100) {
       return this.agentCache.data;
     }
     const data = db.select({ id: agents.id, name: agents.name }).from(agents).all();
-    this.agentCache = { data, tick: currentTick };
+    this.agentCache = { data, at: nowMinutes };
     return data;
   }
 
   // ─── Main entry point ───────────────────────────────────────────────────────
 
-  async review(agentId: number, currentTick: number, currentDay: number): Promise<void> {
+  async review(agentId: number, nowMinutes: number, currentDay: number): Promise<void> {
     // Only review each agent once per day
     if (currentDay !== this.lastDay) {
       this.reviewedToday.clear();
@@ -153,7 +156,7 @@ export class GoalReviewer {
       if (!personality) return;
 
       // Ensure agent has a life ambition
-      const ambition = await this.ensureAmbition(agentId, agent, personality, currentTick);
+      const ambition = await this.ensureAmbition(agentId, agent, personality, nowMinutes);
 
       // Load context
       const activeGoals = db
@@ -196,7 +199,7 @@ export class GoalReviewer {
         )
         .all();
 
-      const allAgents = this.getAllAgents(currentTick);
+      const allAgents = this.getAllAgents(nowMinutes);
       const agentNameMap = new Map(allAgents.map(a => [a.id, a.name]));
 
       const relationshipHighlights = rels
@@ -221,7 +224,7 @@ export class GoalReviewer {
         description: g.description ?? g.type,
         strategy: g.strategy ?? '',
         progress: g.progress,
-        daysActive: Math.floor((currentTick - g.created_at) / TICKS_PER_DAY),
+        daysActive: Math.floor((nowMinutes - g.created_at) / MINUTES_PER_DAY),
       }));
 
       const prompt = buildGoalReviewPrompt({
@@ -262,7 +265,7 @@ export class GoalReviewer {
         db.update(aspirations)
           .set({
             status: 'shifted',
-            shifted_at: currentTick,
+            shifted_at: nowMinutes,
             shifted_to: shift.category,
             shifted_reason: shift.reason,
           })
@@ -274,7 +277,7 @@ export class GoalReviewer {
           type: shift.category,
           intensity: 0.7,
           status: 'active',
-          adopted_at: currentTick,
+          adopted_at: nowMinutes,
           trigger: 'morning_review',
           description: shift.shift,
         }).run();
@@ -296,7 +299,7 @@ export class GoalReviewer {
 
       // Process goal reviews
       for (const reviewAction of reviewResult.reviews) {
-        await this.processReview(reviewAction, agentId, currentTick);
+        await this.processReview(reviewAction, agentId, nowMinutes);
       }
 
       // Create new goals (up to MAX_LLM_GOALS)
@@ -312,7 +315,7 @@ export class GoalReviewer {
 
       for (const ng of newGoalsToCreate) {
         const mapped = this.mapper.map(ng, allAgents);
-        if (isRedundantGoal(agentId, mapped.type, mapped.target_id, currentTick)) continue;
+        if (isRedundantGoal(agentId, mapped.type, mapped.target_id, nowMinutes)) continue;
 
         const inserted = db.insert(goals).values({
           agent_id: agentId,
@@ -322,7 +325,7 @@ export class GoalReviewer {
           priority: ng.priority,
           progress: 0,
           status: 'active',
-          created_at: currentTick,
+          created_at: nowMinutes,
           description: ng.description,
           strategy: ng.strategy,
           mapped_interactions: JSON.stringify(mapped.mapped_interactions),
@@ -353,7 +356,7 @@ export class GoalReviewer {
 
   // ─── Process a single goal review action ───────────────────────────────────
 
-  async processReview(review: GoalReviewAction, agentId: number, currentTick: number): Promise<void> {
+  async processReview(review: GoalReviewAction, agentId: number, nowMinutes: number): Promise<void> {
     const goal = db
       .select()
       .from(goals)
@@ -379,7 +382,7 @@ export class GoalReviewer {
 
     if (review.action === 'abandon') {
       db.update(goals)
-        .set({ status: 'abandoned', completed_at: currentTick })
+        .set({ status: 'abandoned', completed_at: nowMinutes })
         .where(eq(goals.id, review.goal_id))
         .run();
 
@@ -404,7 +407,7 @@ export class GoalReviewer {
   async generateInitialAmbition(
     agentId: number,
     agent: typeof agents.$inferSelect,
-    currentTick: number
+    nowMinutes: number
   ): Promise<{ id: number; type: string; description: string | null } | null> {
     const personality = getEffectivePersonality(agentId);
     if (!personality) return null;
@@ -432,7 +435,7 @@ export class GoalReviewer {
       .where(or(eq(relationships.agent_a, agentId), eq(relationships.agent_b, agentId)))
       .all();
 
-    const allAgents = this.getAllAgents(currentTick);
+    const allAgents = this.getAllAgents(nowMinutes);
     const agentNameMap = new Map(allAgents.map(a => [a.id, a.name]));
 
     const relationshipHighlights = rels
@@ -480,7 +483,7 @@ export class GoalReviewer {
         type: parsed.category,
         intensity: 0.7,
         status: 'active',
-        adopted_at: currentTick,
+        adopted_at: nowMinutes,
         trigger: 'initial_generation',
         description: parsed.description,
       }).returning({ id: aspirations.id }).get();
@@ -506,7 +509,7 @@ export class GoalReviewer {
     agentId: number,
     agent: typeof agents.$inferSelect,
     _personality: ReturnType<typeof getEffectivePersonality>,
-    currentTick: number
+    nowMinutes: number
   ): Promise<{ id: number; type: string; description: string | null } | null> {
     const existing = db
       .select()
@@ -518,6 +521,6 @@ export class GoalReviewer {
       return { id: existing.id, type: existing.type, description: existing.description };
     }
 
-    return this.generateInitialAmbition(agentId, agent, currentTick);
+    return this.generateInitialAmbition(agentId, agent, nowMinutes);
   }
 }

@@ -13,7 +13,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.9,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.1 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'heartbroken',
       tensionDelta: 40,
@@ -30,7 +30,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'impulsiveness', direction: '+', weight: 0.2 },
       { axis: 'morality', direction: '-', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'drunk',
       tensionDelta: 10,
@@ -44,7 +44,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.25 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       emitEvent: 'interaction:completed',
       emitPayload: { action: 'confrontation' },
@@ -63,7 +63,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'warmth', direction: '-', weight: 0.15 },
       { axis: 'neuroticism', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'lonely',
     },
@@ -82,7 +82,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'neuroticism', direction: '+', weight: 0.15 },
       { axis: 'loyalty', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 300,
+    cooldownMinutes: 300,
     effects: {
       createState: 'jealous',
       tensionDelta: 20,
@@ -99,7 +99,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'aggression', direction: '+', weight: 0.2 },
       { axis: 'impulsiveness', direction: '+', weight: 0.15 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       emitEvent: 'interaction:completed',
       emitPayload: { action: 'confrontation' },
@@ -117,7 +117,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'honesty', direction: '-', weight: 0.2 },
       { axis: 'morality', direction: '-', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createFact: 'rumor',
     },
@@ -131,7 +131,7 @@ export const rippleRules: RippleRule[] = [
     target: 'witness',
     probability: 0.7,
     personalityGates: [{ axis: 'morality', direction: '+', weight: 0.15 }],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       createFact: 'theft',
     },
@@ -143,7 +143,7 @@ export const rippleRules: RippleRule[] = [
     target: 'victim',
     probability: 0.5,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.2 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       emitEvent: 'interaction:completed',
       emitPayload: { action: 'confrontation' },
@@ -161,7 +161,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'aggression', direction: '+', weight: 0.2 },
       { axis: 'loyalty', direction: '-', weight: 0.1 },
     ],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createGoal: { type: 'revenge', targetAgent: 'perpetrator' },
       tensionDelta: 15,
@@ -174,7 +174,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.8,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.1 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'stressed',
       createFact: 'arrest',
@@ -188,7 +188,7 @@ export const rippleRules: RippleRule[] = [
     target: 'witness',
     probability: 0.9,
     personalityGates: [{ axis: 'curiosity', direction: '+', weight: 0.1 }],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       createFact: 'arrest',
     },
@@ -200,7 +200,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.7,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'stressed',
       tensionDelta: 25,
@@ -216,7 +216,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'morality', direction: '-', weight: 0.2 },
       { axis: 'impulsiveness', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     requires: { moneyBelow: 20 },
     effects: {
       createGoal: { type: 'steal_from' },
@@ -231,7 +231,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.8,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.1 }],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       createState: 'stressed',
       tensionDelta: 20,
@@ -247,7 +247,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'morality', direction: '-', weight: 0.25 },
       { axis: 'impulsiveness', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createGoal: { type: 'steal_from' },
     },
@@ -262,7 +262,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'vanity', direction: '-', weight: 0.2 },
       { axis: 'warmth', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       emitEvent: 'interaction:completed',
       emitPayload: { action: 'begging' },
@@ -275,7 +275,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.2,
     personalityGates: [{ axis: 'impulsiveness', direction: '+', weight: 0.2 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       emitEvent: 'interaction:completed',
       emitPayload: { action: 'gambling' },
@@ -289,7 +289,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'impulsiveness', direction: '+', weight: 0.15 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'drunk',
       tensionDelta: 15,
@@ -302,7 +302,7 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) => payload?.won === false,
     target: 'self',
     probability: 0.9,
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'in_debt',
       tensionDelta: 20,
@@ -321,7 +321,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'loyalty', direction: '-', weight: 0.15 },
       { axis: 'aggression', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       relationshipDelta: { field: 'trust', value: -10 },
       createFact: 'grudge',
@@ -336,7 +336,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       createState: 'stressed',
       tensionDelta: 10,
@@ -354,7 +354,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'aggression', direction: '+', weight: 0.1 },
       { axis: 'neuroticism', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       createState: 'angry',
       tensionDelta: 20,
@@ -371,7 +371,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'impulsiveness', direction: '+', weight: 0.2 },
       { axis: 'aggression', direction: '+', weight: 0.15 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     requires: {
       notState: 'euphoric',
       coLocatedWith: 'any_agent',
@@ -390,7 +390,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.8,
     personalityGates: [{ axis: 'loyalty', direction: '+', weight: 0.1 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'trust', value: -30 },
       createFact: 'grudge',
@@ -409,7 +409,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'vanity', direction: '+', weight: 0.2 },
       { axis: 'neuroticism', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'stressed',
       tensionDelta: 25,
@@ -422,7 +422,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.3,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.2 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     requires: { needBelow: { need: 'social', value: 30 } },
     effects: {
       createState: 'depressed',
@@ -439,7 +439,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.3,
     personalityGates: [{ axis: 'impulsiveness', direction: '+', weight: 0.2 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       emitEvent: 'interaction:completed',
       emitPayload: { action: 'drunk_misbehavior' },
@@ -454,7 +454,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.25 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     requires: { coLocatedWith: 'perpetrator' },
     effects: {
       emitEvent: 'interaction:completed',
@@ -469,7 +469,7 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) => payload?.state === 'hungover',
     target: 'self',
     probability: 0.6,
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       economyEffect: { field: 'work_performance', delta: -15 },
     },
@@ -481,7 +481,7 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) => payload?.state === 'sick',
     target: 'random_present',
     probability: 0.15,
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     requires: { coLocatedWith: 'any_agent' },
     effects: {
       createState: 'sick',
@@ -498,7 +498,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.6,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.2 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'angry',
       tensionDelta: 25,
@@ -514,7 +514,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'impulsiveness', direction: '+', weight: 0.15 },
       { axis: 'neuroticism', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'drunk',
       tensionDelta: 15,
@@ -526,7 +526,7 @@ export const rippleRules: RippleRule[] = [
     source: 'goal:completed',
     target: 'self',
     probability: 0.4,
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'euphoric',
       tensionDelta: -20,
@@ -539,7 +539,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.3,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'stressed',
       tensionDelta: 15,
@@ -556,7 +556,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('speech'),
     target: 'witness',
     probability: 0.6,
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       moodDelta: 5,
       relationshipDelta: { field: 'trust', value: 3 },
@@ -571,7 +571,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('protest'),
     target: 'self',
     probability: 0.9,
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       relationshipDelta: { field: 'trust', value: -8 },
       createFact: 'political_dissent',
@@ -588,7 +588,7 @@ export const rippleRules: RippleRule[] = [
     target: 'witness',
     probability: 0.35,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       createState: 'stressed',
       tensionDelta: 10,
@@ -603,7 +603,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('escape'),
     target: 'self',
     probability: 0.9,
-    cooldownTicks: 1440,
+    cooldownMinutes: 1440,
     effects: {
       createFact: 'escape',
       tensionDelta: 25,
@@ -620,7 +620,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.8,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.1 }],
-    cooldownTicks: 360,
+    cooldownMinutes: 360,
     effects: {
       createFact: 'conspiracy',
       tensionDelta: 15,
@@ -635,7 +635,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('secret_meeting'),
     target: 'self',
     probability: 0.6,
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       relationshipDelta: { field: 'trust', value: 8 },
       createFact: 'conspiracy',
@@ -650,7 +650,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('confide'),
     target: 'self',
     probability: 0.85,
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       relationshipDelta: { field: 'trust', value: 12 },
     },
@@ -664,7 +664,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('announce'),
     target: 'self',
     probability: 0.9,
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       createFact: 'rumor',
       moodDelta: 5,
@@ -679,7 +679,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('smuggle'),
     target: 'self',
     probability: 0.8,
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'friendship', value: 5 },
       createFact: 'contraband',
@@ -694,7 +694,7 @@ export const rippleRules: RippleRule[] = [
       typeof payload?.action === 'string' && payload.action.includes('lock_out'),
     target: 'victim',
     probability: 0.9,
-    cooldownTicks: 1440,
+    cooldownMinutes: 1440,
     effects: {
       createState: 'stressed',
       createFact: 'grudge',
@@ -712,7 +712,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.15 }],
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       tensionDelta: 15,
     },
@@ -728,7 +728,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.5,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.15 }],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       relationshipDelta: { field: 'friendship', value: 5 },
       tensionDelta: -10,
@@ -743,7 +743,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'loyalty', direction: '+', weight: 0.1 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       relationshipDelta: { field: 'trust', value: 8 },
       tensionDelta: -5,
@@ -761,7 +761,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'warmth', direction: '+', weight: 0.2 },
       { axis: 'loyalty', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'trust', value: 5 },
       tensionDelta: -15,
@@ -781,7 +781,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.35,
     personalityGates: [{ axis: 'loyalty', direction: '+', weight: 0.15 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       relationshipDelta: { field: 'friendship', value: 8 },
     },
@@ -799,7 +799,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.6,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.2 }],
-    cooldownTicks: 240,
+    cooldownMinutes: 240,
     effects: {
       relationshipDelta: { field: 'friendship', value: 10 },
       moodDelta: 8,
@@ -819,7 +819,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.3,
     personalityGates: [{ axis: 'sensuality', direction: '+', weight: 0.2 }],
-    cooldownTicks: 360,
+    cooldownMinutes: 360,
     effects: {
       relationshipDelta: { field: 'romance', value: 8 },
       createState: 'euphoric',
@@ -841,7 +841,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'warmth', direction: '+', weight: 0.2 },
       { axis: 'morality', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'trust', value: 12 },
       tensionDelta: -20,
@@ -861,7 +861,7 @@ export const rippleRules: RippleRule[] = [
     personalityGates: [
       { axis: 'warmth', direction: '+', weight: 0.2 },
     ],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'friendship', value: 8 },
     },
@@ -874,7 +874,7 @@ export const rippleRules: RippleRule[] = [
     target: 'random_present',
     probability: 0.3,
     personalityGates: [{ axis: 'curiosity', direction: '+', weight: 0.15 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       moodDelta: 5,
       tensionDelta: -5,
@@ -892,7 +892,7 @@ export const rippleRules: RippleRule[] = [
     target: 'victim',
     probability: 0.5,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.2 }],
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       createGoal: { type: 'revenge', targetAgent: 'perpetrator' },
       createState: 'angry',
@@ -908,7 +908,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.7,
     personalityGates: [{ axis: 'sensuality', direction: '+', weight: 0.15 }],
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       createState: 'infatuated',
       moodDelta: 15,
@@ -925,7 +925,7 @@ export const rippleRules: RippleRule[] = [
     target: 'victim',
     probability: 0.4,
     personalityGates: [{ axis: 'aggression', direction: '+', weight: 0.15 }],
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       createState: 'stressed',
       createGoal: { type: 'investigate', targetAgent: 'perpetrator' },
@@ -940,7 +940,7 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) => payload?.goalType === 'protect',
     target: 'self',
     probability: 0.8,
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'friendship', value: 15 },
       moodDelta: 10,
@@ -954,7 +954,7 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) => payload?.goalType === 'protect',
     target: 'self',
     probability: 0.7,
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'trust', value: 10 },
     },
@@ -968,7 +968,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'morality', direction: '+', weight: 0.25 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'stressed',
       tensionDelta: 20,
@@ -986,7 +986,7 @@ export const rippleRules: RippleRule[] = [
       { axis: 'neuroticism', direction: '+', weight: 0.2 },
       { axis: 'sensuality', direction: '+', weight: 0.1 },
     ],
-    cooldownTicks: 360,
+    cooldownMinutes: 360,
     effects: {
       createState: 'jealous',
       tensionDelta: 15,
@@ -1000,7 +1000,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'morality', direction: '-', weight: 0.15 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       createState: 'confident',
       tensionDelta: -5,
@@ -1018,7 +1018,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.5,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.2 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       relationshipDelta: { field: 'friendship', value: 15 },
       tensionDelta: -10,
@@ -1033,7 +1033,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.4,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.3 }],
-    cooldownTicks: 480,
+    cooldownMinutes: 480,
     effects: {
       tensionDelta: 20,
       emitEvent: 'need:critical',
@@ -1047,7 +1047,7 @@ export const rippleRules: RippleRule[] = [
     target: 'witness',
     probability: 0.6,
     personalityGates: [{ axis: 'curiosity', direction: '+', weight: 0.2 }],
-    cooldownTicks: 120,
+    cooldownMinutes: 120,
     effects: {
       createFact: 'fight',
       tensionDelta: 5,
@@ -1059,7 +1059,7 @@ export const rippleRules: RippleRule[] = [
     source: 'agent:birthday',
     target: 'self',
     probability: 0.8,
-    cooldownTicks: 1440,
+    cooldownMinutes: 1440,
     effects: {
       tensionDelta: -15,
     },
@@ -1071,7 +1071,7 @@ export const rippleRules: RippleRule[] = [
     target: 'self',
     probability: 0.5,
     personalityGates: [{ axis: 'warmth', direction: '+', weight: 0.2 }],
-    cooldownTicks: 720,
+    cooldownMinutes: 720,
     effects: {
       relationshipDelta: { field: 'trust', value: 8 },
       tensionDelta: -5,

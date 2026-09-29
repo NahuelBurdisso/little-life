@@ -5,7 +5,7 @@ import { agents, agentStates, locations, worldState } from '../../../db/schema';
 import { statesTick } from '../states';
 import { advanceClock, computeDayPhase, detectTransitions } from '../../tick';
 import { gameMinutes } from '../../../lib/gameClock';
-import { stateClockNow } from '../../../lib/states';
+import { gameMinutesNow } from '../../../lib/worldClock';
 
 type WorldTime = typeof worldState.$inferSelect['time'];
 
@@ -100,7 +100,7 @@ describe('agent state durations are game minutes', () => {
   it('stamps states on the game-minute clock', () => {
     const time = { ...db.select().from(worldState).get()!.time, day: 3, hour: 8, minute: 15 };
     setClock(time, 4);
-    expect(stateClockNow()).toBe(gameMinutes(time));
+    expect(gameMinutesNow()).toBe(gameMinutes(time));
   });
 
   it('ends a 120-minute drunk spell after 120 game minutes at 4x, and stamps the hangover', () => {
@@ -109,7 +109,7 @@ describe('agent state durations are game minutes', () => {
     setClock(time, 4);
     db.insert(agentStates).values({
       agent_id: agentId, type: 'drunk', severity: 0.5,
-      started_at: stateClockNow(), duration: 120, source: 'test', metadata: null,
+      started_at: gameMinutesNow(), duration: 120, source: 'test', metadata: null,
     }).run();
 
     // Tick-stamped, this took 120 ticks = 8 game hours at 4x.

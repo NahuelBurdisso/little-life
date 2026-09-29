@@ -2,7 +2,7 @@ import { db } from '../db';
 import { agents, needs, relationships, agentStates } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
-import { getEffectivePersonality, stateClockNow } from './states';
+import { getEffectivePersonality } from './states';
 
 // ─── Loneliness Engine ────────────────────────────────────────────────────────
 // Tracks chronic low social need. When social stays < 20 for extended periods,
@@ -10,29 +10,29 @@ import { getEffectivePersonality, stateClockNow } from './states';
 // visit: decisions.ts walks the visitor to the lonely agent and, once they are
 // together, queues a conversation (see getComfortVisit).
 
-const lonelySince = new Map<number, number>(); // agentId → tick when social first dropped below 20
+const lonelySince = new Map<number, number>(); // agentId → game minute when social first dropped below 20
 const LONELY_THRESHOLD = 20;
-const LONELY_DURATION_TICKS = 720; // ~12 game hours of consecutive low social
+const LONELY_DURATION_MINUTES = 720; // 12 game hours of consecutive low social
 
-/** How long a scheduled visit stays on the visitor's agenda (~3 game hours). */
-export const COMFORT_VISIT_WINDOW_TICKS = 180;
+/** How long a scheduled visit stays on the visitor's agenda (3 game hours). */
+export const COMFORT_VISIT_WINDOW_MINUTES = 180;
 
 interface ComfortVisit {
   lonelyAgentId: number;
-  expiresTick: number;
+  expiresAt: number;
 }
 /** visitorId → the visit they have promised to make. */
 const pendingComfortVisits = new Map<number, ComfortVisit>();
 
-export function scheduleComfortVisit(visitorId: number, lonelyAgentId: number, currentTick: number): void {
-  pendingComfortVisits.set(visitorId, { lonelyAgentId, expiresTick: currentTick + COMFORT_VISIT_WINDOW_TICKS });
+export function scheduleComfortVisit(visitorId: number, lonelyAgentId: number, nowMinutes: number): void {
+  pendingComfortVisits.set(visitorId, { lonelyAgentId, expiresAt: nowMinutes + COMFORT_VISIT_WINDOW_MINUTES });
 }
 
 /** The visitor's pending visit, or null (expired visits are dropped here). */
-export function getComfortVisit(visitorId: number, currentTick: number): ComfortVisit | null {
+export function getComfortVisit(visitorId: number, nowMinutes: number): ComfortVisit | null {
   const visit = pendingComfortVisits.get(visitorId);
   if (!visit) return null;
-  if (currentTick > visit.expiresTick) {
+  if (nowMinutes > visit.expiresAt) {
     pendingComfortVisits.delete(visitorId);
     return null;
   }
@@ -44,14 +44,19 @@ export function completeComfortVisit(visitorId: number): void {
   pendingComfortVisits.delete(visitorId);
 }
 
-/** Drop per-agent loneliness tracking for a world replace (agent ids and ticks both reset). */
+/** Drop per-agent loneliness tracking for a world replace (agent ids and the clock both reset). */
 export function clearLonelinessTracking(): void {
   lonelySince.clear();
   pendingComfortVisits.clear();
 }
 
-/** Called periodically (every 60 ticks) from the tick loop. */
-export function lonelinessCheck(totalTicks: number): void {
+/**
+ * Called once per game hour from the tick loop. CLOCK: `nowMinutes` and every
+ * stamp in this module are GAME MINUTES; they were ticks, so at 4x the 12-hour
+ * lonely streak took two game days and a comfort visit's window stretched to 12
+ * hours.
+ */
+export function lonelinessCheck(nowMinutes: number): void {
   const allNeeds = db.select().from(needs).all();
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const allStates = db.select().from(agentStates).all();
@@ -68,8 +73,8 @@ export function lonelinessCheck(totalTicks: number): void {
     if (agentNeeds.social < LONELY_THRESHOLD) {
       const since = lonelySince.get(agent.id);
       if (!since) {
-        lonelySince.set(agent.id, totalTicks);
-      } else if (totalTicks - since > LONELY_DURATION_TICKS && !hasLonelyState) {
+        lonelySince.set(agent.id, nowMinutes);
+      } else if (nowMinutes - since > LONELY_DURATION_MINUTES && !hasLonelyState) {
         // Agent has been lonely long enough — create lonely state
         db.insert(agentStates).values({
           agent_id: agent.id,
@@ -77,7 +82,7 @@ export function lonelinessCheck(totalTicks: number): void {
           severity: Math.min(1.0, (LONELY_THRESHOLD - agentNeeds.social) / LONELY_THRESHOLD),
           // agentStates.started_at is in game minutes: states.ts expires with
           // `started_at + duration <= nowMinutes`.
-          started_at: stateClockNow(),
+          started_at: nowMinutes,
           duration: 2880, // 2 game days
           source: 'chronic_low_social',
           metadata: null,
@@ -90,7 +95,7 @@ export function lonelinessCheck(totalTicks: number): void {
         });
 
         // Trigger warm neighbor intervention
-        triggerComfortVisit(agent.id, activeAgents, totalTicks);
+        triggerComfortVisit(agent.id, activeAgents, nowMinutes);
       }
     } else {
       // Social is above threshold — reset tracker
@@ -102,7 +107,7 @@ export function lonelinessCheck(totalTicks: number): void {
 function triggerComfortVisit(
   lonelyAgentId: number,
   allAgents: (typeof agents.$inferSelect)[],
-  totalTicks: number,
+  nowMinutes: number,
 ): void {
   // Find warm agents with positive relationship who might visit
   const rels = db.select().from(relationships).all();
@@ -128,7 +133,7 @@ function triggerComfortVisit(
     if (Math.random() > visitChance) continue;
 
     // Used to be log-only: the feed announced a visit nobody ever made.
-    scheduleComfortVisit(other.id, lonelyAgentId, totalTicks);
+    scheduleComfortVisit(other.id, lonelyAgentId, nowMinutes);
     const visitorName = other.name;
     const lonelyAgent = allAgents.find(a => a.id === lonelyAgentId);
     const lonelyName = lonelyAgent?.name ?? 'someone';

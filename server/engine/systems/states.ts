@@ -15,7 +15,6 @@ import {
 } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and, gt, lt, or } from 'drizzle-orm';
-import { CONFIG } from '../../lib/constants';
 import { PersonalityProfile } from '../../lib/personality';
 import { clamp } from '../../lib/utils';
 import {
@@ -32,6 +31,7 @@ import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngin
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { dayChanged, gameMinutes } from '../../lib/gameClock';
+import { gameMinutesToMs } from '../../lib/worldClock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -177,7 +177,7 @@ export function statesTick() {
       .from(needsTable)
       .where(eq(needsTable.agent_id, agent.id))
       .get();
-    checkConditionalExits(agentStateRows, agentNeeds, agent, nowMinutes);
+    checkConditionalExits(agentStateRows, agentNeeds, agent, nowMinutes, world.tick_speed);
 
     // 1c. Evaluate triggers for new states
     agentStateRows = db
@@ -195,6 +195,7 @@ export function statesTick() {
       season,
       removedAgentIds,
       allAgents,
+      world.tick_speed,
     );
 
     // 1d. Compute effective personality from all current states
@@ -314,6 +315,8 @@ function evaluateTriggers(
   season: string,
   removedAgentIds: number[],
   allAgents: Array<typeof agents.$inferSelect>,
+  /** Game minutes per tick, for windows over wall-clock-stamped tables. */
+  tickSpeed: number,
 ) {
   const personality = agent.personality as PersonalityProfile | null;
   if (!personality) return;
@@ -492,8 +495,10 @@ function evaluateTriggers(
 
   // ── Heartbroken ───────────────────────────────────────────────────────────
   if (!activeTypes.has('heartbroken')) {
-    const msPerTick = CONFIG.TICK_INTERVAL_MS;
-    const sinceWindow = Date.now() - 60 * msPerTick;
+    // Tables stamped with Date.now(), so the game-time window is converted to
+    // wall clock at the current speed. A fixed ms window covered four times the
+    // game time at 4x.
+    const sinceWindow = Date.now() - gameMinutesToMs(60, tickSpeed);
     const recentRomanceDrops = db
       .select()
       .from(relationshipEvents)
@@ -544,8 +549,10 @@ function evaluateTriggers(
 
   // ── Angry ─────────────────────────────────────────────────────────────────
   if (!activeTypes.has('angry') && personality.aggression > 40) {
-    const msPerTick = CONFIG.TICK_INTERVAL_MS;
-    const sinceWindow = Date.now() - 60 * msPerTick;
+    // Tables stamped with Date.now(), so the game-time window is converted to
+    // wall clock at the current speed. A fixed ms window covered four times the
+    // game time at 4x.
+    const sinceWindow = Date.now() - gameMinutesToMs(60, tickSpeed);
     const badConvos = db
       .select()
       .from(conversations)
@@ -630,8 +637,10 @@ function evaluateTriggers(
 
   // ── Euphoric ──────────────────────────────────────────────────────────────
   if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 70) {
-    const msPerTick = CONFIG.TICK_INTERVAL_MS;
-    const sinceWindow = Date.now() - 90 * msPerTick;
+    // Tables stamped with Date.now(), so the game-time window is converted to
+    // wall clock at the current speed. A fixed ms window covered four times the
+    // game time at 4x.
+    const sinceWindow = Date.now() - gameMinutesToMs(90, tickSpeed);
     const positiveConvoRows = db
       .select()
       .from(conversations)
@@ -831,7 +840,9 @@ function evaluateTriggers(
       }
       const socialDuration = nowMinutes - lowSocialSince.get(agent.id)!;
       if (socialDuration >= 60) {
-        const sinceWindow = Date.now() - 3600000; // last 60 minutes real-time
+        // 60 game hours: what the old "last 60 minutes real-time" window meant at 1x
+        // (one real second per game minute); kept, only made speed-independent.
+        const sinceWindow = Date.now() - gameMinutesToMs(3600, tickSpeed);
         const positiveConvoRows = db
           .select()
           .from(conversations)
@@ -950,8 +961,10 @@ function evaluateTriggers(
 
   // ── Confident ─────────────────────────────────────────────────────────────
   if (!activeTypes.has('confident') && personality.vanity > 40) {
-    const msPerTick = CONFIG.TICK_INTERVAL_MS;
-    const sinceWindow = Date.now() - 1440 * msPerTick;
+    // Tables stamped with Date.now(), so the game-time window is converted to
+    // wall clock at the current speed. A fixed ms window covered four times the
+    // game time at 4x.
+    const sinceWindow = Date.now() - gameMinutesToMs(1440, tickSpeed);
     // Projected: only membership is read, but `select()` dragged the whole
     // `messages` transcript of every recent conversation across for each agent,
     // every tick.
@@ -994,6 +1007,8 @@ function checkConditionalExits(
   agentNeeds: typeof needsTable.$inferSelect | undefined,
   agent: typeof agents.$inferSelect,
   nowMinutes: number,
+  /** Game minutes per tick, for windows over wall-clock-stamped tables. */
+  tickSpeed: number,
 ) {
   for (const state of stateRows) {
     if (!STATE_DEFINITIONS[state.type as StateType]?.conditionalExit) continue;
@@ -1022,8 +1037,9 @@ function checkConditionalExits(
 
       case 'depressed': {
         // Exit path 1: positive conversation with any friend (friendship > 30)
-        // Look back 10 minutes real-time (enough to catch recent conversations)
-        const sinceWindow = Date.now() - 600_000;
+        // Look back 10 game hours (enough to catch recent conversations): the old
+        // "10 minutes real-time" at 1x, now speed-independent.
+        const sinceWindow = Date.now() - gameMinutesToMs(600, tickSpeed);
         const recentPositiveConvos = db
           .select({ participants: conversations.participants })
           .from(conversations)
@@ -1652,8 +1668,8 @@ function processStateEffects(
       case 'confident': {
         if (!personality || personality.vanity <= 60) break;
 
-        const msPerTick = CONFIG.TICK_INTERVAL_MS;
-        const sinceWindow = Date.now() - 30 * msPerTick;
+        // Wall-clock-stamped table: 30 game minutes at the current speed.
+        const sinceWindow = Date.now() - gameMinutesToMs(30, tickSpeed);
         const negativeConvo = db
           .select()
           .from(conversations)
