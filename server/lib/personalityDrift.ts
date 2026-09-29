@@ -3,6 +3,8 @@ import { agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { simEvents } from './simEvents';
 import type { PersonalityProfile } from './personality';
+import { asId, asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
+import { saveSnapshots } from '../engine/simSnapshots';
 
 // ─── Personality Drift ────────────────────────────────────────────────────────
 // Major life events cause small, permanent personality shifts.
@@ -12,6 +14,11 @@ import type { PersonalityProfile } from './personality';
 
 const MAX_DRIFT = 15;
 const originalPersonalities = new Map<number, PersonalityProfile>();
+
+const AXES: ReadonlyArray<keyof PersonalityProfile> = [
+  'honesty', 'aggression', 'warmth', 'impulsiveness', 'vanity',
+  'curiosity', 'loyalty', 'morality', 'sensuality', 'neuroticism',
+];
 
 /**
  * Drop cached personality baselines for a world replace. A reused agent id
@@ -23,12 +30,58 @@ export function clearPersonalityBaselines(): void {
   originalPersonalities.clear();
 }
 
+/**
+ * Checkpoint of the drift baselines (server/engine/simSnapshots.ts).
+ *
+ * This one is not just "nice to keep". The baseline is captured lazily from the
+ * agents row the first time an agent drifts, and the row is where the drift is
+ * written. When the baselines only lived in memory, the first drift after a
+ * restart captured the *already drifted* personality as the new original, so
+ * the ±15 cap re-anchored on every restart and drift was unbounded across them.
+ * Shape: { [agentId]: PersonalityProfile }.
+ */
+export const personalityBaselineSnapshotStore: SnapshotStore = {
+  key: 'personalityBaselines',
+  version: 1,
+  serialize() {
+    const out: Record<string, PersonalityProfile> = {};
+    for (const [agentId, p] of originalPersonalities) out[agentId] = { ...p };
+    return out;
+  },
+  restore(data) {
+    originalPersonalities.clear();
+    for (const [key, raw] of Object.entries(asRecord(data) ?? {})) {
+      const agentId = asId(key);
+      const p = asRecord(raw);
+      if (agentId === null || !p) continue;
+      // All ten axes or nothing: a partial baseline would compare an axis
+      // against `undefined` and silently disable its cap.
+      const profile = {} as PersonalityProfile;
+      let complete = true;
+      for (const axis of AXES) {
+        const v = asNumber(p[axis]);
+        if (v === null) { complete = false; break; }
+        profile[axis] = v;
+      }
+      if (complete) originalPersonalities.set(agentId, profile);
+    }
+  },
+};
+
 function getOriginal(agentId: number): PersonalityProfile | null {
   if (originalPersonalities.has(agentId)) return originalPersonalities.get(agentId)!;
   const agent = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, agentId)).get();
   if (!agent?.personality) return null;
   const p = agent.personality as PersonalityProfile;
   originalPersonalities.set(agentId, { ...p });
+  // Write the new baseline through at once rather than waiting for the hourly
+  // checkpoint: the drift about to be applied lands in the agents row right
+  // away, and a crash in between would leave a drifted row with no baseline —
+  // the same re-anchoring as before, just rarer. First captures happen once per
+  // agent per world, so this is a handful of tiny writes. It runs inside the
+  // emitting phase's transaction, so the baseline commits or rolls back
+  // together with the drift that caused it.
+  saveSnapshots([personalityBaselineSnapshotStore]);
   return p;
 }
 
