@@ -118,6 +118,7 @@ async function main(): Promise<void> {
   const { gameTick, stopTickLoopAndWait } = await import('../server/engine/tick');
   const { CONFIG } = await import('../server/lib/constants');
   const { TRADE_RULES } = await import('../server/data/economyData');
+  const { getCheapestFoodPrice } = await import('../server/lib/economyEngine');
   // Registers the gift / jealousy listeners the server gets from index.ts.
   await import('../server/lib/giftEngine');
   // Food made per day (farm output, bread, drinks): meals are real food now, so
@@ -126,6 +127,20 @@ async function main(): Promise<void> {
   const produced = new Map<string, number>();
   simEvents.on('economy:production', (p: { item: string; quantity: number }) => {
     produced.set(p.item, (produced.get(p.item) ?? 0) + p.quantity);
+  });
+  // Meal sources per day (economy.ts serveMeal emits once per meal). The
+  // pantry feeds the broke and the starving; only the broke ones are the E5
+  // signal ("lives on the pantry"), a starving agent with money just didn't
+  // reach a vendor in time.
+  const mealSources = new Map<string, number>();
+  const brokePantryToday = new Set<number>();
+  let brokePantryMeals = 0;
+  simEvents.on('economy:meal', (m: { agentId: number; source: string; money: number }) => {
+    mealSources.set(m.source, (mealSources.get(m.source) ?? 0) + 1);
+    if (m.source === 'pantry' && m.money < getCheapestFoodPrice()) {
+      brokePantryToday.add(m.agentId);
+      brokePantryMeals++;
+    }
   });
 
   const { worldState, agents, economy, economyTransactions, locations, activityLog, conversations, needs, agentStates } = schema;
@@ -170,8 +185,9 @@ async function main(): Promise<void> {
 
   out(`soak: ${DAYS} day(s), tick_speed ${tickSpeed}, ${ticksPerDay} ticks/day, db ${tmpDb}${SOURCE_DB ? ` (copy of ${SOURCE_DB})` : ` (fresh world, seed "${SEED}")`}`);
   out('');
-  out('day | agents | $/capita | min$ | ratio | tax pool | salary | buys (n/$) | covers (n/$) | wholesale $ | gifts (n/$) | convos');
-  out('----+--------+----------+------+-------+----------+--------+------------+--------------+-------------+-------------+-------');
+  // pantry = pantry meals / of which the eater was broke (E5).
+  out('day | agents | $/capita | min$ | ratio | tax pool | salary | upkeep | stipend | buys (n/$) | covers (n/$) | wholesale $ | gifts (n/$) | broke | pantry | convos');
+  out('----+--------+----------+------+-------+----------+--------+--------+---------+------------+--------------+-------------+-------------+-------+--------+-------');
   // Second table, printed after the run: needs and meals per day. Needs are
   // averaged over every agent-tick (time-weighted, not a daily snapshot), so a
   // town pinned at 100 and one that dips at lunch read differently.
@@ -185,6 +201,11 @@ async function main(): Promise<void> {
   // Minutes each agent has currently spent at hunger 0 without a break — the
   // starvation death clock (lifeEventsEngine: 4320). Carried across days.
   const hungerZeroRun = new Map<number, number>();
+  // Consecutive days each agent ate a pantry meal (E5: "living on the pantry").
+  const pantryRun = new Map<number, number>();
+  const maxPantryRun = new Map<number, number>();
+  // End-of-day cash per agent, printed as a trajectory table after the run.
+  const cashByDay: { day: number; cash: Map<number, number> }[] = [];
 
   const anomalies: string[] = [];
   const t0 = performance.now();
@@ -265,6 +286,21 @@ async function main(): Promise<void> {
     const covers = txs.filter((t) => t.reason.startsWith('entertainment:'));
     const wholesale = txs.filter((t) => t.reason.startsWith('wholesale:'));
     const gifts = txs.filter((t) => ['gift', 'drunk_gift', 'euphoric_gift'].includes(t.reason));
+    // Treasury payouts to residents other than wages (town:stipend).
+    const welfare = txs.filter((t) => t.reason.startsWith('town:'));
+    const upkeep = txs.filter((t) => t.reason === 'upkeep');
+    const broke = activeEcon.filter((e) => e.money < getCheapestFoodPrice()).length;
+    for (const id of activeIds) {
+      const run = brokePantryToday.has(id) ? (pantryRun.get(id) ?? 0) + 1 : 0;
+      pantryRun.set(id, run);
+      maxPantryRun.set(id, Math.max(maxPantryRun.get(id) ?? 0, run));
+    }
+    const pantryMeals = `${mealSources.get('pantry') ?? 0}/${brokePantryMeals}`;
+    brokePantryMeals = 0;
+    const mealMix = [...mealSources].map(([k, v]) => `${k} ${v}`).join(', ');
+    mealSources.clear();
+    brokePantryToday.clear();
+    cashByDay.push({ day: dayStart.day, cash: new Map(activeEcon.map((e) => [e.agent_id, e.money])) });
 
     const errors = db.select().from(activityLog)
       .where(and(gt(activityLog.id, logMark), eq(activityLog.type, 'error'))).all();
@@ -274,6 +310,11 @@ async function main(): Promise<void> {
       .map((r) => String((r.template_data as any)?.description ?? ''))
       .filter((d) => d.includes(' has died. '))
       .map((d) => d.replace(/ has died\. /, ': ').replace(/\. The town mourns\.$/, ''));
+    // Money-supply crisis events (economy.ts balancer, ratio > 2 / > 3).
+    const crisis = db.select().from(activityLog)
+      .where(and(gt(activityLog.id, logMark), inArray(activityLog.type, ['drama', 'system']))).all()
+      .map((r) => String((r.template_data as any)?.description ?? (r.template_data as any)?.message ?? ''))
+      .filter((d) => /during the economic crisis|traveling scammer|Emergency tax!|Hyperinflation!|is hoarding supplies/.test(d));
     logMark = maxId(activityLog);
     const endedConvos = db.select({ participants: conversations.participants }).from(conversations)
       .where(and(gt(conversations.id, convoMark), inArray(conversations.status, ['ended', 'completed']))).all();
@@ -314,7 +355,7 @@ async function main(): Promise<void> {
       `${(100 * eatingSamples / Math.max(1, needSamples)).toFixed(1)}%`.padStart(7),
       `${mealCount('home')}/${mealCount('out')}/${mealCount('other')}`.padStart(15),
       String(died.length).padStart(6) + (died.length ? ` (${deathCauses.join('; ') || died.map((id) => nameOf.get(id)).join(', ')})` : ''),
-    ].join(' | ') + `  | made: ${[...produced].map(([k, v]) => `${k} ${v}`).join(', ') || '-'}`);
+    ].join(' | ') + `  | made: ${[...produced].map(([k, v]) => `${k} ${v}`).join(', ') || '-'}  | meals: ${mealMix || '-'}`);
     produced.clear();
     out([
       String(dayStart.day).padStart(3),
@@ -324,10 +365,14 @@ async function main(): Promise<void> {
       ratio.toFixed(2).padStart(5),
       f(world.tax_pool).padStart(8),
       f(sum(salary)).padStart(6),
+      f(sum(upkeep)).padStart(6),
+      f(sum(welfare)).padStart(7),
       `${buys.length}/${f(sum(buys))}`.padStart(10),
       `${covers.length}/${f(sum(covers))}`.padStart(12),
       f(sum(wholesale)).padStart(11),
       `${gifts.length}/${f(sum(gifts))}`.padStart(11),
+      String(broke).padStart(5),
+      pantryMeals.padStart(6),
       String(convos).padStart(6),
     ].join(' | '));
 
@@ -358,7 +403,12 @@ async function main(): Promise<void> {
       const e = allEcon.find((x) => x.agent_id === l.owner);
       if (e && e.money < 5) note(`shop owner of ${l.name} is down to $${e.money.toFixed(2)}`);
     }
-    if (world.tax_pool > totalMoney * 0.25) note(`tax pool $${f(world.tax_pool)} is >25% of all agent money ($${f(totalMoney)}) — money sink`);
+    // The treasury pays wages and holds a reserve (server/lib/townTreasury.ts);
+    // it should stay between zero and its cap.
+    const treasuryCap = active.length * CONFIG.ECONOMY.TREASURY_CAP_PER_CAPITA;
+    if (world.tax_pool < 0) note(`treasury in debt ($${f(world.tax_pool)})`);
+    else if (world.tax_pool > treasuryCap) note(`treasury $${f(world.tax_pool)} above its cap $${f(treasuryCap)}`);
+    for (const c of crisis) note(`crisis event: ${c.slice(0, 100)}`);
     if (buys.length === 0) note('no shop purchases all day');
     if (convos === 0) note('no conversations ended all day (template tier not running?)');
     if (errors.length > 0) {
@@ -382,6 +432,21 @@ async function main(): Promise<void> {
   out('day | convos | pairs | top3 share | no convo | top pairs | risky work');
   out('----+--------+-------+-----------+----------+-----------+-----------');
   for (const r of socialRows) out(r);
+  out('');
+  // Cash trajectory: one row per agent (everyone active at some point), one
+  // column per day's closing balance; `pantry run` is the longest run of
+  // consecutive days with a pantry meal eaten broke.
+  const everyone = db.select({ id: agents.id, name: agents.name }).from(agents).all();
+  const econRows = new Map(db.select().from(economy).all().map((e) => [e.agent_id, e]));
+  out(`agent              | job               | salary | ${cashByDay.map((c) => `d${c.day}`.padStart(6)).join(' | ')} | pantry run`);
+  for (const a of everyone) {
+    const e = econRows.get(a.id);
+    const cells = cashByDay.map((c) => (c.cash.has(a.id) ? c.cash.get(a.id)!.toFixed(0) : '-').padStart(6));
+    out([
+      a.name.slice(0, 18).padEnd(18), (e?.job ?? '').slice(0, 17).padEnd(17), String(e?.salary ?? '').padStart(6),
+      ...cells, String(maxPantryRun.get(a.id) ?? 0).padStart(10),
+    ].join(' | '));
+  }
   out('');
   out(`${ticks} ticks in ${(ms / 1000).toFixed(1)} s (${(ms / ticks).toFixed(1)} ms/tick)`);
   out('');
