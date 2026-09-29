@@ -113,7 +113,7 @@ export function secretsLine(count: number): string | null {
 
 function pickLinks(
   agentId: number,
-  rels: TourRelationship[],
+  rels: ReadonlyArray<TourRelationship>,
   nameOf: Map<number, string>,
 ): { tie: CardLink | null; rival: CardLink | null } {
   type Candidate = CardLink & { score: number; friendship: number };
@@ -151,11 +151,11 @@ function strip({ id, name, label }: CardLink): CardLink {
 }
 
 export function buildResidentCards(input: {
-  agents: TourAgent[];
-  relationships: TourRelationship[];
-  secrets: TourSecret[];
-  arcs: TourArc[];
-  places: TourPlace[];
+  agents: ReadonlyArray<TourAgent>;
+  relationships: ReadonlyArray<TourRelationship>;
+  secrets: ReadonlyArray<TourSecret>;
+  arcs: ReadonlyArray<TourArc>;
+  places: ReadonlyArray<TourPlace>;
 }): ResidentCard[] {
   const nameOf = new Map(input.agents.map((a) => [a.id, a.name]));
   const placeOf = new Map(input.places.map((p) => [p.id, p.name]));

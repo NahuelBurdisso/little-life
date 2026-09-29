@@ -72,6 +72,15 @@ export function phaseAfterTour(worldKey: string | null, store: KeyValueStore | n
   return hasSeen('coach', worldKey, store) ? 'idle' : 'coach';
 }
 
+/** "Skip" on the tour means skip the whole introduction, coach marks included. */
+export function phaseAfterSkip(worldKey: string | null, store: KeyValueStore | null = browserStore()): GuidePhase {
+  if (worldKey) {
+    markSeen('tour', worldKey, store);
+    markSeen('coach', worldKey, store);
+  }
+  return 'idle';
+}
+
 export function phaseAfterCoach(worldKey: string | null, store: KeyValueStore | null = browserStore()): GuidePhase {
   if (worldKey) markSeen('coach', worldKey, store);
   return 'idle';

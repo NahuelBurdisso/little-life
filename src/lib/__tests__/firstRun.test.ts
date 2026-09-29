@@ -4,6 +4,7 @@ import {
   initialPhase,
   markSeen,
   phaseAfterCoach,
+  phaseAfterSkip,
   phaseAfterTour,
   worldSeedKey,
   type KeyValueStore,
@@ -72,6 +73,12 @@ describe('guide flow', () => {
     const store = fakeStore();
     markSeen('coach', 'k', store);
     expect(phaseAfterTour('k', store)).toBe('idle');
+  });
+
+  it('skipping the tour skips the coach marks too', () => {
+    const store = fakeStore();
+    expect(phaseAfterSkip('k', store)).toBe('idle');
+    expect(initialPhase('k', store)).toBe('idle');
   });
 
   it('does not write anything for a world it cannot identify', () => {
