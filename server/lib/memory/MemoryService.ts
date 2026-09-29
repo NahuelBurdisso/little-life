@@ -98,6 +98,41 @@ export class MemoryService {
   }
 
   /**
+   * Write every queued memory now instead of on the flush timer, waiting for
+   * the embeddings. Resolves true once the queue is empty and no flush is in
+   * flight, false when `timeoutMs` ran out first (the rest stays queued and is
+   * written by the normal timer later).
+   *
+   * For taking a save (lib/saves.ts): up to a full batch of memories sits in
+   * the queue for WRITE_QUEUE_FLUSH_MS, longer while the embedder is slow, and
+   * a backup taken in that window silently leaves them out of the save. A
+   * bounded wait, because the embedder is the LLM server and the tick loop is
+   * paused while this runs — a hung Ollama must not freeze the game.
+   */
+  async flushPending(timeoutMs = 15_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    const generation = this.generation;
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    // A clear() mid-wait (world replaced) disowns the queue: stop waiting.
+    while ((this.queue.length > 0 || this.flushInProgress) && generation === this.generation) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      // Someone else's flush is awaiting its embeddings: poll until it ends.
+      // Otherwise run one batch ourselves (flush() takes at most one), never
+      // waiting past the deadline for it.
+      const work = this.flushInProgress ? null : this.flush();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const wait = new Promise<void>((resolve) => { timer = setTimeout(resolve, work ? remaining : Math.min(remaining, 50)); });
+      await (work ? Promise.race([work, wait]) : wait);
+      clearTimeout(timer);
+    }
+    return this.queue.length === 0 && !this.flushInProgress;
+  }
+
+  /**
    * Forget cached vectors so they are reloaded from the DB — after the
    * embedding backfill rewrote them. Unlike clear(), pending writes stay.
    */

@@ -155,3 +155,47 @@ describe('MemoryService write flush', () => {
     expect(descriptions).not.toContain('trivial');
   });
 });
+
+/** What a save waits on before it copies the DB (lib/saves.ts). */
+describe('MemoryService.flushPending', () => {
+  it('writes everything queued, a backlog included, without waiting for the timer', async () => {
+    const { service, inserted, releaseFirst } = setup();
+    for (let i = 0; i < WRITE_QUEUE_MAX_SIZE + 3; i++) service.record(1, 'observation', `m${i}`);
+
+    const done = service.flushPending(60_000);
+    // The first embedding hangs; the flush must wait for it, not give up.
+    await vi.advanceTimersByTimeAsync(200);
+    expect(inserted()).toHaveLength(0);
+    releaseFirst();
+    await vi.advanceTimersByTimeAsync(200);
+
+    await expect(done).resolves.toBe(true);
+    expect(inserted()).toHaveLength(WRITE_QUEUE_MAX_SIZE + 3);
+  });
+
+  it('waits out a flush someone else started', async () => {
+    const { service, inserted, releaseFirst } = setup();
+    service.record(1, 'observation', 'first');
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS); // timer flush starts, hangs
+    service.record(1, 'observation', 'second');
+
+    const done = service.flushPending(60_000);
+    await vi.advanceTimersByTimeAsync(500);
+    releaseFirst();
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(done).resolves.toBe(true);
+    expect(inserted().map((m) => m.description)).toEqual(['first', 'second']);
+  });
+
+  it('gives up at the deadline when the embedder hangs, keeping the queue', async () => {
+    const { service, inserted } = setup();
+    service.record(1, 'observation', 'stuck');
+
+    const done = service.flushPending(1_000);
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(done).resolves.toBe(false);
+    expect(inserted()).toHaveLength(0);
+  });
+});
