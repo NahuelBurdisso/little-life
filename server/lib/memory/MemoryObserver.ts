@@ -301,6 +301,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   // prose (itemPhrase), not the id (G9). Prose already sent ("$12", "a drink")
   // passes through unchanged.
   simEvents.on('economy:production', ({ agentId, item, quantity }: { agentId: number; item: string; quantity: number }) => {
+    // Fired for every tick a worker makes something: playtest #3 stored "I
+    // produced 1 portion of raw food at work today." 121 times in under three
+    // game days (a farmhand every ~25 game minutes of his shift) — the largest
+    // repeated memory by far. Once per item per perception window.
+    if (!shouldRecordPerception(agentId, `production|${item}`, gameMinutesNow())) return;
     memoryService.record(agentId, 'observation', describeEvent('economy_production', { made: itemCountPhrase(item, quantity) }), { subtype: 'economy' });
   });
 

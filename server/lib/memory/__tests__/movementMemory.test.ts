@@ -37,6 +37,15 @@ describe('MemoryObserver — movement', () => {
     expect(movementCalls()).toHaveLength(3);
   });
 
+  it('remembers work output once per item per window, not every tick (playtest #3)', () => {
+    const production = () => record.mock.calls.filter((c) => String(c[2]).startsWith('I produced'));
+    for (let i = 0; i < 5; i++) simEvents.emit('economy:production', { agentId: 41, item: 'food_raw', quantity: 1 });
+    expect(production()).toHaveLength(1);
+    simEvents.emit('economy:production', { agentId: 41, item: 'bread', quantity: 2 });
+    simEvents.emit('economy:production', { agentId: 42, item: 'food_raw', quantity: 1 });
+    expect(production()).toHaveLength(3);
+  });
+
   it('does not store departures', () => {
     simEvents.emit('agent:departed', { agentId: 41, locationName: 'Home' });
     expect(movementCalls()).toHaveLength(0);
