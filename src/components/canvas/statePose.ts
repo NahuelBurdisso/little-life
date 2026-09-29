@@ -187,3 +187,122 @@ export function poseOffsets(kind: PoseKind, t: number, out: PoseOffsets): PoseOf
   }
   return out;
 }
+
+// ── Activity body language ────────────────────────────────────────────────────────────────
+// What the agent is *doing* rather than feeling: a jogger paces on the spot, a pickpocket
+// crouches and glances round. Layered on top of the state pose by AgentSprite, so a drunk
+// jogger sways *and* jogs. Same shape as the state poses (pure, caller-owned output).
+
+export type ActivityPoseKind =
+  | 'none' | 'jog' | 'crouch' | 'shifty' | 'look' | 'nibble' | 'clap' | 'orate' | 'lean';
+
+export const ACTIVITY_POSE_KINDS: readonly ActivityPoseKind[] = [
+  'none', 'jog', 'crouch', 'shifty', 'look', 'nibble', 'clap', 'orate', 'lean',
+];
+
+export interface ActivityOffsets extends PoseOffsets {
+  /**
+   * 0 = leave the facing alone, 1 / -1 = face right / left. Glancing poses flip it every
+   * couple of seconds; the caller only applies it once the pose has eased in.
+   */
+  face: -1 | 0 | 1;
+  /** Run the walk-cycle frames while standing on the spot. */
+  legs: boolean;
+}
+
+export function newActivityOffsets(): ActivityOffsets {
+  return { dx: 0, dy: 0, rot: 0, scaleY: 1, breathRate: 1, face: 0, legs: false };
+}
+
+const JOG_STEP_HZ = 2.6;      // footfalls per second (the bob is one hop per foot)
+const JOG_LAP_HZ = 0.32;      // back-and-forth laps per second
+const JOG_LAP_PX = 5;
+const JOG_HOP = 1.8;
+const JOG_LEAN = 0.09;
+const CROUCH_SQUASH = 0.84;
+const CROUCH_DROP = 2.5;
+const CROUCH_LEAN = 0.14;
+const GLANCE_CROUCH_S = 1.4;
+const GLANCE_SHIFTY_S = 2.3;
+const GLANCE_LOOK_S = 2.8;
+const NIBBLE_PERIOD = 2.6;
+const NIBBLE_FRACTION = 0.45;
+const CLAP_PERIOD = 1.7;
+const CLAP_FRACTION = 0.4;
+const ORATE_PERIOD = 2.1;
+const ORATE_FRACTION = 0.3;
+const LEAN_ROT = 0.15;
+
+/** Alternating facing: right for one `period`, left for the next. */
+function glance(t: number, period: number): 1 | -1 {
+  return Math.floor(t / period) % 2 === 0 ? 1 : -1;
+}
+
+export function activityPoseOffsets(kind: ActivityPoseKind, t: number, out: ActivityOffsets): ActivityOffsets {
+  out.dx = 0;
+  out.dy = 0;
+  out.rot = 0;
+  out.scaleY = 1;
+  out.breathRate = 1;
+  out.face = 0;
+  out.legs = false;
+  switch (kind) {
+    case 'jog': {
+      // Feet drum on the spot while the body paces a short lap, turning at each end.
+      out.legs = true;
+      out.dy = -JOG_HOP * Math.abs(Math.sin(Math.PI * JOG_STEP_HZ * t));
+      const lap = TAU * JOG_LAP_HZ * t;
+      out.dx = JOG_LAP_PX * Math.sin(lap);
+      out.face = Math.cos(lap) >= 0 ? 1 : -1;
+      out.rot = JOG_LEAN;
+      out.breathRate = 3;
+      break;
+    }
+    case 'crouch':
+      out.scaleY = CROUCH_SQUASH;
+      out.dy = CROUCH_DROP;
+      out.rot = CROUCH_LEAN;
+      out.face = glance(t, GLANCE_CROUCH_S);
+      out.breathRate = 2;
+      break;
+    case 'shifty':
+      out.scaleY = 0.96;
+      out.rot = 0.05;
+      out.face = glance(t, GLANCE_SHIFTY_S);
+      break;
+    case 'look':
+      // Window shopping: a slow head-turn to the next stall and a little step toward it.
+      out.face = glance(t, GLANCE_LOOK_S);
+      out.dx = 0.8 * Math.sin((TAU * t) / (GLANCE_LOOK_S * 2));
+      break;
+    case 'nibble': {
+      const p = (t % NIBBLE_PERIOD) / NIBBLE_PERIOD;
+      // Two chews per bite.
+      if (p < NIBBLE_FRACTION) out.dy = 0.9 * Math.abs(Math.sin((TAU * p) / NIBBLE_FRACTION));
+      out.rot = 0.04;
+      break;
+    }
+    case 'clap': {
+      const p = (t % CLAP_PERIOD) / CLAP_PERIOD;
+      // Three quick claps, then a pause.
+      if (p < CLAP_FRACTION) out.dy = -1.3 * Math.abs(Math.sin((3 * Math.PI * p) / CLAP_FRACTION));
+      break;
+    }
+    case 'orate': {
+      const p = (t % ORATE_PERIOD) / ORATE_PERIOD;
+      if (p < ORATE_FRACTION) {
+        const s = Math.sin((Math.PI * p) / ORATE_FRACTION);
+        out.dy = -1.4 * s;
+        out.rot = 0.12 * s;
+      }
+      break;
+    }
+    case 'lean':
+      out.rot = LEAN_ROT;
+      out.dx = 0.6 * Math.sin(TAU * 0.25 * t);
+      break;
+    case 'none':
+      break;
+  }
+  return out;
+}

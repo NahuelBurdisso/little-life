@@ -2,7 +2,10 @@ import * as PIXI from "pixi.js";
 import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 import { facingFromStep, pickAgentFrame, type SheetFacing } from "./agentFrames";
 import { loadAgentSheet } from "./agentSheet";
-import { newPoseOffsets, poseOffsets, type PoseKind, type StatePose } from "./statePose";
+import {
+  activityPoseOffsets, newActivityOffsets, newPoseOffsets, poseOffsets,
+  type ActivityPoseKind, type PoseKind, type StatePose,
+} from "./statePose";
 
 const LERP_SPEED = 0.12;
 /**
@@ -57,6 +60,13 @@ const STATE_POSE_FADE = 0.08;        // per-frame blend of a pose in/out (also w
 const STATE_POSE_GATE = 0.15;        // per-frame blend of the walking/seated suppression
 const STATE_POSE_WALK_HOLD = 24;     // idle frames (~0.4s) before a stopped body counts as standing
 
+// Activity body language (statePose.ts `activityPoseOffsets`): what the agent is doing, layered on
+// the state pose. Same easing as the state poses so a change of activity never snaps.
+const ACTIVITY_FADE = 0.1;           // per-frame blend of an activity pose in/out
+const ACTIVITY_GATE = 0.2;           // per-frame blend of the walking suppression
+const ACTIVITY_APPLY_ABOVE = 0.6;    // weight past which facing and running legs take over
+const ACTIVITY_LEG_PX = 0.55;        // walk-cycle distance per frame while jogging on the spot
+
 // Blinking (sheet sprites only): a closed-eye frame every few seconds, desynced per agent.
 const BLINK_MIN_GAP = 150;           // frames (~2.5s at 60fps) between blinks, minimum
 const BLINK_GAP_SPREAD = 240;        // extra random frames on top of the minimum
@@ -100,6 +110,15 @@ const HAND_X = 7;
 const HAND_Y = -10;
 /** Top of the head above the feet anchor, standing. */
 export const HEAD_HEIGHT = 27;
+
+/** Two 0xRRGGBB tints multiplied channel by channel. */
+function mulTint(m: number, p: number): number {
+  if (p === 0xffffff) return m;
+  const r = (((m >> 16) & 255) * ((p >> 16) & 255) / 255) | 0;
+  const g = (((m >> 8) & 255) * ((p >> 8) & 255) / 255) | 0;
+  const b = ((m & 255) * (p & 255) / 255) | 0;
+  return (r << 16) | (g << 8) | b;
+}
 
 /** Represents a single agent's visual on the canvas: pixel-art sprite with rings + label. */
 export class AgentSprite {
@@ -163,6 +182,17 @@ export class AgentSprite {
   private readonly poseOff = newPoseOffsets();
   private poseTint = 0xffffff;
   private moodShade = 0xffffff;
+
+  // Activity pose: `activityKind` is what the data asks for, `activityActive` what is playing.
+  private activityKind: ActivityPoseKind = 'none';
+  private activityActive: ActivityPoseKind = 'none';
+  private activityWeight = 0;
+  private activityGate = 1;
+  private activityClock = Math.random() * 60;
+  private activityTint = 0xffffff;
+  private readonly activityOff = newActivityOffsets();
+  private actFace: -1 | 0 | 1 = 0;
+  private actLegs = false;
 
   constructor(name: string, spriteKey?: string) {
     this.container = new PIXI.Container();
@@ -374,6 +404,19 @@ export class AgentSprite {
     }
   }
 
+  /**
+   * Body language for what the agent is doing (jog, sneak, glance about...). `tint` is
+   * multiplied into the sprite colour for as long as the activity lasts (a thief's dim
+   * cloak). Cheap to call every data refresh; `animate` eases the pose in and out.
+   */
+  setActivityPose(kind: ActivityPoseKind, tint = 0xffffff) {
+    this.activityKind = kind;
+    if (tint !== this.activityTint) {
+      this.activityTint = tint;
+      this.applyTint();
+    }
+  }
+
   /** Horizontal facing: 1 = right, -1 = left. The rig is mirrored accordingly. */
   get facingDir(): 1 | -1 {
     return this.facing;
@@ -472,6 +515,8 @@ export class AgentSprite {
     if (this.workBlend > 0.01) this.workPhase += WORK_RATE * deltaTime;
 
     const pose = this.stepPose(walking, deltaTime);
+    this.mergeActivity(pose, walking, deltaTime);
+    if (this.actFace !== 0) this.facing = this.actFace;
 
     if (walking) {
       this.sheetFacing = facingFromStep(stepX, stepY, this.sheetFacing);
@@ -502,7 +547,14 @@ export class AgentSprite {
       if (this.blinkCountdown <= 0) {
         this.blinkCountdown = BLINK_MIN_GAP + Math.random() * BLINK_GAP_SPREAD;
       }
-      this.showFrame(false, blinking);
+      if (this.actLegs) {
+        // Jogging on the spot: the legs run while the body stays put.
+        this.sheetFacing = 'down';
+        this.walkDistance += ACTIVITY_LEG_PX * deltaTime;
+        this.showFrame(true);
+      } else {
+        this.showFrame(false, blinking);
+      }
       // Idle: breathe, plus whatever the current pose adds. Offsets are absolute
       // rather than decayed so sitting and working hold their shape instead of
       // being pulled back to rest every frame.
@@ -563,6 +615,43 @@ export class AgentSprite {
     o.scaleY = 1 + (o.scaleY - 1) * w;
     o.breathRate = 1 + (o.breathRate - 1) * w;
     return o;
+  }
+
+  /**
+   * Advance the activity pose and add its offsets, weighted by how far it has eased in, to the
+   * state pose's (`pose` is the reused object stepPose returned). A walking body drops it: the
+   * server's walking steps are short glides and an activity only begins on arrival.
+   */
+  private mergeActivity(
+    pose: { dx: number; dy: number; rot: number; scaleY: number; breathRate: number },
+    walking: boolean,
+    deltaTime: number,
+  ) {
+    this.activityClock += deltaTime / 60;
+    const fade = Math.min(1, ACTIVITY_FADE * deltaTime);
+    if (this.activityActive !== this.activityKind) {
+      this.activityWeight -= this.activityWeight * fade;
+      if (this.activityWeight < 0.02) {
+        this.activityWeight = 0;
+        this.activityActive = this.activityKind;
+        // Restart the clock so every pose begins at its first beat (a jog at the lap's start).
+        this.activityClock = 0;
+      }
+    } else {
+      this.activityWeight += ((this.activityActive === 'none' ? 0 : 1) - this.activityWeight) * fade;
+    }
+    this.activityGate += ((walking ? 0 : 1) - this.activityGate) * Math.min(1, ACTIVITY_GATE * deltaTime);
+
+    const o = activityPoseOffsets(this.activityActive, this.activityClock, this.activityOff);
+    const w = this.activityWeight * this.activityGate;
+    pose.dx += o.dx * w;
+    pose.dy += o.dy * w;
+    pose.rot += o.rot * w;
+    pose.scaleY *= 1 + (o.scaleY - 1) * w;
+    pose.breathRate *= 1 + (o.breathRate - 1) * w;
+    const applies = w > ACTIVITY_APPLY_ABOVE;
+    this.actFace = applies ? o.face : 0;
+    this.actLegs = applies && o.legs;
   }
 
   /** Layer the pose on top of the transform the caller just set on the rig. */
@@ -648,19 +737,10 @@ export class AgentSprite {
     this.applyTint();
   }
 
-  /** Mood shade times the state pose's tint (only `shiver` has one), channel by channel. */
+  /** Mood shade times the state pose's tint (only `shiver` has one) and the activity's. */
   private applyTint() {
     if (!this.sprite) return;
-    const m = this.moodShade;
-    const p = this.poseTint;
-    if (p === 0xffffff) {
-      this.sprite.tint = m;
-      return;
-    }
-    const r = (((m >> 16) & 255) * ((p >> 16) & 255) / 255) | 0;
-    const g = (((m >> 8) & 255) * ((p >> 8) & 255) / 255) | 0;
-    const b = ((m & 255) * (p & 255) / 255) | 0;
-    this.sprite.tint = (r << 16) | (g << 8) | b;
+    this.sprite.tint = mulTint(mulTint(this.moodShade, this.poseTint), this.activityTint);
   }
 
   /** Show or hide the interior glow effect. */
