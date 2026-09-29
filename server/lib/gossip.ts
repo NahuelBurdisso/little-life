@@ -449,6 +449,11 @@ export function rumorReachedSubject(
     severity: 0.4,
     templateData: { description: `${subjectName} heard what ${tellerName} has been saying about them and is furious.` },
   });
+
+  // Only player-planted rumors are `unverified` (godPowers.startRumor), so this
+  // is the moment a planted rumor comes home; lib/playerOutcomes.ts tells the
+  // player it did.
+  simEvents.emit('rumor:reached_subject', { factId: fact.id, subjectId: listenerId, tellerId });
 }
 
 // ─── spreadGossip ─────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ import { TOWN_SETTING } from '../ai/setting';
 import { renderMessage } from './activityMessage';
 import { detectStoryArcs } from './chronicle';
 import { emitter } from '../engine/emitter';
+import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
 
 export const GAZETTE_NAME = 'The Town Crier';
 
@@ -53,7 +54,13 @@ export function gatherMaterial(sinceTick: number): GazetteMaterial {
     .orderBy(desc(activityLog.importance))
     .limit(200)
     .all()
-    .filter((r) => !SKIP_CATEGORIES.has(r.category) && r.importance >= MIN_IMPORTANCE);
+    .filter((r) =>
+      !SKIP_CATEGORIES.has(r.category) &&
+      r.importance >= MIN_IMPORTANCE &&
+      // Player-facing reports ("Your confrontation: …") are loud on purpose
+      // and would name the hand behind the story; see activityRegistry.ts.
+      ACTIVITY_REGISTRY[r.type]?.newsworthy !== false,
+    );
 
   // One line per story. A rumor spreading logs a row per retelling ("Ray told
   // Lucia that…", "Diego overheard that…", "The whole town now knows that…"),

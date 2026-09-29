@@ -27,6 +27,13 @@
   --ui-alert-warn-border: #d19a2a;
   --ui-alert-note-bg: #1d2022;
   --ui-alert-note-border: #5a8fb0;
+  /* Alert tiers (lib/alertTiers.ts): toasts and inbox rows. The same ramp the
+     activity feed already uses for drama (red) and goals (orange); the player's
+     own outcomes are gold, the colour of every "you did this" in the UI. */
+  --ui-alert-major: #a03028;
+  --ui-alert-minor: #c07840;
+  --ui-alert-player: #c8a84b;
+  --ui-alert-player-bg: #2a2413;
 }
 
 /* The warm palette as Tailwind colours (bg-ui-panel, border-ui-line, text-ui-dim,
@@ -48,6 +55,10 @@
   --color-ui-good: var(--ui-positive);
   --color-ui-bad: var(--ui-negative);
   --color-ui-warn: var(--ui-warning);
+  --color-ui-alert-major: var(--ui-alert-major);
+  --color-ui-alert-minor: var(--ui-alert-minor);
+  --color-ui-alert-player: var(--ui-alert-player);
+  --color-ui-alert-player-bg: var(--ui-alert-player-bg);
 }
 
 body {

@@ -3,6 +3,12 @@ export interface ActivityDef {
   base_importance: number;
   retention: 'short' | 'medium' | 'long' | 'permanent';
   template: string;
+  /**
+   * false keeps the row out of the Town Crier (lib/gazette.ts) whatever its
+   * importance. For rows that must be loud in the UI (alerts, the inbox) but
+   * would give the game away in the paper: the player's own hand.
+   */
+  newsworthy?: boolean;
 }
 
 export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
@@ -35,6 +41,13 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   player_whisper: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
   player_rumor: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
   player_stir: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
+  // What a nudge / confrontation / revealed secret / planted rumor came to, and
+  // nudges that never happened (lib/playerOutcomes.ts). Importance ≥ 0.8 so they
+  // alert like drama does — the player asked for this scene and should hear how
+  // it ended — but `newsworthy: false`: the paper reports the feud, never
+  // "your confrontation". Gazette's importance cut alone can't hold these out.
+  player_outcome: { category: 'player', base_importance: 0.85, retention: 'medium', template: '{description}', newsworthy: false },
+  player_nudge_expired: { category: 'player', base_importance: 0.8, retention: 'short', template: '{description}', newsworthy: false },
   plan_generated: { category: 'planning', base_importance: 0.3, retention: 'short', template: '{agentName} planned their day: {summary}' },
   // Reason in parentheses: it may end in "…" (shortenForFeed), and "{reason}." rendered "…." there.
   plan_changed: { category: 'planning', base_importance: 0.5, retention: 'medium', template: '{agentName} changed plans ({reason}). Now: {summary}' },
