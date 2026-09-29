@@ -1,5 +1,6 @@
 import type { SystemFactory } from "./types";
 import { createHeldItemSystem } from "./held/HeldItemSystem";
+import { createBeatSystem } from "./beats/BeatSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -7,4 +8,5 @@ import { createHeldItemSystem } from "./held/HeldItemSystem";
  */
 export const SYSTEM_FACTORIES: SystemFactory[] = [
   createHeldItemSystem,
+  createBeatSystem,
 ];
