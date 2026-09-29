@@ -36,6 +36,16 @@ export function asClause(text: string): string {
   return clause;
 }
 
+/**
+ * What a feed line is about, ignoring who passed it on: a rumor logs a row per
+ * retelling ("Ray told Lucia that…", "Diego overheard that…", "The whole town
+ * now knows that…"), and the paper and the recap want each story once.
+ */
+export function storyKey(text: string): string {
+  const m = text.match(/\b(?:that|:)\s+(.+)$/i);
+  return (m && /\b(told|overheard|learned|discovered|knows|heard)\b/i.test(text) ? m[1] : text).toLowerCase();
+}
+
 /** Add a full stop unless the text already ends a sentence (possibly inside a quote). */
 export function endSentence(text: string): string {
   const trimmed = text.trim();

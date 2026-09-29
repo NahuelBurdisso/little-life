@@ -14,7 +14,7 @@
  */
 
 import { renderMessage } from './activityMessage';
-import { endSentence } from './factText';
+import { endSentence, storyKey } from './factText';
 
 /** The slice of an `activity_log` row the recap reads. */
 export interface RecapRow {
@@ -63,6 +63,8 @@ export const RECAP_MAX_BULLETS = 6;
 export const RECAP_MAX_HEADLINES = 2;
 /** The player's own outcomes are the most personal lines, but not the whole card. */
 const MAX_PLAYER = 2;
+/** Beats of one family (row type + story beat: gossip, fights, storms…) on one card. */
+const MAX_PER_FAMILY = 2;
 /** Rows below this never reach the recap, whatever their kind (the router pre-filters on it). */
 export const RECAP_MIN_IMPORTANCE = 0.6;
 /** A generic beat needs this much to compete with the named kinds above. */
@@ -101,6 +103,8 @@ interface Candidate extends RecapBullet {
   priority: number;
   /** Rows about the same pair (or person, for a death) collapse into the strongest one. */
   subject: string;
+  /** `type:beat`, for the per-family cap on generic beats. */
+  family: string;
   rowId: number;
 }
 
@@ -121,8 +125,12 @@ function sentence(row: RecapRow): string {
 function classify(row: RecapRow): Candidate | null {
   if (row.game_minute == null || row.importance < RECAP_MIN_IMPORTANCE) return null;
   const agentIds = agentsOf(row);
-  const base = { key: `row-${row.id}`, agentIds, gameMinute: row.game_minute, rowId: row.id, subject: pairKey(agentIds) };
   const beat = row.metadata?.beat;
+  const base = {
+    key: `row-${row.id}`, agentIds, gameMinute: row.game_minute, rowId: row.id,
+    // A row about nobody in particular (a storm, a market) is its own subject.
+    subject: agentIds.length ? pairKey(agentIds) : `row-${row.id}`, family: `${row.type}:${beat ?? ''}`,
+  };
 
   if (beat === 'death') {
     // Keyed by the person alone: a death is never merged into a pair's line.
@@ -172,15 +180,17 @@ export function buildRecap({ sinceMinute, untilMinute, rows, headlines = [] }: B
     }
   }
 
-  // Same sentence twice (a rumor logged by two engines, a repeated goal line):
-  // keep the first to happen.
-  const seenText = new Set<string>();
+  // One line per story: a rumor logs a row per retelling and a storm one per
+  // day, so lines are keyed on what they are about (`storyKey`, shared with
+  // the paper). Ranked first, so the widest telling ("The whole town now
+  // knows…", importance 1) beats one person's, and ties go to the first.
+  const seenStory = new Set<string>();
   const ranked = [...bySubject.values()]
     .sort((x, y) => (y.priority - x.priority) || (x.gameMinute - y.gameMinute) || (x.rowId - y.rowId))
     .filter((c) => {
-      const t = c.text.toLowerCase();
-      if (seenText.has(t)) return false;
-      seenText.add(t);
+      const key = storyKey(c.text);
+      if (seenStory.has(key)) return false;
+      seenStory.add(key);
       return true;
     });
 
@@ -209,9 +219,16 @@ export function buildRecap({ sinceMinute, untilMinute, rows, headlines = [] }: B
   const room = Math.max(0, RECAP_MAX_BULLETS - papers.length);
   const picked: Candidate[] = [];
   let players = 0;
+  const perFamily = new Map<string, number>();
   for (const c of ranked) {
     if (picked.length >= room) break;
     if (c.kind === 'player' && players >= MAX_PLAYER) continue;
+    if (c.kind === 'beat') {
+      // A gossip-heavy day would otherwise be six "The whole town now knows…".
+      const n = perFamily.get(c.family) ?? 0;
+      if (n >= MAX_PER_FAMILY) continue;
+      perFamily.set(c.family, n + 1);
+    }
     if (c.kind === 'player') players++;
     picked.push(c);
   }

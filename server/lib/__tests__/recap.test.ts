@@ -27,8 +27,11 @@ const wedding = (m: number, a = 2, b = 3) =>
   row({ type: 'wedding', category: 'relationship', importance: 1, game_minute: m, agent_ids: [a, b], template_data: { description: 'Bo and Cy were married on the square, with the whole town looking on.' } });
 const status = (m: number, s: string, a = 2, b = 3) =>
   row({ type: 'relationship_status_change', category: 'relationship', importance: 0.7, game_minute: m, agent_ids: [a, b], template_data: { agent1: 'Bo Hale', agent2: 'Cy Moss', status: s } });
-const fight = (m: number, a: number, b: number, importance = 0.85, text = `Fight ${a}-${b}`) =>
-  row({ type: 'confrontation', game_minute: m, importance, agent_ids: [a, b], metadata: { beat: 'fight' }, template_data: { description: text } });
+const fight = (m: number, a: number, b: number, importance = 0.85, text = `Fight ${a}-${b}`, beat = 'fight') =>
+  row({ type: 'confrontation', game_minute: m, importance, agent_ids: [a, b], metadata: { beat }, template_data: { description: text } });
+
+/** Ten different story beats, so the per-family cap stays out of a test's way. */
+const BEATS = ['fight', 'insult', 'snap', 'date', 'flirt', 'reconciliation', 'confession', 'gossip', 'breakup', 'arrest'];
 
 describe('buildRecap', () => {
   it('returns no bullets for an empty span', () => {
@@ -85,7 +88,7 @@ describe('buildRecap', () => {
     const rows = [
       death(900),
       wedding(50),
-      ...Array.from({ length: 10 }, (_, i) => fight(100 + i, 20 + i * 2, 21 + i * 2, 0.76 + i * 0.02)),
+      ...Array.from({ length: 10 }, (_, i) => fight(100 + i, 20 + i * 2, 21 + i * 2, 0.76 + i * 0.02, `Scene ${i}`, BEATS[i])),
     ];
     const r = buildRecap({ sinceMinute: 0, untilMinute: DAY, rows });
     expect(r.bullets).toHaveLength(RECAP_MAX_BULLETS);
@@ -127,6 +130,41 @@ describe('buildRecap', () => {
       ],
     });
     expect(r.bullets.map((b) => b.kind)).toEqual(['beat', 'death']);
+  });
+
+  it('tells a rumor once, in its widest telling', () => {
+    const tell = (m: number, text: string, importance: number, agents: number[]) =>
+      row({ type: 'drama', game_minute: m, importance, agent_ids: agents, template_data: { description: text } });
+    const r = buildRecap({
+      sinceMinute: 0,
+      untilMinute: DAY,
+      rows: [
+        tell(100, 'Ray told Lucia that Diego has a crush on Rosa', 0.8, [1, 2]),
+        tell(200, 'Omar overheard that Diego has a crush on Rosa', 0.8, [3]),
+        tell(300, 'The whole town now knows that Diego has a crush on Rosa', 1, [4]),
+      ],
+    });
+    expect(r.bullets.map((b) => b.text)).toEqual(['The whole town now knows that Diego has a crush on Rosa.']);
+  });
+
+  it('keeps at most two beats of one family, so a gossipy day still reads varied', () => {
+    const known = (m: number, what: string, who: number) =>
+      row({ type: 'drama', game_minute: m, importance: 1, agent_ids: [who], template_data: { description: `The whole town now knows that ${what}` } });
+    const storm = (m: number, text: string) =>
+      row({ type: 'world_event', category: 'world_event', importance: 0.9, game_minute: m, template_data: { description: text } });
+    const r = buildRecap({
+      sinceMinute: 0,
+      untilMinute: DAY,
+      rows: [
+        known(10, 'A is in love', 1), known(20, 'B lied', 2), known(30, 'C stole', 3), known(40, 'D cried', 4),
+        storm(50, 'Heavy Storm: rain'), storm(60, 'Traveling Merchant: goods'), storm(70, 'Bountiful Catch: fish'),
+        fight(80, 7, 8, 0.8, 'Eli shoved Fay'),
+      ],
+    });
+    const texts = r.bullets.map((b) => b.text);
+    expect(texts.filter((t) => t.startsWith('The whole town'))).toHaveLength(2);
+    expect(texts.filter((t) => /Storm|Merchant|Catch/.test(t))).toHaveLength(2);
+    expect(texts).toContain('Eli shoved Fay.');
   });
 
   it('caps the player lines at two, outcomes before expired nudges', () => {
