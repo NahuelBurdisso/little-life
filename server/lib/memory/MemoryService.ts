@@ -326,7 +326,11 @@ export class MemoryService {
     if (cached) return cached;
 
     const vec = await this.batcher.embedForRead(query);
-    this.queryCache.set(query, vec);
+    // A failed embedding comes back as all zeros (relevance 0 for every
+    // memory, so retrieval falls back to recency/importance). Caching it made
+    // one timeout — Ollama still loading the model at startup — stick to that
+    // query for good; the self-description and reflection queries repeat daily.
+    if (vec.some((v) => v !== 0)) this.queryCache.set(query, vec);
     return vec;
   }
 
