@@ -33,7 +33,12 @@ if (atX || atY) {
 for (let i = 0; i < zoomSteps; i++) {
   await page.mouse.move(cx, cy); await page.mouse.wheel(0, -240); await page.waitForTimeout(150);
 }
-await page.getByText('4x', { exact: true }).click().catch(() => {});
+if (process.env.HOVER) {
+  const [hx, hy] = process.env.HOVER.split(',').map(Number);  // page coords after zoom
+  await page.mouse.move(hx, hy);
+} else {
+  await page.getByText('4x', { exact: true }).click().catch(() => {});
+}
 const BURST = Number(process.env.BURST ?? 6), GAP = Number(process.env.GAP ?? 700);
 for (let i = 0; i < BURST; i++) {
   await page.waitForTimeout(GAP);

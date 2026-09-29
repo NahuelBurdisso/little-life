@@ -26,6 +26,17 @@ const FLOOR_URLS: Record<string, string> = {
   stone: '/sprites/tiles/floor_stone.png',
 };
 
+/**
+ * Tileable roof surfaces (scripts/aseprite/roof-tiles.lua). Neutral grey like the
+ * floors: BuildingRenderer tints them per building type.
+ */
+const ROOF_URLS: Record<string, string> = {
+  clay:    '/sprites/tiles/roof_clay.png',
+  shingle: '/sprites/tiles/roof_shingle.png',
+  slate:   '/sprites/tiles/roof_slate.png',
+  tin:     '/sprites/tiles/roof_tin.png',
+};
+
 const WALL_URLS: Record<string, string> = {
   // Wall/door sprites intentionally unused — procedural Graphics handles building
   // walls. Keep the map here so getWallTexture() still returns null cleanly.
@@ -80,6 +91,11 @@ export function getTerrainTexture(key: string): Promise<PIXI.Texture> | null {
 
 export function getFloorTexture(key: string): Promise<PIXI.Texture> | null {
   const url = FLOOR_URLS[key];
+  return url ? loadTexture(url) : null;
+}
+
+export function getRoofTexture(key: string): Promise<PIXI.Texture> | null {
+  const url = ROOF_URLS[key];
   return url ? loadTexture(url) : null;
 }
 

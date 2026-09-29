@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
-import { getFurnitureTexture, getFloorTexture } from "./textures";
+import { getFurnitureTexture, getFloorTexture, getRoofTexture } from "./textures";
 
 const TILE_SIZE = 32;
 
@@ -81,6 +81,44 @@ const DOOR_STYLE: Record<string, { color: number; w: number; h: number }> = {
   divebar:   { color: 0x1e1810, w: 12, h: 10 },
 };
 
+/**
+ * Roof per building type. Textures are neutral grey (scripts/aseprite/roof-tiles.lua)
+ * and take `color` as a tint on the sunlit south slope; the north slope and ridge are
+ * darker shades of it. Homes rotate through `HOME_ROOFS` by id so a street of houses
+ * doesn't read as one repeated stamp.
+ */
+const ROOF_STYLE: Record<string, { material: string; color: number }> = {
+  shop:      { material: 'clay',    color: 0x9a5a3e },
+  tavern:    { material: 'clay',    color: 0xa84a30 },
+  bakery:    { material: 'clay',    color: 0xc0703f },
+  clinic:    { material: 'slate',   color: 0x9aacb0 },
+  town_hall: { material: 'slate',   color: 0x6a7488 },
+  workshop:  { material: 'tin',     color: 0x8e8e86 },
+  prison:    { material: 'slate',   color: 0x5a5a5e },
+  pawnshop:  { material: 'shingle', color: 0x7a6450 },
+  divebar:   { material: 'shingle', color: 0x5e4a3a },
+};
+const HOME_ROOFS = [
+  { material: 'shingle', color: 0xa07a52 },
+  { material: 'clay',    color: 0xb05c3c },
+  { material: 'slate',   color: 0x7a8494 },
+  { material: 'shingle', color: 0x8a6a4a },
+];
+function roofStyleFor(type: string, id: number): { material: string; color: number } {
+  if (type === 'home') return HOME_ROOFS[id % HOME_ROOFS.length];
+  return ROOF_STYLE[type] ?? HOME_ROOFS[0];
+}
+
+/** Roof overhang past the walls on the west, north and east sides, px. */
+const EAVE = 3;
+/**
+ * Height of the south wall left visible under the roof — the facade with its windows
+ * and door. The view is top-down with a hint of 3/4, so only the south face shows.
+ */
+const FACADE_H = 11;
+/** Per-frame approach of a roof's alpha to its target (1 = closed, 0 = cut away). */
+const ROOF_FADE = 0.18;
+
 // Building types that get a chimney rect (proposal-visual.md §4 chimneys)
 const CHIMNEY_TYPES = new Set(['tavern', 'bakery', 'workshop', 'divebar', 'home']);
 
@@ -110,6 +148,12 @@ export function southWindowXs(loc: {
 
 /** Distance from the south edge up to the vertical centre of a window rect. */
 export const WINDOW_CENTER_ABOVE_SOUTH_EDGE = 6;
+
+/** Per-channel lighten toward white; `amount` 0 = unchanged, 1 = white. */
+function lighten(color: number, amount: number): number {
+  const ch = (c: number) => Math.round(c + (255 - c) * amount);
+  return (ch((color >> 16) & 0xff) << 16) | (ch((color >> 8) & 0xff) << 8) | ch(color & 0xff);
+}
 
 /** Per-channel multiply darken for hex colors (used for south wall face band). */
 function darken(color: number, factor: number): number {
@@ -181,6 +225,8 @@ interface BuildingEntry {
   /** Whole building shell (base + floor sprite + walls), or the patch for open areas. */
   wallGraphic: PIXI.Container;
   interiorContainer: PIXI.Container | null;
+  /** Roof drawn over the whole shell; faded out whenever the interior is shown. */
+  roof: PIXI.Container | null;
   label: PIXI.Text;
   position: { x: number; y: number; width: number; height: number };
   entryPoint: { x: number; y: number };
@@ -223,6 +269,20 @@ export class BuildingRenderer {
   // Track which building IDs contain the selected agent (task 3)
   private occupiedBuildingIds: Set<number> = new Set();
 
+  /** Eases roofs toward their target alpha; registered on the shared ticker. */
+  private readonly fadeRoofs = (ticker: PIXI.Ticker): void => {
+    const step = Math.min(1, ROOF_FADE * ticker.deltaTime);
+    for (const [id, entry] of this.buildings) {
+      const roof = entry.roof;
+      if (!roof) continue;
+      const target = this.interiorShown(id) ? 0 : 1;
+      if (roof.alpha === target) continue;
+      roof.alpha += (target - roof.alpha) * step;
+      if (Math.abs(roof.alpha - target) < 0.01) roof.alpha = target;
+      roof.visible = roof.alpha > 0;
+    }
+  };
+
   constructor(parent: PIXI.Container) {
     this.container = new PIXI.Container();
     // 'passive', not 'none': PixiJS treats 'none' as "ignore events, *even on
@@ -249,6 +309,7 @@ export class BuildingRenderer {
     this.container.addChild(this.tooltipLayer);
 
     parent.addChild(this.container);
+    PIXI.Ticker.shared.add(this.fadeRoofs);
   }
 
   /**
@@ -410,6 +471,7 @@ export class BuildingRenderer {
   }
 
   destroy(): void {
+    PIXI.Ticker.shared.remove(this.fadeRoofs);
     this.container.destroy({ children: true, style: true });
     this.buildings.clear();
   }
@@ -423,9 +485,13 @@ export class BuildingRenderer {
   private syncInteriorVisibility(): void {
     for (const [id, entry] of this.buildings) {
       if (!entry.interiorContainer) continue;
-      const show = id === this.hoveredBuildingId || this.occupiedBuildingIds.has(id);
-      entry.interiorContainer.alpha = show ? 0.4 : 0;
+      entry.interiorContainer.alpha = this.interiorShown(id) ? 0.4 : 0;
     }
+  }
+
+  /** Interior on show = roof cut away: while hovered, or while anyone is inside. */
+  private interiorShown(id: number): boolean {
+    return id === this.hoveredBuildingId || this.occupiedBuildingIds.has(id);
   }
 
   /**
@@ -623,6 +689,12 @@ export class BuildingRenderer {
 
     this.buildingLayer.addChild(interiorContainer);
 
+    // ── 9. Roof — above the interior, cut away while the interior is shown ────
+    const roof = this.addRoof(loc, palette, doorDef);
+    roof.alpha = this.interiorShown(loc.id) ? 0 : 1;
+    roof.visible = roof.alpha > 0;
+    this.buildingLayer.addChild(roof);
+
     // Name label centered below the building
     const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE.clone() });
     label.anchor.set(0.5, 0);
@@ -635,10 +707,99 @@ export class BuildingRenderer {
       type: loc.type,
       wallGraphic: shell,
       interiorContainer,
+      roof,
       label,
       position: loc.position,
       entryPoint: loc.entry_point,
     });
+  }
+
+  /**
+   * The closed-building look: a gabled roof over the footprint with a strip of south
+   * wall (the facade) left showing below the eave.
+   *
+   * Everything here duplicates what the shell already draws underneath (windows, south
+   * door, chimney) at the same world positions, so fading the roof out reveals the floor
+   * plan with nothing jumping. The chimney in particular must stay where
+   * `GameCanvas.chimneyAnchor` puts the smoke.
+   */
+  private addRoof(
+    loc: LocationData,
+    palette: { floor: number; wall: number },
+    doorDef: { color: number; w: number; h: number },
+  ): PIXI.Container {
+    const { x, y, width, height } = loc.position;
+    const style = roofStyleFor(loc.type, loc.id);
+    const roof = new PIXI.Container();
+    // Never a hover target: the shell under it owns hit-testing, and the roof going
+    // invisible on hover must not change what the pointer is over.
+    roof.eventMode = 'none';
+
+    const rx = x - EAVE;
+    const ry = y - EAVE;
+    const rw = width + EAVE * 2;
+    const roofBottom = y + height - FACADE_H;
+    const rh = roofBottom - ry;
+    // Ridge a bit north of centre: seen slightly from the south, the near slope is the
+    // bigger one.
+    const ridgeY = Math.round(ry + rh * 0.42);
+
+    // Flat colour first — it is what shows until (or if never) the texture loads.
+    const under = new PIXI.Graphics();
+    under.rect(rx, ry, rw, ridgeY - ry).fill({ color: darken(style.color, 0.7) });
+    under.rect(rx, ridgeY, rw, roofBottom - ridgeY).fill({ color: style.color });
+    roof.addChild(under);
+
+    const tex = getRoofTexture(style.material);
+    if (tex) {
+      tex.then((t) => {
+        if (roof.destroyed) return;
+        const north = new PIXI.TilingSprite({ texture: t, width: rw, height: ridgeY - ry });
+        north.position.set(rx, ry);
+        north.tint = darken(style.color, 0.72);
+        const south = new PIXI.TilingSprite({ texture: t, width: rw, height: roofBottom - ridgeY });
+        south.position.set(rx, ridgeY);
+        south.tint = lighten(style.color, 0.08);
+        // Directly above the flat fallback, below ridge/eaves/facade.
+        roof.addChildAt(north, 1);
+        roof.addChildAt(south, 2);
+      }).catch(() => { /* flat fallback stays */ });
+    }
+
+    const g = new PIXI.Graphics();
+    // Ridge cap: dark board with a lit top edge.
+    g.rect(rx, ridgeY - 2, rw, 4).fill({ color: darken(style.color, 0.5) });
+    g.rect(rx, ridgeY - 2, rw, 1).fill({ color: lighten(style.color, 0.25) });
+    // Gable ends: a slightly darker board down each short side sells the slope.
+    g.rect(rx, ry, 2, rh).fill({ color: darken(style.color, 0.6) });
+    g.rect(rx + rw - 2, ry, 2, rh).fill({ color: darken(style.color, 0.6) });
+
+    // Facade: the south wall face under the eave, with the same windows and door the
+    // shell draws, so the building reads as a volume and not a lid.
+    const faceTop = roofBottom;
+    g.rect(x, faceTop, width, y + height - faceTop).fill({ color: darken(palette.wall, 0.85) });
+    g.rect(x, y + height - 3, width, 3).fill({ color: darken(palette.wall, 0.55) }); // plinth
+    for (const wx of southWindowXs(loc)) {
+      g.rect(Math.round(wx - 5), y + height - 10, 10, 8).fill({ color: 0x1a1510 });
+      g.rect(Math.round(wx - 4), y + height - 9, 8, 6).fill({ color: 0xd8c07a, alpha: 0.9 });
+      g.rect(Math.round(wx - 4), y + height - 6, 8, 1).fill({ color: 0x1a1510, alpha: 0.6 }); // mullion
+    }
+    const ex = loc.entry_point.x;
+    const ey = loc.entry_point.y;
+    if (Math.abs(ey - (y + height)) < 6) {
+      const doorX = Math.round(ex - doorDef.w / 2);
+      const doorY = Math.round(ey - doorDef.h / 2);
+      g.rect(doorX, doorY, doorDef.w, doorDef.h).fill({ color: doorDef.color });
+      g.rect(doorX, doorY, doorDef.w, doorDef.h).stroke({ width: 1, color: 0x1a1510, alpha: 0.8 });
+    }
+    // Eave: a lip along the roof's lower edge and the shadow it drops on the facade.
+    g.rect(rx, roofBottom - 2, rw, 2).fill({ color: darken(style.color, 0.45) });
+    g.rect(x, roofBottom, width, 2).fill({ color: 0x1a1510, alpha: 0.45 });
+    g.rect(rx, ry, rw, rh).stroke({ width: 1, color: 0x1a1510, alpha: 0.9 });
+
+    if (CHIMNEY_TYPES.has(loc.type)) this.drawChimney(g, loc.type, x, y, width);
+    roof.addChild(g);
+    return roof;
   }
 
   /**
@@ -901,6 +1062,7 @@ export class BuildingRenderer {
       type: loc.type,
       wallGraphic: patch,
       interiorContainer: null,
+      roof: null,
       label,
       position: loc.position,
       entryPoint: loc.entry_point,
