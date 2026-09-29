@@ -2,6 +2,8 @@ import * as PIXI from "pixi.js";
 import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
 import { facingFromStep, pickAgentFrame, type SheetFacing } from "./agentFrames";
 import { loadAgentSheet } from "./agentSheet";
+import { generatedAgentSheet } from "./generatedSheet";
+import { isPlaceholderSpriteKey, type LookHints } from "../../lib/residentArt/look";
 import {
   activityPoseOffsets, newActivityOffsets, newPoseOffsets, poseOffsets,
   type ActivityPoseKind, type PoseKind, type StatePose,
@@ -143,7 +145,7 @@ export class AgentSprite {
   private selectionRing: PIXI.Graphics;
   private moodRing: PIXI.Graphics;
   private sprite: PIXI.Sprite | null = null;
-  /** Animation frames from `<key>_sheet.png`; null while loading or for static sprites. */
+  /** Animation frames from `<key>_sheet.png` or the generator; null while loading or for static sprites. */
   private frames: PIXI.Texture[] | null = null;
   private sheetFacing: SheetFacing = 'down';
   private walkDistance = 0;
@@ -194,7 +196,11 @@ export class AgentSprite {
   private actFace: -1 | 0 | 1 = 0;
   private actLegs = false;
 
-  constructor(name: string, spriteKey?: string) {
+  /**
+   * `look` (gender/age) only steers a generated body's odds; it must be what the portraits get
+   * too, which is why callers pass the agent row's own fields.
+   */
+  constructor(name: string, spriteKey?: string, look: LookHints = {}) {
     this.container = new PIXI.Container();
 
     // --- Interior glow (behind everything) ---
@@ -225,11 +231,13 @@ export class AgentSprite {
     this.rig.addChild(this.behind, this.hand);
     this.container.addChild(this.rig);
 
-    // --- Sprite or fallback circle+letter ---
-    if (spriteKey) {
-      this.loadSprite(spriteKey, name);
+    // --- Hand-drawn sprite, generated body, or (only if both fail) circle+letter ---
+    if (isPlaceholderSpriteKey(spriteKey)) {
+      // "default" (nudged New Resident) never has a PNG: draw the body now rather than show
+      // a circle while two requests 404.
+      this.useGeneratedBody(name, look);
     } else {
-      this.buildFallback(name);
+      this.loadSprite(spriteKey!, name, look);
     }
 
     // --- State ring (active state indicator, above sprite) ---
@@ -264,12 +272,13 @@ export class AgentSprite {
     this.container.addChild(this.nameLabel);
   }
 
-  private loadSprite(spriteKey: string, name: string) {
+  private loadSprite(spriteKey: string, name: string, look: LookHints) {
     // PIXI v8: Sprite.from(url) only reads from cache; must Assets.load() first.
     // Build fallback immediately so there's something visible while texture loads.
     this.buildFallback(name);
-    // Prefer the animation sheet; agents without one (custom residents, or a key whose
-    // sheet was never generated) keep the single static frame.
+    // Prefer the animation sheet; a key with a base PNG but no sheet keeps the single
+    // static frame; a key with neither (wizard custom names get a slug nobody drew) gets
+    // a generated body with the full animation.
     loadAgentSheet(spriteKey)
       .then(frames => {
         if (this.container.destroyed) return;
@@ -280,11 +289,27 @@ export class AgentSprite {
         const url = `/sprites/agents/${spriteKey}.png`;
         return PIXI.Assets.load(url).then((texture: PIXI.Texture) => {
           if (this.container.destroyed) return;
+          // Vite answers a missing public file with index.html; don't take that for a sprite.
+          if (texture.width !== 32 || texture.height !== 32) throw new Error(`${url} is not a 32x32 sprite`);
           texture.source.scaleMode = 'nearest';
           this.attachSprite(texture);
         });
       })
-      .catch(() => this.onSpriteLoadFailed(name));
+      .catch(() => {
+        if (!this.container.destroyed) this.useGeneratedBody(name, look);
+      });
+  }
+
+  /** Parametric body (src/lib/residentArt) for residents without hand-drawn art. */
+  private useGeneratedBody(name: string, look: LookHints) {
+    try {
+      this.frames = generatedAgentSheet(name, look);
+      this.attachSprite(this.frames[0]);
+    } catch {
+      // No 2D canvas (headless edge cases): the circle is still better than nothing.
+      this.frames = null;
+      this.onSpriteLoadFailed(name);
+    }
   }
 
   private attachSprite(texture: PIXI.Texture) {
