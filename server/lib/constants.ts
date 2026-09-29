@@ -296,6 +296,16 @@ export const CONFIG = {
     },
   },
 
+  // Save slots (server/lib/saves.ts)
+  SAVES: {
+    // A copy of the world at every game day change. Off under vitest: engine
+    // tests drive ticks across midnight, and a save there would stop and
+    // restart the tick loop under them. AUTOSAVE=0 disables it.
+    AUTOSAVE: !process.env.VITEST && process.env.AUTOSAVE !== '0',
+    // Autosaves kept; older ones are deleted. Manual saves are never pruned.
+    AUTOSAVE_KEEP: 3,
+  },
+
   // UI
   UI: {
     ACTIVITY_FEED_MAX_ENTRIES: 50,
