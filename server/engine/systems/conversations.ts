@@ -52,6 +52,7 @@ import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
+import { llmSocialGain, templateSocialGain } from '../../lib/socialGain';
 import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
 import { extractConfidedQuote } from '../../lib/factText';
@@ -1425,10 +1426,7 @@ async function finishCompletedConversation(
     if (agentNeeds) {
       const personality = participant.personality as PersonalityProfile | null;
 
-      let socialBoost = clamp(8 + overallSentiment * 7, 1, 15);
-      if (personality && personality.warmth > 60 && overallSentiment > 0) {
-        socialBoost *= 1.3;
-      }
+      const socialBoost = llmSocialGain(overallSentiment, personality?.warmth ?? null);
       const newSocial = clamp(agentNeeds.social + socialBoost, 0, 100);
 
       // Fun boost from enjoyable conversations
@@ -2224,6 +2222,14 @@ async function processTimedOutEntry(
     if (agentNeeds) {
       // Fun delta mirrors LLM conversations: positive sentiment → fun boost
       const funDelta = avgSentiment > 0 ? 2 : avgSentiment < -0.3 ? -1 : 0.5;
+      // Social payoff (E10): a flat +3 left 4x towns lonely, since most chats
+      // there are templates. Scales with the exchange and this agent's bond to
+      // the other speaker (lib/socialGain.ts); still under a full LLM chat.
+      const socialGain = templateSocialGain({
+        sentiment: avgSentiment,
+        turns: turns.length,
+        friendship: agent.id === orderedA ? (existingRel?.friendship_ab ?? 0) : (existingRel?.friendship_ba ?? 0),
+      });
       const currentTime = agentNeeds.last_updated ?? 0;
 
       // Add mood modifier like LLM conversations do
@@ -2238,7 +2244,7 @@ async function processTimedOutEntry(
 
       db.update(needs)
         .set({
-          social: clamp(agentNeeds.social + 3, 0, 100),
+          social: clamp(agentNeeds.social + socialGain, 0, 100),
           fun: clamp(agentNeeds.fun + funDelta, 0, 100),
           mood_modifiers: moodModifiers,
         })
