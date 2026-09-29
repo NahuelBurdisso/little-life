@@ -30,7 +30,8 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} is heartbroken over ${t ?? 'someone'}`,
   drunk_incident: (s, t, ctx) =>
     ctx?.quote ? `${s} got drunk and told ${t ?? 'someone'}: "${ctx.quote}"` :
-    `${s} got drunk and said terrible things to ${t ?? 'someone'}`,
+    t ? `${s} got drunk and said terrible things to ${t}` :
+    `${s} got drunk and made a scene`,
   grudge: (s, t, ctx) =>
     ctx?.detail ? `${s} holds a grudge against ${t ?? 'someone'} — ${ctx.detail}` :
     `${s} holds a grudge against ${t ?? 'someone'}`,
@@ -194,6 +195,9 @@ export function createFact(
   source: string,
   context?: FactContext,
 ): number | null {
+  // A fact about someone and themselves reads "Priya got drunk and said
+  // terrible things to Priya" (the drunk_incident ripple rule targets 'self').
+  if (targetId === subjectId) targetId = null;
   const subjectName = getAgentName(subjectId);
   const targetName = targetId != null ? getAgentName(targetId) : undefined;
 
