@@ -31,7 +31,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 | DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
 | Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
 | LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything, qwen3-embedding:0.6b for memory; config in `.env`, Ollama flags in `start-game.bat` |
-| Tests | Vitest 2, 43 files / ~504 tests, all server-side |
+| Tests | Vitest 2, ~210 files / ~2300 tests (server + pure client modules) |
 
 ## Commands
 
