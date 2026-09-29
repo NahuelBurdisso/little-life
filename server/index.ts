@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { applyWSSHandler } from '@trpc/server/adapters/ws';
 import { appRouter } from './router';
 import { startTickLoop, stopTickLoop } from './engine/tick';
+import { warmUpModels } from './ai/warmup';
 import { endOrphanedLLMConversations } from './engine/systems/conversations';
 import { taskRunner } from './ai/taskRunner';
 import { sqlite } from './db';
@@ -126,6 +127,9 @@ const handler = applyWSSHandler({
   wss,
   router: appRouter,
 });
+
+// Load the models in the background so the first turns don't pay for it.
+void warmUpModels();
 
 // Start tick loop
 startTickLoop();

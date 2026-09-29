@@ -33,3 +33,11 @@ export const TYPE_PRIORITY: Record<string, number> = {
 };
 export const OLLAMA_BASE_URL = CONFIG.AI.EMBED_BASE_URL;
 export const OLLAMA_EMBED_MODEL = CONFIG.AI.EMBEDDING_MODEL;
+/**
+ * Sent with every embedding request. Without it the embedding model unloads
+ * after Ollama's default 5 idle minutes; reloading it takes ~14 s on Windows,
+ * longer than READ_TIMEOUT_MS, and a request aborted mid-load cancels the
+ * load — so every retrieval failed (zero vectors) until a slower write batch
+ * happened to finish loading it.
+ */
+export const EMBED_KEEP_ALIVE = CONFIG.AI.KEEP_ALIVE;

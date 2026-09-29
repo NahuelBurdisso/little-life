@@ -281,6 +281,7 @@ export async function callOllamaEmbedding(
       body: JSON.stringify({
         model: CONFIG.AI.EMBEDDING_MODEL,
         prompt: text,
+        keep_alive: CONFIG.AI.KEEP_ALIVE,
       }),
       signal: controller.signal,
     });
