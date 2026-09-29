@@ -8,6 +8,8 @@ import {
   rebaseTickStampsToGameMinutes,
 } from './clockMigration';
 import { runStartupSteps } from './startupSteps';
+import { raiseWagesToFloor } from './wageFloorMigration';
+import { CONFIG } from '../lib/constants';
 import path from 'path';
 import fs from 'fs';
 
@@ -230,6 +232,8 @@ export function initSchema(): void {
     migrateSchema,
     // One-shot (PRAGMA user_version); logs to the console when it rewrites a world.
     () => rebaseTickStampsToGameMinutes(sqlite),
+    // One-shot (user_version 3), after the rebase: old worlds' wages to the E5 floor.
+    () => raiseWagesToFloor(sqlite, CONFIG.ECONOMY.WAGE_FLOOR),
     // Every start, whatever user_version says: no started-at stamp in the future.
     () => clampFutureGameMinuteStamps(sqlite),
     // After migrateSchema, which adds the column; a no-op once filled.
