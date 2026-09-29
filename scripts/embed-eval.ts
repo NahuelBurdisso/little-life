@@ -28,7 +28,7 @@ const prefixFor = (model: string) => (q: string) => asRetrievalQuery(q, model);
 async function embed(model: string, input: string[]): Promise<number[][]> {
   const out: number[][] = [];
   for (let i = 0; i < input.length; i += 64) {
-    const r = await fetch(`${BASE}/api/embed`, { method: 'POST', body: JSON.stringify({ model, input: input.slice(i, i + 64), keep_alive: '10m' }) });
+    const r = await fetch(`${BASE}/api/embed`, { method: 'POST', body: JSON.stringify({ model, input: input.slice(i, i + 64), keep_alive: '10m', options: { num_ctx: CONFIG.AI.EMBED_NUM_CTX } }) });
     const j = await r.json() as { embeddings?: number[][]; error?: string };
     if (!j.embeddings) throw new Error(`${model}: ${j.error ?? r.status}`);
     out.push(...j.embeddings);

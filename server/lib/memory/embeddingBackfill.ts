@@ -15,7 +15,7 @@
  */
 import { sqlite } from '../../db';
 import { CONFIG } from '../constants';
-import { EMBED_KEEP_ALIVE, EMBEDDING_DIMENSIONS } from './constants';
+import { EMBED_KEEP_ALIVE, EMBED_OPTIONS, EMBEDDING_DIMENSIONS } from './constants';
 import { float32ArrayToBuffer } from './MemoryService';
 
 const META_KEY = 'embedding_model';
@@ -35,7 +35,7 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
   const res = await fetch(`${CONFIG.AI.EMBED_BASE_URL}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: CONFIG.AI.EMBEDDING_MODEL, input: texts, keep_alive: EMBED_KEEP_ALIVE }),
+    body: JSON.stringify({ model: CONFIG.AI.EMBEDDING_MODEL, input: texts, keep_alive: EMBED_KEEP_ALIVE, options: EMBED_OPTIONS }),
     signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) throw new Error(`/api/embed ${res.status}: ${await res.text().catch(() => '')}`);

@@ -65,6 +65,7 @@ export async function warmUpModels(): Promise<void> {
       model: CONFIG.AI.EMBEDDING_MODEL,
       input: 'warm up',
       keep_alive: CONFIG.AI.KEEP_ALIVE,
+      options: { num_ctx: CONFIG.AI.EMBED_NUM_CTX },
     }).then((res) => report('embedding', CONFIG.AI.EMBEDDING_MODEL, started, res)),
   );
 

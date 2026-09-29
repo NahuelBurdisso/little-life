@@ -282,6 +282,7 @@ export async function callOllamaEmbedding(
         model: CONFIG.AI.EMBEDDING_MODEL,
         prompt: text,
         keep_alive: CONFIG.AI.KEEP_ALIVE,
+        options: { num_ctx: CONFIG.AI.EMBED_NUM_CTX },
       }),
       signal: controller.signal,
     });

@@ -8,6 +8,7 @@ import {
   WRITE_BATCH_MAX_SIZE,
   EMBEDDING_DIMENSIONS,
   EMBED_KEEP_ALIVE,
+  EMBED_OPTIONS,
   asRetrievalQuery,
 } from './constants';
 import { QueryCache } from './QueryCache';
@@ -221,7 +222,7 @@ export class EmbeddingBatcher implements EmbeddingProvider {
       res = await fetch(`${this.baseUrl}/api/embed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, input: texts, keep_alive: EMBED_KEEP_ALIVE }),
+        body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, input: texts, keep_alive: EMBED_KEEP_ALIVE, options: EMBED_OPTIONS }),
         signal: controller.signal,
       });
     } finally {
@@ -251,7 +252,7 @@ export class EmbeddingBatcher implements EmbeddingProvider {
       res = await fetch(`${this.baseUrl}/api/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, prompt: text, keep_alive: EMBED_KEEP_ALIVE }),
+        body: JSON.stringify({ model: OLLAMA_EMBED_MODEL, prompt: text, keep_alive: EMBED_KEEP_ALIVE, options: EMBED_OPTIONS }),
         signal: controller.signal,
       });
     } finally {

@@ -224,6 +224,12 @@ export const CONFIG = {
     // 5 min unloads it whenever the game sits paused a while, and the next
     // conversation turn then pays a multi-second reload.
     KEEP_ALIVE: process.env.LLM_KEEP_ALIVE ?? '30m',
+    // Context for every embedding call. Ollama otherwise loads the embedding
+    // model at its full context (32k for qwen3-embedding: ~4 GB of VRAM), which
+    // squeezed the 26B chat model and cut generation to ~9 tok/s. Memories and
+    // queries are a sentence or two. Must be the same on every call, or Ollama
+    // reloads the model.
+    EMBED_NUM_CTX: Number(process.env.EMBED_NUM_CTX ?? 2048),
     // One LLM call per finished LLM conversation writes each participant's
     // first-person takeaway as their memory of it (conversationSummary.ts).
     // Off under vitest: the observer runs inside engine tests, which must not

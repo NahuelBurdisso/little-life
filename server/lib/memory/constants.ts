@@ -41,6 +41,8 @@ export const OLLAMA_EMBED_MODEL = CONFIG.AI.EMBEDDING_MODEL;
  * happened to finish loading it.
  */
 export const EMBED_KEEP_ALIVE = CONFIG.AI.KEEP_ALIVE;
+/** Sent with every embedding request (see CONFIG.AI.EMBED_NUM_CTX). */
+export const EMBED_OPTIONS = { num_ctx: CONFIG.AI.EMBED_NUM_CTX };
 
 /**
  * Qwen3-Embedding is trained with an instruction on the query side (documents
