@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, startingTreasury, treasuryExcess,
+  moneyTargetFor, savingsAllowance,
 } from '../townTreasury';
 import { CONFIG } from '../constants';
 
@@ -48,7 +49,8 @@ describe('dailyUpkeep', () => {
 
   it('with the shipped settings a low earner who eats three meals still keeps money', () => {
     const { UPKEEP } = CONFIG.ECONOMY;
-    const params = { base: UPKEEP.BASE, allowance: UPKEEP.SAVINGS_ALLOWANCE, rate: UPKEEP.LIFESTYLE_RATE };
+    const allowance = savingsAllowance(CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY, UPKEEP.ALLOWANCE_OF_TARGET);
+    const params = { base: UPKEEP.BASE, allowance, rate: UPKEEP.LIFESTYLE_RATE };
     // Lowest default wage ($20) minus three $5 meals (the shop and bakery menu
     // price; the tavern's is $6, spring takes 10% off).
     let cash = 20;
@@ -110,6 +112,25 @@ describe('balancerMultipliers', () => {
     expect(balancerMultipliers(1.5).tax).toBe(1);
     expect(balancerMultipliers(2.0).tax).toBeCloseTo(1.8);
     expect(balancerMultipliers(0.4).tax).toBe(0.5);
+  });
+});
+
+describe('per-world money target', () => {
+  const range = { MIN: 30, MAX: 300 };
+
+  it('is the mean starting cash, rounded', () => {
+    expect(moneyTargetFor([80, 40, 60, 120, 90, 100, 55, 150, 65, 25, 35, 20, 70], range)).toBe(70);
+  });
+
+  it('is clamped: a $10 start and a $500 start still get a workable target', () => {
+    expect(moneyTargetFor([10, 10, 12], range)).toBe(30);
+    expect(moneyTargetFor([500, 500], range)).toBe(300);
+    expect(moneyTargetFor([], range)).toBe(30);
+  });
+
+  it('the savings allowance follows the target', () => {
+    expect(savingsAllowance(75, 0.8)).toBe(60);
+    expect(savingsAllowance(300, 0.8)).toBe(240);
   });
 });
 

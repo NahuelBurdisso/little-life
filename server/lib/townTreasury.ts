@@ -45,6 +45,24 @@
 
 const cents = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * A new world's money target per resident: the mean starting cash, clamped.
+ * The balancer steered every town to one fixed figure, so a poor start (the
+ * wizard's starting money goes down to $10) left the treasury in debt for
+ * good, and a rich one ($500) read as hyperinflation on night 1 and was
+ * deflated. The target is stored on the world (money_target_per_capita).
+ */
+export function moneyTargetFor(startingCash: readonly number[], range: { MIN: number; MAX: number }): number {
+  if (startingCash.length === 0) return range.MIN;
+  const mean = startingCash.reduce((s, c) => s + c, 0) / startingCash.length;
+  return Math.round(Math.min(range.MAX, Math.max(range.MIN, mean)));
+}
+
+/** The savings a resident keeps free of the lifestyle share: a share of the target. */
+export function savingsAllowance(targetPerCapita: number, shareOfTarget: number): number {
+  return cents(targetPerCapita * shareOfTarget);
+}
+
 /** A new town's treasury: a reserve per resident, enough for a day of wages. */
 export function startingTreasury(residents: number, perCapita: number): number {
   return Math.max(0, residents) * perCapita;

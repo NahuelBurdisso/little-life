@@ -10,6 +10,7 @@ import {
   WHOLESALE_MAX_CASH_FRACTION,
   wholesaleBuyerOrder,
   settleTreasury,
+  resetMoneySupplyState,
 } from '../economy';
 import { TRADE_RULES } from '../../../data/economyData';
 import { simEvents } from '../../../lib/simEvents';
@@ -642,8 +643,13 @@ describe('who pays the wage', () => {
 
 /** E1/E5: the nightly settlement — upkeep into the treasury, stipend out of it. */
 describe('treasury settlement', () => {
+  beforeEach(() => resetMoneySupplyState());
+
   it('charges upkeep, tops the broke up to the floor, and creates no money', () => {
     ensureWorld(12, 0, 0);
+    // An empty treasury: the conservation sum below must not depend on the
+    // pool other tests left behind (or on the over-cap retirement).
+    db.update(worldState).set({ tax_pool: 0 }).run();
     n++;
     const home = insertLocation(`settle home ${n}`, 'home', null);
     const rich = insertAgent(`Saver ${n}`, home);
@@ -658,7 +664,8 @@ describe('treasury settlement', () => {
     settleTreasury(world, residents, econByAgent, 0);
 
     const { UPKEEP, STIPEND_FLOOR } = CONFIG.ECONOMY;
-    const richUpkeep = UPKEEP.BASE + UPKEEP.LIFESTYLE_RATE * (160 - UPKEEP.SAVINGS_ALLOWANCE);
+    // No stored target on this world: the default $75, allowance $60.
+    const richUpkeep = UPKEEP.BASE + UPKEEP.LIFESTYLE_RATE * (160 - 0.8 * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY);
     expect(econ(rich).money).toBeCloseTo(160 - richUpkeep, 2);
     expect(econ(rich).daily_expenses).toBeCloseTo(richUpkeep, 2);
     // Paid the $2 they had, then topped up to the floor.
@@ -672,5 +679,110 @@ describe('treasury settlement', () => {
     const feed = db.select().from(activityLog).where(eq(activityLog.type, 'system')).all()
       .map((r) => String((r.template_data as any)?.message ?? ''));
     expect(feed.some((m) => m.includes(`stipend to Broke ${n}`))).toBe(true);
+  });
+
+  it('money trouble is news the night someone falls onto the stipend, not every night after', () => {
+    ensureWorld(12, 0, 0);
+    db.update(worldState).set({ tax_pool: 0 }).run();
+    n++;
+    const home = insertLocation(`distress home ${n}`, 'home', null);
+    const poor = insertAgent(`Hard up ${n}`, home);
+    insertEconomy(poor, 1, []);
+    const distress: number[] = [];
+    const onDistress = (p: { agentId: number }) => distress.push(p.agentId);
+    simEvents.on('economy:distress', onDistress);
+    try {
+      const residents = db.select().from(agents).where(eq(agents.id, poor)).all();
+      const night = () => settleTreasury(
+        db.select().from(worldState).get()!, residents, new Map([[poor, econ(poor)]]), 0);
+      night();
+      // Spent the stipend again by the next night.
+      db.update(economy).set({ money: 1 }).where(eq(economy.agent_id, poor)).run();
+      night();
+      expect(distress.filter((id) => id === poor)).toHaveLength(1);
+      // Back on their feet, then broke again: news again.
+      db.update(economy).set({ money: 50 }).where(eq(economy.agent_id, poor)).run();
+      night();
+      db.update(economy).set({ money: 1 }).where(eq(economy.agent_id, poor)).run();
+      night();
+      expect(distress.filter((id) => id === poor)).toHaveLength(2);
+    } finally {
+      simEvents.off('economy:distress', onDistress);
+    }
+  });
+});
+
+/**
+ * The settlement and the balancer wired through economyTick: once per
+ * day_changed tick, never on an ordinary tick, and the balancer's multiplier
+ * from tonight's ratio steering tomorrow night's lifestyle share. Every other
+ * resident in the shared test DB is retired first so the ratio is only these
+ * two (the dead don't count — see the balancer).
+ */
+describe('day change through economyTick', () => {
+  const upkeepRows = (agentId: number) => db.select().from(economyTransactions).where(and(
+    eq(economyTransactions.from_agent, agentId), eq(economyTransactions.reason, 'upkeep'),
+  )).all();
+  const dayChange = (day: number) => {
+    ensureWorld(day, 0, 0);
+    db.update(worldState).set({ pending_transitions: [{ type: 'day_changed' }] }).run();
+  };
+
+  it("settles once per night and applies the balancer's multiplier the next night", () => {
+    resetMoneySupplyState();
+    db.update(agents).set({ is_active: false, current_action: { type: 'idle' }, current_location: null }).run();
+    db.update(worldState).set({ tax_pool: 0 }).run();
+    n++;
+    const home = insertLocation(`night home ${n}`, 'home', null);
+    const rich = insertAgent(`Well off ${n}`, home);
+    const mid = insertAgent(`Getting by ${n}`, home);
+    insertEconomy(rich, 200, []);
+    insertEconomy(mid, 60, []);
+    const allowance = 0.8 * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY; // $60, no stored target
+    const { BASE, LIFESTYLE_RATE } = CONFIG.ECONOMY.UPKEEP;
+
+    // Night 1, multiplier 1: 4 + 0.35 × 140 = $53.
+    dayChange(20);
+    economyTick();
+    expect(upkeepRows(rich)).toHaveLength(1);
+    const night1 = BASE + LIFESTYLE_RATE * (200 - allowance);
+    expect(econ(rich).money).toBeCloseTo(200 - night1, 2);
+
+    // An ordinary tick the same night: no second settlement.
+    ensureWorld(20, 0, 1);
+    economyTick();
+    expect(upkeepRows(rich)).toHaveLength(1);
+
+    // Tonight's ratio (147 + 56) / (2 × 75) = 1.35 set the multiplier 1.35³ ≈ 2.48,
+    // so tomorrow's lifestyle rate is 0.35 × 2.48, capped at 0.6.
+    const ratio = (200 - night1 + 60 - BASE) / (2 * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY);
+    const rate = Math.min(0.6, LIFESTYLE_RATE * ratio ** 3);
+    const before = econ(rich).money;
+    dayChange(21);
+    economyTick();
+    expect(upkeepRows(rich)).toHaveLength(2);
+    expect(econ(rich).money).toBeCloseTo(before - (BASE + rate * (before - allowance)), 2);
+    // A strong pull says so in the feed.
+    const feed = db.select().from(activityLog).where(eq(activityLog.type, 'system')).all()
+      .map((r) => String((r.template_data as any)?.message ?? ''));
+    expect(feed.some((m) => m.includes('more money in town than it needs'))).toBe(true);
+  });
+
+  it('a stored per-world target moves the allowance', () => {
+    resetMoneySupplyState();
+    db.update(agents).set({ is_active: false }).run();
+    db.update(worldState).set({ tax_pool: 0, money_target_per_capita: 200 }).run();
+    try {
+      n++;
+      const home = insertLocation(`rich home ${n}`, 'home', null);
+      const saver = insertAgent(`Rich town ${n}`, home);
+      insertEconomy(saver, 200, []);
+      dayChange(22);
+      economyTick();
+      // Allowance 0.8 × 200 = 160: 4 + 0.35 × 40 = $18, not the $53 a $75 town charges.
+      expect(econ(saver).money).toBeCloseTo(200 - 18, 2);
+    } finally {
+      db.update(worldState).set({ money_target_per_capita: null }).run();
+    }
   });
 });

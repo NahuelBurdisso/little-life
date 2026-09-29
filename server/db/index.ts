@@ -100,6 +100,7 @@ function migrateSchema() {
   // World state extensions
   addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
   addColumnIfMissing('world_state', 'terrain_tiles', 'TEXT', "'[]'");
+  addColumnIfMissing('world_state', 'money_target_per_capita', 'REAL');
 
   // Backfills. Each runs independently — sharing one catch meant a failure on
   // the goals backfill skipped the aspirations one entirely. The first real

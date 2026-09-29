@@ -24,7 +24,7 @@
 
 import { clearStatesTrackers } from './systems/states';
 import { clearCriticalNeedFired, clearConsecutiveWorkMinutes } from './systems/needs';
-import { clearMilestoneTracking, clearPurchaseTracking } from './systems/economy';
+import { clearMilestoneTracking, clearPurchaseTracking, resetMoneySupplyState } from './systems/economy';
 import { clearWorkSkipCounts } from './systems/decisions';
 import { clearLonelinessTracking } from '../lib/lonelinessEngine';
 import { clearGiftTracking } from '../lib/giftEngine';
@@ -89,6 +89,9 @@ export function clearPerWorldCaches(): void {
   clearHungerTracking();
   clearMilestoneTracking();
   clearWorkSkipCounts();
+  // The balancer's multipliers were measured on the old world's money: a
+  // replaced rich town would start the new one with its savings pulled hard.
+  resetMoneySupplyState();
 
   // Caches keyed on conversation/agent id pairs. Both id spaces restart at 1 after
   // the wipe, and neither is evicted by the normal completion paths when a world

@@ -375,6 +375,10 @@ export const worldState = sqliteTable('world_state', {
   road_tiles: text('road_tiles', { mode: 'json' }).$type<Array<{x: number; y: number}>>().notNull().$defaultFn(() => []),
   terrain_tiles: text('terrain_tiles', { mode: 'json' }).$type<Array<{x: number; y: number; kind: string}>>().notNull().$defaultFn(() => []),
   setup_config: text('setup_config', { mode: 'json' }).$type<Record<string, any> | null>(),
+  // Money per resident the balancer steers to (townTreasury.ts moneyTargetFor),
+  // stored at world creation from the starting cash. NULL on saves from before
+  // it existed: CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY.
+  money_target_per_capita: real('money_target_per_capita'),
 });
 
 // ─── 13. worldEvents ──────────────────────────────────────────────────────────

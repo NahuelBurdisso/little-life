@@ -70,20 +70,24 @@ export const CONFIG = {
     STARTING_MONEY: 50,
     DAILY_EXPENSES: { min: 2, max: 5 }, // legacy fallback
     TAX_RATE: 0.05,
-    // Healthy money per resident: the default cast starts at ~$70 average and
-    // is paid ~$22/day, so a few days of meals in hand. At 50 a freshly
-    // created town already read 1.64 on day 1 — "inflation" before anything
-    // happened — and the balancer taxed it from the first night.
+    // Healthy money per resident for a world with no stored target (saves from
+    // before world_state.money_target_per_capita). New worlds store their own:
+    // the mean starting cash, clamped to MONEY_TARGET_RANGE (townTreasury.ts
+    // moneyTargetFor), so the wizard's starting-money slider and the scenario's
+    // wealth spread set the level the balancer steers to. At the old fixed 50
+    // a freshly created town already read 1.64 on day 1.
     TARGET_PER_CAPITA_MONEY: 75,
+    MONEY_TARGET_RANGE: { MIN: 30, MAX: 300 },
     // Daily settlement at day change (server/lib/townTreasury.ts): every
-    // resident pays BASE + LIFESTYLE_RATE × (cash − SAVINGS_ALLOWANCE) to the
-    // treasury, which pays wages and the stipend. BASE (rent, utilities)
-    // replaces the old $3 housing cost; the old $4 "food" and $2
+    // resident pays BASE + LIFESTYLE_RATE × (cash − allowance) to the treasury,
+    // which pays wages and the stipend; the allowance is
+    // ALLOWANCE_OF_TARGET × the world's money target ($60 at $75). BASE (rent,
+    // utilities) replaces the old $3 housing cost; the old $4 "food" and $2
     // "entertainment" charges are gone because meals and venue visits are paid
     // when they happen (G2). The lifestyle share caps a top earner's savings
-    // near $60 + surplus/rate, and the balancer scales its rate with the money
-    // supply, which keeps the supply flat whatever the cast earns.
-    UPKEEP: { BASE: 4, SAVINGS_ALLOWANCE: 60, LIFESTYLE_RATE: 0.35 },
+    // near allowance + surplus/rate, and the balancer scales its rate with the
+    // money supply, which keeps the supply flat whatever the cast earns.
+    UPKEEP: { BASE: 4, ALLOWANCE_OF_TARGET: 0.8, LIFESTYLE_RATE: 0.35 },
     // The stipend tops anyone below this up at settlement: ~3 meals at $5-6.
     STIPEND_FLOOR: 18,
     // A shop owner pays their staff only while keeping this much in the till.

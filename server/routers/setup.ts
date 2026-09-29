@@ -32,7 +32,7 @@ import {
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
-import { startingTreasury } from '../lib/townTreasury';
+import { startingTreasury, moneyTargetFor } from '../lib/townTreasury';
 import { queueMaxWait } from '../lib/conversationPacing';
 import { gameMinutes } from '../lib/gameClock';
 import { eq } from 'drizzle-orm';
@@ -910,6 +910,11 @@ function seedWorld(
     pending_transitions: [],
     // The town's opening reserve (townTreasury.ts): wages are paid from it.
     tax_pool: startingTreasury(config.agents.length, CONFIG.ECONOMY.TREASURY_START_PER_CAPITA),
+    // The residents' economy rows were written above (every table was cleared).
+    money_target_per_capita: moneyTargetFor(
+      db.select({ money: economy.money }).from(economy).all().map((e) => e.money),
+      CONFIG.ECONOMY.MONEY_TARGET_RANGE,
+    ),
     map_width: genResult.dimensions.width,
     map_height: genResult.dimensions.height,
     collision_grid: dynamicCollisionGrid,

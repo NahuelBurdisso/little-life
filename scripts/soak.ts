@@ -184,6 +184,7 @@ async function main(): Promise<void> {
   let convoMark = maxId(conversations);
 
   out(`soak: ${DAYS} day(s), tick_speed ${tickSpeed}, ${ticksPerDay} ticks/day, db ${tmpDb}${SOURCE_DB ? ` (copy of ${SOURCE_DB})` : ` (fresh world, seed "${SEED}")`}`);
+  out(`money target $${world0.money_target_per_capita ?? CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY}/resident, treasury $${Math.round(world0.tax_pool)}`);
   out('');
   // pantry = pantry meals / of which the eater was broke (E5).
   out('day | agents | $/capita | min$ | ratio | tax pool | salary | upkeep | stipend | buys (n/$) | covers (n/$) | wholesale $ | gifts (n/$) | broke | pantry | convos');
@@ -272,11 +273,12 @@ async function main(): Promise<void> {
     const allEcon = db.select().from(economy).all();
     const activeIds = new Set(active.map((a) => a.id));
     const activeEcon = allEcon.filter((e) => activeIds.has(e.agent_id));
-    const totalMoney = allEcon.reduce((s, e) => s + e.money, 0);
+    const totalMoney = activeEcon.reduce((s, e) => s + e.money, 0);
     const perCapita = activeEcon.reduce((s, e) => s + e.money, 0) / Math.max(1, activeEcon.length);
     const minMoney = Math.min(...activeEcon.map((e) => e.money));
     // Same ratio economy.ts balances on at day change.
-    const ratio = totalMoney / Math.max(1, active.length * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY);
+    const target = world.money_target_per_capita ?? CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
+    const ratio = totalMoney / Math.max(1, active.length * target);
 
     const txs = db.select().from(economyTransactions).where(gt(economyTransactions.id, txMark)).all();
     txMark = maxId(economyTransactions);

@@ -13,14 +13,35 @@ import { getReputationPriceModifier } from '../../lib/reputationEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { gameMinutes, isOpenAt } from '../../lib/gameClock';
 import { getAgentStates } from '../../lib/states';
-import { dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, treasuryExcess } from '../../lib/townTreasury';
+import { dailyUpkeep, stipendFor, wagePayer, balancerMultipliers, treasuryExcess, savingsAllowance } from '../../lib/townTreasury';
 
 // --- Module-level state for batching and milestones ---
 
 const productionThisTick = new Map<number, { item: string; qty: number }>();
 
+// Set by the day-change balancer, read by the next night's settlement and by
+// every sale's tax. Per world: resetMoneySupplyState (worldCaches.ts).
 let dailyUpkeepMultiplier = 1.0;
 let dailyTaxRateMultiplier = 1.0;
+
+/**
+ * Residents who needed the stipend last night. Falling onto it is the "money
+ * trouble" moment (financial fact + distress memory); staying on it is not
+ * news every night.
+ */
+const onStipend = new Set<number>();
+
+/** Drop the balancer's multipliers and the stipend roll for a world replace. */
+export function resetMoneySupplyState(): void {
+  dailyUpkeepMultiplier = 1.0;
+  dailyTaxRateMultiplier = 1.0;
+  onStipend.clear();
+}
+
+/** The money per resident the balancer steers this world to. */
+export function worldMoneyTarget(world: Pick<typeof worldState.$inferSelect, 'money_target_per_capita'>): number {
+  return world.money_target_per_capita ?? CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
+}
 
 const lastMilestoneLevel = new Map<number, number>();
 
@@ -522,6 +543,7 @@ export function settleTreasury(
   now: number,
 ): void {
   const { UPKEEP, STIPEND_FLOOR } = CONFIG.ECONOMY;
+  const allowance = savingsAllowance(worldMoneyTarget(world), UPKEEP.ALLOWANCE_OF_TARGET);
   let pool = world.tax_pool;
   const ledger = (from: number | null, to: number | null, amount: number, reason: string) =>
     db.insert(economyTransactions).values({
@@ -532,7 +554,7 @@ export function settleTreasury(
     const econ = econByAgent.get(agent.id);
     if (!econ) continue;
     const upkeep = dailyUpkeep(econ.money, {
-      base: UPKEEP.BASE, allowance: UPKEEP.SAVINGS_ALLOWANCE, rate: UPKEEP.LIFESTYLE_RATE,
+      base: UPKEEP.BASE, allowance, rate: UPKEEP.LIFESTYLE_RATE,
       multiplier: dailyUpkeepMultiplier,
     });
     econ.money = Math.round((econ.money - upkeep) * 100) / 100;
@@ -540,11 +562,6 @@ export function settleTreasury(
     db.update(economy).set({ money: econ.money, daily_expenses: upkeep }).where(eq(economy.id, econ.id)).run();
     if (upkeep > 0) ledger(agent.id, null, upkeep, 'upkeep');
     checkMilestone(agent.id, econ.money);
-
-    if (econ.money < 10) {
-      createFact('financial', agent.id, null, 1, [agent.id], 'observed');
-      simEvents.emit('economy:distress', { agentId: agent.id });
-    }
   }
 
   const helped: string[] = [];
@@ -553,7 +570,18 @@ export function settleTreasury(
     const econ = econByAgent.get(agent.id);
     if (!econ) continue;
     const stipend = stipendFor(econ.money, STIPEND_FLOOR);
-    if (stipend <= 0) continue;
+    if (stipend <= 0) {
+      onStipend.delete(agent.id);
+      continue;
+    }
+    // Money trouble is news the night someone falls onto the stipend. It used
+    // to fire every night anyone ended under $10 after the living costs — and
+    // before the stipend topped them up.
+    if (!onStipend.has(agent.id)) {
+      onStipend.add(agent.id);
+      createFact('financial', agent.id, null, 1, [agent.id], 'observed');
+      simEvents.emit('economy:distress', { agentId: agent.id });
+    }
     econ.money = Math.round((econ.money + stipend) * 100) / 100;
     pool -= stipend;
     paidOut += stipend;
@@ -1033,18 +1061,33 @@ export function economyTick(): void {
   // loop — player gifts, an old inflated save — instead of firing in every
   // soak from day 4.
   if (dayChanged) {
-    const totalMoney = allEcon.reduce((sum, e) => sum + e.money, 0);
-    const targetTotal =
-      activeAgents.length * CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY;
+    // Residents only. The dead keep an economy row at $0: counted, they
+    // dragged the ratio down; picked as "the poorest", a robbery moved cash
+    // into an account nobody would ever spend.
+    const activeIds = new Set(activeAgents.map((a) => a.id));
+    const residentEcon = allEcon.filter((e) => activeIds.has(e.agent_id));
+    const totalMoney = residentEcon.reduce((sum, e) => sum + e.money, 0);
+    const targetTotal = activeAgents.length * worldMoneyTarget(world);
     const ratio = targetTotal > 0 ? totalMoney / targetTotal : 1;
 
     const mult = balancerMultipliers(ratio);
     dailyUpkeepMultiplier = mult.upkeep;
     dailyTaxRateMultiplier = mult.tax;
 
+    // Savings visibly shrinking needs a reason on screen. Only when the pull
+    // is strong (ratio ≥ ~1.15): normal nights sit near 1 and say nothing.
+    if (mult.upkeep >= 1.5) {
+      logActivity({
+        type: 'system',
+        templateData: {
+          message: `There is more money in town than it needs (${Math.round((ratio - 1) * 100)}% over): upkeep on savings is up, and the well-off will see theirs shrink`,
+        },
+      });
+    }
+
     // ── ECONOMIC CRISIS EVENTS (ratio > 2.0) ──
     if (ratio > 2.0) {
-      const sortedByWealth = [...allEcon].sort((a, b) => b.money - a.money);
+      const sortedByWealth = [...residentEcon].sort((a, b) => b.money - a.money);
       const crisisRoll = Math.random();
 
       if (crisisRoll < 0.25) {
@@ -1070,7 +1113,7 @@ export function economyTick(): void {
         // EMERGENCY TAX: government seizes % from everyone
         const taxRate = 0.05 + Math.random() * 0.10; // 5-15%
         let totalSeized = 0;
-        for (const econ of allEcon) {
+        for (const econ of residentEcon) {
           const seized = Math.floor(econ.money * taxRate);
           if (seized > 0) {
             db.update(economy).set({ money: econ.money - seized }).where(eq(economy.id, econ.id)).run();
@@ -1114,7 +1157,7 @@ export function economyTick(): void {
     // ── EXTREME INFLATION DRAIN (ratio > 3.0): money literally rots ──
     if (ratio > 3.0) {
       const rotRate = Math.min(0.15, (ratio - 3.0) * 0.05); // 5-15% wealth decay
-      for (const econ of allEcon) {
+      for (const econ of residentEcon) {
         const lost = Math.floor(econ.money * rotRate);
         if (lost > 0) {
           db.update(economy).set({ money: econ.money - lost }).where(eq(economy.id, econ.id)).run();
