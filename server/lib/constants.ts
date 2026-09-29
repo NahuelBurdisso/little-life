@@ -7,7 +7,7 @@
 export const AUTOPLAY_CONFIG = {
   // Opt-in via `autoplay.configure({ enabled: true })`. Off by default: the
   // profiler adds per-tick DB reads and the nudger injects events into the
-  // player's town outside the tick transactions, and there is no UI yet.
+  // player's town outside the tick transactions. Toggled from the Autoplay panel.
   ENABLED: false,
   WINDOW_SIZE: 60,           // ticks per analysis window (~1 game hour)
   BOREDOM_THRESHOLD: 55,     // score to trigger auto-nudges
