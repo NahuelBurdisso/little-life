@@ -7,7 +7,8 @@ import { agents } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { gameMinutesNow } from '../worldClock';
 import { CONFIG } from '../constants';
-import { summarizeConversation, MIN_SUMMARY_LINES, type SummaryLine } from './conversationSummary';
+import { summarizeConversation, summaryPriority, type SummaryLine } from './conversationSummary';
+import { isAnyWatched } from '../spotlight';
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { getImportance } from './ImportanceScorer';
 import { goalClause } from '../goalText';
@@ -103,12 +104,17 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         .filter((m) => !isFallbackMessage(m, nameOf(m.speakerId) ?? ''))
         .map((m) => ({ speaker: nameOf(m.speakerId) ?? 'Someone', text: m.text }));
       const me = nameOf(agentId);
-      if (CONFIG.AI.CONVERSATION_SUMMARIES && conversationId != null && !truncated && me && spoken.length >= MIN_SUMMARY_LINES) {
+      // Short off-screen chats keep the gist; see summaryPriority. Every
+      // participant's handler runs in this same emit loop and reads the same
+      // spotlight, so they agree on whether the shared summary call happens.
+      const speakers = [agentId, ...(messages ?? []).map((m) => m.speakerId)];
+      const priority = summaryPriority(spoken.length, isAnyWatched(speakers));
+      if (CONFIG.AI.CONVERSATION_SUMMARIES && conversationId != null && !truncated && me && priority) {
         const worldEpoch = currentWorldEpoch();
         let pending = pendingSummaries.get(conversationId);
         if (!pending) {
           const participants = [...new Set(spoken.map((l) => l.speaker))];
-          pending = summarizeConversation(participants, spoken);
+          pending = summarizeConversation(participants, spoken, priority);
           pendingSummaries.set(conversationId, pending);
           // Every participant's handler runs in this same emit loop, so the
           // entry is only needed until the call settles.
