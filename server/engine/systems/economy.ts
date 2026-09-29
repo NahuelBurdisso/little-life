@@ -54,10 +54,26 @@ const purchasesThisAction = new Map<number, { actionKey: string; handled: Set<st
 /** Drop per-action purchase tracking for a world replace (agent ids and ticks restart). */
 export function clearPurchaseTracking(): void {
   purchasesThisAction.clear();
+  venueVisitPaid.clear();
 }
 
 /** Sentinel in the handled set for "this eating action has paid for its meal". */
 const MEAL = '__meal__';
+
+// --- Tavern visits ---
+
+/**
+ * agentId -> the venue (tavern) whose cover charge they already paid on this
+ * visit. A visit is continuous presence: the entry is dropped the first tick
+ * the agent is anywhere else. Keyed on the stay rather than the action on
+ * purpose: an evening out is socializing -> talking -> idle -> eating, each a
+ * fresh `action_started`, and a per-action key would charge the cover 3-4
+ * times for one night.
+ */
+const venueVisitPaid = new Map<number, number>();
+
+/** Actions that make someone a patron (staff at work don't pay the cover). */
+const PATRON_ACTIONS = new Set(['socializing', 'idle', 'talking', 'eating']);
 
 /** Wholesale stops restocking an item once the shop holds this many. */
 export const WHOLESALE_STOCK_TARGET = 10;
@@ -89,9 +105,9 @@ function purchasesFor(agentId: number, actionKey: string): Set<string> {
 type EconRecord = typeof economy.$inferSelect;
 
 /**
- * Move one unit of `item` from the shop owner to the buyer at `price`, taxed,
- * and record it in the ledger, the activity feed and `economy:purchase`.
- * Mutates the cached econ rows so later steps of this tick see the new state.
+ * Move one unit of `item` from the shop owner to the buyer at `price`, then
+ * record the sale. Mutates the cached econ rows so later steps of this tick
+ * see the new state.
  */
 function sellOneItem(
   world: typeof worldState.$inferSelect,
@@ -106,21 +122,47 @@ function sellOneItem(
 ): void {
   const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], item, 1);
   const newBuyerInv = addToInventory(buyerEcon.inventory as any[], item, 1, now);
+  db.update(economy).set({ inventory: newOwnerInv }).where(eq(economy.id, ownerEcon.id)).run();
+  ownerEcon.inventory = newOwnerInv;
+  db.update(economy).set({ inventory: newBuyerInv }).where(eq(economy.id, buyerEcon.id)).run();
+  buyerEcon.inventory = newBuyerInv;
+
+  recordSale(world, buyer, buyerEcon, ownerId, ownerEcon, price, {
+    reason: `purchase:${item}`,
+    items: [{ itemId: item, quantity: 1 }],
+    feedItem: item,
+    memoryItem: item,
+  }, location, now);
+}
+
+/**
+ * The money side of any sale to a shop owner: buyer pays `price`, the owner
+ * gets it minus tax, the tax goes to the town pool, and the sale is written to
+ * the ledger, the activity feed (`purchase`) and `economy:purchase`.
+ */
+function recordSale(
+  world: typeof worldState.$inferSelect,
+  buyer: { id: number; name: string },
+  buyerEcon: EconRecord,
+  ownerId: number,
+  ownerEcon: EconRecord,
+  price: number,
+  what: {
+    reason: string;
+    items: { itemId: string; quantity: number }[] | null;
+    feedItem: string;
+    memoryItem: string;
+  },
+  location: { id: number; name: string },
+  now: number,
+): void {
   const tax = Math.round(price * CONFIG.ECONOMY.TAX_RATE * dailyTaxRateMultiplier);
   const sellerReceives = price - tax;
 
-  db.update(economy).set({
-    inventory: newOwnerInv,
-    money: ownerEcon.money + sellerReceives,
-  }).where(eq(economy.id, ownerEcon.id)).run();
-  ownerEcon.inventory = newOwnerInv;
+  db.update(economy).set({ money: ownerEcon.money + sellerReceives }).where(eq(economy.id, ownerEcon.id)).run();
   ownerEcon.money += sellerReceives;
 
-  db.update(economy).set({
-    inventory: newBuyerInv,
-    money: buyerEcon.money - price,
-  }).where(eq(economy.id, buyerEcon.id)).run();
-  buyerEcon.inventory = newBuyerInv;
+  db.update(economy).set({ money: buyerEcon.money - price }).where(eq(economy.id, buyerEcon.id)).run();
   buyerEcon.money -= price;
 
   db.update(worldState).set({
@@ -132,8 +174,8 @@ function sellOneItem(
     from_agent: buyer.id,
     to_agent: ownerId,
     amount: price,
-    reason: `purchase:${item}`,
-    items_exchanged: [{ itemId: item, quantity: 1 }],
+    reason: what.reason,
+    items_exchanged: what.items,
     location_id: location.id,
     timestamp: now,
   }).run();
@@ -142,9 +184,10 @@ function sellOneItem(
     type: 'purchase',
     initiator: buyer.id,
     target: ownerId,
-    templateData: { agent: buyer.name, item, amount: price },
+    location: location.id,
+    templateData: { agent: buyer.name, item: what.feedItem, amount: price },
   });
-  simEvents.emit('economy:purchase', { agentId: buyer.id, item, price, locationName: location.name });
+  simEvents.emit('economy:purchase', { agentId: buyer.id, item: what.memoryItem, price, locationName: location.name });
   checkMilestone(buyer.id, buyerEcon.money);
 }
 
@@ -508,6 +551,49 @@ export function economyTick(): void {
       sellOneItem(world, agent, buyerEcon, shopLocation.owner, ownerEcon, item, price, shopLocation, now);
       handled.add(item);
     }
+  }
+
+  // ========== 3b. TAVERN VISITS: cover charge ==========
+  // Taverns had no patron income once eating stopped passing drinks off as meals
+  // (no recipe makes the food_prepared a tavern sells). Their TRADE_RULES
+  // `entertainmentCost` was defined but never charged; it is now the cover, paid
+  // once per visit by patrons (not the owner, not staff whose workplace it is).
+  // A drink in stock is poured as part of it, consumed from the owner's stock.
+  for (const agent of activeAgents) {
+    const at = agent.current_location;
+    const paidAt = venueVisitPaid.get(agent.id);
+    if (paidAt !== undefined && paidAt !== at) venueVisitPaid.delete(agent.id);
+    if (at == null || venueVisitPaid.has(agent.id)) continue;
+
+    const actionType = (agent.current_action as any)?.type;
+    if (!PATRON_ACTIONS.has(actionType)) continue;
+
+    const venue = locationCache.get(at) ?? allLocations.find((l) => l.id === at);
+    if (!venue) continue;
+    locationCache.set(at, venue);
+    const fee = getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0;
+    if (fee <= 0 || !venue.owner) continue;
+    if (venue.owner === agent.id || agent.workplace === at) continue;
+
+    const patronEcon = econByAgent.get(agent.id);
+    const ownerEcon = econByAgent.get(venue.owner);
+    if (!patronEcon || !ownerEcon) continue;
+    // Can't pay: not charged yet, retried next tick (payday can land mid-visit).
+    if (patronEcon.money < fee) continue;
+
+    const pours = getInventoryCount(ownerEcon.inventory as any[], 'drink') > 0;
+    if (pours) {
+      const newInv = removeFromInventory(ownerEcon.inventory as any[], 'drink', 1);
+      db.update(economy).set({ inventory: newInv }).where(eq(economy.id, ownerEcon.id)).run();
+      ownerEcon.inventory = newInv;
+    }
+    recordSale(world, agent, patronEcon, venue.owner, ownerEcon, fee, {
+      reason: `entertainment:${venue.type}`,
+      items: pours ? [{ itemId: 'drink', quantity: 1 }] : null,
+      feedItem: pours ? `a drink at ${venue.name}` : `a night out at ${venue.name}`,
+      memoryItem: pours ? 'a drink' : 'a night out',
+    }, venue, now);
+    venueVisitPaid.set(agent.id, at);
   }
 
   // ========== 4. LIVING COSTS (data-driven) ==========

@@ -8,6 +8,7 @@ import {
   WHOLESALE_STOCK_TARGET,
   WHOLESALE_MAX_CASH_FRACTION,
 } from '../economy';
+import { TRADE_RULES } from '../../../data/economyData';
 
 /**
  * Playtest bug: eating at a shop bought one item EVERY tick of the meal, and a
@@ -110,6 +111,12 @@ const purchasesBy = (agentId: number) =>
   db.select().from(economyTransactions).where(and(
     eq(economyTransactions.from_agent, agentId),
     like(economyTransactions.reason, 'purchase:%'),
+  )).all();
+
+const coversBy = (agentId: number) =>
+  db.select().from(economyTransactions).where(and(
+    eq(economyTransactions.from_agent, agentId),
+    like(economyTransactions.reason, 'entertainment:%'),
   )).all();
 
 const feedPurchasesBy = (agentId: number) =>
@@ -243,6 +250,8 @@ describe('shop purchases', () => {
     setAction(dry.buyer, { type: 'eating', locationId: dry.shop }, 100, dry.shop);
     ticks(5);
     expect(purchasesBy(dry.buyer)).toHaveLength(0);
+    // The tavern still earns: the cover charge (see 'tavern visits' below).
+    expect(coversBy(dry.buyer)).toHaveLength(1);
 
     const fed = scene(stock({ drink: 10, food_prepared: 10 }), 100, [], 'tavern');
     setAction(fed.buyer, { type: 'eating', locationId: fed.shop }, 100, fed.shop);
@@ -368,5 +377,89 @@ describe('wholesale restock', () => {
     for (let i = 0; i < 5; i++) economyTick();
     expect(count(owner, 'food_raw')).toBe(WHOLESALE_STOCK_TARGET);
     expect(econ(owner).money).toBe(1000);
+  });
+});
+
+/**
+ * Taverns earned $0 from patrons once drinks stopped counting as meals. The
+ * TRADE_RULES `entertainmentCost` is now a cover charge, once per visit.
+ */
+describe('tavern visits', () => {
+  beforeAll(() => ensureWorld(7, 19, 0));
+  beforeEach(() => clearPurchaseTracking());
+
+  const COVER = TRADE_RULES.tavern.entertainmentCost;
+
+  it('charges the cover once per visit, however many actions the evening has', () => {
+    const { buyer, shop, owner } = scene(stock({ drink: 5 }), 100, [], 'tavern');
+
+    setAction(buyer, { type: 'socializing', locationId: shop }, 100, shop);
+    ticks(5);
+    setAction(buyer, { type: 'talking' }, 105, shop);
+    ticks(5);
+    setAction(buyer, { type: 'idle' }, 110, shop);
+    ticks(5);
+
+    const covers = coversBy(buyer);
+    expect(covers).toHaveLength(1);
+    expect(covers[0]).toMatchObject({ to_agent: owner, amount: COVER, reason: 'entertainment:tavern' });
+    expect(covers[0].items_exchanged).toEqual([{ itemId: 'drink', quantity: 1 }]);
+    expect(econ(buyer).money).toBe(100 - COVER);
+    // The drink came out of the owner's stock. (Owner money isn't asserted: the
+    // tavern also restocks food_raw wholesale from the farmers seeded above.)
+    expect(count(owner, 'drink')).toBe(4);
+
+    const feed = feedPurchasesBy(buyer);
+    expect(feed).toHaveLength(1);
+    expect(String((feed[0].template_data as any).item)).toContain('a drink at');
+  });
+
+  it('a new visit after leaving is charged again', () => {
+    const { buyer, shop } = scene(stock({ drink: 5 }), 100, [], 'tavern');
+    const home = insertLocation(`tavern-goer home ${n}`, 'home', null);
+
+    setAction(buyer, { type: 'socializing' }, 100, shop);
+    ticks(3);
+    setAction(buyer, { type: 'idle' }, 200, home);
+    ticks(3);
+    setAction(buyer, { type: 'socializing' }, 300, shop);
+    ticks(3);
+
+    expect(coversBy(buyer)).toHaveLength(2);
+  });
+
+  it('with no drink in stock the cover is still a night out', () => {
+    const { buyer, shop } = scene([], 100, [], 'tavern');
+    setAction(buyer, { type: 'socializing' }, 100, shop);
+    ticks(3);
+
+    const covers = coversBy(buyer);
+    expect(covers).toHaveLength(1);
+    expect(covers[0].items_exchanged).toBeNull();
+    expect(String((feedPurchasesBy(buyer)[0].template_data as any).item)).toContain('a night out at');
+  });
+
+  it('owners, staff and people at work do not pay', () => {
+    const { buyer, owner, shop } = scene(stock({ drink: 5 }), 100, [], 'tavern');
+    const barmaid = insertAgent(`Barmaid ${n}`, shop);
+    insertEconomy(barmaid, 100, []);
+    db.update(agents).set({ workplace: shop }).where(eq(agents.id, barmaid)).run();
+
+    setAction(owner, { type: 'socializing' }, 100, shop);
+    setAction(barmaid, { type: 'idle' }, 100, shop);
+    setAction(buyer, { type: 'working' }, 100, shop);
+    ticks(3);
+
+    expect(coversBy(owner)).toHaveLength(0);
+    expect(coversBy(barmaid)).toHaveLength(0);
+    expect(coversBy(buyer)).toHaveLength(0);
+  });
+
+  it('someone who cannot afford the cover is not charged', () => {
+    const { buyer, shop } = scene(stock({ drink: 5 }), COVER - 1, [], 'tavern');
+    setAction(buyer, { type: 'socializing' }, 100, shop);
+    ticks(3);
+    expect(coversBy(buyer)).toHaveLength(0);
+    expect(econ(buyer).money).toBe(COVER - 1);
   });
 });
