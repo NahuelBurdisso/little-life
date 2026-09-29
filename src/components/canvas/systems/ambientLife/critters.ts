@@ -84,11 +84,13 @@ export function stepBird(
   if (b.mode !== 'flee' && td2 < BIRD_FLEE_RADIUS * BIRD_FLEE_RADIUS) {
     const len = Math.sqrt(td2);
     let nx = len > 0.001 ? tdx / len : b.facing;
+    const ny = len > 0.001 ? tdy / len : 0;
     // Always leave sideways too, so a walker straight above doesn't send it into their face.
     if (Math.abs(nx) < 0.3) nx = nx < 0 || (nx === 0 && b.facing < 0) ? -0.3 : 0.3;
     const speed = between(rnd, 80, 110);
     b.vx = nx * speed;
-    b.vy = -between(rnd, 40, 65);
+    // Climbs whichever way it flees; a walker below it adds a little more lift.
+    b.vy = -between(rnd, 40, 65) + ny * 15;
     b.facing = b.vx >= 0 ? 1 : -1;
     b.lift = 0;
     birdMode(b, 'flee', BIRD_FLIGHT_TIME);
