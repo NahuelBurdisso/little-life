@@ -1,8 +1,9 @@
 import * as PIXI from 'pixi.js';
-import type { ParticleProfile, ParticleContext, ActiveEmitter, ParticleTrigger, ParticleShape } from './types';
+import type { ParticleProfile, ParticleContext, ActiveEmitter, ParticleShape } from './types';
 import { ParticlePool } from './ParticlePool';
 import { createShapeTextures } from './ShapeTextures';
 import { PARTICLE_PROFILES } from './profileRegistry';
+import { EmitterKeyCache, ProfileIndex } from './emitterLookup';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -14,9 +15,6 @@ function randomPick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function emitterKey(anchorType: string, anchorId: string, profileId: string): string {
-  return `${anchorType}-${anchorId}-${profileId}`;
-}
 
 // ─── Engine ───────────────────────────────────────────────────────────────────
 
@@ -40,8 +38,16 @@ export class ParticleEngine {
   private initialized = false;
   private destroyed = false;
 
-  // Index: trigger type → profiles that match
-  private triggerIndex: Map<string, ParticleProfile[]> = new Map();
+  // Index: trigger type + value → profiles that match
+  private triggerIndex = new ProfileIndex();
+
+  // Per-frame scratch, kept between frames so `update` allocates nothing in steady state.
+  private readonly desiredEmitters = new Set<string>();
+  private readonly aliveCounts = new Map<string, number>();
+  private readonly anchor = { x: 0, y: 0 };
+  private readonly agentKeys = new EmitterKeyCache('agent');
+  private readonly locationKeys = new EmitterKeyCache('location');
+  private readonly worldKeys = new EmitterKeyCache('world');
 
   constructor(parentContainer: PIXI.Container, maxParticles = 500) {
     this.pool = new ParticlePool(maxParticles);
@@ -50,10 +56,7 @@ export class ParticleEngine {
     // Build profile map and trigger index
     for (const profile of PARTICLE_PROFILES) {
       this.profiles.set(profile.id, profile);
-      const key = this.triggerKey(profile.trigger);
-      const list = this.triggerIndex.get(key) ?? [];
-      list.push(profile);
-      this.triggerIndex.set(key, list);
+      this.triggerIndex.add(profile);
     }
   }
 
@@ -85,11 +88,12 @@ export class ParticleEngine {
     if (!this.initialized) return;
 
     // 1. Determine which emitters SHOULD be active based on current context
-    const desiredEmitters = new Set<string>();
-    this.matchContext(context, desiredEmitters, cameraX, cameraY);
+    const desiredEmitters = this.desiredEmitters;
+    desiredEmitters.clear();
+    this.matchContext(context, desiredEmitters);
 
     // 2. Remove emitters that are no longer desired
-    for (const [key] of this.emitters) {
+    for (const key of this.emitters.keys()) {
       if (!desiredEmitters.has(key)) {
         this.emitters.delete(key);
         // Particles from this emitter will die naturally (lifecycle)
@@ -105,11 +109,13 @@ export class ParticleEngine {
         const profile = this.profiles.get(profileId);
         if (!profile) continue;
 
+        const anchorId = parts.slice(1, -1).join('-'); // middle segments
         this.emitters.set(key, {
           key,
           profileId: profile.id,
           anchorType: parts[0] as 'agent' | 'location' | 'world',
-          anchorId: parts.slice(1, -1).join('-'), // middle segments
+          anchorId,
+          anchorNum: Number(anchorId),
           spawnAccumulator: 0,
           aliveCount: 0,
           burstDone: false,
@@ -118,17 +124,18 @@ export class ParticleEngine {
     }
 
     // 4. Update pool (physics + lifecycle) — returns alive counts per emitter
-    const aliveCounts = this.pool.updateAll(dt);
+    const aliveCounts = this.pool.updateAll(dt, this.aliveCounts);
 
     // 5. Spawn new particles from active emitters
-    for (const [key, emt] of this.emitters) {
+    for (const emt of this.emitters.values()) {
+      const key = emt.key;
       const profile = this.profiles.get(emt.profileId);
       if (!profile) continue;
 
       // Update alive count from pool
       emt.aliveCount = aliveCounts.get(key) ?? 0;
 
-      // Resolve anchor position
+      // Resolve anchor position (into the shared scratch point)
       const anchor = this.resolveAnchor(emt, context, cameraX, cameraY);
       if (!anchor) continue;
 
@@ -158,16 +165,18 @@ export class ParticleEngine {
   /** Register an additional profile at runtime. */
   addProfile(profile: ParticleProfile): void {
     this.profiles.set(profile.id, profile);
-    const key = this.triggerKey(profile.trigger);
-    const list = this.triggerIndex.get(key) ?? [];
-    list.push(profile);
-    this.triggerIndex.set(key, list);
+    this.triggerIndex.add(profile);
   }
 
   destroy(): void {
     this.destroyed = true;
     this.pool.destroy();
     this.emitters.clear();
+    this.desiredEmitters.clear();
+    this.aliveCounts.clear();
+    this.agentKeys.clear();
+    this.locationKeys.clear();
+    this.worldKeys.clear();
     // Only the RenderTextures we made — the Kenney glows belong to the `Assets`
     // cache and destroying them hands dead textures to the next mount.
     for (const tex of this.ownedTextures) tex.destroy(true);
@@ -177,72 +186,76 @@ export class ParticleEngine {
 
   // ─── Private ────────────────────────────────────────────────────────────────
 
-  private triggerKey(trigger: ParticleTrigger): string {
-    return `${trigger.type}:${(trigger as any).state ?? (trigger as any).action ?? (trigger as any).weather ?? (trigger as any).phase ?? (trigger as any).season ?? (trigger as any).locType ?? (trigger as any).event}`;
-  }
-
-  private matchContext(
-    ctx: ParticleContext,
-    desiredEmitters: Set<string>,
-    _cameraX: number,
-    _cameraY: number,
-  ): void {
+  /**
+   * Fills `desiredEmitters` from the context. Index lookups and emitter keys come from the
+   * memoising helpers in `emitterLookup`, so a steady-state frame builds no strings.
+   */
+  private matchContext(ctx: ParticleContext, desiredEmitters: Set<string>): void {
     // Agent-based triggers
-    for (const agent of ctx.agents) {
+    const agents = ctx.agents;
+    for (let i = 0; i < agents.length; i++) {
+      const agent = agents[i];
       // Agent states
-      for (const state of agent.states) {
-        const profiles = this.triggerIndex.get(`agent_state:${state}`);
+      const states = agent.states;
+      for (let s = 0; s < states.length; s++) {
+        const profiles = this.triggerIndex.get('agent_state', states[s]);
         if (profiles) {
-          for (const p of profiles) {
-            desiredEmitters.add(emitterKey('agent', agent.id, p.id));
+          for (let k = 0; k < profiles.length; k++) {
+            desiredEmitters.add(this.agentKeys.get(agent.id, profiles[k].id));
           }
         }
       }
 
       // Agent action
-      const actionProfiles = this.triggerIndex.get(`agent_action:${agent.action}`);
+      const actionProfiles = this.triggerIndex.get('agent_action', agent.action);
       if (actionProfiles) {
-        for (const p of actionProfiles) {
-          desiredEmitters.add(emitterKey('agent', agent.id, p.id));
+        for (let k = 0; k < actionProfiles.length; k++) {
+          desiredEmitters.add(this.agentKeys.get(agent.id, actionProfiles[k].id));
         }
       }
     }
 
     // Weather triggers
-    const weatherProfiles = this.triggerIndex.get(`weather:${ctx.weather}`);
+    const weatherProfiles = this.triggerIndex.get('weather', ctx.weather);
     if (weatherProfiles) {
-      for (const p of weatherProfiles) {
-        desiredEmitters.add(emitterKey('world', 'weather', p.id));
+      for (let k = 0; k < weatherProfiles.length; k++) {
+        desiredEmitters.add(this.worldKeys.get('weather', weatherProfiles[k].id));
       }
     }
 
     // Time-of-day triggers
-    const timeProfiles = this.triggerIndex.get(`time:${ctx.dayPhase}`);
+    const timeProfiles = this.triggerIndex.get('time', ctx.dayPhase);
     if (timeProfiles) {
-      for (const p of timeProfiles) {
-        desiredEmitters.add(emitterKey('world', 'time', p.id));
+      for (let k = 0; k < timeProfiles.length; k++) {
+        desiredEmitters.add(this.worldKeys.get('time', timeProfiles[k].id));
       }
     }
 
     // Season triggers
-    const seasonProfiles = this.triggerIndex.get(`season:${ctx.season}`);
+    const seasonProfiles = this.triggerIndex.get('season', ctx.season);
     if (seasonProfiles) {
-      for (const p of seasonProfiles) {
-        desiredEmitters.add(emitterKey('world', 'season', p.id));
+      for (let k = 0; k < seasonProfiles.length; k++) {
+        desiredEmitters.add(this.worldKeys.get('season', seasonProfiles[k].id));
       }
     }
 
     // Location-type triggers
-    for (const loc of ctx.locations) {
-      const locProfiles = this.triggerIndex.get(`location_type:${loc.type}`);
+    const locations = ctx.locations;
+    for (let i = 0; i < locations.length; i++) {
+      const loc = locations[i];
+      const locProfiles = this.triggerIndex.get('location_type', loc.type);
       if (locProfiles) {
-        for (const p of locProfiles) {
-          desiredEmitters.add(emitterKey('location', String(loc.id), p.id));
+        for (let k = 0; k < locProfiles.length; k++) {
+          desiredEmitters.add(this.locationKeys.get(loc.id, locProfiles[k].id));
         }
       }
     }
   }
 
+  /**
+   * Writes the emitter's anchor into the shared `this.anchor` point and returns it, or null when
+   * the anchor is gone. The point is reused: callers must read it before the next call.
+   */
   private resolveAnchor(
     emt: ActiveEmitter,
     ctx: ParticleContext,
@@ -251,22 +264,35 @@ export class ParticleEngine {
   ): { x: number; y: number } | null {
     const profile = this.profiles.get(emt.profileId);
     if (!profile) return null;
+    const anchor = this.anchor;
 
     if (emt.anchorType === 'agent') {
-      const agent = ctx.agents.find(a => a.id === emt.anchorId);
-      if (!agent) return null;
-      return { x: agent.x + profile.offset.x, y: agent.y + profile.offset.y };
+      const agents = ctx.agents;
+      for (let i = 0; i < agents.length; i++) {
+        if (agents[i].id !== emt.anchorId) continue;
+        anchor.x = agents[i].x + profile.offset.x;
+        anchor.y = agents[i].y + profile.offset.y;
+        return anchor;
+      }
+      return null;
     }
 
     if (emt.anchorType === 'location') {
-      const loc = ctx.locations.find(l => String(l.id) === emt.anchorId);
-      if (!loc) return null;
-      return { x: loc.x + profile.offset.x, y: loc.y + profile.offset.y };
+      const locations = ctx.locations;
+      for (let i = 0; i < locations.length; i++) {
+        if (locations[i].id !== emt.anchorNum) continue;
+        anchor.x = locations[i].x + profile.offset.x;
+        anchor.y = locations[i].y + profile.offset.y;
+        return anchor;
+      }
+      return null;
     }
 
     if (emt.anchorType === 'world') {
       // World emitters anchor to camera center
-      return { x: cameraX + profile.offset.x, y: cameraY + profile.offset.y };
+      anchor.x = cameraX + profile.offset.x;
+      anchor.y = cameraY + profile.offset.y;
+      return anchor;
     }
 
     return null;

@@ -132,10 +132,12 @@ export class ParticlePool {
   /**
    * Update all alive particles. Single flat loop — O(N) where N = maxParticles.
    * @param dt Delta time in seconds.
-   * @returns Map of emitterKey → alive count (for emitter tracking).
+   * @param aliveCounts Map refilled with emitterKey → alive count (for emitter tracking). Callers
+   *   pass one they keep between frames, so this hot path never allocates it.
+   * @returns `aliveCounts`.
    */
-  updateAll(dt: number): Map<string, number> {
-    const aliveCounts = new Map<string, number>();
+  updateAll(dt: number, aliveCounts: Map<string, number> = new Map()): Map<string, number> {
+    aliveCounts.clear();
 
     for (let i = 0; i < this.maxParticles; i++) {
       const p = this.particles[i];
