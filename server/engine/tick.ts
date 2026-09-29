@@ -29,6 +29,8 @@ import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { saveWorldCaches } from './worldCaches';
+import { tickHealth } from './tickHealth';
+import { refreshHealth } from '../lib/health';
 import crypto from 'crypto';
 import { autoPlayer } from '../autoplay';
 import { conversationQueue, conversationSchedulerState } from '../db/schema';
@@ -403,6 +405,12 @@ let lastSlowTickReport = 0;
 let slowTicksSinceReport = 0;
 
 function reportSlowTick(totalMs: number, phaseMs: Array<[string, number]>): void {
+  // Feed the in-game health banner too. refreshHealth only speaks when the
+  // "town is lagging" verdict flips (5+ overruns in a minute), so a slow tick
+  // costs one signature compare, not a client refetch.
+  if (tickHealth.noteTick(totalMs, CONFIG.TICK_INTERVAL_MS)) {
+    try { refreshHealth(); } catch { /* health reporting must never fail a tick */ }
+  }
   if (totalMs <= CONFIG.TICK_INTERVAL_MS) return;
   slowTicksSinceReport++;
   const now = Date.now();

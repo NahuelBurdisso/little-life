@@ -8,6 +8,7 @@ import { getLLMStats } from '../ai/llmSemaphore';
 import { getLLMMetrics } from '../ai/llmMetrics';
 import { startWorldEvent } from '../engine/systems/events';
 import { PLAYER_EVENT_TYPES } from '../data/worldEventCatalog';
+import { getHealthSnapshot, HEALTH_CHANNEL } from '../lib/health';
 
 export const worldRouter = router({
   getState: publicProcedure.query(() => {
@@ -21,6 +22,22 @@ export const worldRouter = router({
   /** Per-purpose latency / token numbers since server start (llmMetrics.ts). */
   getLLMMetrics: publicProcedure.query(() => {
     return getLLMMetrics();
+  }),
+
+  /**
+   * Is the machinery behind the town working? LLM verdict (ok / degraded /
+   * down + reason), the planning breaker, embeddings and tick overruns — what
+   * the health banner shows. Fresh via `onHealthChange`, which fires only when
+   * the verdict changes (lib/health.ts), not per tick.
+   */
+  getHealth: publicProcedure.query(() => {
+    return getHealthSnapshot();
+  }),
+
+  onHealthChange: publicProcedure.subscription(async function* (opts) {
+    for await (const data of emitter.iterate(HEALTH_CHANNEL, opts.signal)) {
+      yield data;
+    }
   }),
 
   getActiveEvents: publicProcedure.query(() => {

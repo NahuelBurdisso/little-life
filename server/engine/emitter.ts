@@ -53,6 +53,20 @@ export class TickEmitter {
     }
   }
 
+  /**
+   * Notify one channel now, leaving the others dirty for the tick's own flush.
+   * For state that changes outside the tick (LLM health): a full `flush()` from
+   * an LLM callback would announce channels a phase has marked mid-transaction,
+   * before the tick has committed what they describe.
+   */
+  flushChannel(channel: string) {
+    if (!this.dirty.delete(channel)) return;
+    const now = Date.now();
+    for (const cb of this.subscribers.get(channel) ?? []) {
+      cb({ channel, timestamp: now });
+    }
+  }
+
   flush() {
     const now = Date.now();
     for (const channel of this.dirty) {

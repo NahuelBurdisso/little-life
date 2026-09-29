@@ -7,6 +7,7 @@ import { appRouter } from './router';
 import { startTickLoop, stopTickLoopAndWait } from './engine/tick';
 import { restoreWorldCaches, saveWorldCaches } from './engine/worldCaches';
 import { warmUpModels } from './ai/warmup';
+import { startHealthWatch } from './lib/health';
 import { runEmbeddingBackfill } from './lib/memory/embeddingBackfill';
 import { endOrphanedLLMConversations } from './engine/systems/conversations';
 import { taskRunner } from './ai/taskRunner';
@@ -136,6 +137,10 @@ const handler = applyWSSHandler({
   wss,
   router: appRouter,
 });
+
+// Health banner plumbing first, so the warm-up's own "model missing" verdict
+// reaches the client. Tells subscribers only when the verdict changes.
+startHealthWatch();
 
 // Load the models in the background so the first turns don't pay for it.
 // Then give every memory a vector from the current embedding model (seeded

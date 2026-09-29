@@ -230,3 +230,25 @@ export function queueMaxWait(gameMinutes: number): number {
 export function queueDeadlineGameMin(entry: { max_wait: number }, nowGameMin: number): number {
   return Math.round(nowGameMin + entry.max_wait / CONFIG.TICK_INTERVAL_MS);
 }
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+/**
+ * Are ordinary conversations being demoted to template lines right now because
+ * a measured LLM turn is too slow for the current speed? The health banner's
+ * "degraded" case: nothing failed, but the town cannot afford live chats.
+ * Unmeasured latency is no verdict (a fresh start has none).
+ */
+export function conversationsOnTemplates(nowGameMin: number, tickSpeed: number): boolean {
+  const observedLatencyMs = turnLatencyEstimateMs(nowGameMin);
+  if (observedLatencyMs == null) return false;
+  return planConversation({
+    tierMaxTurns: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
+    tickSpeed,
+    isProtected: false,
+    observedLatencyMs,
+    probeDue: false,
+  }).tier === 'template';
+}

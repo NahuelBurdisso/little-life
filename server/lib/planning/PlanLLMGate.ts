@@ -124,6 +124,9 @@ export class PlanLLMGate {
 
   private _epoch = 0;
 
+  /** Told when the breaker opens or closes (the health banner), never on every failure. */
+  private breakerListeners = new Set<() => void>();
+
   private readonly wallNow: () => number;
   private readonly random: () => number;
 
@@ -140,6 +143,23 @@ export class PlanLLMGate {
   ) {
     this.wallNow = opts.wallNow ?? Date.now;
     this.random = opts.random ?? Math.random;
+  }
+
+  /** Is the town-wide breaker open (planning is refused except for the probe)? */
+  get breakerOpen(): boolean {
+    return this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
+  }
+
+  /** Subscribe to breaker open/close transitions. Returns the unsubscribe. */
+  onBreakerChange(cb: () => void): () => void {
+    this.breakerListeners.add(cb);
+    return () => this.breakerListeners.delete(cb);
+  }
+
+  private fireBreakerChange(): void {
+    for (const cb of this.breakerListeners) {
+      try { cb(); } catch { /* a listener must never break planning */ }
+    }
   }
 
   /**
@@ -190,10 +210,12 @@ export class PlanLLMGate {
    * Resets the outage streak and closes the breaker.
    */
   noteAnswered(): void {
-    if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
+    const wasOpen = this.outage.failures >= PLAN_OUTAGE_THRESHOLD;
+    if (wasOpen) {
       console.log('[PlanLLMGate] LLM answered again; planning requests resume');
     }
     this.outage = { failures: 0, openUntilMs: 0, reported: false };
+    if (wasOpen) this.fireBreakerChange();
   }
 
   /**
@@ -224,6 +246,7 @@ export class PlanLLMGate {
     const step = this.backOff(agentId);
 
     this.outage.failures++;
+    if (this.outage.failures === PLAN_OUTAGE_THRESHOLD) this.fireBreakerChange();
     if (this.outage.failures >= PLAN_OUTAGE_THRESHOLD) {
       this.outage.openUntilMs = this.wallNow() + PLAN_OUTAGE_PROBE_SECONDS * 1000;
       // One activity-feed entry per outage, re-armed by the next answer.
