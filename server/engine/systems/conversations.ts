@@ -34,13 +34,13 @@ import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { selectTemplate, interpolateTemplate, greetingCategory } from '../../ai/templates';
 import { TEMPLATE_REPLY_FALLBACKS, ROLE_PLACEHOLDERS, WRAP_UP_FAREWELLS } from '../../data/templates';
-import { gameMinutesToMs } from '../../lib/worldClock';
 import {
   affordableTurns,
   averageTurnLatencyMs,
   conversationBudgetGameMinutes,
   isPastBedtime,
   needsWrapUpReason,
+  queueDeadlineGameMin,
   type NeedsWrapUpReason,
 } from '../../lib/conversationPacing';
 import { OUTDOOR_TYPES } from '../../lib/worldgen/buildingTemplates';
@@ -125,9 +125,6 @@ const TALK_DISTANCE_PX = 40;
 const TALK_STAGE_OFFSET_PX = 24;
 /** Destination drift tolerated before the walk order is re-issued. */
 const TALK_STAGE_REISSUE_PX = 12;
-
-/** Extra time a protected queue entry may wait past its blocker's latest end. */
-const PROTECTED_WAIT_MARGIN_MS = 30_000;
 
 /**
  * Entries the player (or the autoplay stand-in, just below the player) asked
@@ -302,13 +299,10 @@ export async function conversationsTick(): Promise<void> {
     const toRemove = new Set<number>();
     const orphanAgeMs = schedulerState.max_turns_deep * ORPHAN_MS_PER_DEEP_TURN;
     const now = Date.now();
-    // Conversation budgets are GAME minutes (see conversationPacing.ts); only
-    // the wait estimates handed to other systems are converted back to wall ms.
+    // Conversation budgets and queue waits are GAME minutes (see
+    // conversationPacing.ts), so the conversation rate follows the game clock.
     const nowGameMin = gameMinutes(world.time);
     const graceGameMin = CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES;
-    /** Wall-clock ms by which something `gameMin` game minutes away happens. */
-    const wallAt = (gameMin: number): number =>
-      now + gameMinutesToMs(Math.max(0, gameMin - nowGameMin), world.tick_speed);
 
     // Who is tied up in a conversation this tick — see "Participant claims" below.
     // Built from the scheduler's OWN entries, not from every `active` row: a row
@@ -319,7 +313,7 @@ export async function conversationsTick(): Promise<void> {
     const busyAgents = new Set<number>();
     /** Pair key → topic of the live conversation between them. */
     const livePairs = new Map<string, string | null>();
-    /** Agent → wall-clock ms by which the conversation holding them must be over. */
+    /** Agent → game minute by which the conversation holding them must be over. */
     const agentFreeAt = new Map<number, number>();
     const registerLive = (participants: number[], topic: string | null, freeAt: number): void => {
       for (const id of participants) {
@@ -418,8 +412,8 @@ export async function conversationsTick(): Promise<void> {
         conversation.participants as number[],
         conversation.topic,
         completion
-          ? now
-          : wallAt(entry.wrapUp ? entry.wrapUp.sinceGameMin + graceGameMin : deadlineGameMin + graceGameMin),
+          ? nowGameMin
+          : (entry.wrapUp ? entry.wrapUp.sinceGameMin : deadlineGameMin) + graceGameMin,
       );
 
       if (completion) {
@@ -484,7 +478,7 @@ export async function conversationsTick(): Promise<void> {
      */
     const claimParticipants = (
       entry: QueueRow,
-      { peek = false, freeAt = now }: { peek?: boolean; freeAt?: number } = {},
+      { peek = false, freeAt = nowGameMin }: { peek?: boolean; freeAt?: number } = {},
     ): 'ok' | 'duplicate' | 'busy' => {
       const p = entry.participants as number[];
       const key = conversationPairKey(p);
@@ -514,10 +508,10 @@ export async function conversationsTick(): Promise<void> {
         .map((id) => agentFreeAt.get(id))
         .filter((t): t is number => t != null);
       if (blockers.length === 0) return false; // not held by a conversation
-      const deadline = Math.max(...blockers) + PROTECTED_WAIT_MARGIN_MS;
-      if (deadline <= now) return false;
+      const deadline = Math.max(...blockers) + CONFIG.CONVERSATIONS.PROTECTED_WAIT_MARGIN_GAME_MINUTES;
+      if (deadline <= nowGameMin) return false;
       db.update(conversationQueue)
-        .set({ max_wait: deadline - entry.queued_at })
+        .set({ deadline_game_min: deadline })
         .where(eq(conversationQueue.id, entry.id))
         .run();
       return true;
@@ -539,7 +533,18 @@ export async function conversationsTick(): Promise<void> {
     const fillEntries = [...updatedActiveLLM];
 
     for (const entry of queueEntries) {
-      if (now > entry.queued_at + entry.max_wait) {
+      // Queue waits run on the game clock: at 4x an entry used to wait four
+      // times the game time (10 s = 40 game minutes), so the conversation rate
+      // tracked real time. Producers write a 1x-equivalent `max_wait`; the
+      // deadline is derived once and stored, so a later speed change can't move it.
+      if (entry.deadline_game_min == null) {
+        entry.deadline_game_min = queueDeadlineGameMin(entry, now, nowGameMin, world.tick_speed);
+        db.update(conversationQueue)
+          .set({ deadline_game_min: entry.deadline_game_min })
+          .where(eq(conversationQueue.id, entry.id))
+          .run();
+      }
+      if (nowGameMin > entry.deadline_game_min) {
         // Step C: timed out — delete; async template processing happens outside.
         // A timed-out entry has nowhere left to wait, so if its participants are
         // taken it is simply dropped rather than becoming a parallel template chat
@@ -729,7 +734,7 @@ export async function conversationsTick(): Promise<void> {
       }
 
       // Over by its budget plus the wrap-up grace at the latest.
-      claimParticipants(entry, { freeAt: wallAt(nowGameMin + budgetGameMin + graceGameMin) });
+      claimParticipants(entry, { freeAt: nowGameMin + budgetGameMin + graceGameMin });
 
       // Create conversation record
       const result = db
@@ -1937,6 +1942,7 @@ async function processTimedOutEntry(
           listenerElsewhere: other.current_location !== locationId,
         },
         vars,
+        gameMinutes(world.time),
       );
       if (!picked) continue;
       return {

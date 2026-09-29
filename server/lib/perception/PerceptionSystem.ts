@@ -6,6 +6,8 @@ import { PERCEPTION_REGISTRY, REACTION_TYPES } from './perceptionRegistry';
 import type { PerceptionRule } from './types';
 import type { PersonalityProfile } from '../personality';
 import { gameMinutes, type ClockTime } from '../gameClock';
+import { CONFIG } from '../constants';
+import { queueMaxWait } from '../conversationPacing';
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
@@ -342,7 +344,7 @@ export class PerceptionSystem {
                 trigger_reason: reaction.trigger_reason,
                 topic: reaction.conversation_topic,
                 queued_at: Date.now(),
-                max_wait: 10000,
+                max_wait: queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES),
               })
               .run();
 

@@ -272,8 +272,17 @@ export const conversationQueue = sqliteTable(
     priority: integer('priority').notNull(),
     trigger_reason: text('trigger_reason').notNull(),
     topic: text('topic'),
+    /** WALL-CLOCK ms (Date.now()) — diagnostics only; expiry runs on game time. */
     queued_at: integer('queued_at').notNull(),
+    /**
+     * How long the entry may wait, in ms OF 1x PLAY: one game minute per
+     * TICK_INTERVAL_MS (`queueMaxWait()` builds it from game minutes; the
+     * decisions.ts literal 10000 is 10 game minutes). The scheduler converts it
+     * into `deadline_game_min` the first time it sees the entry.
+     */
     max_wait: integer('max_wait').notNull(),
+    /** GAME MINUTES at which the entry times out; stamped by conversationsTick. */
+    deadline_game_min: integer('deadline_game_min'),
   },
   (table) => [index('idx_conversation_queue_priority').on(table.priority)]
 );
@@ -408,7 +417,13 @@ export const templateUsage = sqliteTable(
     template_category: text('template_category').notNull(),
     agent_a: integer('agent_a').notNull().references(() => agents.id),
     agent_b: integer('agent_b').notNull().references(() => agents.id),
+    /** WALL-CLOCK ms — ordering only. */
     used_at: integer('used_at').notNull(),
+    /**
+     * GAME MINUTES — what the per-pair cooldown is measured on. Null on rows
+     * written before it existed; those count as expired.
+     */
+    used_game_min: integer('used_game_min'),
   },
   (table) => [
     index('idx_template_usage_pair_category').on(

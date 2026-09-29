@@ -82,9 +82,17 @@ export const CONFIG = {
     MAX_QUEUE_SIZE: 10,
     MAX_TURNS_DEEP: 10,
     MAX_TURNS_STANDARD: 6,
-    TEMPLATE_FALLBACK_MS: 10000,
+    // CLOCK: GAME MINUTES. How long a queue entry may wait for its pair to be
+    // free (or for an LLM slot) before it falls back to a template chat or is
+    // dropped. These were wall-clock ms (10 s / 30 s), so at 4x an entry waited
+    // 40 / 120 game minutes and the conversation rate followed real time. The
+    // 1x behaviour is unchanged: one game minute per real second.
+    QUEUE_MAX_WAIT_GAME_MINUTES: 10,
     PLAYER_NUDGE_PRIORITY: 200,
-    PLAYER_NUDGE_MAX_WAIT_MS: 30000,
+    PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES: 30,
+    // CLOCK: GAME MINUTES. Extra wait a protected entry (player nudge, comfort
+    // visit) gets past the latest end of the conversation blocking it.
+    PROTECTED_WAIT_MARGIN_GAME_MINUTES: 30,
     COOLDOWN_SAME_PAIR_HOURS: 0.5,
     TEMPLATE_COOLDOWN_PER_PAIR: 2,
     // Ended conversations kept for history/UI; older ones are pruned on day change.

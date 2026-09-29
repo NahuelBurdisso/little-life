@@ -142,3 +142,33 @@ export function needsWrapUpReason(
   if (n.hunger < n.critical) return 'hunger';
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Queue waits
+// ---------------------------------------------------------------------------
+
+/**
+ * `conversation_queue.max_wait` for a wait of `gameMinutes`: the column is in
+ * ms of 1x play (one game minute per TICK_INTERVAL_MS), which is what every
+ * producer already wrote — decisions.ts' literal 10000 reads as 10 game minutes.
+ */
+export function queueMaxWait(gameMinutes: number): number {
+  return gameMinutes * CONFIG.TICK_INTERVAL_MS;
+}
+
+/**
+ * The game minute a queue entry times out, derived from its wall-clock queue
+ * stamp and its 1x-equivalent `max_wait`. The time it has already waited is
+ * converted at the current speed — exact for an entry queued a tick ago, which
+ * is when the scheduler first sees (and then stores) it.
+ */
+export function queueDeadlineGameMin(
+  entry: { queued_at: number; max_wait: number },
+  nowMs: number,
+  nowGameMin: number,
+  tickSpeed: number,
+): number {
+  const waitedGameMin = turnGameMinutes(Math.max(0, nowMs - entry.queued_at), tickSpeed);
+  // Rounded, not floored: a few ms of real age must not cost a whole minute.
+  return Math.round(nowGameMin - waitedGameMin + entry.max_wait / CONFIG.TICK_INTERVAL_MS);
+}

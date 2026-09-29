@@ -31,6 +31,8 @@ import {
   conversationBudgetGameMinutes,
   isPastBedtime,
   needsWrapUpReason,
+  queueDeadlineGameMin,
+  queueMaxWait,
   recordTurnLatency,
   resetTurnLatency,
 } from '../../../lib/conversationPacing';
@@ -135,16 +137,16 @@ function insertAgent(name: string, locationId: number): number {
   }).returning({ id: agents.id }).get().id;
 }
 
-function enqueue(participants: number[], tier: string, priority = 50): void {
-  db.insert(conversationQueue).values({
+function enqueue(participants: number[], tier: string, priority = 50, maxWait = 600_000): number {
+  return db.insert(conversationQueue).values({
     participants,
     tier,
     priority,
     trigger_reason: TAG,
     topic: null,
     queued_at: Date.now(),
-    max_wait: 600_000,
-  }).run();
+    max_wait: maxWait,
+  }).returning({ id: conversationQueue.id }).get().id;
 }
 
 function taggedConversations() {
@@ -243,6 +245,15 @@ describe('conversation pacing — pure helpers', () => {
     const owl = { impulsiveness: 100, sensuality: 100, morality: 0, neuroticism: 0 };
     expect(isPastBedtime(sched, owl, 23)).toBe(false);
     expect(isPastBedtime(sched, owl, 0)).toBe(true);
+  });
+
+  it('keeps the old 1x queue waits as game minutes', () => {
+    // decisions.ts still writes a literal 10000: that is the default wait.
+    expect(queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES)).toBe(10_000);
+    expect(queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES)).toBe(30_000);
+    // Queued 2 real seconds ago at 4x = 8 game minutes already waited.
+    expect(queueDeadlineGameMin({ queued_at: 98_000, max_wait: 10_000 }, 100_000, 500, 4)).toBe(502);
+    expect(queueDeadlineGameMin({ queued_at: 100_000, max_wait: 10_000 }, 100_003, 500, 1)).toBe(510);
   });
 
   it('ranks the needs that end a conversation', () => {
@@ -413,6 +424,51 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       const entry = (db.select().from(conversationSchedulerState).get()!.active_llm_conversations as any[])
         .find((e) => e.conversationId === row.id);
       expect(entry).toMatchObject({ budgetGameMin: conversationBudgetGameMinutes(DEEP), plannedTurns: MIN_LLM_TURNS });
+    });
+  });
+
+  describe('queue waits run on game time', () => {
+    /**
+     * Ticks until a queued LLM entry that can never get a slot times out into
+     * a template chat. Every tick advances the clock `speed` game minutes.
+     */
+    async function ticksToTimeout(speed: number): Promise<{ ticks: number; gameMin: number }> {
+      db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 }).run();
+      setClock(nowGameMin(), speed);
+      const start = nowGameMin();
+      const id = enqueue([a, b], 'llm_standard', 50, queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES));
+      for (let tick = 0; tick < 100; tick++) {
+        await conversationsTick();
+        if (!db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()) {
+          return { ticks: tick, gameMin: nowGameMin() - start };
+        }
+        setClock(nowGameMin() + speed);
+      }
+      throw new Error('entry never timed out');
+    }
+
+    it('times out after the same game minutes at 1x and 4x', async () => {
+      const slow = await ticksToTimeout(1);
+      // 1x is what it always was: ten seconds, one game minute each.
+      expect(slow).toEqual({ ticks: 11, gameMin: 11 });
+      db.delete(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).run();
+      db.delete(templateUsage).where(inArray(templateUsage.agent_a, [a, b])).run();
+
+      const fast = await ticksToTimeout(4);
+      // Used to be ten seconds = 40 game minutes at 4x.
+      expect(fast).toEqual({ ticks: 3, gameMin: 12 });
+      expect(taggedConversations().map((c) => c.trigger_reason)).toEqual([`${TAG} (template)`]);
+    });
+
+    it('stores the deadline once, so a speed change does not move it', async () => {
+      db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 }).run();
+      const id = enqueue([a, b], 'llm_standard', 50, 10_000);
+      await conversationsTick();
+      const stamped = db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()!.deadline_game_min;
+      expect(stamped).toBe(nowGameMin() + 10);
+      setClock(nowGameMin() + 1, 4);
+      await conversationsTick();
+      expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()!.deadline_game_min).toBe(stamped);
     });
   });
 

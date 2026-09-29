@@ -32,6 +32,7 @@ import {
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
+import { queueMaxWait } from '../lib/conversationPacing';
 import { gameMinutes } from '../lib/gameClock';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -890,7 +891,7 @@ function seedWorld(
     max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
     max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
     max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
-    template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
+    template_fallback_after_ms: queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES),
     stats: {
       llmConversationsTotal: 0,
       templateConversationsTotal: 0,
@@ -1209,7 +1210,7 @@ export const setupRouter = router({
           max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
           max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
           max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
-          template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
+          template_fallback_after_ms: queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES),
           stats: {
             llmConversationsTotal: 0,
             templateConversationsTotal: 0,

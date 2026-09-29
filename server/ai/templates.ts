@@ -14,6 +14,8 @@ import { eq, and, desc } from "drizzle-orm";
 import { db } from "../db";
 import { templateUsage } from "../db/schema";
 import { CONVERSATION_TEMPLATES, type TemplateDef } from "../data/templates";
+import { gameMinutesNow } from "../lib/worldClock";
+import { MINUTES_PER_HOUR } from "../lib/gameClock";
 
 export interface TemplateState {
   friendship: number;
@@ -108,7 +110,8 @@ export function selectTemplate(
   agentA: number,
   agentB: number,
   currentState: TemplateState,
-  vars?: Record<string, string>
+  vars?: Record<string, string>,
+  nowGameMin: number = gameMinutesNow()
 ): { text: string; sentiment: number } | null {
   // 1. Templates for this category, with only the variants we can render
   const categoryTemplates = CONVERSATION_TEMPLATES
@@ -146,12 +149,14 @@ export function selectTemplate(
     .all();
   const recentUsage = recentUsageRows[0] ?? null;
 
-  const now = Date.now();
-
-  // Filter out templates whose cooldown hasn't expired
+  // Filter out templates whose cooldown hasn't expired. GAME time: the
+  // cooldown was `cooldownPerPair` real minutes against Date.now(), i.e. game
+  // hours at 1x but four times as many at 4x, so a pair ran out of fresh small
+  // talk in a quarter of the game time. A row stamped before `used_game_min`
+  // existed has no game-time stamp and counts as expired.
   const available = matching.filter((t) => {
-    if (!recentUsage) return true;
-    return now - recentUsage.used_at >= t.cooldownPerPair * 60_000;
+    if (recentUsage?.used_game_min == null) return true;
+    return nowGameMin - recentUsage.used_game_min >= t.cooldownPerPair * MINUTES_PER_HOUR;
   });
 
   if (available.length === 0) return null;
@@ -169,7 +174,8 @@ export function selectTemplate(
     template_category: category,
     agent_a: orderedA,
     agent_b: orderedB,
-    used_at: now,
+    used_at: Date.now(),
+    used_game_min: nowGameMin,
   }).run();
 
   return { text: variant.text, sentiment: variant.sentiment };

@@ -30,7 +30,7 @@ import { evaluateConversation } from '../../../lib/conversationEvaluator';
 import { conversationsTick } from '../conversations';
 import { nudgeRouter } from '../../../routers/nudge';
 import { CONFIG } from '../../../lib/constants';
-import { gameMinutesToMs } from '../../../lib/worldClock';
+import { gameMinutes } from '../../../lib/gameClock';
 
 /**
  * Playtest regression: one agent in two conversations at once. The queue held
@@ -415,17 +415,13 @@ describe('conversationsTick — one conversation per agent', () => {
 
       const entry = db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get();
       expect(entry).toBeDefined();
-      // Bounded: until the blocker must be over — its game-minute budget (4 turns
-      // × allowance) plus the wrap-up grace, in wall ms at this speed — plus the
-      // margin. Anchored on the tick's own clock, so allow for the tick's runtime.
-      const speed = db.select().from(worldState).get()!.tick_speed;
-      const blockerMs = gameMinutesToMs(
-        4 * CONFIG.CONVERSATIONS.GAME_MINUTES_PER_TURN + CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES,
-        speed,
+      // Bounded, in game minutes: until the blocker must be over — its budget
+      // (4 turns × allowance) plus the wrap-up grace — plus the margin.
+      const { GAME_MINUTES_PER_TURN, WRAP_UP_GRACE_GAME_MINUTES, PROTECTED_WAIT_MARGIN_GAME_MINUTES } = CONFIG.CONVERSATIONS;
+      expect(entry!.deadline_game_min).toBe(
+        gameMinutes(db.select().from(worldState).get()!.time)
+          + 4 * GAME_MINUTES_PER_TURN + WRAP_UP_GRACE_GAME_MINUTES + PROTECTED_WAIT_MARGIN_GAME_MINUTES,
       );
-      const deadline = entry!.queued_at + entry!.max_wait;
-      expect(deadline).toBeGreaterThanOrEqual(startedAt + blockerMs + 30_000);
-      expect(deadline).toBeLessThanOrEqual(Date.now() + blockerMs + 30_000);
       expect(startedConversations().map((x) => x.participants)).toEqual([[a, d]]);
     });
 

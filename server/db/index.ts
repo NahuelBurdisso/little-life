@@ -89,6 +89,10 @@ function migrateSchema() {
   // Activity log extensions
   addColumnIfMissing('activity_log', 'metadata', 'TEXT');
 
+  // Conversation pacing on the game clock (see schema.ts)
+  addColumnIfMissing('conversation_queue', 'deadline_game_min', 'INTEGER');
+  addColumnIfMissing('template_usage', 'used_game_min', 'INTEGER');
+
   // Shared knowledge extensions
   addColumnIfMissing('shared_knowledge', 'is_public', 'INTEGER', '0');
   addColumnIfMissing('shared_knowledge', 'revealed_at', 'INTEGER');

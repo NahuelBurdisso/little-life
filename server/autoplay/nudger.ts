@@ -5,6 +5,7 @@ import {
 } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
+import { queueMaxWait } from '../lib/conversationPacing';
 import { gameMinutes } from '../lib/gameClock';
 import type { Diagnosis, NudgeAction, AnalysisWindow } from './types';
 import { startWorldEvent } from '../engine/systems/events';
@@ -200,7 +201,7 @@ export class SmartNudger {
             trigger_reason: `autoplay:${action.reason.slice(0, 50)}`,
             topic: null,
             queued_at: Date.now(),
-            max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+            max_wait: queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES),
           }).run();
           break;
         }
@@ -225,7 +226,7 @@ export class SmartNudger {
             trigger_reason: `autoplay:confrontation`,
             topic: 'confrontation',
             queued_at: Date.now(),
-            max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+            max_wait: queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES),
           }).run();
           break;
         }

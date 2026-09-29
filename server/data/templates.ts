@@ -29,6 +29,11 @@ export interface TemplateDef {
     notLocation?: string[] | null;
   };
   variants: Array<{ text: string; sentiment: number }>;
+  /**
+   * GAME HOURS before this pair can hear the category again. It used to be
+   * real minutes against Date.now() — the same span at 1x (one game minute per
+   * real second), so the numbers are unchanged.
+   */
   cooldownPerPair: number;
 }
 

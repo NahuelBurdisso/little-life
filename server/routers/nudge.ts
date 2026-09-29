@@ -15,6 +15,7 @@ import { eq, and, ne } from 'drizzle-orm';
 import { emitter } from '../engine/emitter';
 import { z } from 'zod';
 import { CONFIG } from '../lib/constants';
+import { queueMaxWait } from '../lib/conversationPacing';
 import { zoneOccupancy } from '../lib/interiorGrid';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
@@ -156,9 +157,9 @@ export const nudgeRouter = router({
               trigger_reason: 'player_nudge',
               topic: topic ?? null,
               // conversationQueue.queued_at is wall-clock ms everywhere else
-              // (the scheduler expires entries against Date.now()); `now` is a tick.
+              // (the scheduler turns it into a game-minute deadline); `now` is a tick.
               queued_at: Date.now(),
-              max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+              max_wait: queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES),
             })
             .run();
 
@@ -637,7 +638,7 @@ export const nudgeRouter = router({
             trigger_reason: 'player_tell_secret',
             topic: `revealing: ${fact.content}`,
             queued_at: Date.now(),
-            max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+            max_wait: queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES),
           }).run();
 
           logActivity({
@@ -672,7 +673,7 @@ export const nudgeRouter = router({
             trigger_reason: 'player_confront',
             topic: 'confrontation',
             queued_at: Date.now(),
-            max_wait: CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_MS,
+            max_wait: queueMaxWait(CONFIG.CONVERSATIONS.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES),
           }).run();
 
           // Walk both to midpoint

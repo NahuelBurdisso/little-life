@@ -27,6 +27,7 @@ import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
+import { queueMaxWait } from '../lib/conversationPacing';
 import { gameMinutes } from '../lib/gameClock';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
@@ -402,7 +403,7 @@ function seed() {
     max_queue_size: CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE,
     max_turns_deep: CONFIG.CONVERSATIONS.MAX_TURNS_DEEP,
     max_turns_standard: CONFIG.CONVERSATIONS.MAX_TURNS_STANDARD,
-    template_fallback_after_ms: CONFIG.CONVERSATIONS.TEMPLATE_FALLBACK_MS,
+    template_fallback_after_ms: queueMaxWait(CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES),
     stats: {
       llmConversationsTotal: 0,
       templateConversationsTotal: 0,

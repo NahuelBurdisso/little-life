@@ -16,6 +16,7 @@ import {
 import { CONVERSATION_TEMPLATES } from '../../data/templates';
 import { greetingCategory, selectTemplate, type TemplateState } from '../templates';
 import { conversationsTick } from '../../engine/systems/conversations';
+import { gameMinutesNow } from '../../lib/worldClock';
 
 /**
  * Playtest regressions in template-tier conversations:
@@ -191,6 +192,42 @@ describe('selectTemplate — context', () => {
   });
 });
 
+describe('per-pair cooldown runs on game time', () => {
+  // The friendly farewell is the only one matching friendship 50: cooldown 2 game hours.
+  const COOLDOWN_MIN = 2 * 60;
+
+  function usedAt(usedGameMin: number | null): void {
+    clearUsage();
+    db.insert(templateUsage).values({
+      template_category: 'farewell',
+      agent_a: Math.min(a, b),
+      agent_b: Math.max(a, b),
+      // Just now on the wall clock — irrelevant: only game minutes count.
+      used_at: Date.now(),
+      used_game_min: usedGameMin,
+    }).run();
+  }
+
+  it('holds a category for cooldownPerPair game hours, then frees it', () => {
+    usedAt(10_000);
+    expect(selectTemplate('farewell', a, b, state(), undefined, 10_000 + COOLDOWN_MIN - 1)).toBeNull();
+    usedAt(10_000);
+    expect(selectTemplate('farewell', a, b, state(), undefined, 10_000 + COOLDOWN_MIN)).not.toBeNull();
+  });
+
+  it('stamps usage in game minutes', () => {
+    clearUsage();
+    selectTemplate('farewell', a, b, state(), undefined, 4321);
+    const row = db.select().from(templateUsage).where(eq(templateUsage.agent_a, Math.min(a, b))).get()!;
+    expect(row.used_game_min).toBe(4321);
+  });
+
+  it('treats a usage row from before game-time stamps as expired', () => {
+    usedAt(null);
+    expect(selectTemplate('farewell', a, b, state(), undefined, 0)).not.toBeNull();
+  });
+});
+
 describe('greetings', () => {
   it('have a template for every relationship band, mood and time of day', () => {
     const phases = ['dawn', 'morning', 'afternoon', 'evening', 'night'];
@@ -292,8 +329,11 @@ describe('template conversations', () => {
 
   it('still gives the partner a reply when every template category is on cooldown', async () => {
     const now = Date.now();
+    const nowMin = gameMinutesNow();
     for (const category of new Set(CONVERSATION_TEMPLATES.map((t) => t.category))) {
-      db.insert(templateUsage).values({ template_category: category, agent_a: Math.min(a, b), agent_b: Math.max(a, b), used_at: now }).run();
+      db.insert(templateUsage).values({
+        template_category: category, agent_a: Math.min(a, b), agent_b: Math.max(a, b), used_at: now, used_game_min: nowMin,
+      }).run();
     }
     const convo = await runTemplateConversation();
     const messages = convo.messages as Array<{ speakerId: number; text: string }>;
