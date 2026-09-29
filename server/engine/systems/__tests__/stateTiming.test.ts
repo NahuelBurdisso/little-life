@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../../db';
 import { agents, agentStates, locations, worldState } from '../../../db/schema';
@@ -9,8 +9,9 @@ import { gameMinutesNow } from '../../../lib/worldClock';
 
 type WorldTime = typeof worldState.$inferSelect['time'];
 
-function ensureWorld(): void {
-  if (db.select().from(worldState).get()) return;
+/** Creates a world if the worker DB has none; says whether it did. */
+function ensureWorld(): boolean {
+  if (db.select().from(worldState).get()) return false;
   db.insert(worldState).values({
     time: { day: 1, hour: 9, minute: 0, totalTicks: 540, seasonDay: 1, season: 'spring' },
     day_phase: 'morning',
@@ -27,6 +28,7 @@ function ensureWorld(): void {
     map_height: 30,
     collision_grid: '',
   }).run();
+  return true;
 }
 
 function setClock(time: WorldTime, speed: number, transitions: Record<string, unknown>[] = []): void {
@@ -48,9 +50,16 @@ function stateOf(agentId: number, type: string) {
 
 describe('agent state durations are game minutes', () => {
   let agentId: number;
+  // The worker DB is shared by every test file the worker runs. These tests
+  // move the world clock and set 4x; left that way, a later file would inherit
+  // a world at speed 4 on day 3 and read its own timings wrong.
+  let createdWorld = false;
+  let savedWorld: Pick<typeof worldState.$inferSelect, 'time' | 'tick_speed' | 'pending_transitions'> | undefined;
 
   beforeAll(() => {
-    ensureWorld();
+    createdWorld = ensureWorld();
+    const w = db.select().from(worldState).get()!;
+    savedWorld = { time: w.time, tick_speed: w.tick_speed, pending_transitions: w.pending_transitions };
     const home = db.insert(locations).values({
       name: 'State clock home',
       type: 'house',
@@ -95,6 +104,13 @@ describe('agent state durations are game minutes', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     db.delete(agentStates).where(eq(agentStates.agent_id, agentId)).run();
+  });
+
+  afterAll(() => {
+    if (createdWorld) db.delete(worldState).run();
+    else if (savedWorld) db.update(worldState).set(savedWorld).run();
+    // Out of later files' agent loops (rows it left in logs may still point at it).
+    db.update(agents).set({ is_active: false }).where(eq(agents.id, agentId)).run();
   });
 
   it('stamps states on the game-minute clock', () => {
