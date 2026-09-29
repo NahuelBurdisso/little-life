@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeAction } from '../actionText';
+import { describeAction, actionIcon } from '../actionText';
 
 describe('describeAction', () => {
   it('prefers the zone activity over the coarse type', () => {
@@ -26,5 +26,18 @@ describe('describeAction', () => {
     expect(describeAction({ type: 'idle', description: 'waiting for a friend' })).toBe('Waiting for a friend');
     expect(describeAction(null)).toBe('Taking a moment');
     expect(describeAction('sleeping')).toBe('Sleeping');
+  });
+});
+
+describe('actionIcon', () => {
+  it('follows the same precedence as describeAction', () => {
+    expect(actionIcon({ type: 'idle', zoneActivity: 'fish' })).toBe('🎣');
+    expect(actionIcon({ type: 'sleeping' })).toBe('💤');
+    expect(actionIcon({ type: 'idle', zoneActivity: 'plan:decomposed' })).toBe('🙂');
+  });
+
+  it('has a neutral fallback for unknown or junk actions', () => {
+    expect(actionIcon({ type: 'some_new_action' })).toBe('•');
+    expect(actionIcon(null)).toBe('•');
   });
 });
