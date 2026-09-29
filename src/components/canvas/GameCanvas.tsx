@@ -15,6 +15,7 @@ import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
 import type { ViewRect } from "./systems/view";
 import { useCanvasActivity } from "../../hooks/useCanvasActivity";
 import { onCanvasEvent } from "../../lib/canvasBus";
+import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { ParticleContext } from "./particles/types";
 
 // Day phases during which each building type's chimney smokes.
@@ -893,6 +894,7 @@ export const GameCanvas = React.memo(function GameCanvas({
         className="w-full h-full"
         style={{ imageRendering: "pixelated" }}
       />
+      <PlaybackOverlay paused={Boolean(world?.is_paused)} speed={world?.tick_speed ?? 1} />
       {selectedAgentId && agents.some(a => String(a.id) === selectedAgentId) && (
         <button
           type="button"
