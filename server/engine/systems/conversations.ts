@@ -32,8 +32,8 @@ import { gameMinutes } from '../../lib/gameClock';
 import { clearConversationCache, fallbackDetector } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
-import { interpolateTemplate, recordScriptUsage, scriptLastUsed } from '../../ai/templates';
-import { WRAP_UP_FAREWELLS } from '../../data/wrapUpFarewells';
+import { recordScriptUsage, scriptLastUsed } from '../../ai/templates';
+import { WRAP_UP_FAREWELLS, farewellText } from '../../data/wrapUpFarewells';
 import { composeTemplateChat } from '../../lib/templateChat';
 import { buildTemplateChatContext } from '../../helpers/templateChatContext';
 import {
@@ -244,7 +244,7 @@ function closeWrappedTranscript(
     const line = lines[Math.floor(Math.random() * lines.length)];
     messages.push({
       speakerId: leaverId,
-      text: interpolateTemplate(line.text, { 'other.name': otherName ?? 'friend' }),
+      text: farewellText(line.text, otherName),
       sentiment: line.sentiment,
       topics: [],
       timestamp: Date.now(),

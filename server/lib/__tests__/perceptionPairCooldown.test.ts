@@ -6,6 +6,8 @@ import { simEvents } from '../simEvents';
 import { PerceptionSystem, kindCooldownLifted, pairKey, KIND_COOLDOWN_ROMANCE_RESET } from '../perception/PerceptionSystem';
 import type { PersonalityProfile } from '../personality';
 import { CONFIG } from '../constants';
+import { clearSpotlight, setSpotlight } from '../spotlight';
+import { TIER_BUDGET, watchedPriority } from '../conversationTier';
 
 /**
  * The QA playtest saw the same two people flirt every ~30 game minutes all
@@ -141,6 +143,28 @@ describe('perception pair cooldowns', () => {
     p.forgetPair(b, a);
     p.scan(at(T0 + 1));
     expect(pairFlirts()).toBe(1);
+  });
+
+  it('gives a pair on screen the spotlight head start and longer wait', () => {
+    // Playtest #3: a watched crush's flirt queued with the ordinary 10-minute
+    // wait, aged out while she finished another chat and became a template.
+    const queued = () => db.select().from(conversationQueue).all()
+      .find((q) => (q.participants as number[]).includes(a) && (q.participants as number[]).includes(b))!;
+
+    new PerceptionSystem().scan(at(T0));
+    const offScreen = queued();
+    consumeQueue();
+
+    setSpotlight([b]);
+    try {
+      new PerceptionSystem().scan(at(T0));
+    } finally {
+      clearSpotlight();
+    }
+    const onScreen = queued();
+    expect(onScreen.priority).toBe(watchedPriority(offScreen.priority));
+    expect(onScreen.priority).toBeGreaterThan(offScreen.priority);
+    expect(onScreen.max_wait).toBe(offScreen.max_wait * TIER_BUDGET.WATCHED_WAIT_FACTOR);
   });
 
   it('pairKey and kindCooldownLifted', () => {

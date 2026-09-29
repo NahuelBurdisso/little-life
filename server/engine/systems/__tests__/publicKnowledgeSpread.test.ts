@@ -3,6 +3,7 @@ import { db } from '../../../db';
 import { agents, locations, shared_knowledge } from '../../../db/schema';
 import { eq } from 'drizzle-orm';
 import { gossipTick } from '../gossipEngine';
+import { createFact } from '../../../lib/gossip';
 
 /**
  * B13: public-knowledge spread ran twice per tick, once from the states phase
@@ -97,6 +98,23 @@ describe('public knowledge spread (gossip phase)', () => {
 
     expect(knownBy(fact)).toEqual([subject, bystander].sort((a, b) => a - b));
     expect(knownBy(fact)).not.toContain(farAway);
+  });
+
+  it('still spreads a fact whose known_by repeats a knower (playtest #3)', () => {
+    // Ripple rules that target 'self' created drunk_incident facts known by
+    // [X, X]. addKnowers compared the deduplicated list's length with the raw
+    // one, so adding one person looked like "no change" and nothing was ever
+    // written — while the feed kept logging the same person overhearing it.
+    const fact = insertFact(subject, 1, [subject, subject]);
+
+    gossipTick(0);
+
+    expect(knownBy(fact)).toEqual([subject, bystander].sort((a, b) => a - b));
+  });
+
+  it('createFact stores each knower once', () => {
+    const id = createFact('drunk_incident', subject, subject, 2, [subject, subject], 'test')!;
+    expect(knownBy(id)).toEqual([subject]);
   });
 
   it('does not spread secrets this way', () => {

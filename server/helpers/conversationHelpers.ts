@@ -12,6 +12,8 @@ import { getReputation, getReputationLabel } from '../lib/reputationEngine';
 import { getAgentHobbies } from '../lib/hobbyEngine';
 import { getMoodMomentum } from '../lib/moodMomentum';
 import { gameMinutes } from '../lib/gameClock';
+import { goalClause } from '../lib/goalText';
+import { firstName } from '../ai/names';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -47,6 +49,32 @@ export function clearConversationCache(conversationId: number): void {
  */
 export function clearAllConversationCaches(): void {
   identityCache.clear();
+}
+
+/**
+ * The speaker's goals as the "Your goals:" line of a dialogue prompt (at most 3).
+ *
+ * Trigger- and cascade-made goals have no text of their own: a boot backfill
+ * (db/index.ts) copies their registry key into `description`, so the prompt read
+ * "Your goals: Keep a watchful eye on the Constable's temperament.; protect"
+ * (playtest #3) — a bare verb the model can't place, after a doubled ".;".
+ * `goalClause` turns keys into prose and drops trailing full stops; a keyed goal
+ * with a target names them ("looking after Rosa"), since "someone" says nothing.
+ */
+export function goalPromptLines(
+  rows: ReadonlyArray<{ type: string; description: string | null; target_id: number | null }>,
+  nameOf: (id: number) => string,
+): string[] {
+  return rows
+    .filter((g) => g.description && g.description.trim())
+    .slice(0, 3)
+    .map((g) => {
+      const clause = goalClause(g.description);
+      const keyed = g.description!.trim() === g.type;
+      return keyed && g.target_id != null
+        ? clause.replace(/\bsomeone\b/, firstName(nameOf(g.target_id)))
+        : clause;
+    });
 }
 import { getDrinkCount } from '../lib/tavernEngine';
 
@@ -107,10 +135,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
   const allGoals = db.select().from(goals)
     .where(and(eq(goals.agent_id, speakerId), eq(goals.status, 'active')))
     .all();
-  const speakerGoals = allGoals
-    .filter(g => (g as any).description)
-    .map(g => (g as any).description as string)
-    .slice(0, 3);
+  const speakerGoals = goalPromptLines(allGoals, (id) => getAgentName(id));
 
   // Check if any goal targets the conversation partner
   const GOAL_HINTS: Record<string, string> = {
