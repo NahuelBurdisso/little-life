@@ -81,10 +81,44 @@ const PLACEHOLDER =
 const ASTERISK_GESTURE =
   /^(?:\w+ly\s+)?(?:sigh|laugh|chuckle|giggle|smile|grin|wink|shrug|nod|pause|blush|smirk|frown|gasp|cough|groan|snort|scoff|gulp|lean|look|glance|stare|wave|hug|clear)(?:s|es|ed|d|ing)?\b/i;
 
-// Dialogue-tag verbs that mark text outside quotes as narration rather than
-// part of the utterance ("I murmur, leaning in", "Omar smiles.").
-const NARRATION_VERB =
-  /\b(?:say|says|said|murmur(?:s|ed)?|whisper(?:s|ed)?|ask(?:s|ed)?|repl(?:y|ies|ied)|mutter(?:s|ed)?|add(?:s|ed)?|sigh(?:s|ed)?|laugh(?:s|ed)?|smil(?:e|es|ed)|grin(?:s|ned)?|chuckl(?:e|es|ed)|exclaim(?:s|ed)?|continu(?:e|es|ed)|answer(?:s|ed)?|lean(?:s|ed|ing)?|nod(?:s|ded)?|shrug(?:s|ged)?|purr(?:s|ed)?|teas(?:e|es|ed)|blurt(?:s|ed)?|respond(?:s|ed)?|wink(?:s|ed)?|glanc(?:e|es|ed))\b/i;
+// Verbs of a dialogue tag or a self-narrated gesture: "I murmur", "Omar grins",
+// "I lean closer". Deliberately excludes tell/hear/call — "I heard Diego say…",
+// "I told her…" introduce reported speech, not a tag.
+const TAG_VERB =
+  /^(?:say|says|said|murmur(?:s|ed)?|whisper(?:s|ed)?|ask(?:s|ed)?|repl(?:y|ies|ied)|mutter(?:s|ed)?|add(?:s|ed)?|sigh(?:s|ed)?|laugh(?:s|ed)?|smil(?:e|es|ed)|grin(?:s|ned)?|chuckl(?:e|es|ed)|exclaim(?:s|ed)?|continu(?:e|es|ed)|answer(?:s|ed)?|lean(?:s|ed)?|nod(?:s|ded)?|shrug(?:s|ged)?|purr(?:s|ed)?|teas(?:e|es|ed)|blurt(?:s|ed)?|respond(?:s|ed)?|wink(?:s|ed)?|glanc(?:e|es|ed)|look(?:s|ed)?|paus(?:e|es|ed)|tap(?:s|ped)?|step(?:s|ped)?|turn(?:s|ed)?|wav(?:e|es|ed)|sip(?:s|ped)?|smirk(?:s|ed)?|frown(?:s|ed)?|blush(?:es|ed)?|offer(?:s|ed)?)$/i;
+
+// Words that would start a second clause inside what claims to be a tag
+// ("I said "no" and walked away", "Diego said "stay away" so I did").
+const CLAUSE_WORD = /^(?:and|but|so|because|that|while|when|if|then|who|which|he|she|they|we|you|it)$/i;
+
+/**
+ * One sentence of text outside the quotes, judged as a dialogue tag / gesture of
+ * the speaker themself: subject ("I" or the speaker's own name), an optional
+ * adverb, a tag verb, then at most a short tail with no second clause
+ * ("I murmur, leaning in slightly", "Omar grins", "I say, tapping the table").
+ * A third party ("She whispered…", "Diego said…") is never a tag — that is the
+ * speaker reporting someone else's words.
+ */
+function isSelfTag(sentence: string, speakerNames: readonly string[]): boolean {
+  const words = sentence.replace(/[,;:—–\-.!?…]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  let i = 0;
+  // Subject: "I" or the speaker's (one- or two-word) name.
+  if (words[0] === 'I') {
+    i = 1;
+  } else {
+    const matched = speakerNames.find((n) => {
+      const parts = n.split(/\s+/);
+      return parts.every((p, k) => words[k] === p);
+    });
+    if (!matched) return false;
+    i = matched.split(/\s+/).length;
+  }
+  if (words[i] && /ly$/i.test(words[i]) && words[i + 1] && TAG_VERB.test(words[i + 1])) i++;
+  if (!words[i] || !TAG_VERB.test(words[i])) return false;
+  const tail = words.slice(i + 1);
+  return tail.length <= 6 && !tail.some((w) => CLAUSE_WORD.test(w));
+}
 
 function replacePlaceholders(text: string, speaker: string, listener: string): string {
   return text.replace(PLACEHOLDER, (_m, owner: string | undefined) =>
@@ -109,55 +143,50 @@ function stripStageDirections(text: string): string {
     prev = out;
     out = out.replace(/\([^()]*\)/g, ' ').replace(/\[[^[\]]*\]/g, ' ');
   } while (out !== prev);
-  // An unclosed "(" or "[" is a direction the token cap cut off mid-way.
-  out = out.replace(/[([][^)\]]*$/, ' ');
+  // An unclosed "(" or "[" is a direction the token cap cut off mid-way: drop
+  // from the first opener that no closer follows. A linear scan, since the
+  // equivalent /[([][^)\]]*$/ backtracks quadratically on a run of openers.
+  const lastCloser = Math.max(out.lastIndexOf(')'), out.lastIndexOf(']'));
+  const tail = out.slice(lastCloser + 1).search(/[([]/);
+  if (tail !== -1) out = `${out.slice(0, lastCloser + 1 + tail)} `;
   out = out.replace(/[)\]]/g, ' ');
   return out;
 }
 
 /**
- * Keep only the quoted speech when the reply is narration around a quote.
- * Declines (returns the text unchanged) when the quote looks like part of the
- * utterance itself — "She said "never again" and left." — i.e. the outside text
- * dominates and doesn't read as the speaker narrating themself.
+ * Keep only the quoted speech when the reply is the speaker narrating around a
+ * quote ("I murmur, leaning in slightly, "…"", ""Maybe," Omar said.").
+ * Extracts only when EVERY sentence outside the quotes is a short dialogue tag
+ * or gesture of the speaker themself (see `isSelfTag`). Anything else — reported
+ * speech ("She whispered "I never loved him" and I believed her."), a quote
+ * inside a full clause — is left exactly as written.
  */
-function extractSpokenWords(text: string, speaker: string): string {
+function extractSpokenWords(text: string, speakerNames: readonly string[]): string {
   const segments: string[] = [];
-  let outside = '';
+  const outsides: string[] = [];
   let current = '';
   let inQuote = false;
   for (const ch of text) {
     if (ch === '"') {
-      if (inQuote) {
-        segments.push(current);
-        current = '';
-      }
+      (inQuote ? segments : outsides).push(current);
+      current = '';
       inQuote = !inQuote;
-    } else if (inQuote) {
-      current += ch;
     } else {
-      outside += ch;
+      current += ch;
     }
   }
   // An unclosed quote runs to the end — typically a reply cut by the token cap.
-  if (inQuote && current.trim()) segments.push(current);
+  (inQuote ? segments : outsides).push(current);
 
   const spoken = segments.map((s) => s.trim()).filter(Boolean);
   if (spoken.length === 0) return text.replace(/"/g, ' ');
 
-  const letters = (s: string) => s.replace(/[^\p{L}]/gu, '').length;
-  const outsideLetters = letters(outside);
-  const quotedLetters = letters(spoken.join(''));
-
-  // The speaker narrating themself: "Omar smiles, …" or "I murmur, leaning in, …".
-  const selfNarration =
-    (speaker !== '' && new RegExp(`\\b${escapeRegExp(speaker)}\\b`).test(outside)) ||
-    (/\bI\s+(?:\w+ly\s+)?\w+/.test(outside) && NARRATION_VERB.test(outside));
-
-  if (outsideLetters === 0 || quotedLetters >= outsideLetters || selfNarration) {
-    return spoken.join(' ');
-  }
-  return text;
+  const allTags = outsides.every((seg) =>
+    seg
+      .split(/(?<=[.!?…])\s+/)
+      .every((sentence) => !/\p{L}/u.test(sentence) || isSelfTag(sentence, speakerNames)),
+  );
+  return allTags ? spoken.join(' ') : text;
 }
 
 function stripSpeakerPrefix(text: string, speakerFull: string, speaker: string): string {
@@ -282,7 +311,7 @@ export function sanitizeDialogue(raw: string, opts: DialogueSanitizeOptions): st
   text = stripStageDirections(text);
   text = text.replace(/\s+/g, ' ').trim();
   text = stripSpeakerPrefix(text, opts.speakerName, speaker);
-  text = extractSpokenWords(text, speaker);
+  text = extractSpokenWords(text, [opts.speakerName.trim(), speaker].filter(Boolean));
   text = tidy(text);
   text = fixWrongVocatives(text, speaker, listener, opts.townNames ?? []);
   if (opts.truncated) text = trimIncompleteTail(text);

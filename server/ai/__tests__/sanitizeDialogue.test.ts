@@ -37,6 +37,12 @@ describe('sanitizeDialogue — stage directions', () => {
     expect(clean('[smiling warmly] It is good to see you. (She reaches for')).toBe('It is good to see you.');
   });
 
+  it('handles a long run of unclosed openers in linear time', () => {
+    const started = performance.now();
+    expect(clean(`Fine. ${'('.repeat(50_000)}x`)).toBe('Fine.');
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it('returns empty when the reply was nothing but a direction', () => {
     expect(clean('(Omar smiles and nods.)')).toBe('');
     expect(clean('*shrugs*')).toBe('');
@@ -53,13 +59,24 @@ describe('sanitizeDialogue — quotes and narration', () => {
     expect(clean('I murmur, leaning in slightly, "Do you ever wonder what they\'re hiding?"'))
       .toBe("Do you ever wonder what they're hiding?");
     expect(clean('"Hmm, interesting," Omar said.')).toBe('Hmm, interesting.');
-    expect(clean('Omar grins. "Fancy meeting you here." He taps the counter. "Coffee?"'))
-      .toBe('Fancy meeting you here. Coffee?');
+    expect(clean('Omar grins. "Fancy meeting you here." "Coffee?"')).toBe('Fancy meeting you here. Coffee?');
+    expect(clean('"Maybe," I say, tapping the table. "Maybe not."')).toBe('Maybe, Maybe not.');
+    expect(clean('Omar Haddad leans closer. "Not here."')).toBe('Not here.');
   });
 
-  it('leaves a quotation that is part of the utterance alone', () => {
-    expect(clean('She told me "never again" and then she walked out on the whole town.'))
-      .toBe('She told me "never again" and then she walked out on the whole town.');
+  it('leaves reported speech and quotes inside a full clause alone', () => {
+    for (const line of [
+      'She told me "never again" and then she walked out on the whole town.',
+      'She whispered "I never loved him" and I believed her.',
+      'I heard Diego say "the money is gone" at the tavern.',
+      'Diego said "stay away" so I did.',
+      'I said "no" and walked away.',
+      'He called it "the best pie in the whole town" and I laughed.',
+      // A third-person "He" can't be told apart from reported speech: left alone.
+      'Omar grins. "Fancy meeting you here." He taps the counter. "Coffee?"',
+    ]) {
+      expect(clean(line)).toBe(line);
+    }
   });
 
   it('strips a leading speaker-name prefix', () => {
