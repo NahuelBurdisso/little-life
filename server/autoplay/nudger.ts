@@ -10,6 +10,7 @@ import { gameMinutes, isOpenAt } from '../lib/gameClock';
 import type { Diagnosis, NudgeAction, AnalysisWindow } from './types';
 import { startWorldEvent } from '../engine/systems/events';
 import { isWorldEventType } from '../data/worldEventCatalog';
+import { recordHandsOn } from '../lib/challenges/store';
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 4, high: 3, medium: 2, low: 1,
@@ -90,6 +91,8 @@ export class SmartNudger {
     if (!action) return [];
 
     this.execute(action);
+    // The player switched autoplay on, so its pokes break "Hands off" too.
+    recordHandsOn();
     this.nudgesToday++;
     this.lastNudgeMinute = window.endMinutes;
     return [action];

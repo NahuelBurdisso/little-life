@@ -20,6 +20,9 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   relationship_status_change: { category: 'relationship', base_importance: 0.7, retention: 'long', template: '{agent1} and {agent2} are now {status}' },
   drama: { category: 'drama', base_importance: 0.8, retention: 'long', template: '{description}' },
   world_event: { category: 'world_event', base_importance: 0.9, retention: 'permanent', template: '{description}' },
+  // A whole winter without a death (the challenges' season watch). Town news,
+  // and the row the client's "Survived a winter" achievement unlocks on.
+  season_survived: { category: 'world_event', base_importance: 0.8, retention: 'long', template: '{description}' },
   system: { category: 'system', base_importance: 0.1, retention: 'short', template: '{message}' },
   error: { category: 'error', base_importance: 0.5, retention: 'medium', template: 'Error in {system}: {message}' },
   interaction_resolved: { category: 'interaction', base_importance: 0.6, retention: 'medium', template: '{initiator_name} {verb} {target_name} at {location}' },
@@ -48,6 +51,12 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // "your confrontation". Gazette's importance cut alone can't hold these out.
   player_outcome: { category: 'player', base_importance: 0.85, retention: 'medium', template: '{description}', newsworthy: false },
   player_nudge_expired: { category: 'player', base_importance: 0.8, retention: 'short', template: '{description}', newsworthy: false },
+  // The player's optional challenges settling (lib/challenges/evaluate.ts).
+  // `player` category and tier: a goal the player set themselves is always
+  // worth a toast and an inbox line. Never news — the paper reports the
+  // wedding, not "your Matchmaker challenge".
+  challenge_completed: { category: 'player', base_importance: 0.9, retention: 'long', template: '{description}', newsworthy: false },
+  challenge_failed: { category: 'player', base_importance: 0.8, retention: 'medium', template: '{description}', newsworthy: false },
   plan_generated: { category: 'planning', base_importance: 0.3, retention: 'short', template: '{agentName} planned their day: {summary}' },
   // Reason in parentheses: it may end in "…" (shortenForFeed), and "{reason}." rendered "…." there.
   plan_changed: { category: 'planning', base_importance: 0.5, retention: 'medium', template: '{agentName} changed plans ({reason}). Now: {summary}' },

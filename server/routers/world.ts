@@ -11,6 +11,7 @@ import { PLAYER_EVENT_TYPES } from '../data/worldEventCatalog';
 import { getRules, RuleOverridesSchema, setRuleOverrides } from '../lib/worldRules';
 import { getHealthSnapshot, HEALTH_CHANNEL } from '../lib/health';
 import { nightSkip, NIGHT_SKIP_CHANNEL } from '../engine/nightSkip';
+import { recordHandsOn } from '../lib/challenges/store';
 
 export const worldRouter = router({
   getState: publicProcedure.query(() => {
@@ -90,6 +91,8 @@ export const worldRouter = router({
         weather: input.weather,
         weather_duration: input.durationHours * 60,
       }).where(eq(worldState.id, world.id)).run();
+      // Weather writes no feed row, but it is the player's hand ("Hands off").
+      recordHandsOn();
 
       emitter.markDirty('world.state');
       emitter.flush();
