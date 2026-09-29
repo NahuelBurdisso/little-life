@@ -23,6 +23,25 @@ export function describeStateTrigger(state: string, cause?: string): string {
   return isProse ? `${feeling}: ${cause!.trim()}` : feeling;
 }
 
+/** States that are good news — they don't disrupt a day the way a bad one does. */
+const POSITIVE_STATES = new Set(['confident', 'euphoric', 'relieved']);
+
+/**
+ * How strongly a finished conversation should push its participants to
+ * rethink the day. A replan is a full LLM plan for the rest of the day, and in
+ * a 22-day trace most of them (≈540, the second-largest LLM load after
+ * decomposition) followed pleasant small talk: "had a conversation with Marco
+ * about exciting news" counted as dramatic because |sentiment| > 0.5. A warm
+ * chat rarely changes where someone goes next; a fight often does. Positive
+ * sentiment is halved, and only a clearly bad talk is dramatic.
+ */
+export function conversationReplanSignal(sentiment: number): { sentiment: number; isDramatic: boolean } {
+  return {
+    sentiment: sentiment > 0 ? sentiment * 0.5 : sentiment,
+    isDramatic: sentiment <= -0.5,
+  };
+}
+
 export function initPlanEventAdapter(): void {
   const DRAMATIC_STATES = new Set([
     'heartbroken',
@@ -43,8 +62,7 @@ export function initPlanEventAdapter(): void {
       agentId: payload.agentId,
       type: 'conversation',
       description: `had a conversation with ${payload.otherName ?? 'someone'} about ${payload.summary ?? 'things'}`,
-      sentiment: payload.sentiment ?? 0,
-      isDramatic: Math.abs(payload.sentiment ?? 0) > 0.5,
+      ...conversationReplanSignal(payload.sentiment ?? 0),
     });
   });
 
@@ -57,7 +75,10 @@ export function initPlanEventAdapter(): void {
       agentId: payload.agentId,
       type: 'state',
       description: describeStateTrigger(payload.state, payload.cause),
-      sentiment: -0.5,
+      // Every state used to arrive as -0.5, so "started feeling confident"
+      // cleared the replan threshold like "started feeling sick" (71 replans
+      // in the trace).
+      sentiment: POSITIVE_STATES.has(payload.state) ? 0.2 : -0.5,
       isDramatic: DRAMATIC_STATES.has(payload.state),
     });
   });

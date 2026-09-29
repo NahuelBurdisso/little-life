@@ -640,3 +640,38 @@ describe('PlanExecutor with a fallback plan', () => {
     expect(decomposer.queueDecomposition).not.toHaveBeenCalled();
   });
 });
+
+describe('PlanExecutor prefetch', () => {
+  const action = { description: 'Knead dough', action_type: 'working', target_location: 'Bakery', duration_minutes: 120 };
+  const planWith = () => ({
+    day: 1,
+    generated_at: 0,
+    needs_snapshot: { hunger: 50, energy: 50, social: 50 },
+    blocks: [
+      { id: 'b0', start_hour: 9, end_hour: 12, broad_action: 'Bake', location_hint: 'Bakery', status: 'pending' as const, decomposed_actions: [action] },
+      { id: 'b1', start_hour: 12, end_hour: 13, broad_action: 'Lunch', location_hint: 'Bakery', status: 'pending' as const },
+    ],
+  });
+
+  it('asks for the next block in the current block\'s last hour, not before', () => {
+    const cache = makeCache();
+    const decomposer = { queueDecomposition: vi.fn(), isPending: vi.fn(() => false) };
+    const executor = new PlanExecutor(cache, decomposer as never);
+    cache.set(agentId, planWith());
+
+    executor.getPlannedAction(agentId, 9, 0, 1, 30);
+    expect(decomposer.queueDecomposition).not.toHaveBeenCalled();
+
+    executor.getPlannedAction(agentId, 11, 0, 1, 10);
+    expect(decomposer.queueDecomposition).toHaveBeenCalledWith(agentId, 'b1', expect.any(Number));
+  });
+
+  it('does not re-ask while the next block is already being decomposed', () => {
+    const cache = makeCache();
+    const decomposer = { queueDecomposition: vi.fn(), isPending: vi.fn(() => true) };
+    const executor = new PlanExecutor(cache, decomposer as never);
+    cache.set(agentId, planWith());
+    executor.getPlannedAction(agentId, 11, 0, 1, 10);
+    expect(decomposer.queueDecomposition).not.toHaveBeenCalled();
+  });
+});

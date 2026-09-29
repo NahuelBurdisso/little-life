@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeStateTrigger } from '../PlanEventAdapter';
+import { describeStateTrigger, conversationReplanSignal } from '../PlanEventAdapter';
 import { joinForFeed, shortenForFeed } from '../../factText';
 import { ACTIVITY_REGISTRY } from '../../../data/activityRegistry';
 
@@ -72,5 +72,13 @@ describe('feed-sized plan text', () => {
     // Every word before the ellipsis is a whole word of the original.
     const words = short.slice(0, -1).split(' ');
     expect(reason.split(' ').slice(0, words.length)).toEqual(words);
+  });
+});
+
+describe('conversationReplanSignal', () => {
+  it('treats only a clearly bad talk as dramatic', () => {
+    expect(conversationReplanSignal(-0.7)).toEqual({ sentiment: -0.7, isDramatic: true });
+    expect(conversationReplanSignal(0.8)).toEqual({ sentiment: 0.4, isDramatic: false });
+    expect(conversationReplanSignal(0)).toEqual({ sentiment: 0, isDramatic: false });
   });
 });

@@ -120,6 +120,12 @@ export class PlanExecutor {
       this.cache.setExecState(agentId, execState);
     }
 
+    // 5b. In the block's last hour, ask for the next block's actions ahead of
+    //     time. Otherwise the agent reaches the next block, finds nothing to do,
+    //     and stands in the plan layer's idle until the LLM answers — at 4x a
+    //     20 s reply is 80 game minutes of standing still at every block edge.
+    if (currentHour >= block.end_hour - 1) this._prefetchNext(plan, block, agentId, gameMinute);
+
     // 6. Check if current action's duration has elapsed
     const actions = block.decomposed_actions;
     const idx = execState.currentActionIndex;
@@ -177,6 +183,21 @@ export class PlanExecutor {
    * with Ollama down, that was most of the day. Returning null instead hands
    * the agent to needs/schedule scoring until decomposition succeeds.
    */
+  /**
+   * Queue decomposition of the block that follows `block`, if it still needs
+   * it. A no-op while that job is out or the agent is backing off (same gate
+   * as a regular request), and the result is dropped if a replan replaces the
+   * plan meanwhile (PlanDecomposer checks the cached plan).
+   */
+  private _prefetchNext(plan: DailyPlan, block: PlanBlock, agentId: number, gameMinute: number): void {
+    const next = plan.blocks
+      .filter((b) => b.status === 'pending' && b.start_hour >= block.end_hour)
+      .sort((a, b) => a.start_hour - b.start_hour)[0];
+    if (!next || (next.decomposed_actions && next.decomposed_actions.length > 0)) return;
+    if (this.decomposer.isPending(agentId, next.id)) return;
+    this.decomposer.queueDecomposition(agentId, next.id, gameMinute);
+  }
+
   private _awaitDecomposition(agentId: number, block: PlanBlock, gameMinute: number): ScoredAction | null {
     this.decomposer.queueDecomposition(agentId, block.id, gameMinute);
     return this.decomposer.isPending(agentId, block.id) ? this._idleAction(block) : null;
