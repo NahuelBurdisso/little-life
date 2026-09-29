@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 95 files / 1008 tests passing.
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 97 files / 1040 tests passing.
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -16,7 +16,7 @@ worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 | Goals & aspirations | Done |
 | Drama setup wizard | Done |
 | Cascade (Ripple/Tension/Snap/Witness) | Working; rumors/cast attribution fixed 2026-09-29 |
-| Procedural worldgen v2 (terrain, autotiling, social homes) | In progress in the other session |
+| Procedural worldgen v2 (terrain, autotiling, social homes, organic layout) | Done — plan `docs/superpowers/plans/2026-09-28-worldgen-v2.md` |
 | Worldgen stages `interiors`, `names` | **Stubs**; output discarded by `pipeline.ts` |
 | Economy | Mechanics fixed; **balance open** (see E1–E4) |
 | Autoplay profiler + auto-nudger | Working, no UI, **off by default** |
@@ -107,6 +107,19 @@ Evidence in the session scratchpad; line numbers approximate.
   ignores it.
 - **C10 [L]** Old conversations stored before 2026-09-29 render canned fallback lines as speech.
 
+### Worldgen v2 (open, all minor)
+- **W1 [M]** Organic towns sit farther from roads than the grid: public doors >6 tiles away 16%
+  vs 8%, homes 17% vs 11%, alley in 63% of towns vs 97%. Structural (less road, south-only doors);
+  closing it needs door orientation or a build-along-lane placer in `layout.ts`.
+- **W2 [L]** Custom 56×43 with 30+ agents can fail `[homes] not enough spots` (organic 3/200,
+  grid 19/200). Auto sizing never fails.
+- **W3 [L]** Wizard: the drama Preview step still runs before Agents, so edits to the cast
+  after it change the scenario Start builds without showing it again (World Layout was moved
+  after Relationships for the same reason).
+- **W4 [L]** `organic.test.ts` is the slowest test file (~10 s of a ~35 s check).
+- Worldgen changes are pinned by golden hashes (grid + organic in `organic.test.ts`); recompute
+  only for a deliberate change and say so in the commit — saved worlds rebuild from their seed.
+
 ### Dead code
 `npm run deadcode`: 0 orphans; `WeatherType` in `server/lib/types.ts` unused.
 
@@ -155,6 +168,15 @@ before merging.
   as narration; conversation memories quote a charged line.
 - **Client:** C2 restart invalidation, C3 missing-agent panel, C4 weather ambient, C6 lanterns,
   C7 single rain/snow renderer, single lightning owner, frame-rate independent fades.
+
+- **Worldgen v2** (tracks A1/A2/B/C, 2026-09-28 → 29): noise-clustered terrain with Poisson
+  trees (`noise.ts`, new kinds `grass_tuft/tree/bush/rock`; legacy `tall_grass` still renders);
+  autotiled roads (`src/lib/autotile.ts`: rounded caps, chamfers, bridged staircases, dithered lip,
+  ruts on straights only) and organic dirt blobs (`rasterizeSoftBlob`); homes assigned from the
+  social graph (`worldgen/social.ts`: rivals near, secret affairs far, lovers/friends near;
+  `socialPlacement`, off for legacy configs on restart); `layoutStyle: 'organic'` village mode
+  (`stages/organicRoads.ts`). Wizard: World Layout after Relationships, Start errors shown,
+  name/bio length caps. Vitest ignores `.claude/**` worktrees.
 
 ## Next steps (suggested order)
 
