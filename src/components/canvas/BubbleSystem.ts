@@ -1,5 +1,9 @@
 import * as PIXI from "pixi.js";
 import type { SpritePool } from "./SpritePool";
+import { loadStrip } from "./stripAtlas";
+import {
+  EMOTES_URL, EMOTE_FRAME_COUNT, EMOTE_CELL, EMOTE_EMOJI_FALLBACK, emoteFrameAt,
+} from "./emoteFrames";
 
 const BUBBLE_MAX_CHARS = 60;
 /** px a head-anchored overlay must fall to stay with a fully lying-down body. */
@@ -33,6 +37,9 @@ interface BubbleEntry {
    */
   dx: number; // container.x relative to the agent's world x
   bgH: number; // background height, excluding any tail
+  /** Atlas-backed emotes only: which animation to play and the sprite to swap frames on. */
+  emoteName?: string;
+  emoteSprite?: PIXI.Sprite;
 }
 
 const THOUGHT_STYLE = new PIXI.TextStyle({
@@ -58,29 +65,21 @@ const TEXT_THOUGHT_STYLE = new PIXI.TextStyle({
   wordWrapWidth: 100,
 });
 
-const EMOTE_EMOJIS: Record<string, string> = {
-  heart: "❤️",
-  anger: "😡",
-  laugh: "😂",
-  wave: "👋",
-  question: "❓",
-  exclaim: "❗",
-  zzz: "💤",
-  cry: "😢",
-  sparkle: "✨",
-  fish: "🐟",
-  flower: "🌸",
-  music: "🎵",
-  sweat: "💧",
-  money: "💰",
-  skull: "💀",
-  fire: "🔥",
-  star: "⭐",
-  drink: "🍺",
-  sick: "🤢",
-  think: "💭",
-  work: "🔨",
-};
+/**
+ * Emote atlas textures, shared by every BubbleSystem. Null until the strip loads (or for good
+ * if it fails) — `showEmote` then falls back to the emoji glyph, so a missing PNG degrades the
+ * look but never breaks a bubble. `loadStrip` caches by URL and forgets failures.
+ */
+let emoteTextures: PIXI.Texture[] | null = null;
+let emoteLoadStarted = false;
+function ensureEmoteAtlas() {
+  if (emoteTextures || emoteLoadStarted) return;
+  emoteLoadStarted = true;
+  loadStrip(EMOTES_URL, EMOTE_FRAME_COUNT, EMOTE_CELL)
+    .then(frames => { emoteTextures = frames; })
+    // Allow a later BubbleSystem (world reload) to try again.
+    .catch(() => { emoteLoadStarted = false; });
+}
 
 /**
  * Emotes re-puffed on a loop for as long as a pose holds, rather than fired once
@@ -99,11 +98,46 @@ export class BubbleSystem {
   private prevEmoteStampMap: Map<string, number> = new Map();
   private shownMessageCounts = new Map<string, number>(); // agentId → message count when last bubble shown
   private lyingBlendMap = new Map<string, number>(); // agentId → 0 upright .. 1 lying down
+  /** Finished atlas emotes, kept for reuse: an emote per state change would churn allocations. */
+  private emotePool: PIXI.Container[] = [];
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
     this.container.eventMode = 'none'; // transparent to clicks — let agents below receive events
     parentContainer.addChild(this.container);
+    ensureEmoteAtlas();
+  }
+
+  /**
+   * Retire a bubble. Atlas emotes go back to the pool (their sprite is reused); everything else
+   * is destroyed with its children as before.
+   */
+  private dispose(entry: BubbleEntry) {
+    if (entry.emoteSprite) {
+      entry.container.removeFromParent();
+      entry.container.visible = false;
+      entry.emoteSprite = undefined;
+      this.emotePool.push(entry.container);
+    } else {
+      entry.container.destroy({ children: true });
+    }
+  }
+
+  /** A pooled (or fresh) container holding one `PIXI.Sprite`, with the sprite as first child. */
+  private takeEmoteContainer(texture: PIXI.Texture): { container: PIXI.Container; sprite: PIXI.Sprite } {
+    const container = this.emotePool.pop() ?? (() => {
+      const c = new PIXI.Container();
+      const s = new PIXI.Sprite(texture);
+      // Floating at fractional y would shimmer a nearest-scaled 16px sprite; snap to whole pixels.
+      s.roundPixels = true;
+      c.addChild(s);
+      return c;
+    })();
+    const sprite = container.children[0] as PIXI.Sprite;
+    sprite.texture = texture;
+    container.visible = true;
+    container.alpha = 1;
+    return { container, sprite };
   }
 
   /**
@@ -252,14 +286,23 @@ export class BubbleSystem {
     const emoteKey = looped ? `${agentId}__emote_${emoteType}` : `${agentId}__emote`;
     this.removeBubbleByKey(emoteKey);
 
-    const bubbleContainer = new PIXI.Container();
-
-    const emoji = EMOTE_EMOJIS[emoteType] ?? "?";
-    const label = new PIXI.Text({
-      text: emoji,
-      style: { fontSize: 16 },
-    });
-    bubbleContainer.addChild(label);
+    // Pixel-art frame from the atlas; the emoji glyph only while the atlas is still loading
+    // (or failed) and for names it does not know.
+    const first = emoteTextures ? emoteFrameAt(emoteType, 0) : null;
+    let bubbleContainer: PIXI.Container;
+    let emoteSprite: PIXI.Sprite | undefined;
+    if (emoteTextures && first != null) {
+      const taken = this.takeEmoteContainer(emoteTextures[first]);
+      bubbleContainer = taken.container;
+      emoteSprite = taken.sprite;
+    } else {
+      bubbleContainer = new PIXI.Container();
+      const label = new PIXI.Text({
+        text: EMOTE_EMOJI_FALLBACK[emoteType] ?? "?",
+        style: { fontSize: 16 },
+      });
+      bubbleContainer.addChild(label);
+    }
 
     // Emote floats above sprite head: same baseline as bubbles.
     // Looped emotes live in their own slot, so a sleeping agent who also gains
@@ -282,6 +325,8 @@ export class BubbleSystem {
       // extra 12px of lift makes that `-32 - 4 - 28`.
       dx,
       bgH: looped ? 28 : 16,
+      emoteName: emoteSprite ? emoteType : undefined,
+      emoteSprite,
     });
   }
 
@@ -292,7 +337,7 @@ export class BubbleSystem {
   private removeBubbleByKey(key: string) {
     const entry = this.bubbles.get(key);
     if (entry) {
-      entry.container.destroy({ children: true });
+      this.dispose(entry);
       this.bubbles.delete(key);
     }
   }
@@ -452,7 +497,7 @@ export class BubbleSystem {
     for (const [key, entry] of this.bubbles) {
       // Expire timed bubbles
       if (entry.duration > 0 && now - entry.createdAt > entry.duration) {
-        entry.container.destroy({ children: true });
+        this.dispose(entry);
         this.bubbles.delete(key);
         continue;
       }
@@ -462,6 +507,12 @@ export class BubbleSystem {
         entry.container.y -= EMOTE_FLOAT_SPEED * deltaTime;
         const elapsed = now - entry.createdAt;
         entry.container.alpha = Math.max(0, 1 - elapsed / entry.duration);
+        if (entry.emoteSprite && entry.emoteName && emoteTextures) {
+          const f = emoteFrameAt(entry.emoteName, elapsed);
+          if (f != null && entry.emoteSprite.texture !== emoteTextures[f]) {
+            entry.emoteSprite.texture = emoteTextures[f];
+          }
+        }
       }
 
       // Re-position non-emote bubbles to follow agent
@@ -480,6 +531,9 @@ export class BubbleSystem {
       entry.container.destroy({ children: true });
     }
     this.bubbles.clear();
+    // Pooled emotes were detached from the tree, so `container.destroy` below misses them.
+    for (const c of this.emotePool) c.destroy({ children: true });
+    this.emotePool.length = 0;
     this.prevMoodMap.clear();
     this.shownMessageCounts.clear();
     this.container.destroy({ children: true });
