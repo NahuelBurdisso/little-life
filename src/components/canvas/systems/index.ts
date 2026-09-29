@@ -1,4 +1,5 @@
 import type { SystemFactory } from "./types";
+import { createTownEventSystem } from "./townEvents/TownEventSystem";
 import { createAmbientLifeSystem } from "./ambientLife/AmbientLifeSystem";
 import { createHeldItemSystem } from "./held/HeldItemSystem";
 import { createBeatSystem } from "./beats/BeatSystem";
@@ -8,7 +9,8 @@ import { createBeatSystem } from "./beats/BeatSystem";
  * only matters when two systems draw into the same layer (later = on top).
  */
 export const SYSTEM_FACTORIES: SystemFactory[] = [
-  // Background first: its flyers share `overAgents` with the beat effects below.
+  // Event decorations are set dressing: critters walk over them, beats play above both.
+  createTownEventSystem,
   createAmbientLifeSystem,
   createHeldItemSystem,
   createBeatSystem,
