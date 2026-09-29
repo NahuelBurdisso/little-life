@@ -19,6 +19,7 @@ import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { LocationPanel } from "./components/ui/LocationPanel";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
 import { ConversationHistory } from "./components/ui/ConversationHistory";
+import { Timeline } from "./components/ui/Timeline";
 import { useWorldState } from "./hooks/useWorldState";
 import { gameMinutes } from "../server/lib/gameClock";
 import { useAgents } from "./hooks/useAgents";
@@ -61,6 +62,7 @@ export default function App() {
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
   const [showAutoplay, setShowAutoplay] = useState(false);
   const [autoCut, setAutoCut] = useState(false);
 
@@ -82,6 +84,7 @@ export default function App() {
       setShowNewAgent(false);
       setShowRelGraph(false);
       setShowConvoHistory(false);
+      setShowTimeline(false);
       setShowAutoplay(false);
     }
   }, [isNewSimulation]);
@@ -154,6 +157,8 @@ export default function App() {
           setShowNewAgent(false);
         } else if (showAutoplay) {
           setShowAutoplay(false);
+        } else if (showTimeline) {
+          setShowTimeline(false);
         } else if (showConvoHistory) {
           // Escape closes the topmost layer, so this chain must match paint
           // order: ConversationHistory is rendered last and covers the graph.
@@ -170,7 +175,7 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showAutoplay, selectedLocationId, selectedAgentId]);
+  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showTimeline, showAutoplay, selectedLocationId, selectedAgentId]);
 
   // Cast bar: favourites are per world (keyed by seed) and sort first, both in the
   // bar and in Tab order, so the two never disagree about who is "next".
@@ -212,7 +217,7 @@ export default function App() {
     },
     agentKeysEnabled: !(
       contextMenuAgent || showEventMenu || showGazette || showTownStats || showNewAgent ||
-      showRelGraph || showConvoHistory || showAutoplay || guide.tourOpen || guide.helpOpen
+      showRelGraph || showConvoHistory || showTimeline || showAutoplay || guide.tourOpen || guide.helpOpen
     ),
     onToggleHelp: guide.toggleHelp,
   });
@@ -343,6 +348,7 @@ export default function App() {
         onNewAgent={() => setShowNewAgent(true)}
         onShowRelationships={() => setShowRelGraph(true)}
         onShowHistory={() => setShowConvoHistory(true)}
+        onShowTimeline={() => setShowTimeline(true)}
         onShowAutoplay={() => setShowAutoplay(true)}
         autoCut={autoCut}
         onToggleAutoCut={() => setAutoCut(v => !v)}
@@ -426,6 +432,16 @@ export default function App() {
           // Close first: the history modal covers the map, so the camera move
           // would otherwise happen behind it.
           setShowConvoHistory(false);
+          focusAgent(id);
+        }}
+      />
+      <Timeline
+        isOpen={showTimeline}
+        onClose={() => setShowTimeline(false)}
+        onSelectAgent={(id) => {
+          // Close first, like the history modal: it covers the map, so the
+          // camera move would otherwise happen behind it.
+          setShowTimeline(false);
           focusAgent(id);
         }}
       />
