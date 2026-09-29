@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { formatTime, weatherEmoji, seasonEmoji } from "../../lib/formatters";
 import { SpeedControls } from "./SpeedControls";
 import { SavesDialog } from "./SavesDialog";
@@ -36,10 +36,45 @@ interface TopBarProps {
 const BAR_BTN =
   "px-3 py-1 text-sm bg-ui-raised hover:bg-ui-hover border border-ui-line hover:border-ui-line-accent rounded-sm transition-colors disabled:opacity-50";
 
+/** One row of the narrow-window "more" menu. */
+function MoreItem({
+  icon,
+  children,
+  onClick,
+  disabled,
+  title,
+  danger,
+}: {
+  icon: string;
+  children: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+        danger ? "text-ui-bad hover:bg-ui-bad/15" : "text-ui-text hover:bg-ui-hover"
+      }`}
+    >
+      <span aria-hidden="true" className="w-4 text-center">{icon}</span>
+      {children}
+    </button>
+  );
+}
+
 export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onShowInbox, unreadAlerts, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [showSaves, setShowSaves] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
 
   // Both replace the world wholesale, but the server's `markAllDirty` only
   // reaches queries a subscription hook is wired to — `locations.getAll` isn't,
@@ -100,21 +135,42 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
 
   const hasConfig = !!world.setup_config;
 
+  // The "more" menu (narrow windows). Outside click closes it; Escape closes just
+  // it (capture + stopPropagation, like the confirm dialog above, so App's own
+  // Escape chain doesn't also close a panel underneath).
+  useEffect(() => {
+    if (!showMore) return;
+    const onDown = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setShowMore(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setShowMore(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [showMore]);
+
   return (
     <>
-      <div className="h-12 bg-ui-panel border-b border-ui-line flex items-center px-4 gap-4 shrink-0">
+      <div className="h-12 bg-ui-panel border-b border-ui-line flex items-center px-4 gap-3 lg:gap-4 shrink-0">
         {/* Left: Time info. The raw tick counter lives in the tooltip: it is a debugging figure, not something to read. */}
-        <div className="flex items-center gap-3 text-sm" title={`Tick ${world.time.totalTicks}`}>
+        <div className="flex items-center gap-3 text-sm whitespace-nowrap shrink-0" title={`Tick ${world.time.totalTicks}`}>
           <span className="font-bold text-ui-gold">Day {world.time.day}</span>
           <span>{formatTime(world.time)}</span>
           <span title={`Weather: ${world.weather}`}>{weatherEmoji(world.weather, world.time.hour)}</span>
           <span className="text-ui-dim capitalize">
-            {seasonEmoji(world.time.season)} {world.time.season}
+            {seasonEmoji(world.time.season)}<span className="hidden lg:inline"> {world.time.season}</span>
           </span>
         </div>
 
-        {/* Live activity readout */}
-        <div className="flex items-center gap-3 text-xs text-ui-dim">
+        {/* Live activity readout (hidden on narrow windows: the speed controls and buttons need the room) */}
+        <div className="hidden lg:flex items-center gap-3 text-xs text-ui-dim whitespace-nowrap shrink-0">
           <span title="Conversations happening right now">💬 {liveConversations}</span>
           <span title="Agents awake">🚶 {awakeAgents}</span>
           {llm && (
@@ -129,18 +185,24 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
         </div>
 
         {/* Center: Speed controls */}
-        <div className="flex-1 flex justify-center">
+        <div className="flex-1 min-w-0 flex justify-center">
           <SpeedControls isPaused={world.is_paused} currentSpeed={world.tick_speed} />
         </div>
 
-        {/* Right: Menu buttons */}
-        <div className="flex items-center gap-2">
+        {/* Right: Menu buttons. Labels fold to icons below xl and the secondary
+            buttons (Stats, saves, restart, reset) fold into a "more" menu below lg,
+            so the bar stays one row down to ~800px. Paper and Events stay put:
+            the first-run coach marks ring them. */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={onShowStats}
             disabled={isResetting}
-            className={BAR_BTN}
+            aria-label="Stats"
+            title="Town stats"
+            className={`${BAR_BTN} hidden lg:inline-flex items-center gap-1.5 whitespace-nowrap`}
           >
-            📊 Stats
+            <span aria-hidden="true">📊</span>
+            <span className="hidden xl:inline">Stats</span>
           </button>
           <button
             onClick={onShowInbox}
@@ -160,10 +222,12 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             onClick={onShowGazette}
             disabled={isResetting}
             title="The Town Crier — the town's daily paper"
+            aria-label={hasNewGazette ? "Paper, new edition" : "Paper"}
             data-coach="paper"
-            className={`${BAR_BTN} relative`}
+            className={`${BAR_BTN} relative inline-flex items-center gap-1.5 whitespace-nowrap`}
           >
-            📰 Paper
+            <span aria-hidden="true">📰</span>
+            <span className="hidden xl:inline">Paper</span>
             {hasNewGazette && (
               <span className="absolute -top-1 -right-1 bg-ui-gold text-ui-deep font-bold text-[10px] rounded-full px-1 h-4 flex items-center justify-center">
                 new
@@ -173,42 +237,86 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           <button
             onClick={onShowEvents}
             disabled={isResetting}
+            title="Events and weather"
+            aria-label={events.length > 0 ? `Events, ${events.length} active` : "Events"}
             data-coach="events"
-            className={`${BAR_BTN} relative`}
+            className={`${BAR_BTN} relative inline-flex items-center gap-1.5 whitespace-nowrap`}
           >
-            ⚡ Events
+            <span aria-hidden="true">⚡</span>
+            <span className="hidden xl:inline">Events</span>
             {events.length > 0 && (
               <span className="absolute -top-1 -right-1 bg-ui-warn text-ui-deep font-bold text-xs rounded-full w-4 h-4 flex items-center justify-center">
                 {events.length}
               </span>
             )}
           </button>
-          <div className="w-px h-6 bg-ui-line" />
-          <button
-            onClick={() => setShowSaves(true)}
-            disabled={isResetting}
-            title="Save or load a town"
-            className={`${BAR_BTN} !px-2`}
-            aria-label="Saves"
-          >
-            💾
-          </button>
-          <button
-            onClick={() => setConfirmAction('restart')}
-            disabled={isResetting || !hasConfig}
-            title={hasConfig ? "Restart with same settings" : "No saved config — use Reset to Wizard"}
-            className={`${BAR_BTN} !px-2 disabled:cursor-not-allowed`}
-          >
-            {isResetting && confirmAction === 'restart' ? '...' : '↻'}
-          </button>
-          <button
-            onClick={() => setConfirmAction('reset')}
-            disabled={isResetting}
-            title="Reset to Setup Wizard"
-            className={`${BAR_BTN} !px-2 hover:!bg-ui-bad/30 hover:!border-ui-bad/60`}
-          >
-            {isResetting && confirmAction === 'reset' ? '...' : '⟲'}
-          </button>
+
+          {/* lg and up: the rest sits in the bar */}
+          <div className="hidden lg:flex items-center gap-2">
+            <div className="w-px h-6 bg-ui-line" />
+            <button
+              onClick={() => setShowSaves(true)}
+              disabled={isResetting}
+              title="Save or load a town"
+              className={`${BAR_BTN} !px-2`}
+              aria-label="Saves"
+            >
+              💾
+            </button>
+            <button
+              onClick={() => setConfirmAction('restart')}
+              disabled={isResetting || !hasConfig}
+              title={hasConfig ? "Restart with same settings" : "No saved config — use Reset to Wizard"}
+              aria-label="Restart with same settings"
+              className={`${BAR_BTN} !px-2 disabled:cursor-not-allowed`}
+            >
+              {isResetting && confirmAction === 'restart' ? '...' : '↻'}
+            </button>
+            <button
+              onClick={() => setConfirmAction('reset')}
+              disabled={isResetting}
+              title="Reset to Setup Wizard"
+              aria-label="Reset to Setup Wizard"
+              className={`${BAR_BTN} !px-2 hover:!bg-ui-bad/30 hover:!border-ui-bad/60`}
+            >
+              {isResetting && confirmAction === 'reset' ? '...' : '⟲'}
+            </button>
+          </div>
+
+          {/* Below lg: the same four actions in a "more" menu */}
+          <div ref={moreRef} className="relative lg:hidden">
+            <button
+              onClick={() => setShowMore((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={showMore}
+              aria-label="More actions"
+              title="Stats, saves, restart, reset"
+              className={`${BAR_BTN} !px-2`}
+            >
+              ⋯
+            </button>
+            {showMore && (
+              <div
+                role="menu"
+                aria-label="More actions"
+                className="absolute right-0 top-full mt-1 z-50 w-60 py-1 bg-ui-panel border border-ui-line shadow-xl"
+              >
+                <MoreItem icon="📊" onClick={() => { setShowMore(false); onShowStats(); }}>Stats</MoreItem>
+                <MoreItem icon="💾" onClick={() => { setShowMore(false); setShowSaves(true); }}>Save / load</MoreItem>
+                <MoreItem
+                  icon="↻"
+                  disabled={!hasConfig}
+                  title={hasConfig ? "Restart with same settings" : "No saved config — use Reset to Wizard"}
+                  onClick={() => { setShowMore(false); setConfirmAction('restart'); }}
+                >
+                  Restart
+                </MoreItem>
+                <MoreItem icon="⟲" danger onClick={() => { setShowMore(false); setConfirmAction('reset'); }}>
+                  Reset to Setup Wizard
+                </MoreItem>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

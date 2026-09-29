@@ -7,12 +7,6 @@ const FADE_MS = 280;
 const CHAR_MS = 26;
 const MAX_TYPE_MS = 2200;
 
-/**
- * Space the bar keeps clear on the right so it never sits on the floating
- * toolbar (w-44 + its 16px margin, App passes the extra offset when the agent
- * panel is open — the panel is outside this container, so 208px is enough).
- */
-const TOOLBAR_CLEARANCE = 208;
 
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -59,6 +53,11 @@ interface DirectorCaptionProps {
   caption: Caption | null;
   /** Identifies the camera cut; a new value fades the bar out, then in with the new content. */
   cut: number;
+  /**
+   * Space kept clear on the right so the bar never sits on the tools strip
+   * (toolbarClearance(): the icon rail or the open w-44 strip plus its margin).
+   */
+  rightClearance: number;
 }
 
 /**
@@ -71,7 +70,7 @@ interface DirectorCaptionProps {
  * when the side panels resize, keeps clear of the toolbar on the right, and
  * never takes the pointer.
  */
-export function DirectorCaption({ caption, cut }: DirectorCaptionProps) {
+export function DirectorCaption({ caption, cut, rightClearance }: DirectorCaptionProps) {
   const [shown, setShown] = useState<{ cut: number; caption: Caption | null }>({ cut: 0, caption: null });
   // True while the old shot's bar fades out, before the next shot's text replaces it.
   const [leaving, setLeaving] = useState(false);
@@ -99,7 +98,7 @@ export function DirectorCaption({ caption, cut }: DirectorCaptionProps) {
   return (
     <div
       className="absolute inset-x-0 bottom-3 z-20 flex justify-center pointer-events-none pl-4"
-      style={{ paddingRight: TOOLBAR_CLEARANCE }}
+      style={{ paddingRight: rightClearance }}
       role="status"
       aria-live="polite"
     >
