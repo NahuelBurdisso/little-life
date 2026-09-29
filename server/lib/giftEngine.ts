@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
+import { gameMinutes } from './gameClock';
 import { addToInventory, removeFromInventory, getInventoryCount } from './economyEngine';
 import { ITEM_REGISTRY } from '../data/economyData';
 
@@ -320,7 +321,8 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
 
   // This runs from a simEvents handler, so no tick is threaded in; read it.
   const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  const currentTick = world?.time?.totalTicks ?? 0;
+  // State clock: GAME MINUTES (see stateClockNow in lib/states.ts).
+  const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
 
   // Find agents at same location with romance toward the giver
   const coLocated = db.select().from(agents)
@@ -361,9 +363,9 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
       severity: Math.min(1.0, witnessRomance / 100),
       target_agent_id: giverId,
       metadata: { rivalId: receiverId, loveInterestId: giverId, trigger: 'gift_witnessed' },
-      // agentStates.started_at is tick-valued: states.ts expires with
-      // `started_at + duration <= currentTick`.
-      started_at: currentTick,
+      // agentStates.started_at is in game minutes: states.ts expires with
+      // `started_at + duration <= nowMinutes`.
+      started_at: nowMinutes,
       duration: 2880, // ~2 game days
       source: 'gift_witnessed',
     }).run();

@@ -2,7 +2,7 @@ import { db } from '../db';
 import { agents, needs, economy, agentStates, locations } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
-import { getEffectivePersonality } from './states';
+import { getEffectivePersonality, stateClockNow } from './states';
 import { adjustReputation } from './reputationEngine';
 
 // ─── Tavern Engine ────────────────────────────────────────────────────────────
@@ -111,9 +111,9 @@ export function tavernTick(totalTicks: number): void {
           agent_id: agent.id,
           type: 'drunk',
           severity: 0.6,
-          // agentStates.started_at is tick-valued: states.ts expires with
-          // `started_at + duration <= currentTick`.
-          started_at: totalTicks,
+          // agentStates.started_at is in game minutes: states.ts expires with
+          // `started_at + duration <= nowMinutes`.
+          started_at: stateClockNow(),
           duration: 720, // ~12 game hours
           source: 'tavern_drinking',
           metadata: { drinks: state.drinks },

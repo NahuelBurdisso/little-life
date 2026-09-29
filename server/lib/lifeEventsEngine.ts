@@ -21,7 +21,8 @@ import { zoneOccupancy } from './interiorGrid';
 
 export interface AgentDeathContext {
   agent: { id: number; name: string; age: number };
-  currentTick: number;
+  /** CLOCK: GAME MINUTES, like `agentStates.started_at` (states.ts). */
+  nowMinutes: number;
   season: string;
   hungerZeroTicks: number;
   activeStates: Array<{ type: string; started_at: number; severity: number; metadata: any }>;
@@ -45,7 +46,8 @@ interface DeathEffectContext {
   agentName: string;
   cause: string;
   causeDescription: string;
-  currentTick: number;
+  /** CLOCK: GAME MINUTES — stamps the survivors' `grieving` states. */
+  nowMinutes: number;
 }
 
 interface DeathEffect {
@@ -91,7 +93,7 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     priority: 2,
     check: (ctx) => {
       const sickState = ctx.activeStates.find(s => s.type === 'sick');
-      return sickState != null && (ctx.currentTick - sickState.started_at) > 7200;
+      return sickState != null && (ctx.nowMinutes - sickState.started_at) > 7200;
     },
   },
   {
@@ -102,7 +104,7 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
       const alcState = ctx.activeStates.find(s => s.type === 'alcoholic');
       if (!alcState) return false;
       const meta = alcState.metadata as any;
-      return meta?.stage === 3 && (ctx.currentTick - alcState.started_at) > 10080;
+      return meta?.stage === 3 && (ctx.nowMinutes - alcState.started_at) > 10080;
     },
   },
   {
@@ -110,7 +112,7 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     description: 'Died of natural causes',
     priority: 4,
     check: (ctx) => {
-      const simAge = ctx.agent.age + Math.floor(ctx.currentTick / 1440);
+      const simAge = ctx.agent.age + Math.floor(ctx.nowMinutes / 1440);
       if (simAge < 80) return false;
       return Math.random() < 0.0001 * (simAge - 80);
     },
@@ -222,7 +224,7 @@ function triggerGrieving(ctx: DeathEffectContext): void {
       agent_id: otherId,
       type: 'grieving',
       severity,
-      started_at: ctx.currentTick,
+      started_at: ctx.nowMinutes,
       duration,
       target_agent_id: ctx.agentId,
       source: `event:death_of_${ctx.agentId}`,
@@ -392,7 +394,7 @@ const DEATH_EFFECTS: DeathEffect[] = [
 
 export function checkDeathTriggers(
   agent: { id: number; name: string; age: number },
-  currentTick: number,
+  nowMinutes: number,
   statesArr: Array<{ type: string; started_at: number; severity: number; metadata: any }>,
   needsData: { mood: number; hunger: number; energy: number },
   job: string,
@@ -402,7 +404,7 @@ export function checkDeathTriggers(
 ): string | null {
   const ctx: AgentDeathContext = {
     agent,
-    currentTick,
+    nowMinutes,
     season,
     hungerZeroTicks: hungerZeroTicks.get(agent.id) ?? 0,
     activeStates: statesArr,
@@ -424,7 +426,7 @@ export function checkDeathTriggers(
   return null;
 }
 
-export function processAgentDeath(agentId: number, agentName: string, cause: string, currentTick: number): void {
+export function processAgentDeath(agentId: number, agentName: string, cause: string, nowMinutes: number): void {
   const trigger = DEATH_TRIGGERS.find(t => t.type === cause);
   const causeDescription = trigger?.description ?? cause;
 
@@ -433,7 +435,7 @@ export function processAgentDeath(agentId: number, agentName: string, cause: str
     agentName,
     cause,
     causeDescription,
-    currentTick,
+    nowMinutes,
   };
 
   for (const effect of DEATH_EFFECTS) {

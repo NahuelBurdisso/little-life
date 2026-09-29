@@ -1417,14 +1417,14 @@ async function finishCompletedConversation(
       if (!getAgentStates(pid).includes('heartbroken')) {
         db.insert(agentStates).values({
           agent_id: pid, type: 'heartbroken', severity: 0.8,
-          started_at: time.totalTicks, duration: Math.floor(2880 + Math.random() * 4320),
+          started_at: gameMinutes(time), duration: Math.floor(2880 + Math.random() * 4320),
           target_agent_id: otherId, source: 'event:affair_discovery', metadata: null,
         }).run();
       }
       if (!getAgentStates(pid).includes('angry')) {
         db.insert(agentStates).values({
           agent_id: pid, type: 'angry', severity: 0.9,
-          started_at: time.totalTicks, duration: Math.floor(480 + Math.random() * 720),
+          started_at: gameMinutes(time), duration: Math.floor(480 + Math.random() * 720),
           target_agent_id: otherId, source: 'event:affair_discovery', metadata: null,
         }).run();
       }

@@ -11,6 +11,7 @@ import { generateSituationalPrompt } from '../lib/personality';
 import { getReputation, getReputationLabel } from '../lib/reputationEngine';
 import { getAgentHobbies } from '../lib/hobbyEngine';
 import { getMoodMomentum } from '../lib/moodMomentum';
+import { gameMinutes } from '../lib/gameClock';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -132,7 +133,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
   const currentTick = world?.time?.totalTicks ?? 0;
 
   // State prompts change per turn (mood-dependent) — always reload
-  const statePrompts = getActiveStatePrompts(speaker.id, world?.time?.totalTicks);
+  const statePrompts = getActiveStatePrompts(speaker.id, world?.time ? gameMinutes(world.time) : undefined);
 
   // Build situational prompt from the speaker's active dramatic states
   const speakerStates = getAgentStates(speakerId);

@@ -71,7 +71,8 @@ export function isCommonKnowledge(
 /** How hard being found out hits the subject, per point of sensitivity. */
 const EXPOSURE_MOOD_HIT = 6;
 
-export function gossipTick(currentTick: number): void {
+/** `nowMinutes`: the game-minute clock agent states are stamped in (lib/states.ts). */
+export function gossipTick(nowMinutes: number): void {
   const allAgents: AgentInfo[] = db.select({
     id: agents.id,
     name: agents.name,
@@ -300,7 +301,7 @@ export function gossipTick(currentTick: number): void {
           agent_id: subject.id,
           type: 'stressed',
           severity: Math.min(0.9, 0.3 + fact.sensitivity * 0.15),
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration: 999999, // conditional exit, same as the needs-driven variant
           source: 'knowledge:exposed',
           metadata: { factId: fact.id },

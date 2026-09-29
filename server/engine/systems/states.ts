@@ -31,7 +31,7 @@ import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
-import { dayChanged } from '../../lib/gameClock';
+import { dayChanged, gameMinutes } from '../../lib/gameClock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,53 +46,53 @@ interface CascadeEntry {
 // ─── Module-level state ───────────────────────────────────────────────────────
 
 /** Minimum lifetime (1 game hour) before a conditional-exit state may be removed. */
-const CONDITIONAL_EXIT_GRACE_TICKS = 60;
+const CONDITIONAL_EXIT_GRACE_MINUTES = 60;
 
 let previouslyActiveAgents = new Set<number>();
 
-// Track ticks where an agent had stressed state removed (to avoid re-triggering immediately)
-const stressRemovedAtTick = new Map<number, number>();
+// Game minute when an agent had stressed state removed (to avoid re-triggering immediately)
+const stressRemovedAt = new Map<number, number>();
 
 const gamblingCooldowns = new Map<string, number>();
 
-// Track tick when mood first dropped below 15 (for depressed trigger duration check)
-const lowMoodSince = new Map<number, number>(); // agentId → tick when mood first dropped below 15
+// Game minute when mood first dropped below 15 (for depressed trigger duration check)
+const lowMoodSince = new Map<number, number>(); // agentId → game minute when mood first dropped below 15
 
-// Track tick when social first dropped below 20 (for lonely trigger duration check)
-const lowSocialSince = new Map<number, number>(); // agentId → tick when social dropped below 20
+// Game minute when social first dropped below 20 (for lonely trigger duration check)
+const lowSocialSince = new Map<number, number>(); // agentId → game minute when social dropped below 20
 
 // Track when an agent recovered from sickness (for immunity cooldown)
-const sickRecoveredAtTick = new Map<number, number>(); // agentId → tick when sickness expired
+const sickRecoveredAt = new Map<number, number>(); // agentId → game minute when sickness expired
 
 // Track drunk episode timestamps per agent for alcoholism detection
 const drunkHistory = new Map<number, number[]>();
 
 // Track alcoholism recovery for relapse mechanic
-const alcoholRecoveredAtTick = new Map<number, number>();
+const alcoholRecoveredAt = new Map<number, number>();
 
 // Track how long an agent has been broke (for in_debt trigger)
 const brokeSince = new Map<number, number>();
 
-// Track ticks when each agent gambled (for addiction detection)
-const gamblingHistory = new Map<number, number[]>(); // agentId → array of ticks when gambled
+// Game minutes when each agent gambled (for addiction detection)
+const gamblingHistory = new Map<number, number[]>(); // agentId → array of game minutes when gambled
 
 /**
  * Drop all per-agent tracking for a world replace.
  *
- * Every map above is keyed by agent id and holds tick values. SQLite reuses
+ * Every map above is keyed by agent id and holds game-minute values. SQLite reuses
  * rowids after a DELETE while `totalTicks` restarts at 0, so surviving entries
- * both belong to a stranger and sit in the future — `currentTick - since` goes
+ * both belong to a stranger and sit in the future — `now - since` goes
  * negative and the cooldowns/duration gates they guard never fire again.
  */
 export function clearStatesTrackers(): void {
   previouslyActiveAgents = new Set();
-  stressRemovedAtTick.clear();
+  stressRemovedAt.clear();
   gamblingCooldowns.clear();
   lowMoodSince.clear();
   lowSocialSince.clear();
-  sickRecoveredAtTick.clear();
+  sickRecoveredAt.clear();
   drunkHistory.clear();
-  alcoholRecoveredAtTick.clear();
+  alcoholRecoveredAt.clear();
   brokeSince.clear();
   gamblingHistory.clear();
 }
@@ -103,7 +103,13 @@ export function statesTick() {
   const world = db.select().from(worldState).limit(1).all()[0];
   if (!world) return;
 
+  // CLOCK: two clocks on purpose. Agent states (`started_at`, `duration`), the
+  // trackers above and every duration in this file are GAME MINUTES — they
+  // were ticks, so at 4x every state lasted four times its game-time length
+  // (a 2-4 h drunk spell ran 8-16 game hours, three broke days took twelve).
+  // `currentTick` is kept only for the memory stream, which is tick-stamped.
   const currentTick = (world.time as any).totalTicks as number;
+  const nowMinutes = gameMinutes(world.time);
   const weather = world.weather as string;
   const season = (world.time as any).season as string;
 
@@ -128,10 +134,10 @@ export function statesTick() {
     for (const state of agentStateRows) {
       const def = STATE_DEFINITIONS[state.type as StateType];
       if (def?.conditionalExit) continue; // handled in 1b
-      if (state.started_at + state.duration <= currentTick) {
+      if (state.started_at + state.duration <= nowMinutes) {
         // Track sickness recovery for immunity cooldown
         if (state.type === 'sick') {
-          sickRecoveredAtTick.set(agent.id, currentTick);
+          sickRecoveredAt.set(agent.id, nowMinutes);
           logActivity({
             type: 'state_lost',
             initiator: agent.id,
@@ -171,7 +177,7 @@ export function statesTick() {
       .from(needsTable)
       .where(eq(needsTable.agent_id, agent.id))
       .get();
-    checkConditionalExits(agentStateRows, agentNeeds, agent, currentTick);
+    checkConditionalExits(agentStateRows, agentNeeds, agent, nowMinutes);
 
     // 1c. Evaluate triggers for new states
     agentStateRows = db
@@ -184,7 +190,7 @@ export function statesTick() {
       agent,
       agentNeeds,
       activeTypes,
-      currentTick,
+      nowMinutes,
       weather,
       season,
       removedAgentIds,
@@ -207,7 +213,7 @@ export function statesTick() {
   }
 
   // ── Pass 2: Cascades (max depth 2) ────────────────────────────────────────
-  applyCascades(pendingCascades, currentTick, 0, 2);
+  applyCascades(pendingCascades, nowMinutes, 0, 2);
 
   // ── Pass 3: Side effects ──────────────────────────────────────────────────
   for (const agent of allAgents) {
@@ -216,7 +222,7 @@ export function statesTick() {
       .from(agentStates)
       .where(eq(agentStates.agent_id, agent.id))
       .all();
-    processStateEffects(agent, states, allAgents, currentTick);
+    processStateEffects(agent, states, allAgents, nowMinutes, currentTick, world.tick_speed);
   }
 
   // ── Blackmail self-expose: honest victims have a small daily chance to expose ──
@@ -261,12 +267,12 @@ export function statesTick() {
 
     const deathCause = checkDeathTriggers(
       { id: agent.id, name: agent.name, age: agent.age },
-      currentTick, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season,
+      nowMinutes, states as any, agentNeeds, econ?.job ?? '', action, isOutdoors, season,
     );
 
     if (deathCause && !diedThisTick.has(agent.id)) {
       diedThisTick.add(agent.id);
-      processAgentDeath(agent.id, agent.name, deathCause, currentTick);
+      processAgentDeath(agent.id, agent.name, deathCause, nowMinutes);
     }
   }
 
@@ -303,7 +309,7 @@ function evaluateTriggers(
   agent: typeof agents.$inferSelect,
   agentNeeds: typeof needsTable.$inferSelect | undefined,
   activeTypes: Set<string>,
-  currentTick: number,
+  nowMinutes: number,
   weather: string,
   season: string,
   removedAgentIds: number[],
@@ -324,13 +330,13 @@ function evaluateTriggers(
       // Using /10000 so a 70-impulsiveness agent has ~0.7% chance per tick to start drinking.
       if (loc?.type === 'tavern' && Math.random() < personality.impulsiveness / 10000) {
         const severity = clamp(0.3 + (personality.impulsiveness / 100) * 0.7, 0, 1);
-        const duration = Math.floor(120 + Math.random() * 120); // 120-240 ticks
+        const duration = Math.floor(120 + Math.random() * 120); // 2-4 hours
         db.insert(agentStates)
           .values({
             agent_id: agent.id,
             type: 'drunk',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration,
             source: 'action:drinking',
             metadata: null,
@@ -345,8 +351,8 @@ function evaluateTriggers(
         activeTypes.add('drunk');
         // Track for alcoholism escalation
         const history = drunkHistory.get(agent.id) ?? [];
-        history.push(currentTick);
-        const cutoff = currentTick - 10080; // 7 days
+        history.push(nowMinutes);
+        const cutoff = nowMinutes - 10080; // 7 days
         drunkHistory.set(agent.id, history.filter((t) => t > cutoff));
       }
     }
@@ -355,9 +361,9 @@ function evaluateTriggers(
   // ── Sick ──────────────────────────────────────────────────────────────────
   if (!activeTypes.has('sick')) {
     // Check immunity cooldown — recently recovered agents can't get sick again immediately
-    const lastRecovery = sickRecoveredAtTick.get(agent.id) ?? -9999;
+    const lastRecovery = sickRecoveredAt.get(agent.id) ?? -9999;
     const immunityPeriod = 2880; // ~2 days of immunity after recovery
-    if (currentTick - lastRecovery > immunityPeriod) {
+    if (nowMinutes - lastRecovery > immunityPeriod) {
       const weatherMult = weather === 'rainy' || weather === 'stormy' ? 2 : 1;
       const seasonMult = season === 'winter' ? 1.5 : 1;
       const energyMult = agentNeeds && agentNeeds.energy < 25 ? 1.5 : 1;
@@ -370,7 +376,7 @@ function evaluateTriggers(
             agent_id: agent.id,
             type: 'sick',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration,
             source: 'random:environment',
             metadata: null,
@@ -391,12 +397,12 @@ function evaluateTriggers(
   // ── Alcoholic ────────────────────────────────────────────────────────────
   if (!activeTypes.has('alcoholic') && personality.impulsiveness > 50) {
     const history = drunkHistory.get(agent.id) ?? [];
-    const recentWindow = currentTick - 10080; // 7 days
+    const recentWindow = nowMinutes - 10080; // 7 days
     const recentDrunkCount = history.filter((t) => t > recentWindow).length;
 
     if (recentDrunkCount >= 3) {
-      const recoveredAt = alcoholRecoveredAtTick.get(agent.id) ?? -9999;
-      const inRelapseWindow = currentTick - recoveredAt < 720;
+      const recoveredAt = alcoholRecoveredAt.get(agent.id) ?? -9999;
+      const inRelapseWindow = nowMinutes - recoveredAt < 720;
 
       if (inRelapseWindow) {
         // Within relapse window: tavern visit has chance of re-triggering
@@ -407,7 +413,7 @@ function evaluateTriggers(
             agent_id: agent.id,
             type: 'alcoholic',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration: 999999,
             source: `relapse:drunk_count_${recentDrunkCount}`,
             metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
@@ -428,7 +434,7 @@ function evaluateTriggers(
           agent_id: agent.id,
           type: 'alcoholic',
           severity,
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration: 999999,
           source: `trigger:drunk_count_${recentDrunkCount}`,
           metadata: { drunkCount: recentDrunkCount, stage: recentDrunkCount >= 5 ? 3 : 2 },
@@ -457,15 +463,15 @@ function evaluateTriggers(
       );
       if (!hasFood) {
         if (!brokeSince.has(agent.id)) {
-          brokeSince.set(agent.id, currentTick);
+          brokeSince.set(agent.id, nowMinutes);
         }
-        const duration = currentTick - brokeSince.get(agent.id)!;
+        const duration = nowMinutes - brokeSince.get(agent.id)!;
         if (duration > 4320) { // 3 days
           db.insert(agentStates).values({
             agent_id: agent.id,
             type: 'in_debt',
             severity: 0.5,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration: 999999,
             source: 'trigger:broke_3_days',
             metadata: { beggingFailCount: 0, desperationUnlocked: false },
@@ -516,7 +522,7 @@ function evaluateTriggers(
             agent_id: agent.id,
             type: 'heartbroken',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration: neuroDuration,
             target_agent_id: targetId,
             source: 'event:romance_drop',
@@ -571,7 +577,7 @@ function evaluateTriggers(
           agent_id: agent.id,
           type: 'angry',
           severity,
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration,
           target_agent_id: targetId ?? null,
           source: 'event:bad_conversation',
@@ -599,15 +605,15 @@ function evaluateTriggers(
       agentNeeds.fun,
     ];
     const lowNeedsCount = needValues.filter((v) => v < 35).length;
-    const lastRemoved = stressRemovedAtTick.get(agent.id) ?? -9999;
-    if (lowNeedsCount >= 3 && currentTick - lastRemoved > 120) { // 2 game hours hysteresis to prevent oscillation
+    const lastRemoved = stressRemovedAt.get(agent.id) ?? -9999;
+    if (lowNeedsCount >= 3 && nowMinutes - lastRemoved > 120) { // 2 game hours hysteresis to prevent oscillation
       const severity = clamp(0.3 + (lowNeedsCount / 5) * 0.5, 0.3, 0.8);
       db.insert(agentStates)
         .values({
           agent_id: agent.id,
           type: 'stressed',
           severity,
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration: 999999, // conditional exit
           source: 'needs:multiple_low',
           metadata: { lowNeedsCount },
@@ -649,7 +655,7 @@ function evaluateTriggers(
           agent_id: agent.id,
           type: 'euphoric',
           severity,
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration,
           source: 'event:positive_conversation',
           metadata: null,
@@ -694,7 +700,7 @@ function evaluateTriggers(
             agent_id: agent.id,
             type: 'grieving',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration,
             target_agent_id: removedId,
             source: 'event:agent_removed',
@@ -732,7 +738,7 @@ function evaluateTriggers(
             agent_id: agent.id,
             type: 'infatuated',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration: 999999, // conditional exit
             target_agent_id: targetId,
             source: 'relationship:high_romance',
@@ -798,7 +804,7 @@ function evaluateTriggers(
             agent_id: agent.id,
             type: 'jealous',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration: 999999,
             target_agent_id: rivalId,
             source: 'trigger:rival_romance',
@@ -821,9 +827,9 @@ function evaluateTriggers(
   if (!activeTypes.has('lonely') && agentNeeds) {
     if (agentNeeds.social < 20) {
       if (!lowSocialSince.has(agent.id)) {
-        lowSocialSince.set(agent.id, currentTick);
+        lowSocialSince.set(agent.id, nowMinutes);
       }
-      const socialDuration = currentTick - lowSocialSince.get(agent.id)!;
+      const socialDuration = nowMinutes - lowSocialSince.get(agent.id)!;
       if (socialDuration >= 60) {
         const sinceWindow = Date.now() - 3600000; // last 60 minutes real-time
         const positiveConvoRows = db
@@ -848,7 +854,7 @@ function evaluateTriggers(
               agent_id: agent.id,
               type: 'lonely',
               severity,
-              started_at: currentTick,
+              started_at: nowMinutes,
               duration: 999999, // conditional exit
               source: 'needs:low_social',
               metadata: null,
@@ -877,24 +883,24 @@ function evaluateTriggers(
     let shouldDepress = false;
     let depressSource = '';
 
-    // Lonely for > 3 days (4320 ticks)
+    // Lonely for > 3 days (4320 minutes)
     const lonelyState = db
       .select()
       .from(agentStates)
       .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'lonely')))
       .get();
-    if (lonelyState && currentTick - lonelyState.started_at > 4320) {
+    if (lonelyState && nowMinutes - lonelyState.started_at > 4320) {
       shouldDepress = true;
       depressSource = 'cascade:lonely';
     }
 
-    // Mood < 15 for > 2 days (2880 ticks) — requires sustained low mood
+    // Mood < 15 for > 2 days (2880 minutes) — requires sustained low mood
     if (!shouldDepress && agentNeeds) {
       if (agentNeeds.mood < 15) {
         if (!lowMoodSince.has(agent.id)) {
-          lowMoodSince.set(agent.id, currentTick);
+          lowMoodSince.set(agent.id, nowMinutes);
         }
-        const duration = currentTick - lowMoodSince.get(agent.id)!;
+        const duration = nowMinutes - lowMoodSince.get(agent.id)!;
         if (duration >= 2880) {
           shouldDepress = true;
           depressSource = 'trigger:low_mood';
@@ -913,7 +919,7 @@ function evaluateTriggers(
     // Neuroticism > 60 doubles trigger probability
     if (!shouldDepress && personality.neuroticism > 60) {
       // Re-evaluate with doubled probability for lonely/low_mood sub-conditions
-      if (lonelyState && currentTick - lonelyState.started_at > 2160) {
+      if (lonelyState && nowMinutes - lonelyState.started_at > 2160) {
         shouldDepress = Math.random() < 0.5;
         depressSource = 'cascade:lonely_neurotic';
       }
@@ -926,7 +932,7 @@ function evaluateTriggers(
           agent_id: agent.id,
           type: 'depressed',
           severity,
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration: 999999, // conditional exit
           source: depressSource,
           metadata: null,
@@ -964,7 +970,7 @@ function evaluateTriggers(
           agent_id: agent.id,
           type: 'confident',
           severity,
-          started_at: currentTick,
+          started_at: nowMinutes,
           duration,
           source: 'event:positive_conversations',
           metadata: null,
@@ -987,7 +993,7 @@ function checkConditionalExits(
   stateRows: Array<typeof agentStates.$inferSelect>,
   agentNeeds: typeof needsTable.$inferSelect | undefined,
   agent: typeof agents.$inferSelect,
-  currentTick: number,
+  nowMinutes: number,
 ) {
   for (const state of stateRows) {
     if (!STATE_DEFINITIONS[state.type as StateType]?.conditionalExit) continue;
@@ -996,7 +1002,7 @@ function checkConditionalExits(
     // the very next tick. That silently no-op'd every cascade rule that grants
     // `stressed` (arrest, blackmail, humiliation, ...) to an agent whose needs
     // happened to be fine. Give every conditional state a minimum lifetime.
-    if (currentTick - state.started_at < CONDITIONAL_EXIT_GRACE_TICKS) continue;
+    if (nowMinutes - state.started_at < CONDITIONAL_EXIT_GRACE_MINUTES) continue;
 
     let shouldExit = false;
 
@@ -1048,16 +1054,16 @@ function checkConditionalExits(
           shouldExit = true;
           break;
         }
-        // Exit path 2: sustained high mood (mood > 55 for 120+ ticks = natural recovery)
+        // Exit path 2: sustained high mood (mood > 55 for 120+ minutes = natural recovery)
         if (agentNeeds && agentNeeds.mood > 55) {
-          const elapsed = currentTick - state.started_at;
+          const elapsed = nowMinutes - state.started_at;
           if (elapsed > 120) {
             shouldExit = true;
           }
         }
         // Exit path 3: long duration (depression lifts after ~2 game days even without help)
-        const maxDepressedTicks = 2880; // ~2 game days
-        if (currentTick - state.started_at > maxDepressedTicks) {
+        const maxDepressedMinutes = 2880; // ~2 game days
+        if (nowMinutes - state.started_at > maxDepressedMinutes) {
           // OR, not assignment: a plain `=` let this arm overwrite the exit that
           // path 2 had already granted, so past the two-day mark a recovered
           // agent was pushed back into depression 95% of the time and the state
@@ -1071,7 +1077,7 @@ function checkConditionalExits(
         if (!state.target_agent_id) {
           // No love-interest link to evaluate. Pass 1a skips conditional-exit
           // states entirely, so without this fallback the state is permanent.
-          shouldExit = state.started_at + state.duration <= currentTick;
+          shouldExit = state.started_at + state.duration <= nowMinutes;
           break;
         }
         const rel = db
@@ -1129,7 +1135,7 @@ function checkConditionalExits(
           // Jealousy from a source that didn't record the triangle (e.g. a
           // cascade rule). Exiting immediately would delete it the very next
           // tick, so let it run out its duration instead.
-          shouldExit = state.started_at + state.duration <= currentTick;
+          shouldExit = state.started_at + state.duration <= nowMinutes;
           break;
         }
 
@@ -1162,7 +1168,7 @@ function checkConditionalExits(
         }
         // Safety valve: jealousy fades after ~1.5 game days even if romance is still high
         if (!shouldExit) {
-          const elapsed = currentTick - state.started_at;
+          const elapsed = nowMinutes - state.started_at;
           if (elapsed > 2160 && Math.random() < 0.03) shouldExit = true;
         }
         break;
@@ -1182,10 +1188,10 @@ function checkConditionalExits(
 
     if (shouldExit) {
       if (state.type === 'stressed') {
-        stressRemovedAtTick.set(agent.id, currentTick);
+        stressRemovedAt.set(agent.id, nowMinutes);
       }
       if (state.type === 'alcoholic') {
-        alcoholRecoveredAtTick.set(agent.id, currentTick);
+        alcoholRecoveredAt.set(agent.id, nowMinutes);
         logActivity({
           type: 'state_lost',
           initiator: agent.id,
@@ -1267,7 +1273,7 @@ function collectExpiryCascades(
 
 function applyCascades(
   cascades: CascadeEntry[],
-  currentTick: number,
+  nowMinutes: number,
   depth: number,
   maxDepth: number,
 ) {
@@ -1315,7 +1321,7 @@ function applyCascades(
         agent_id: cascade.agentId,
         type: cascade.stateType,
         severity,
-        started_at: currentTick,
+        started_at: nowMinutes,
         duration,
         target_agent_id: cascade.targetAgentId ?? null,
         source: cascade.source,
@@ -1341,7 +1347,7 @@ function applyCascades(
   }
 
   if (nextCascades.length > 0) {
-    applyCascades(nextCascades, currentTick, depth + 1, maxDepth);
+    applyCascades(nextCascades, nowMinutes, depth + 1, maxDepth);
   }
 }
 
@@ -1351,7 +1357,10 @@ function processStateEffects(
   agent: typeof agents.$inferSelect,
   states: Array<typeof agentStates.$inferSelect>,
   allAgents: Array<typeof agents.$inferSelect>,
+  nowMinutes: number,
+  /** TICK clock and speed, for the tick-stamped memory stream only. */
   currentTick: number,
+  tickSpeed: number,
 ) {
   const personality = agent.personality as PersonalityProfile | null;
 
@@ -1393,8 +1402,8 @@ function processStateEffects(
 
         for (const other of nearbyAgents) {
           // Skip agents with immunity (recently recovered)
-          const otherRecovery = sickRecoveredAtTick.get(other.id) ?? -9999;
-          if (currentTick - otherRecovery <= 2880) continue;
+          const otherRecovery = sickRecoveredAt.get(other.id) ?? -9999;
+          if (nowMinutes - otherRecovery <= 2880) continue;
 
           const coLocKey = `coloc_${other.id}`;
           meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + 1;
@@ -1418,7 +1427,7 @@ function processStateEffects(
                   agent_id: other.id,
                   type: 'sick',
                   severity,
-                  started_at: currentTick,
+                  started_at: nowMinutes,
                   duration,
                   source: `cascade:sick_from_${agent.id}`,
                   metadata: null,
@@ -1450,14 +1459,14 @@ function processStateEffects(
               .where(eq(agentStates.id, state.id))
               .run();
 
-            // Consume 1 medicine every 120 ticks (~2 minutes)
+            // Consume 1 medicine every 120 game minutes
             const lastMedUsed = (meta.lastMedicineUsed as number | undefined) ?? 0;
-            if (currentTick - lastMedUsed > 120) {
+            if (nowMinutes - lastMedUsed > 120) {
               const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
                 i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
               ).filter((i: any) => i.quantity > 0);
               db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, healerNearby.id)).run();
-              meta.lastMedicineUsed = currentTick;
+              meta.lastMedicineUsed = nowMinutes;
 
               logActivity({
                 type: 'system',
@@ -1468,7 +1477,7 @@ function processStateEffects(
           } else {
             // No medicine: slower healing (original rate)
             const newSeverity = Math.max(0.1, state.severity - 0.01);
-            const remainingDuration = (state.started_at + state.duration) - currentTick;
+            const remainingDuration = (state.started_at + state.duration) - nowMinutes;
             const reducedDuration = Math.max(1, state.duration - Math.floor(remainingDuration * 0.02));
             db.update(agentStates)
               .set({ severity: newSeverity, duration: reducedDuration })
@@ -1476,9 +1485,9 @@ function processStateEffects(
               .run();
           }
 
-          // Periodically create a "helped" relationship event (every ~60 ticks)
+          // Periodically create a "helped" relationship event (every ~60 game minutes)
           const lastHealEvent = (meta.lastHealEvent as number | undefined) ?? 0;
-          if (currentTick - lastHealEvent > 60) {
+          if (nowMinutes - lastHealEvent > 60) {
             const [orderedA, orderedB] = agent.id < healerNearby.id
               ? [agent.id, healerNearby.id] : [healerNearby.id, agent.id];
             const isPatientA = orderedA === agent.id;
@@ -1497,7 +1506,7 @@ function processStateEffects(
               processed: false,
               timestamp: Date.now(),
             }).run();
-            meta.lastHealEvent = currentTick;
+            meta.lastHealEvent = nowMinutes;
           }
         }
 
@@ -1509,9 +1518,9 @@ function processStateEffects(
         break;
       }
 
-      // ── Angry: grudge tag after 480 ticks ────────────────────────────────
+      // ── Angry: grudge tag after 480 game minutes ────────────────────────────────
       case 'angry': {
-        const elapsed = currentTick - state.started_at;
+        const elapsed = nowMinutes - state.started_at;
         if (elapsed > 480 && state.target_agent_id != null) {
           const rel = db
             .select()
@@ -1668,7 +1677,7 @@ function processStateEffects(
             agent_id: agent.id,
             type: 'angry',
             severity,
-            started_at: currentTick,
+            started_at: nowMinutes,
             duration,
             target_agent_id: targetId ?? null,
             source: 'cascade:confident_vanity',
@@ -1685,7 +1694,10 @@ function processStateEffects(
       case 'hungover': {
         if (state.metadata?.regretProcessed) break;
 
-        // Find memories created while agent was drunk (around when this state started)
+        // Find memories created while agent was drunk (around when this state started).
+        // Memories are tick-stamped and the state is not, so carry the 300-minute
+        // lookback over to ticks at the current speed.
+        const lookbackTicks = (nowMinutes - state.started_at + 300) / (tickSpeed > 0 ? tickSpeed : 1);
         const recentConvoMemories = db
           .select()
           .from(memories)
@@ -1693,7 +1705,7 @@ function processStateEffects(
             and(
               eq(memories.agent_id, agent.id),
               eq(memories.type, 'conversation'),
-              gt(memories.created_at, state.started_at - 300),
+              gt(memories.created_at, currentTick - lookbackTicks),
             ),
           )
           .all();
@@ -1923,7 +1935,7 @@ function processStateEffects(
         const rivalId = meta.rivalId as number | undefined;
 
         if (rivalId && personality && personality.aggression > 60) {
-          const elapsed = currentTick - state.started_at;
+          const elapsed = nowMinutes - state.started_at;
           if (elapsed > 480) {
             const rel = db.select().from(relationships).where(
               or(
@@ -1946,7 +1958,7 @@ function processStateEffects(
 
         // Rumor about rival if low morality + dishonest
         if (rivalId && personality && personality.morality < 40 && personality.honesty < 30) {
-          const elapsed = currentTick - state.started_at;
+          const elapsed = nowMinutes - state.started_at;
           if (elapsed > 720 && Math.random() < 0.005) {
             // Name the love interest the jealousy is about, so the rumor says
             // something; without one it stays the generic "rumors about X".
@@ -2076,7 +2088,7 @@ function processStateEffects(
           const opponent = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
           const pairKey = [agent.id, opponent.id].sort().join('-');
           const lastGamble = gamblingCooldowns.get(pairKey) ?? 0;
-          if (currentTick - lastGamble >= 120) {
+          if (nowMinutes - lastGamble >= 120) {
             const opponentPersonality = opponent.personality as PersonalityProfile | null;
             const betAmount = Math.floor(agentEcon.money * (0.1 + Math.random() * 0.2));
 
@@ -2133,13 +2145,13 @@ function processStateEffects(
                 templateData: { description: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}` },
               });
               simEvents.emit('economy:gambling', { agentId: agent.id, amount: betAmount, won: agentWins, opponentName: opponent.name });
-              gamblingCooldowns.set(pairKey, currentTick);
+              gamblingCooldowns.set(pairKey, nowMinutes);
 
               // Track gambling frequency for addiction detection
               const gambHistory = gamblingHistory.get(agent.id) ?? [];
-              gambHistory.push(currentTick);
-              // Keep only last 3 game days (4320 ticks)
-              const recentGambles = gambHistory.filter(t => currentTick - t < 4320);
+              gambHistory.push(nowMinutes);
+              // Keep only last 3 game days (4320 minutes)
+              const recentGambles = gambHistory.filter(t => nowMinutes - t < 4320);
               gamblingHistory.set(agent.id, recentGambles);
 
               // Trigger gambling_addict state if 5+ gambles in 3 days
@@ -2151,7 +2163,7 @@ function processStateEffects(
                   agent_id: agent.id,
                   type: 'gambling_addict',
                   severity: 0.5,
-                  started_at: currentTick,
+                  started_at: nowMinutes,
                   duration: 999999,
                   source: 'gambling:frequency',
                   metadata: null,

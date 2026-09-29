@@ -1126,9 +1126,7 @@ export function tick(world: WorldRow): void {
   const worldRow = db.select({ weather: worldState.weather }).from(worldState).limit(1).get();
   const currentWeather = worldRow?.weather ?? 'sunny';
 
-  const totalTicks = world.time.totalTicks;
-  // Action stamps are game minutes (see isActionComplete); agent-state stamps
-  // (`agentStates.started_at`) are still ticks.
+  // Action and agent-state stamps are game minutes (see isActionComplete).
   const nowMinutes = gameMinutes(world.time);
 
   for (const agent of activeAgents) {
@@ -1915,7 +1913,7 @@ export function tick(world: WorldRow): void {
         agent_id: other.id,
         type: 'arrested',
         severity: Math.min(1, sentence / 2880),
-        started_at: totalTicks,
+        started_at: nowMinutes,
         duration: sentence,
         target_agent_id: agent.id,
         source: 'arrest',

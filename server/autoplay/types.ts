@@ -6,6 +6,13 @@ export interface AnalysisWindow {
   startTick: number;
   endTick: number;
   /**
+   * The same window on the GAME-MINUTE clock, for game-minute columns
+   * (`agent_states.started_at`). The start is estimated with the current
+   * tick_speed, so it is approximate across a speed change.
+   */
+  startMinutes: number;
+  endMinutes: number;
+  /**
    * Wall-clock (epoch ms) at which the previous analysis window ran. Several
    * tables (conversations.started_at, relationship_events.timestamp,
    * economy_transactions.timestamp) store Date.now() rather than tick numbers,

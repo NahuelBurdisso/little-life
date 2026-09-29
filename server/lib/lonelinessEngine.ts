@@ -2,7 +2,7 @@ import { db } from '../db';
 import { agents, needs, relationships, agentStates } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
-import { getEffectivePersonality } from './states';
+import { getEffectivePersonality, stateClockNow } from './states';
 
 // ─── Loneliness Engine ────────────────────────────────────────────────────────
 // Tracks chronic low social need. When social stays < 20 for extended periods,
@@ -75,9 +75,9 @@ export function lonelinessCheck(totalTicks: number): void {
           agent_id: agent.id,
           type: 'lonely',
           severity: Math.min(1.0, (LONELY_THRESHOLD - agentNeeds.social) / LONELY_THRESHOLD),
-          // agentStates.started_at is tick-valued: states.ts expires with
-          // `started_at + duration <= currentTick`.
-          started_at: totalTicks,
+          // agentStates.started_at is in game minutes: states.ts expires with
+          // `started_at + duration <= nowMinutes`.
+          started_at: stateClockNow(),
           duration: 2880, // 2 game days
           source: 'chronic_low_social',
           metadata: null,

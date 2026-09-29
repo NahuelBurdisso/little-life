@@ -9,7 +9,7 @@ import type { EngagementSnapshot, AnalysisWindow } from '../types';
 export class EngagementCollector {
   collect(window: AnalysisWindow): EngagementSnapshot {
     // startTick bounds tick-valued columns; startMs bounds Date.now()-valued ones.
-    const { startTick, startMs } = window;
+    const { startTick, startMs, startMinutes } = window;
 
     // ── Action distribution (current snapshot) ────────────────────────────
     const agentRows = db.select({
@@ -144,7 +144,7 @@ export class EngagementCollector {
     let stateTransitions = 0;
     try {
       const newStates = db.select({ id: agentStates.id }).from(agentStates).where(
-        gte(agentStates.started_at, startTick)
+        gte(agentStates.started_at, startMinutes) // state clock: game minutes
       ).all();
       stateTransitions = newStates.length;
     } catch { /* */ }

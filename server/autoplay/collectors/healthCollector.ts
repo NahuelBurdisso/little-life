@@ -48,7 +48,7 @@ export class HealthCollector {
   }
 
   collect(window: AnalysisWindow): HealthSnapshot {
-    const { endTick } = window;
+    const { endMinutes } = window;
 
     // ── Needs distribution ────────────────────────────────────────────────
     const allNeeds = db.select({
@@ -132,7 +132,7 @@ export class HealthCollector {
     for (const s of allStates) {
       stateDistribution[s.type] = (stateDistribution[s.type] || 0) + 1;
 
-      const elapsed = endTick - s.started_at;
+      const elapsed = endMinutes - s.started_at; // state clock: game minutes
       // Only state types with a known expected duration can be judged stuck.
       // Falling back to s.duration would flag every conditional-exit state
       // (duration 0) as stuck on its very first tick.

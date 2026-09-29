@@ -2,6 +2,7 @@ import { db } from '../db';
 import { agents, worldEvents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
+import { gameMinutes } from '../lib/gameClock';
 
 import { PerfCollector } from './collectors/perfCollector';
 import { EngagementCollector } from './collectors/engagementCollector';
@@ -135,6 +136,8 @@ class AutoPlayer {
     const windowSize = CONFIG.AUTOPLAY.WINDOW_SIZE;
     const endTick = time.totalTicks;
     const startTick = Math.max(0, endTick - windowSize);
+    const endMinutes = gameMinutes(time);
+    const startMinutes = endMinutes - (endTick - startTick) * (worldRow.tick_speed ?? 1);
     const startMs = this.lastAnalyzeMs;
     const nowMs = Date.now();
 
@@ -152,6 +155,8 @@ class AutoPlayer {
       const window: AnalysisWindow = {
         startTick,
         endTick,
+        startMinutes,
+        endMinutes,
         startMs,
         gameHour: time.hour,
         dayPhase: this.computeDayPhase(time.hour),

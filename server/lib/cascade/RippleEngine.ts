@@ -9,6 +9,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { createFact, getAgentName, jealousRumorContext, type FactContext } from '../gossip';
 import { describeWitnessedAct } from './WitnessAmplifier';
 import { logActivity } from '../activityLogger';
+import { stateClockNow } from '../states';
 import crypto from 'crypto';
 
 interface QueueItem {
@@ -701,7 +702,8 @@ export class RippleEngine {
           agent_id: agentId,
           type: fx.createState,
           severity: 0.5,
-          started_at: currentTick,
+          // State clock is game minutes; `currentTick` here is the cascade's tick.
+          started_at: stateClockNow(),
           duration: 120,
           target_agent_id: aboutId,
           source: `cascade:${rule.id}`,
