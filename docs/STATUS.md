@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 229 files / 2603 tests passing (autonomous improvement session, waves 1–5 merged).
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 252 files / 2845 tests passing (autonomous improvement session, waves 1–6 merged).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -244,6 +244,29 @@ Player-facing:
   Audio only: rain/wind/thunder synced to lightning, birds/crickets, forge, tavern lute, crowds, bells at
   7/12/18, story sounds by `metadata.beat`, god-power sparkles, alert chimes; speaker control in
   SpeedControls, starts after the first click).
+- **Wave 6:** **Town Journal** (📖 TopBar / J: Brewing, Stories, Timeline, Paper, Inbox, Talks,
+  🏆 Challenges; feed back to All/Highlights + 🔥 chip) and **"Previously on…" recap**
+  (`server/lib/recap.ts`, `RecapCard.tsx`, after ≥ 6 game h away or a night skip); **population flow**
+  (`server/lib/residents.ts` createResident/retireResident, `life:arrived|departed|death` events;
+  `populationFlow.ts`: residents think of leaving for a day — Brewing `leaving` — then go unless
+  helped; newcomers fill empty homes and missing trades; newlyweds move in together; rules
+  `populationFlow`/`populationTarget`; cap 32 everywhere); **spotlight LLM budget**
+  (`server/lib/spotlight.ts`, pure `conversationTier.ts` `chooseTier`, `useSpotlight`; on-screen chats
+  with an LLM tier at 4x/32 residents 37% → 65%, `scripts/spotlight-sim.ts`); **challenges +
+  achievements** (`server/lib/challenges/`, 9 kinds, state-checked hourly, stored in
+  `rule_overrides.challenges`; achievements in localStorage; celebrate FX + fanfare); **correctness**
+  (gossip/encounter/crowd/arrest rolls per game minute; whisper outcomes; getPair throttled; health
+  banner on the loading screen; needs writes prepared); **visual polish** (door paths routed around
+  buildings, capitalised place names, responsive LocationPanel, sprite hair/cap/sleeve fixes, audio
+  voice budget); **M** mutes; **README**; **30-day soak** (`--agents N`, `--json`, story-health table:
+  `scripts/soakHealth.ts`) + fixes: proposals answered by template chats (they never resolved),
+  observer-only goal triggers skipped.
+- **30-day soak findings (LLM off, 13 and 32 residents, before the story-health pass):** no collapse
+  (money ratio 1.03–1.09, no deaths), no saturation (≤ 22% friend pairs), but **stagnation**: 4–5 of 13
+  beat types (gossip ~88%), mood 71 → 91 flat, secrets dry up after day ~14, 0 goals completed,
+  30–70% residents invisible some days, a serial-arrest loop on seduction facts (`decisions.ts:~2343`,
+  `gossip.ts:~319`). Template chats emit no drama beats (`conversations.ts` `processTimedOutEntry`).
+  A story-health pass is in progress. Tick p95 433 ms at 32 residents (interval 1000 ms).
 - Open from wave 5: long bells can starve other voices under stress (`synth.ts:27`); Priya's back-view
   head reads as skin (`agent-sheets.lua:170`); cap bills don't point forward in profile; in-flight
   embedding requests not aborted on world swap (`EmbeddingBatcher.ts:217`); home names start with a
