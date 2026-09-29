@@ -55,6 +55,15 @@ body {
 .toast-in { animation: toast-in 160ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .toast-in { animation: none; } }
 
+/* Hottest rows of the feed's Brewing tab (src/components/ui/ActivityFeed.tsx):
+   the heat bar breathes so a resident about to snap catches the eye. */
+@keyframes brew-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.brew-pulse { animation: brew-pulse 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .brew-pulse { animation: none; } }
+
 /* Skeleton placeholder shimmer (src/components/ui/Skeleton.tsx). */
 @keyframes ui-shimmer {
   0% { background-position: 200% 0; }

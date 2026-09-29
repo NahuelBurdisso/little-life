@@ -4,6 +4,7 @@ import { useWorldState } from "../../hooks/useWorldState";
 import { timeAgo } from "../../lib/formatters";
 import { renderMessage, type ActivityEntry } from "../../lib/activityMessage";
 import type { ArcKind, StoryArc } from "../../../server/lib/chronicle";
+import type { BrewingItem, BrewingKind } from "../../../server/lib/brewing";
 
 // --- Event Categories ---
 
@@ -34,6 +35,26 @@ const ARC_KINDS: Record<ArcKind, { icon: string; color: string }> = {
   downfall:       { icon: '▼', color: '#c07840' },
   scandal:        { icon: '◉', color: '#c8a84b' },
 };
+
+/** Presentation for the Brewing tab: what kind of trouble a row is. */
+const BREWING_KINDS: Record<BrewingKind, { icon: string; label: string }> = {
+  snap:          { icon: '🔥', label: 'About to snap' },
+  secret:        { icon: '🤫', label: 'Secret spreading' },
+  confrontation: { icon: '⚔', label: 'Confrontation queued' },
+  nudge:         { icon: '✦', label: 'Your nudge is waiting' },
+  goal:          { icon: '▶', label: 'Goal within reach' },
+  relationship:  { icon: '♥', label: 'About to change' },
+};
+
+/**
+ * Heat -> colour, on the feed's own warm ramp (ui-gold -> the goal orange -> the
+ * drama red) so a hot row reads as the same "danger" the Drama chip already means.
+ */
+function heatColor(heat: number): string {
+  if (heat >= 0.85) return '#a03028';
+  if (heat >= 0.6) return '#c07840';
+  return '#c8a84b';
+}
 
 function getCategory(type: string): EventCategory {
   if (type === 'conversation_ended') return 'conversation';
@@ -82,9 +103,9 @@ interface ActivityFeedProps {
 }
 
 export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
-  const { activities, highlights, arcs } = useActivityFeed();
+  const { activities, highlights, arcs, brewing } = useActivityFeed();
   const { world } = useWorldState();
-  const [tab, setTab] = useState<'all' | 'highlights' | 'stories'>('all');
+  const [tab, setTab] = useState<'all' | 'highlights' | 'stories' | 'brewing'>('all');
   const [filters, setFilters] = useState<Record<EventCategory, boolean>>({
     conversation: true,
     economy: true,
@@ -253,12 +274,14 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
     tab === 'highlights' ? (highlights as unknown as ActivityEntry[]) : filtered;
 
   const storyArcs = arcs as StoryArc[];
+  const brewingItems = brewing as BrewingItem[];
+  const hotCount = brewingItems.filter(b => b.heat >= 0.7).length;
 
   return (
     <div className="h-full bg-[#1a1814] border-t border-[#3a3028] flex flex-col">
       {/* Tabs */}
       <div className="flex gap-1 px-2 pt-1 shrink-0">
-        {([['all', 'All'], ['highlights', '★ Highlights'], ['stories', '📖 Stories']] as const).map(([key, label]) => (
+        {([['all', 'All'], ['highlights', '★ Highlights'], ['stories', '📖 Stories'], ['brewing', '🔥 Brewing']] as const).map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -271,6 +294,11 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
             }`}
           >
             {label}
+            {/* How many rows are near the boil, so the tab can be noticed while
+                another one is open. */}
+            {key === 'brewing' && hotCount > 0 && (
+              <span className="ml-1 text-ui-warn" aria-label={`${hotCount} hot`}>{hotCount}</span>
+            )}
           </button>
         ))}
       </div>
@@ -305,7 +333,55 @@ export function ActivityFeed({ onSelectAgent }: ActivityFeedProps) {
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
-        {tab === 'stories' ? (
+        {tab === 'brewing' ? (
+          brewingItems.length === 0 ? (
+            <p className="text-ui-muted text-xs">All quiet — nothing is about to boil over.</p>
+          ) : (
+            <div className="space-y-0.5">
+              {brewingItems.map(item => {
+                const { icon, label } = BREWING_KINDS[item.kind];
+                const color = heatColor(item.heat);
+                const pct = Math.round(item.heat * 100);
+                const focusId = item.agentIds[0];
+                const body = (
+                  <>
+                    <span className="shrink-0" title={label}>{icon}</span>
+                    <span className="text-ui-dim flex-1">{item.text}</span>
+                    {/* Heat bar: how close to going off. The hottest pulse. */}
+                    <span
+                      className="shrink-0 inline-block w-12 h-1.5 bg-ui-line self-center"
+                      title={`${label} — heat ${pct}%`}
+                      role="img"
+                      aria-label={`Heat ${pct}%`}
+                    >
+                      <span
+                        className={`block h-full ${item.heat >= 0.85 ? 'brew-pulse' : ''}`}
+                        style={{ width: `${pct}%`, backgroundColor: color }}
+                      />
+                    </span>
+                  </>
+                );
+                const rowClass = 'w-full text-left text-[11px] flex gap-1.5 border-l-2 pl-1.5 py-0.5';
+                return onSelectAgent && focusId != null ? (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectAgent(String(focusId))}
+                    className={`${rowClass} cursor-pointer hover:bg-ui-hover focus-visible:bg-ui-hover transition-colors`}
+                    style={{ borderLeftColor: color }}
+                    aria-label={`${item.text} — focus agent`}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div key={item.id} className={rowClass} style={{ borderLeftColor: color }}>
+                    {body}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : tab === 'stories' ? (
           storyArcs.length === 0 ? (
             <p className="text-[#504838] text-xs">No stories yet — the town needs more history.</p>
           ) : (
