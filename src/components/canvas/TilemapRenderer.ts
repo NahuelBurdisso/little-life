@@ -4,6 +4,7 @@ import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getTerrainTexture } from "./textures";
 import { loadStrip } from "./stripAtlas";
+import { CROP_STAGE_COUNT, CROP_TILE_SIZE, CROP_URL, cropCell } from "./crops";
 import { PROPS_URL, PROP_FRAME_COUNT, propFrame, type PropSpriteKind } from "./propFrames";
 import {
   type BlobRaster, type BlobStyle, type SoftBlobStyle,
@@ -97,9 +98,7 @@ const onChecker = (cx: number, cy: number) => ((cx + cy) & 1) === 0;
 
 /** Map zone ids to terrain texture keys. Falls back to colored fill when unmapped. */
 const ZONE_TEXTURE: Record<string, string> = {
-  // Farm
-  crops_north: 'crops_summer',
-  crops_south: 'crops_summer',
+  // Farm crops are not here: their tile follows the season (see `setCropSeason`).
   // Park
   riverside: 'water',
   grove_west: 'grove',
@@ -158,6 +157,13 @@ export class TilemapRenderer {
   private roadContainer: PIXI.Container;
   private doorPathContainer: PIXI.Container;
   private openAreaContainer: PIXI.Container;
+
+  /** Tile sprites of the farm's crop fields, retextured whenever the season's stage changes. */
+  private cropSprites: PIXI.Sprite[] = [];
+  private cropTextures: PIXI.Texture[] | null = null;
+  private cropTexturesRequested = false;
+  /** Cell of the crop strip on show; summer until the world says otherwise. */
+  private cropCellIdx = cropCell('summer', 14);
 
   private mapWidth = 0;
   private mapHeight = 0;
@@ -226,6 +232,7 @@ export class TilemapRenderer {
     // Detach first: `destroy()` splices the child out of `children`, so
     // iterating the live array skips every second entry and leaks it.
     for (const child of this.openAreaContainer.removeChildren()) child.destroy();
+    this.cropSprites = [];
     const myGeneration = ++this.zoneGeneration;
 
     if (!Array.isArray(locations)) return;
@@ -249,6 +256,11 @@ export class TilemapRenderer {
 
       for (const zone of zones) {
         if (!zone.tiles || zone.tiles.length === 0) continue;
+
+        if (loc.type === 'farm' && zone.id.startsWith('crops_')) {
+          this.addCropField(pos, zone, zoneAlpha);
+          continue;
+        }
 
         const textureKey = ZONE_TEXTURE[zone.id];
         if (textureKey) {
@@ -300,6 +312,62 @@ export class TilemapRenderer {
         }
       }
     }
+  }
+
+  /**
+   * One crop field: a flat colour first (what shows until the strip loads, or forever if it
+   * fails), then a tile sprite per zone tile that `applyCrops` textures for the current season.
+   */
+  private addCropField(pos: { x: number; y: number }, zone: { tiles: [number, number][]; color: number }, alpha: number): void {
+    const fallback = new PIXI.Graphics();
+    const group = new PIXI.Container();
+    for (const [tx, ty] of zone.tiles) {
+      const x = pos.x + tx * TILE_SIZE;
+      const y = pos.y + ty * TILE_SIZE;
+      fallback.rect(x, y, TILE_SIZE, TILE_SIZE).fill({ color: zone.color, alpha });
+      const sprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+      sprite.position.set(x, y);
+      sprite.width = TILE_SIZE;
+      sprite.height = TILE_SIZE;
+      sprite.visible = false;
+      group.addChild(sprite);
+      this.cropSprites.push(sprite);
+    }
+    this.openAreaContainer.addChild(fallback);
+    this.openAreaContainer.addChild(group);
+    this.ensureCropTextures();
+    this.applyCrops();
+  }
+
+  private ensureCropTextures(): void {
+    if (this.cropTextures || this.cropTexturesRequested) return;
+    this.cropTexturesRequested = true;
+    loadStrip(CROP_URL, CROP_STAGE_COUNT, CROP_TILE_SIZE)
+      .then((tex) => { this.cropTextures = tex; this.applyCrops(); })
+      // Allow a retry on the next redraw instead of pinning the flat colour for the session.
+      .catch(() => { this.cropTexturesRequested = false; });
+  }
+
+  private applyCrops(): void {
+    const tex = this.cropTextures?.[this.cropCellIdx];
+    if (!tex) return;
+    for (const sprite of this.cropSprites) {
+      if (sprite.destroyed) continue;
+      sprite.texture = tex;
+      sprite.visible = true;
+    }
+  }
+
+  /**
+   * Point the farm's fields at the season: bare rows and sprouts in spring, green through
+   * summer, gold then stubble in autumn, snow in winter, three stages each. Cheap and
+   * idempotent — it only touches the sprites when the stage actually changes.
+   */
+  setCropSeason(season: unknown, seasonDay?: number | null): void {
+    const cell = cropCell(season, seasonDay);
+    if (cell === this.cropCellIdx) return;
+    this.cropCellIdx = cell;
+    this.applyCrops();
   }
 
   /**

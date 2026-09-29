@@ -13,6 +13,7 @@ import { ParticleEngine } from "./particles/ParticleEngine";
 import { SYSTEM_FACTORIES } from "./systems";
 import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
 import type { ViewRect } from "./systems/view";
+import { seasonDayOf } from "./crops";
 import { useCanvasActivity } from "../../hooks/useCanvasActivity";
 import { onCanvasEvent } from "../../lib/canvasBus";
 import type { ParticleContext } from "./particles/types";
@@ -706,6 +707,11 @@ export const GameCanvas = React.memo(function GameCanvas({
         }
 
         const dayPhase = (worldRef.current as any)?.day_phase ?? 'morning';
+
+        // The farm's crop rows follow the season and how far into it the town is; a
+        // no-op unless the growth stage changed.
+        const clock = (worldRef.current as any)?.time;
+        tilemapRef.current?.setCropSeason(clock?.season, seasonDayOf(clock));
 
         // Synthetic 'chimney' locations — smoke emitters at chimney caps,
         // phase-gated per building type (bakery mornings, homes evenings, ...)
