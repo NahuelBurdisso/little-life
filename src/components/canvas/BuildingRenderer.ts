@@ -225,6 +225,11 @@ interface BuildingEntry {
   /** Whole building shell (base + floor sprite + walls), or the patch for open areas. */
   wallGraphic: PIXI.Container;
   interiorContainer: PIXI.Container | null;
+  /**
+   * Furniture sprites. Separate from `interiorContainer` because that one is shown at
+   * 40% — right for the zone tint rects, but it turned the furniture into ghosts.
+   */
+  furniture: PIXI.Container | null;
   /** Roof drawn over the whole shell; faded out whenever the interior is shown. */
   roof: PIXI.Container | null;
   label: PIXI.Text;
@@ -485,7 +490,9 @@ export class BuildingRenderer {
   private syncInteriorVisibility(): void {
     for (const [id, entry] of this.buildings) {
       if (!entry.interiorContainer) continue;
-      entry.interiorContainer.alpha = this.interiorShown(id) ? 0.4 : 0;
+      const shown = this.interiorShown(id);
+      entry.interiorContainer.alpha = shown ? 0.4 : 0;
+      if (entry.furniture) entry.furniture.visible = shown;
     }
   }
 
@@ -607,6 +614,9 @@ export class BuildingRenderer {
     // ── 8. Interior zones ──────────────────────────────────────────────────────
     const interiorContainer = new PIXI.Container();
     interiorContainer.alpha = 0; // hidden by default (task 3)
+    const furniture = new PIXI.Container();
+    furniture.eventMode = 'none';
+    furniture.visible = false;
     const zones = INTERIOR_ZONES[loc.type] ?? [];
     for (const zone of zones) {
       const zg = new PIXI.Graphics();
@@ -653,13 +663,13 @@ export class BuildingRenderer {
           const py = y + fty * TILE_SIZE;
           getFurnitureTexture(spriteKey)
             ?.then((texture) => {
-              if (interiorContainer.destroyed) return;
+              if (furniture.destroyed) return;
               const sprite = new PIXI.Sprite(texture);
               sprite.x = px;
               sprite.y = py;
               sprite.width = TILE_SIZE;
               sprite.height = TILE_SIZE;
-              interiorContainer.addChild(sprite);
+              furniture.addChild(sprite);
             })
             .catch(() => {
               // No-op — the zone label still names the area.
@@ -688,6 +698,7 @@ export class BuildingRenderer {
     }
 
     this.buildingLayer.addChild(interiorContainer);
+    this.buildingLayer.addChild(furniture);
 
     // ── 9. Roof — above the interior, cut away while the interior is shown ────
     const roof = this.addRoof(loc, palette, doorDef);
@@ -707,6 +718,7 @@ export class BuildingRenderer {
       type: loc.type,
       wallGraphic: shell,
       interiorContainer,
+      furniture,
       roof,
       label,
       position: loc.position,
@@ -1062,6 +1074,7 @@ export class BuildingRenderer {
       type: loc.type,
       wallGraphic: patch,
       interiorContainer: null,
+      furniture: null,
       roof: null,
       label,
       position: loc.position,
@@ -1074,6 +1087,7 @@ export class BuildingRenderer {
     // sprite and the walls; a bare destroy() would orphan all three.
     entry.wallGraphic.destroy({ children: true });
     entry.interiorContainer?.destroy({ children: true, style: true });
+    entry.furniture?.destroy({ children: true });
     entry.label.destroy({ style: true });
   }
 }
