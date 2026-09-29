@@ -1,3 +1,7 @@
+import type { LLMPriority } from '../../ai/llmSemaphore';
+import { isWatched } from '../spotlight';
+import type { ReplanEvent } from './types';
+
 interface QueuedJob {
   run: () => Promise<void>;
   /** Optional dedupe key; see `enqueue`. */
@@ -92,3 +96,21 @@ export class PlanLLMQueue {
 }
 
 export const planLLMQueue = new PlanLLMQueue();
+
+/**
+ * The chat-pool priority of a replan's LLM call, decided when the job runs (so
+ * it sees the spotlight at that moment, not when the event fired).
+ *
+ * A replan is optional polish — the running block and the rest of the day's
+ * plan stay valid without it — and a busy town fires dozens a day (every
+ * pointed conversation, every new state). At 'normal' they queued level with
+ * daily plans and decompositions, the calls that keep agents from idling. So
+ * an ordinary replan of someone nobody is looking at waits at 'low', behind
+ * those and alongside goal reviews. Two kinds keep 'normal': a DRAMATIC event
+ * (ReplanEvaluator: heartbreak, a fight — the day really should change, and
+ * soon), and a resident on the player's screen, whose visible next move is the
+ * whole point of the replan.
+ */
+export function replanPriority(event: Pick<ReplanEvent, 'agentId' | 'isDramatic'>, now: number = Date.now()): LLMPriority {
+  return event.isDramatic || isWatched(event.agentId, now) ? 'normal' : 'low';
+}

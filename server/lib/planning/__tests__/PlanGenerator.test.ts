@@ -21,6 +21,7 @@ import {
 import { gameMinutes, type ClockTime } from '../../gameClock';
 import { PlanGenerator } from '../PlanGenerator';
 import { PlanLLMQueue } from '../PlanLLMQueue';
+import { clearSpotlight, setSpotlight } from '../../spotlight';
 import { PlanExecutor } from '../PlanExecutor';
 import type { DailyPlan, PlanExecutionState } from '../types';
 
@@ -610,6 +611,25 @@ describe('PlanGenerator replan under failure', () => {
     await replanSettled(queue);
     expect(cache.get(agentId)!.blocks.map((b) => b.broad_action)).toEqual(['Breakfast', 'Sulk at home', 'Walk it off', 'Read']);
     expect(retryAt(agentId)).toBeNull();
+  });
+
+  it('asks for an unwatched, non-dramatic replan at low priority and a watched one at normal', async () => {
+    const { cache, queue, gen } = setup();
+    const calm = { ...event, isDramatic: false };
+    clearSpotlight();
+    withActivePlan(cache);
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: REPLAN_OUTPUT }) as never);
+    gen.queueReplan(agentId, calm, 10, gameMinutes(at(10)), 22);
+    await replanSettled(queue);
+    expect(vi.mocked(callOllamaChat).mock.calls.at(-1)![0]).toMatchObject({ purpose: 'plan.revise', priority: 'low' });
+
+    setSpotlight([agentId]);
+    withActivePlan(cache);
+    vi.mocked(callOllamaChat).mockImplementationOnce(async () => ({ text: REPLAN_OUTPUT }) as never);
+    gen.queueReplan(agentId, calm, 10, gameMinutes(at(10)), 22);
+    await replanSettled(queue);
+    expect(vi.mocked(callOllamaChat).mock.calls.at(-1)![0]).toMatchObject({ purpose: 'plan.revise', priority: 'normal' });
+    clearSpotlight();
   });
 
   it('accepts a single-block evening replan', async () => {

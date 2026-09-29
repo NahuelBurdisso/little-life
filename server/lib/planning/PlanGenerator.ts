@@ -7,6 +7,7 @@ import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
 import { buildDailyPlanPrompt, buildReplanPrompt, type PlanPrompt } from './planPrompts';
 import { parsePlanBlocks } from './planParser';
+import { replanPriority } from './PlanLLMQueue';
 import type { DailyPlan, PlanBlock, PlanExecutionState, ReplanEvent } from './types';
 import { logActivity } from '../activityLogger';
 import { simEvents } from '../simEvents';
@@ -626,7 +627,8 @@ export class PlanGenerator {
         purpose: 'plan.revise',
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
-        priority: 'normal',
+        // Unwatched, non-dramatic replans wait behind daily plans (PlanLLMQueue).
+        priority: replanPriority({ agentId, isDramatic: event.isDramatic }),
         format: prompt.format,
         options: { temperature: 0.7, num_predict: 600 },
       });
