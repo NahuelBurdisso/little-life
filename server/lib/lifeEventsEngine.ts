@@ -115,7 +115,11 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     description: 'Died of natural causes',
     priority: 4,
     check: (ctx) => {
-      const simAge = ctx.agent.age + Math.floor(ctx.nowMinutes / 1440);
+      // `agents.age` is already the sim age: agingEngine adds a year on each
+      // birthday (a game year = 4 seasons of SEASON_LENGTH_DAYS). This used to add
+      // the absolute game DAY to it as if days were years, so everyone past day
+      // ~50 counted as 80+ and became eligible for old age.
+      const simAge = ctx.agent.age;
       if (simAge < 80) return false;
       return Math.random() < 0.0001 * (simAge - 80);
     },

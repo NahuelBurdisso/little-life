@@ -3,13 +3,16 @@ import { agents, needs } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
+import { CONFIG } from './constants';
 
 // ─── Aging & Birthday Engine ──────────────────────────────────────────────────
-// Agents age as years pass (1 year = 4 seasons = 112 days with 28-day seasons).
+// Agents age as years pass (1 year = 4 seasons of CONFIG.TIME.SEASON_LENGTH_DAYS).
 // Each agent has a birth day-of-year. When that day arrives, they celebrate.
 // Aging slightly increases energy decay rate (older = tires faster).
 
-const DAYS_PER_YEAR = 28 * 4; // 112 days = 4 seasons
+// Derived from the season length tick.ts uses, so a year always spans exactly
+// one spring-to-winter cycle (112 days at the default 28-day seasons).
+const DAYS_PER_YEAR = CONFIG.TIME.SEASON_LENGTH_DAYS * 4;
 
 // Track birth day per agent (assigned on first encounter, based on initial age)
 const birthDays = new Map<number, number>(); // agentId → day-of-year (0-111)
