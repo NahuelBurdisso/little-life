@@ -16,7 +16,7 @@
  * empty model reply (retry once, then the canned fallback).
  */
 
-import { firstName, nameVariants } from './names';
+import { firstName, nameVariants, withoutHonorific } from './names';
 
 export interface DialogueSanitizeOptions {
   /** Full name of the agent speaking. */
@@ -324,6 +324,28 @@ function trimIncompleteTail(text: string): string {
   return text.replace(/[\s,;:\-–—]+$/, '') + '…';
 }
 
+/**
+ * Nobody calls the person in front of them by their full name. The prompt
+ * names the listener in full ("Start talking to Yuki Tanaka"), and Gemma 4
+ * echoes it: "I will count the minutes until the sun sets, Yuki Tanaka."
+ * Plain names shorten to the first name; a titled one to title + surname
+ * ("Dr. Sofia Petrov" → "Dr. Petrov"), which is how the town addresses her.
+ */
+function shortenListenerName(text: string, listenerFull: string): string {
+  const full = listenerFull.trim();
+  const bare = withoutHonorific(full);
+  const parts = bare.split(/\s+/);
+  if (parts.length < 2) return text;
+  const titled = bare !== full;
+  const title = titled ? full.split(/\s+/)[0].replace(/\.?$/, '.') : '';
+  const short = titled ? `${title} ${parts[parts.length - 1]}` : parts[0];
+  let out = text;
+  for (const variant of [...new Set([full, bare])].sort((a, b) => b.length - a.length)) {
+    out = out.replace(new RegExp(`\\b${escapeRegExp(variant)}\\b`, 'g'), short);
+  }
+  return out;
+}
+
 export function sanitizeDialogue(raw: string, opts: DialogueSanitizeOptions): string {
   const speaker = firstName(opts.speakerName);
   const listener = firstName(opts.listenerName);
@@ -338,6 +360,7 @@ export function sanitizeDialogue(raw: string, opts: DialogueSanitizeOptions): st
   text = extractSpokenWords(text, speakerNames);
   text = tidy(text);
   text = fixWrongVocatives(text, speaker, listener, opts.townNames ?? []);
+  text = shortenListenerName(text, opts.listenerName);
   if (opts.truncated) text = trimIncompleteTail(text);
 
   // Nothing speakable left (only punctuation, or a lone letter).

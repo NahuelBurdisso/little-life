@@ -216,3 +216,16 @@ describe('sanitizeDialogue — leading hesitation', () => {
     expect(sanitizeDialogue('...and then he left.', opts)).toBe('...and then he left.');
   });
 });
+
+describe('sanitizeDialogue — listener full name', () => {
+  it('addresses the listener by first name', () => {
+    const opts = { speakerName: 'Rosa Chen', listenerName: 'Yuki Tanaka', townNames: [] };
+    expect(sanitizeDialogue('I will count the minutes, Yuki Tanaka.', opts)).toBe('I will count the minutes, Yuki.');
+    expect(sanitizeDialogue("Is that Yuki Tanaka's scarf?", opts)).toBe("Is that Yuki's scarf?");
+  });
+
+  it('uses title and surname for a titled listener', () => {
+    const opts = { speakerName: 'Omar Hassan', listenerName: 'Dr. Sofia Petrov', townNames: [] };
+    expect(sanitizeDialogue('See you at the clinic, Dr. Sofia Petrov.', opts)).toBe('See you at the clinic, Dr. Petrov.');
+  });
+});
