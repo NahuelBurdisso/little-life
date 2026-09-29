@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gameMinutesToMs } from '../worldClock';
-import { chancePerTick } from '../gameClock';
+import { chancePerTick, eventMinutesLeft } from '../gameClock';
 import { dailyChancePerTick } from '../../engine/systems/goals';
 import { ReflectionTrigger } from '../memory/ReflectionTrigger';
 
@@ -45,6 +45,16 @@ describe('chancePerTick (per-game-minute hazards)', () => {
     expect(chancePerTick(0.5, 0)).toBe(0);
     expect(chancePerTick(0, 4)).toBe(0);
     expect(chancePerTick(1, 4)).toBe(1);
+  });
+});
+
+describe('eventMinutesLeft (EventMenu "time left")', () => {
+  it('counts down from started_at + duration hours, in game minutes', () => {
+    const storm = { started_at: 5000, duration: 3 }; // 3 game hours
+    expect(eventMinutesLeft(storm, 5000)).toBe(180);
+    expect(eventMinutesLeft(storm, 5135)).toBe(45);
+    expect(eventMinutesLeft(storm, 5180)).toBe(0);
+    expect(eventMinutesLeft(storm, 6000)).toBe(0); // overdue, not negative
   });
 });
 

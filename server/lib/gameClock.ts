@@ -86,6 +86,19 @@ export function chancePerTick(chancePerMinute: number, tickSpeed: number): numbe
 }
 
 /**
+ * Game minutes left on a world event: `started_at` is a game-minute stamp and
+ * `duration` is in game HOURS (world_events; see engine/systems/events.ts,
+ * which ends the event at the same instant). Never negative — an event past
+ * its end is only waiting for the events phase to close it.
+ */
+export function eventMinutesLeft(
+  event: { started_at: number; duration: number },
+  nowMinutes: number,
+): number {
+  return Math.max(0, event.started_at + event.duration * MINUTES_PER_HOUR - nowMinutes);
+}
+
+/**
  * For tables still stamped in TICKS (`memories.created_at`,
  * `activity_log.timestamp`): where the tick clock is and how fast it runs.
  * Rebasing those stamps would be a schema-wide migration; instead, windows over

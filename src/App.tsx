@@ -17,6 +17,7 @@ import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
 import { ConversationHistory } from "./components/ui/ConversationHistory";
 import { useWorldState } from "./hooks/useWorldState";
+import { gameMinutes } from "../server/lib/gameClock";
 import { useAgents } from "./hooks/useAgents";
 import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
@@ -321,6 +322,7 @@ export default function App() {
         isOpen={showEventMenu}
         onClose={() => setShowEventMenu(false)}
         activeEvents={events ?? []}
+        nowMinutes={world?.time ? gameMinutes(world.time) : null}
       />
       <TownStats
         isOpen={showTownStats}

@@ -1,6 +1,7 @@
 import { trpc } from "../../lib/trpc";
 import { weatherEmoji } from "../../lib/formatters";
 import { PLAYER_EVENT_TYPES, WORLD_EVENTS } from "../../../server/data/worldEventCatalog";
+import { eventMinutesLeft } from "../../../server/lib/gameClock";
 
 type PlayerEventType = (typeof PLAYER_EVENT_TYPES)[number];
 
@@ -8,6 +9,21 @@ interface EventMenuProps {
   isOpen: boolean;
   onClose: () => void;
   activeEvents: any[];
+  /**
+   * The world clock in game minutes. The "time left" label used to read a
+   * `remainingTicks` field nothing produced, so it never showed; it is now
+   * derived from each event's `started_at` + `duration` (hours) against this.
+   */
+  nowMinutes: number | null;
+}
+
+/** Game minutes as "2h 15m left" / "40 min left". */
+function formatTimeLeft(minutes: number): string {
+  const m = Math.ceil(minutes);
+  if (m < 60) return `${m} min left`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest === 0 ? `${h}h left` : `${h}h ${rest}m left`;
 }
 
 // Name and duration come from the shared catalog so the card always matches what
@@ -32,7 +48,7 @@ const EVENT_CARDS = PLAYER_EVENT_TYPES.map((type) => ({
 
 const WEATHERS = ["sunny", "cloudy", "rainy", "stormy", "foggy", "snowy", "windy", "hot"] as const;
 
-export function EventMenu({ isOpen, onClose, activeEvents }: EventMenuProps) {
+export function EventMenu({ isOpen, onClose, activeEvents, nowMinutes }: EventMenuProps) {
   const triggerEventMutation = trpc.world.triggerEvent.useMutation();
   const setWeatherMutation = trpc.world.setWeather.useMutation();
 
@@ -67,9 +83,9 @@ export function EventMenu({ isOpen, onClose, activeEvents }: EventMenuProps) {
                     <span className="text-sm text-white capitalize">
                       {(event.type ?? event.eventType ?? "").replace(/_/g, " ")}
                     </span>
-                    {event.remainingTicks != null && (
+                    {nowMinutes != null && event.started_at != null && event.duration != null && (
                       <span className="ml-2 text-xs text-gray-400">
-                        {Math.ceil(event.remainingTicks / 60)} min left
+                        {formatTimeLeft(eventMinutesLeft(event, nowMinutes))}
                       </span>
                     )}
                   </div>
