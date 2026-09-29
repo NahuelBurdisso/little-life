@@ -184,6 +184,7 @@ function computeInteriorPath(
   interiorGrid: { collisionString: string; width: number; height: number },
   buildingPosX: number,
   buildingPosY: number,
+  buildingType: string,
 ): number[][] | null {
   const TILE_SIZE = CONFIG.MOVEMENT.TILE_SIZE;
   const [zoneGridX, zoneGridY] = targetZoneCenter;
@@ -197,6 +198,8 @@ function computeInteriorPath(
     interiorGrid.width,
     interiorGrid.height,
     TILE_SIZE,
+    undefined,
+    buildingType,
   );
 
   if (!interiorPath || interiorPath.length === 0) return null;
@@ -255,6 +258,7 @@ function handleArrival(
             targetZoneDef.center,
             interiorGrid,
             buildingPos.x, buildingPos.y,
+            targetBuildingType,
           );
 
           if (interiorPath && interiorPath.length > 0) {
@@ -540,6 +544,8 @@ export function tick(world: WorldRow): void {
               interiorGrid.width,
               interiorGrid.height,
               CONFIG.MOVEMENT.TILE_SIZE,
+              undefined,
+              insideBuilding.type,
             );
 
             if (interiorPath && interiorPath.length > 0) {
@@ -563,6 +569,8 @@ export function tick(world: WorldRow): void {
               interiorGrid.width,
               interiorGrid.height,
               CONFIG.MOVEMENT.TILE_SIZE,
+              undefined,
+              insideBuilding.type,
             );
 
             const exitWorldPath = (exitPath && exitPath.length > 0)

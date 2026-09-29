@@ -60,6 +60,30 @@ function warnThrottled(kind: WarnKind, message: string): void {
   console.warn(message + suffix);
 }
 
+/**
+ * One straight-line fallback, reported to the observer below. The warnings are
+ * throttled to one line per 10 s, which hides the rate — and the rate is the
+ * whole question (P1: "~20 a game day" vs "278 in a playtest"). The soak report
+ * tallies these by reason and destination; tests assert on them directly.
+ */
+export interface PathFallback {
+  kind: 'unroutable-destination' | 'no-route';
+  /** Tile coords on the grid that was searched. */
+  start: [number, number];
+  end: [number, number];
+  gridWidth: number;
+  gridHeight: number;
+  /** Which grid: 'world', or the building type for an interior grid. */
+  context: string;
+}
+
+let fallbackObserver: ((f: PathFallback) => void) | null = null;
+
+/** Observe every straight-line fallback (null to stop). One observer at a time. */
+export function setPathFallbackObserver(fn: ((f: PathFallback) => void) | null): void {
+  fallbackObserver = fn;
+}
+
 function heuristic(ax: number, ay: number, bx: number, by: number): number {
   const dx = Math.abs(ax - bx);
   const dy = Math.abs(ay - by);
@@ -85,6 +109,7 @@ export function computeAStarPath(
   mapHeight: number,
   tileSize: number,
   costMap?: Float32Array,
+  context = 'world',
 ): number[][] {
   // A cost map sized for a different world reads `undefined` past its end, and
   // `undefined === Infinity` is false — so the unroutable guard below passed and
@@ -129,6 +154,10 @@ export function computeAStarPath(
       `(blocked=${collisionGrid[endY * mapWidth + endX] === '1'}, cost=${endCost}) — ` +
       `falling back to a straight line through obstacles`,
     );
+    fallbackObserver?.({
+      kind: 'unroutable-destination', start: [startX, startY], end: [endX, endY],
+      gridWidth: mapWidth, gridHeight: mapHeight, context,
+    });
     return [
       [startPixel.x, startPixel.y],
       [endPixel.x, endPixel.y],
@@ -236,6 +265,10 @@ export function computeAStarPath(
     `[pathfinding] no route from (${startX},${startY}) to (${endX},${endY}) — ` +
     `falling back to a straight line through obstacles`,
   );
+  fallbackObserver?.({
+    kind: 'no-route', start: [startX, startY], end: [endX, endY],
+    gridWidth: mapWidth, gridHeight: mapHeight, context,
+  });
   return [
     [startPixel.x, startPixel.y],
     [endPixel.x, endPixel.y],
