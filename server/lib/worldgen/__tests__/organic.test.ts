@@ -279,59 +279,77 @@ describe('organic layout: town quality', () => {
     expect(missing).toEqual([]);
   });
 
+  /** Share of doors within 2 tiles of a road (near) and more than 6 out (far),
+   *  by Manhattan distance to the nearest road tile, over the sample. */
+  function doorShares(agents: number, homes: boolean): { near: number; far: number } {
+    let doors = 0, near = 0, far = 0;
+    for (const w of sample(agents)) {
+      const { width } = w.dimensions;
+      const roads = new Set(w.roads.map((t) => t.y * width + t.x));
+      for (const l of w.locations) {
+        if (OUTDOOR.includes(l.type) || (l.type === 'home') !== homes) continue;
+        const dx = Math.floor(l.entry_point.x / TILE), dy = Math.floor(l.entry_point.y / TILE);
+        // Manhattan distance to the nearest road tile, capped at 7.
+        let best = 7;
+        for (let d = 0; d < best; d++) {
+          let hit = false;
+          for (let ox = -d; ox <= d && !hit; ox++) {
+            const oy = d - Math.abs(ox);
+            if (roads.has((dy + oy) * width + dx + ox) || roads.has((dy - oy) * width + dx + ox)) hit = true;
+          }
+          if (hit) { best = d; break; }
+        }
+        doors++;
+        if (best <= 2) near++;
+        if (best > 6) far++;
+      }
+    }
+    return { near: near / doors, far: far / doors };
+  }
+
   it('public buildings front onto the lanes', () => {
     // Same measure as layout.test.ts's grid version. Measured over five
-    // disjoint 60-seed windows:
-    //   13 agents: near 0.483-0.528, far 0.150-0.167   (grid: ~0.53 / ~0.09)
-    //   30 agents: near 0.572-0.583, far 0.122-0.142   (grid: ~0.54 / ~0.08)
-    // Near matches the grid; far is higher because a lane network leaves more
-    // of the map away from any road than a full-span grid does — the farm
-    // alone is ~40% of the far doors. The samples here are 45 and 30 worlds,
-    // smaller than the measuring windows, hence bars well below the worst one.
+    // disjoint 60-seed windows (scripts/worldgen-metrics.ts):
+    //   13 agents: near 0.665-0.696, far 0.061-0.082   (grid: ~0.53 / ~0.08)
+    //   30 agents: near 0.786-0.817, far 0.014-0.031   (grid: ~0.54 / ~0.08)
+    // Before organic towns built along their lanes (LANE_FRONT_DOOR in
+    // layout.ts) far was 0.150-0.167 at 13 agents, twice the grid's. The
+    // samples here are 45 and 30 worlds, smaller than the measuring windows,
+    // hence bars well clear of the worst one.
     const bars: Record<number, { near: number; far: number }> = {
-      13: { near: 0.45, far: 0.21 },
-      30: { near: 0.5, far: 0.21 },
+      13: { near: 0.6, far: 0.12 },
+      30: { near: 0.7, far: 0.07 },
     };
     for (const agents of [13, 30]) {
-      let doors = 0, near = 0, far = 0;
-      for (const w of sample(agents)) {
-        const { width } = w.dimensions;
-        const roads = new Set(w.roads.map((t) => t.y * width + t.x));
-        for (const l of w.locations) {
-          if (OUTDOOR.includes(l.type) || l.type === 'home') continue;
-          const dx = Math.floor(l.entry_point.x / TILE), dy = Math.floor(l.entry_point.y / TILE);
-          // Manhattan distance to the nearest road tile, capped at 7.
-          let best = 7;
-          for (let d = 0; d < best; d++) {
-            let hit = false;
-            for (let ox = -d; ox <= d && !hit; ox++) {
-              const oy = d - Math.abs(ox);
-              if (roads.has((dy + oy) * width + dx + ox) || roads.has((dy - oy) * width + dx + ox)) hit = true;
-            }
-            if (hit) { best = d; break; }
-          }
-          doors++;
-          if (best <= 2) near++;
-          if (best > 6) far++;
-        }
-      }
-      expect(near / doors, `${agents} agents: doors within 2 tiles of a road`).toBeGreaterThan(bars[agents].near);
-      expect(far / doors, `${agents} agents: doors more than 6 tiles from a road`).toBeLessThan(bars[agents].far);
+      const { near, far } = doorShares(agents, false);
+      expect(near, `${agents} agents: doors within 2 tiles of a road`).toBeGreaterThan(bars[agents].near);
+      expect(far, `${agents} agents: doors more than 6 tiles from a road`).toBeLessThan(bars[agents].far);
     }
   });
 
+  it('homes front onto the lanes', () => {
+    // Share of front doors more than 6 tiles from any road, same five windows:
+    // 0.026-0.057 at 13 agents, 0.077-0.113 at 30 (grid: ~0.12 / ~0.21). It
+    // was 0.18-0.19 before HOME_LANE_DOOR in homes.ts, and 0.26 once public
+    // buildings took the lane frontage without it.
+    expect(doorShares(13, true).far, '13 agents').toBeLessThan(0.1);
+    expect(doorShares(30, true).far, '30 agents').toBeLessThan(0.16);
+  });
+
   it('derived plots generate for most seeds', () => {
-    // Measured over five 60-seed windows at 13 agents: market square 0.85-0.98,
-    // farmyard 0.92-0.97, alley 0.50-0.77 (grid: ~1.0 / ~0.9 / ~0.95). The alley
-    // is lower by design, not by accident: it needs two commercial buildings
-    // aligned within ALLEY_MAX_SPAN, and the grid's straight blocks line them
-    // up where organic zones do not. The sample is 45 worlds (the windows
-    // were 60), so the alley bar sits two standard errors under its worst window.
+    // Measured over five 60-seed windows at 13 agents: market square 1.0,
+    // farmyard 0.92-1.0, alley 0.78-0.95 (grid: ~1.0 / ~0.9 / ~0.95). The
+    // alley was 0.50-0.77 before shops were built in rows (`rowLot` in
+    // layout.ts) — the grid's straight blocks line commercial buildings up
+    // where organic lanes do not — and the market square 0.85-0.98 before it
+    // was claimed right after the town square. The sample is 45 worlds (the
+    // windows were 60), so the bars sit two standard errors under the worst
+    // window.
     const ws = sample(13);
     const rate = (type: string) => ws.filter((w) => w.locations.some((l) => l.type === type)).length / ws.length;
-    expect(rate('market_square'), 'market_square rate').toBeGreaterThan(0.75);
-    expect(rate('farmyard'), 'farmyard rate').toBeGreaterThan(0.75);
-    expect(rate('alley'), 'alley rate').toBeGreaterThan(0.35);
+    expect(rate('market_square'), 'market_square rate').toBeGreaterThan(0.9);
+    expect(rate('farmyard'), 'farmyard rate').toBeGreaterThan(0.8);
+    expect(rate('alley'), 'alley rate').toBeGreaterThan(0.65);
   });
 });
 
@@ -571,20 +589,25 @@ describe('organic output is pinned', () => {
    * cutting silently reshapes every saved organic town. Recorded on the merge
    * of track C. As with the grid goldens: recompute only for a deliberate
    * change, and say so in the commit.
+   *
+   * Recomputed once, deliberately (2026-09-29, W1): organic towns now build
+   * along their lanes — venues and homes take lane-front lots first, shops
+   * form rows, the market square is claimed beside the town square. Roads are
+   * unchanged; buildings moved. Grid hashes were untouched by that change.
    */
   const ORGANIC_GOLDEN: Record<string, string> = {
-    'organic-1-auto': '7a18b9db99901421',
-    'organic-1-large': '52ee52f95bc3d06c',
-    'organic-1-custom': 'b98902477a9ff1c3',
-    'organic-5-auto': 'ee4aac5f42dd9460',
-    'organic-5-large': '7ba03f3dd016e5b4',
-    'organic-5-custom': '5a58d73c7ee55e1d',
-    'organic-13-auto': '40b1708d7d963978',
-    'organic-13-large': '7b1a01552d5446af',
-    'organic-13-custom': '4738f965d977093c',
-    'organic-30-auto': 'e781815e2d424656',
-    'organic-30-large': '21d086b729a3eaf1',
-    'organic-30-custom': '2fb7ce0a35eca0df',
+    'organic-1-auto': '588ae84b1d2b4277',
+    'organic-1-large': '850da731bf32a073',
+    'organic-1-custom': 'c0ca4e41ebe0a8d0',
+    'organic-5-auto': 'd9d95cfabc0d645a',
+    'organic-5-large': '40b11d4165f50852',
+    'organic-5-custom': '67e5dd4df36a6a4a',
+    'organic-13-auto': 'fee524c3ffd917c9',
+    'organic-13-large': 'e74ba864668495a3',
+    'organic-13-custom': 'd954567b05f106a0',
+    'organic-30-auto': '57fcec955d780a44',
+    'organic-30-large': '489a53be696b5485',
+    'organic-30-custom': 'bd48a6b7af112400',
   };
   const hash = (r: GenResult) => createHash('sha256').update(JSON.stringify(r)).digest('hex').slice(0, 16);
 

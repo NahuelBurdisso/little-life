@@ -218,6 +218,41 @@ function generateSlots(
   return slots;
 }
 
+/**
+ * Organic-layout slots: every origin whose footprint's *centre* tile lies in the
+ * zone, rather than every origin whose whole footprint does.
+ *
+ * On the grid the zones are the blocks between the roads, so "wholly inside"
+ * is exactly "on this block". Organic zones are plain rect cells laid over a
+ * map that lanes cross at arbitrary places, so the wholly-inside rule threw away
+ * the lots that matter most: a lane usually runs near a cell edge or through
+ * it, and the strip that fronts it is cut in two by the cell boundary. A 9×8
+ * town square or an 8×6 park fitted in neither half and went to the back of the
+ * cell, or to the whole-map fallback zone — measured, the park's door ended up
+ * more than 6 tiles from any road in 24.5% of 13-agent towns (grid: 1.5%).
+ *
+ * Every origin still belongs to exactly one cell (the cells tile the inner map
+ * and each origin has one centre), so no lot is offered twice, and the zone
+ * still decides the neighbourhood — a building sits mostly in the cell whose
+ * affinities placed it. `fits` alone decides what is physically buildable, as
+ * it always did.
+ */
+function generateCentredSlots(
+  zone: Zone,
+  w: number,
+  h: number,
+): Array<{ x: number; y: number }> {
+  const slots: Array<{ x: number; y: number }> = [];
+  const { x1, y1, x2, y2 } = zone.bounds;
+  const ox = Math.floor(w / 2), oy = Math.floor(h / 2);
+  for (let sy = y1 - oy; sy <= y2 - oy; sy++) {
+    for (let sx = x1 - ox; sx <= x2 - ox; sx++) {
+      slots.push({ x: sx, y: sy });
+    }
+  }
+  return slots;
+}
+
 // ─── Outdoor location derivation ──────────────────────────────────────────────
 
 function deriveMainstreet(
@@ -287,6 +322,40 @@ function mainstreetSeed(minX: number, y: number, streetLen: number, rows: number
 
 /** Widest an alley may be, in tiles, however far apart its two buildings are. */
 const ALLEY_MAX_SPAN = 3;
+
+/** The buildings a Back Alley may run between. */
+const COMMERCIAL_TYPES: ReadonlySet<string> = new Set(['shop', 'tavern', 'bakery', 'pawnshop', 'divebar']);
+
+/** Lexicographic `a < b` over equal-length number tuples. */
+function lexLess(a: readonly number[], b: readonly number[]): boolean {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+}
+
+/**
+ * Organic towns build along their lanes: before settling for a back lot in its
+ * best zone, a venue takes a lot whose door is at most this many tiles from a
+ * road in any zone scoring at least LANE_FRONT_SCORE_RATIO of the best. See
+ * the zone choice in `layoutStage`.
+ *
+ * 0.6 is loose on purpose — the organic zones are cut from an interest map,
+ * not from blocks, and neighbouring cells often score within a few percent of
+ * each other, so a tighter bar mostly re-asks the one zone that had no lane.
+ */
+const LANE_FRONT_DOOR = 2;
+const LANE_FRONT_SCORE_RATIO = 0.6;
+
+/**
+ * How far from a road a commercial lot's door may be and still count toward a
+ * row of shops (`rowLot` / `rowKey` in `layoutStage`). Looser than
+ * LANE_FRONT_DOOR because a lane that bends leaves the lot next door a tile or
+ * two further back than its neighbour — with the row lot at 2 the alley
+ * generated in 82.5% of 13-agent organic towns, at 4 in 86.5%.
+ */
+const ROW_FRONT_DOOR = 4;
+/** Footprint of the smallest commercial template (shop, bakery, pawnshop,
+ *  divebar): the lot a row must keep free beside it for the next shop. */
+const ROW_NEIGHBOUR = { w: 5, h: 4 };
 
 /**
  * Fractional +/- noise applied to every zone score, so towns differ per seed.
@@ -453,10 +522,7 @@ function deriveAlley(
   placedBuildings: Array<{ type: string; tileX: number; tileY: number; w: number; h: number }>,
   roadTiles: Array<{ x: number; y: number }>,
 ): LocationSeed | null {
-  const commercialTypes = ['shop', 'tavern', 'bakery', 'pawnshop', 'divebar'];
-  const commercial = placedBuildings.filter((b) =>
-    commercialTypes.includes(b.type),
-  );
+  const commercial = placedBuildings.filter((b) => COMMERCIAL_TYPES.has(b.type));
 
   const roads = new Set(roadTiles.map((t) => `${t.x},${t.y}`));
 
@@ -648,12 +714,15 @@ export const layoutStage: Stage<{
 }> = {
   name: 'layout',
   dependsOn: ['dimensions', 'roads'],
-  run(ctx, rng, _cfg, agentCount) {
+  run(ctx, rng, cfg, agentCount) {
     if (!ctx.dimensions) throw new Error('layout: dimensions not populated');
     if (!ctx.roads) throw new Error('layout: roads not populated');
 
     const { width, height } = ctx.dimensions;
     const { tiles: roadTiles, zones } = ctx.roads;
+    // Everything organic-only below is gated on this, so grid towns stay
+    // byte-identical (pinned by the goldens in organic.test.ts).
+    const organic = cfg.layoutStyle === 'organic';
 
     // 1. Select templates
     const templates = getTemplatesForAgentCount(agentCount);
@@ -701,6 +770,47 @@ export const layoutStage: Stage<{
     }> = [];
     const locationSeeds: LocationSeed[] = [];
 
+    // Each derived plot is marked before deriving the next, or two of them can
+    // claim the same tiles. It also joins `placedBuildings` so later derivations
+    // treat it as an obstacle — `blocked` alone is not enough, because
+    // `deriveAlley` reasons about footprints rather than the mask (whose gap
+    // rings would veto every legitimate alley).
+    //
+    // `usedAreaByZone` is deliberately not updated: derived plots are open
+    // ground, and like the town square (see `chargedArea`) they should not make
+    // a zone read as full. That includes the organic market square, the one
+    // plot marked while templates are still being placed (below).
+    const markSeed = (seed: LocationSeed) => {
+      markPlaced(
+        seed.position.x / TILE,
+        seed.position.y / TILE,
+        seed.position.width / TILE,
+        seed.position.height / TILE,
+        blocked,
+      );
+      placedBuildings.push({
+        type: seed.type,
+        tileX: seed.position.x / TILE,
+        tileY: seed.position.y / TILE,
+        w: seed.position.width / TILE,
+        h: seed.position.height / TILE,
+      });
+    };
+
+    /**
+     * Organic towns claim the Market Square as soon as the town square is down,
+     * instead of after every template like the grid.
+     *
+     * Building along the lanes packs the venues around the town square's lane
+     * too, and they used to take the ground the market needed: the market
+     * generated in 82.5% of 13-agent organic towns once venues fronted the lanes
+     * (90% before, grid 99.5%). The grid never needed this — its town square
+     * sits in a block of its own with streets on every side. Only the *timing*
+     * changes: it is the same `deriveMarketSquare` search and it still lands in
+     * the output after Main Street.
+     */
+    let reservedMarket: LocationSeed | null = null;
+
     // 4. Place each template
     for (const template of sorted) {
       const { w, h } = template.size;
@@ -737,12 +847,98 @@ export const layoutStage: Stage<{
         ...ranked.filter((z) => z.zone.fallback),
       ];
 
-      let placed = false;
+      // Primary slot key: how close the building's doorway lands to a road.
+      //
+      // Nothing used to pull buildings toward the street network — zones are
+      // defined *between* the roads and a slot in the middle of a block scored
+      // exactly like one on its edge. Measured share of buildings whose door was
+      // within 2 tiles of a road: 50.1% at 13 agents, 38.0% at 20, 25.3% at 30,
+      // i.e. the bigger the town the more of it was back-lot. Doors more than 6
+      // tiles from any road: 24.3% / 29.2% / 44.4%.
+      //
+      // This is an ordering preference, not a filter — `fits` still falls back to
+      // the interior of the block when the frontage is taken, so no template
+      // becomes unplaceable because of it.
+      const doorDist = (x: number, y: number, bw: number, bh: number) => {
+        const dx = x + Math.floor(bw / 2), dy = y + bh;
+        if (dx < 0 || dy < 0 || dx >= width || dy >= height) return Infinity;
+        return roadDist[dy * width + dx];
+      };
+      const frontage = (s: { x: number; y: number }) => doorDist(s.x, s.y, w, h);
 
-      // c. Try each zone in score order
-      for (const { zone } of tryOrder) {
-        const slots = generateSlots(zone, w, h);
-        if (slots.length === 0) continue;
+      type Pick = { zone: Zone; slot: { x: number; y: number } };
+
+      // Rows of shops — organic towns, commercial templates only.
+      //
+      // The grid gets its Back Alley for free: every commercial venue fronts
+      // the same straight main street, so two of them nearly always end up
+      // shoulder to shoulder (alley in 95% of 13-agent towns). Organic lanes
+      // scatter them over several streets and the alley came out in 63%.
+      //
+      // So a shop first looks for a lot in a row with one already placed (see
+      // `rowLot`), and where it cannot join a row it prefers a street-front lot
+      // that leaves room beside it for the next one (`rowKey`). Measured at 13
+      // agents: the row lot alone lifts the alley to 86.5%, the room-leaving
+      // preference to ~92%.
+      const wantsRow = organic && COMMERCIAL_TYPES.has(template.type);
+      /** 0 for a street-front lot with room for a neighbour shop beside it, 1
+       *  otherwise. Always 0 on the grid and for every other template, so it
+       *  orders nothing there. */
+      const rowKey = (s: { x: number; y: number }): number => {
+        if (!wantsRow || frontage(s) > ROW_FRONT_DOOR) return wantsRow ? 1 : 0;
+        // The neighbour lot, bottom-aligned so the two doors share the lane,
+        // just outside the BUILDING_GAP ring this lot will reserve.
+        const sy = s.y + h - ROW_NEIGHBOUR.h;
+        for (const sx of [s.x - BUILDING_GAP - ROW_NEIGHBOUR.w, s.x + w + BUILDING_GAP]) {
+          if (
+            fits(sx, sy, ROW_NEIGHBOUR.w, ROW_NEIGHBOUR.h, blocked) &&
+            doorDist(sx, sy, ROW_NEIGHBOUR.w, ROW_NEIGHBOUR.h) <= ROW_FRONT_DOOR
+          ) return 0;
+        }
+        return 1;
+      };
+      /**
+       * The best lot in a row with a commercial building already placed: side
+       * by side, sharing at least two rows, at a gap `deriveAlley` can turn into
+       * an alley, door within ROW_FRONT_DOOR of a road. Enumerated directly —
+       * a few dozen lots beside each shop — rather than by scanning every zone's
+       * slots, which made the layout stage ~6× slower.
+       *
+       * Any real zone qualifies, not just the ones scoring near the leader: a
+       * shop beside a shop is in the commercial quarter by definition. Among
+       * the candidates the best-ranked zone wins, then the narrower gap (a
+       * tighter alley), then frontage; position breaks ties. Draws no rng.
+       */
+      const rowLot = (order: ReadonlyArray<{ zone: Zone }>): Pick | null => {
+        const rank = new Map(order.map((z, i) => [z.zone, i]));
+        let best: { pick: Pick; key: number[] } | null = null;
+        for (const b of placedBuildings) {
+          if (!COMMERCIAL_TYPES.has(b.type)) continue;
+          for (let gap = BUILDING_GAP; gap <= ALLEY_MAX_SPAN; gap++) {
+            for (const x of [b.tileX - gap - w, b.tileX + b.w + gap]) {
+              for (let y = b.tileY - h + 2; y <= b.tileY + b.h - 2; y++) {
+                const f = frontage({ x, y });
+                if (f > ROW_FRONT_DOOR || !fits(x, y, w, h, blocked)) continue;
+                const cx = x + Math.floor(w / 2), cy = y + Math.floor(h / 2);
+                const zone = zones.find((z) => !z.fallback &&
+                  cx >= z.bounds.x1 && cx <= z.bounds.x2 && cy >= z.bounds.y1 && cy <= z.bounds.y2);
+                if (!zone) continue;
+                const key = [rank.get(zone)!, gap, f, y, x];
+                if (!best || lexLess(key, best.key)) best = { pick: { zone, slot: { x, y } }, key };
+              }
+            }
+          }
+        }
+        return best?.pick ?? null;
+      };
+
+      // c. The first fitting slot of a zone, in (row room) → frontage → centrality
+      // order. Consumes one `rng.shuffle` per zone that has any slot at all, so
+      // the grid, which asks zone after zone until one fits, draws exactly what
+      // it always drew.
+      const firstFitIn = (zone: Zone): { x: number; y: number } | null => {
+        const slots = organic ? generateCentredSlots(zone, w, h) : generateSlots(zone, w, h);
+        if (slots.length === 0) return null;
 
         // `centrality` only steered which *zone* won; the slot inside it was
         // uniform, so a central-by-design venue that lost the middle zone landed
@@ -752,24 +948,6 @@ export const layoutStage: Stage<{
         // strictly nearest-first; centrality 0 → one bucket → the old pure shuffle.
         const shuffledSlots = rng.shuffle(slots);
         const centrality = template.centrality ?? 0;
-
-        // Primary key: how close the building's doorway lands to a road.
-        //
-        // Nothing used to pull buildings toward the street network — zones are
-        // defined *between* the roads and a slot in the middle of a block scored
-        // exactly like one on its edge. Measured share of buildings whose door was
-        // within 2 tiles of a road: 50.1% at 13 agents, 38.0% at 20, 25.3% at 30,
-        // i.e. the bigger the town the more of it was back-lot. Doors more than 6
-        // tiles from any road: 24.3% / 29.2% / 44.4%.
-        //
-        // This is an ordering preference, not a filter — `fits` still falls back to
-        // the interior of the block when the frontage is taken, so no template
-        // becomes unplaceable because of it.
-        const frontage = (s: { x: number; y: number }) => {
-          const dx = s.x + Math.floor(w / 2), dy = s.y + h;
-          if (dx < 0 || dy < 0 || dx >= width || dy >= height) return Infinity;
-          return roadDist[dy * width + dx];
-        };
 
         // Secondary key: distance to the map centre, for venues everyone walks to.
         // `centrality` only steered which *zone* won; the slot inside it was
@@ -788,50 +966,77 @@ export const layoutStage: Stage<{
         // 5→20, 6→4). Anchoring at minD makes the pool monotone in bucketSize
         // and makes the paragraph above actually true.
         const minD = centrality > 0 ? Math.min(...shuffledSlots.map(dist)) : 0;
-        const keyed = shuffledSlots.map((s, i) => ({
-          s,
-          i,
-          f: Math.floor(Math.min(frontage(s), ROAD_FRONTAGE_CAP) / ROAD_FRONTAGE_BUCKET),
-          k: centrality > 0 ? Math.floor((dist(s) - minD) / bucketSize) : 0,
-        }));
-        // Array.prototype.sort is stable in ES2019+, so equal buckets keep the
-        // shuffled order; `i` is a belt-and-braces tiebreak.
-        keyed.sort((a, b) => a.f - b.f || a.k - b.k || a.i - b.i);
-        shuffledSlots.length = 0;
-        for (const e of keyed) shuffledSlots.push(e.s);
 
-        for (const slot of shuffledSlots) {
-          if (fits(slot.x, slot.y, w, h, blocked)) {
-            // Place!
-            markPlaced(slot.x, slot.y, w, h, blocked);
-
-            // Update used area. See `scoreZone` for what this is charged
-            // against; `chargedArea` explains the two adjustments.
-            const prev = usedAreaByZone.get(zone.id) ?? 0;
-            usedAreaByZone.set(zone.id, prev + chargedArea(template));
-
-            // Convert to LocationSeed
-            locationSeeds.push(
-              templateToLocationSeed(template, slot.x, slot.y),
-            );
-
-            placedBuildings.push({
-              type: template.type,
-              tileX: slot.x,
-              tileY: slot.y,
-              w,
-              h,
-            });
-
-            placed = true;
-            break;
-          }
+        // The first fitting slot in (t, f, k, shuffled index) order, found in
+        // one pass instead of by sorting every slot and walking the sorted list:
+        // the same slot, since the shuffled index breaks every tie exactly as
+        // the stable sort did. The sort allocated and ordered every slot of
+        // every zone asked — hundreds per zone, and the organic zone choice asks
+        // several — only to use the first one that fits. `fits` runs only on a
+        // slot that would beat the best found so far.
+        let best: { x: number; y: number } | null = null;
+        let bt = 0, bf = 0, bk = 0;
+        for (const s of shuffledSlots) {
+          const t = rowKey(s);
+          const f = Math.floor(Math.min(frontage(s), ROAD_FRONTAGE_CAP) / ROAD_FRONTAGE_BUCKET);
+          const k = centrality > 0 ? Math.floor((dist(s) - minD) / bucketSize) : 0;
+          if (best && (t > bt || (t === bt && (f > bf || (f === bf && k >= bk))))) continue;
+          if (!fits(s.x, s.y, w, h, blocked)) continue;
+          best = s; bt = t; bf = f; bk = k;
         }
+        return best;
+      };
 
-        if (placed) break;
+      // d. Choose the zone. The grid takes the best-scoring zone with room.
+      //
+      // Organic towns build along their lanes. The grid's zones are blocks
+      // bounded by roads on all four sides, so the best zone always has a
+      // street-front lot unless it is full; an organic cell may have no lane
+      // anywhere near its free ground, and the grid rule then put the venue at
+      // the back of it — the park's and workshop's doors ended up more than 6
+      // tiles from any road in 24.5% of 13-agent towns (grid: 1.5% and 0%).
+      // So every zone scoring within LANE_FRONT_SCORE_RATIO of the leader is
+      // asked for a lot on a lane (door ≤ LANE_FRONT_DOOR tiles out) before
+      // settling for the leader's back lot. Zoning still decides among the
+      // lane-front lots, and the ratio keeps a venue out of a zone its
+      // affinities clearly reject just because a lane runs through it.
+      let pick: Pick | null = null;
+      if (!organic) {
+        for (const { zone } of tryOrder) {
+          const slot = firstFitIn(zone);
+          if (slot) { pick = { zone, slot }; break; }
+        }
+      } else {
+        pick = wantsRow ? rowLot(tryOrder) : null;
+        const bar = (tryOrder[0]?.score ?? 0) * LANE_FRONT_SCORE_RATIO;
+        let backLot: Pick | null = null;
+        for (const { zone, score } of pick ? [] : tryOrder) {
+          if (backLot && (zone.fallback || score < bar)) break;
+          const slot = firstFitIn(zone);
+          if (!slot) continue;
+          if (frontage(slot) <= LANE_FRONT_DOOR) { pick = { zone, slot }; break; }
+          backLot ??= { zone, slot };
+        }
+        pick ??= backLot;
       }
 
-      if (!placed) {
+      if (pick) {
+        const { zone, slot } = pick;
+        markPlaced(slot.x, slot.y, w, h, blocked);
+
+        // Update used area. See `scoreZone` for what this is charged
+        // against; `chargedArea` explains the two adjustments.
+        const prev = usedAreaByZone.get(zone.id) ?? 0;
+        usedAreaByZone.set(zone.id, prev + chargedArea(template));
+
+        locationSeeds.push(templateToLocationSeed(template, slot.x, slot.y));
+        placedBuildings.push({ type: template.type, tileX: slot.x, tileY: slot.y, w, h });
+
+        if (organic && template.type === 'town_square') {
+          reservedMarket = deriveMarketSquare(placedBuildings, blocked);
+          if (reservedMarket) markSeed(reservedMarket);
+        }
+      } else {
         throw new FitError(
           'layout',
           `cannot place ${template.name} (${w}×${h}) — no space in any zone`,
@@ -842,32 +1047,6 @@ export const layoutStage: Stage<{
     // 5. Derive outdoor locations
     const mainstreet = deriveMainstreet(roadTiles, ctx.roads.mainStreet);
     if (mainstreet) locationSeeds.push(mainstreet);
-
-    // Each derived plot is marked before deriving the next, or two of them can
-    // claim the same tiles. It also joins `placedBuildings` so later derivations
-    // treat it as an obstacle — `blocked` alone is not enough, because
-    // `deriveAlley` reasons about footprints rather than the mask (whose gap
-    // rings would veto every legitimate alley).
-    //
-    // `usedAreaByZone` is deliberately not updated: nothing is scored after this
-    // point, so there is no reader left to mislead. Anything added below the
-    // derivations must charge these plots first.
-    const markSeed = (seed: LocationSeed) => {
-      markPlaced(
-        seed.position.x / TILE,
-        seed.position.y / TILE,
-        seed.position.width / TILE,
-        seed.position.height / TILE,
-        blocked,
-      );
-      placedBuildings.push({
-        type: seed.type,
-        tileX: seed.position.x / TILE,
-        tileY: seed.position.y / TILE,
-        w: seed.position.width / TILE,
-        h: seed.position.height / TILE,
-      });
-    };
 
     // Derived plots are best-effort, and a failure used to be a `console.warn` on
     // server stdout and nothing else — `GenResult` had nowhere to put it. The
@@ -891,10 +1070,10 @@ export const layoutStage: Stage<{
     // ground more often.
     const warnings: string[] = [];
 
-    const marketSquare = deriveMarketSquare(placedBuildings, blocked);
+    const marketSquare = reservedMarket ?? deriveMarketSquare(placedBuildings, blocked);
     if (marketSquare) {
       locationSeeds.push(marketSquare);
-      markSeed(marketSquare);
+      if (!reservedMarket) markSeed(marketSquare);
     } else {
       warnings.push('No room for a market square beside the town center.');
     }
