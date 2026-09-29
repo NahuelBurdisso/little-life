@@ -27,6 +27,7 @@ import { getRelationshipSeeds } from '../data/relationships';
 import { getMemorySeeds } from '../data/memories';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
+import { gameMinutes } from '../lib/gameClock';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 
@@ -337,8 +338,11 @@ function seed() {
   // 6. Insert relationships
   console.log('[seed] Inserting relationships...');
   const relSeeds = getRelationshipSeeds(agentMap);
+  // The seed world starts at day 1, 09:00 (worldState below): the relationships'
+  // decay clock starts with it.
+  const seedStartMinute = gameMinutes({ day: 1, hour: 9, minute: 0 });
   for (const rel of relSeeds) {
-    db.insert(relationships).values(rel).run();
+    db.insert(relationships).values({ ...rel, last_interaction_minute: seedStartMinute }).run();
   }
   console.log(`[seed] Inserted ${relSeeds.length} relationships.`);
 

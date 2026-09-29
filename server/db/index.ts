@@ -2,7 +2,11 @@ import 'dotenv/config';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
-import { clampFutureGameMinuteStamps, rebaseTickStampsToGameMinutes } from './clockMigration';
+import {
+  backfillRelationshipInteractionMinutes,
+  clampFutureGameMinuteStamps,
+  rebaseTickStampsToGameMinutes,
+} from './clockMigration';
 import { runStartupSteps } from './startupSteps';
 import path from 'path';
 import fs from 'fs';
@@ -78,6 +82,9 @@ function migrateSchema() {
   // Aspirations table extensions
   addColumnIfMissing('aspirations', 'description', 'TEXT');
   addColumnIfMissing('aspirations', 'shifted_reason', 'TEXT');
+
+  // Relationship decay clock (game minutes; see schema.ts)
+  addColumnIfMissing('relationships', 'last_interaction_minute', 'INTEGER');
 
   // Activity log extensions
   addColumnIfMissing('activity_log', 'metadata', 'TEXT');
@@ -220,6 +227,8 @@ export function initSchema(): void {
     () => rebaseTickStampsToGameMinutes(sqlite),
     // Every start, whatever user_version says: no started-at stamp in the future.
     () => clampFutureGameMinuteStamps(sqlite),
+    // After migrateSchema, which adds the column; a no-op once filled.
+    () => backfillRelationshipInteractionMinutes(sqlite),
   ]);
 }
 

@@ -191,6 +191,12 @@ export const relationships = sqliteTable(
     familiarity: real('familiarity').notNull(),
     interaction_count: integer('interaction_count').notNull(),
     last_interaction: integer('last_interaction').notNull(),
+    // GAME MINUTE of the last interaction — the clock relationship decay reads.
+    // `last_interaction` is Date.now(), so a gap measured on it counted time the
+    // server was off or paused as game time. Nullable because it was added to
+    // existing worlds; startup backfills NULLs to the current game minute
+    // (clockMigration.ts) and the decay pass stamps any it still meets.
+    last_interaction_minute: integer('last_interaction_minute'),
     average_interaction_sentiment: real('average_interaction_sentiment').notNull(),
     tags: text('tags', { mode: 'json' }).notNull().$type<string[]>(),
     status: text('status').notNull(),

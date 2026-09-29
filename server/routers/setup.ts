@@ -32,6 +32,7 @@ import {
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
+import { gameMinutes } from '../lib/gameClock';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { logActivity } from '../lib/activityLogger';
@@ -719,10 +720,10 @@ function seedWorld(
     db.insert(relationships).values({
       ...row,
       interaction_count: 0,
-      // Wall-clock, not tick 0: the decay pass computes `Date.now() - it`, so a
-      // 0 here reads as ~57 years since the last interaction and decays every
-      // configured value toward 0 from the first hourly pass onward.
+      // Wall-clock column (Date.now()); decay reads the game-minute one below.
       last_interaction: now,
+      // The decay clock: game time, starting with the world (inserted below).
+      last_interaction_minute: gameMinutes({ day: config.world.startDay, hour: config.world.startHour, minute: 0 }),
       average_interaction_sentiment: 0,
       created_at: now,
       last_updated: now,

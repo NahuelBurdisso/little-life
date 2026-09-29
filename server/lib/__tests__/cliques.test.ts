@@ -23,6 +23,7 @@ function rel(
     familiarity: 50,
     interaction_count: 5,
     last_interaction: 0,
+    last_interaction_minute: 0,
     average_interaction_sentiment: 0,
     tags: [],
     status: 'friends',

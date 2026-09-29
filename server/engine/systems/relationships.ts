@@ -4,8 +4,7 @@ import { and, eq, lt } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
-import { hourChanged } from '../../lib/gameClock';
-import { msToGameMinutes } from '../../lib/worldClock';
+import { gameMinutes, hourChanged, type ClockTime } from '../../lib/gameClock';
 import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
 import { simEvents } from '../../lib/simEvents';
@@ -158,10 +157,17 @@ export function pruneRelationshipEvents(): number {
 // --- Main Tick ---
 
 export function tick(
-  world: { tick_speed: number; pending_transitions?: Array<{ type?: unknown }> | null },
+  world: {
+    time: ClockTime;
+    tick_speed: number;
+    pending_transitions?: Array<{ type?: unknown }> | null;
+  },
 ): void {
   const gameHoursElapsed = world.tick_speed / 60;
   const now = Date.now();
+  // Decay's clock. `now` stays for the wall-clock columns (last_interaction,
+  // last_updated, created_at) that other readers still use as "recently".
+  const nowMinutes = gameMinutes(world.time);
 
   // --- 1. Proximity Familiarity ---
   const activeAgents = db
@@ -231,6 +237,7 @@ export function tick(
             familiarity: 1,
             interaction_count: 0,
             last_interaction: now,
+            last_interaction_minute: nowMinutes,
             average_interaction_sentiment: 0,
             tags: [] as string[],
             status: 'strangers',
@@ -275,6 +282,7 @@ export function tick(
         familiarity: 1,
         interaction_count: 0,
         last_interaction: now,
+        last_interaction_minute: nowMinutes,
         average_interaction_sentiment: 0,
         tags: [] as string[],
         status: 'strangers',
@@ -387,6 +395,7 @@ export function tick(
         familiarity: newFamiliarity,
         interaction_count: newInteractionCount,
         last_interaction: now,
+        last_interaction_minute: nowMinutes,
         average_interaction_sentiment: newSentiment,
         tags: newTags,
         status: newStatus,
@@ -405,6 +414,7 @@ export function tick(
     rel.familiarity = newFamiliarity;
     rel.interaction_count = newInteractionCount;
     rel.last_interaction = now;
+    rel.last_interaction_minute = nowMinutes;
     rel.average_interaction_sentiment = newSentiment;
     rel.tags = newTags;
     rel.status = newStatus;
@@ -465,9 +475,11 @@ export function tick(
     return;
   }
 
-  // Grace period and ramp are GAME days. `last_interaction` is a Date.now()
-  // stamp, so the gap is converted at the current speed. They were real days,
-  // so decay never started inside a session (3 real days = 180 game days at 1x).
+  // Grace period and ramp are GAME days, measured on `last_interaction_minute`
+  // (game minutes). They were once real days, so decay never started inside a
+  // session; then the Date.now() gap was converted at the current speed, which
+  // counted every minute the server was off or paused as game time — after a
+  // night's break every pair decayed at full strength on the first pass.
   const gracePeriodMinutes = CONFIG.RELATIONSHIPS.DECAY_GRACE_PERIOD_DAYS * 1440;
 
   // Game hours since the *previous* decay pass, not since the previous tick:
@@ -481,7 +493,17 @@ export function tick(
     // quietly walk the hatred back to neutral and undo the permanence.
     if (rel.tags.includes('estranged')) continue;
 
-    const minutesSinceInteraction = msToGameMinutes(now - rel.last_interaction, world.tick_speed);
+    if (rel.last_interaction_minute == null) {
+      // Written by something that doesn't know the column yet (startup backfills
+      // the rest). Start its clock now rather than guess an age for it.
+      db.update(relationships)
+        .set({ last_interaction_minute: nowMinutes })
+        .where(eq(relationships.id, rel.id))
+        .run();
+      rel.last_interaction_minute = nowMinutes;
+      continue;
+    }
+    const minutesSinceInteraction = nowMinutes - rel.last_interaction_minute;
     if (minutesSinceInteraction <= gracePeriodMinutes) continue;
 
     const daysSinceInteraction = minutesSinceInteraction / 1440;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gameMinutesToMs, msToGameMinutes } from '../worldClock';
+import { gameMinutesToMs } from '../worldClock';
 import { dailyChancePerTick } from '../../engine/systems/goals';
 import { ReflectionTrigger } from '../memory/ReflectionTrigger';
 
@@ -9,7 +9,6 @@ describe('wall-clock windows in game time', () => {
     expect(gameMinutesToMs(60, 1)).toBe(60_000);
     expect(gameMinutesToMs(60, 4)).toBe(15_000);
     expect(gameMinutesToMs(60, 0.5)).toBe(120_000);
-    expect(msToGameMinutes(15_000, 4)).toBe(60);
   });
 
   it('treats a frozen clock as 1x instead of dividing by zero', () => {

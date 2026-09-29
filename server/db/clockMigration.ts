@@ -132,6 +132,37 @@ export function rebaseTickStampsToGameMinutes(sqlite: Database.Database): void {
 }
 
 /**
+ * Fill `relationships.last_interaction_minute` for rows that predate the column
+ * (or were written by something that doesn't set it), and pull any future value
+ * back to now — the same self-heal as `clampFutureGameMinuteStamps`.
+ *
+ * NULL becomes the current game minute: the real game time of the last
+ * interaction is unknowable (the old wall-clock stamp counts server-off time,
+ * which is the bug the column fixes), and "now" errs toward a fresh grace
+ * period instead of decaying every pair at full strength on the first pass.
+ */
+export function backfillRelationshipInteractionMinutes(sqlite: Database.Database): void {
+  let world: { time: string } | undefined;
+  try {
+    world = sqlite.prepare('SELECT time FROM world_state LIMIT 1').get() as typeof world;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/no such table/i.test(message)) throw err;
+  }
+  if (!world) return;
+  const hasColumn = (sqlite.prepare('PRAGMA table_info(relationships)').all() as { name: string }[])
+    .some((c) => c.name === 'last_interaction_minute');
+  if (!hasColumn) return;
+  const nowMinutes = gameMinutes(JSON.parse(world.time) as { day: number; hour: number; minute: number });
+  sqlite
+    .prepare(
+      'UPDATE relationships SET last_interaction_minute = ? ' +
+      'WHERE last_interaction_minute IS NULL OR last_interaction_minute > ?',
+    )
+    .run(nowMinutes, nowMinutes);
+}
+
+/**
  * Game-minute "started at" stamps that are checked against now on every start.
  * A value after now makes `now - started` negative, so an action never ends, a
  * state or event never expires and a goal never ages.

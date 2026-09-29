@@ -29,16 +29,11 @@ function effectiveSpeed(tickSpeed: number): number {
  * `tickSpeed`: one tick per TICK_INTERVAL_MS, `tickSpeed` game minutes per tick.
  *
  * For "in the last N game minutes" windows over tables stamped with Date.now()
- * (conversations, relationship_events, relationships.last_interaction). Written
+ * (conversations, relationship_events). Written
  * as a fixed number of ms, those windows covered four times the game time at 4x.
  * Approximate: it assumes the current speed held across the window and counts
  * paused time as elapsed, which is fine for "recently".
  */
 export function gameMinutesToMs(minutes: number, tickSpeed: number): number {
   return (minutes / effectiveSpeed(tickSpeed)) * CONFIG.TICK_INTERVAL_MS;
-}
-
-/** Inverse of `gameMinutesToMs`: game minutes lived in `ms` of wall clock at `tickSpeed`. */
-export function msToGameMinutes(ms: number, tickSpeed: number): number {
-  return (ms / CONFIG.TICK_INTERVAL_MS) * effectiveSpeed(tickSpeed);
 }

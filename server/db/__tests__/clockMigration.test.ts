@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   GAME_MINUTE_STAMPS_VERSION,
+  backfillRelationshipInteractionMinutes,
   clampFutureGameMinuteStamps,
   rebaseSpeed,
   rebaseTickStampsToGameMinutes,
@@ -215,6 +216,27 @@ describe('clampFutureGameMinuteStamps', () => {
     putWorld(old, 1);
     expect(() => clampFutureGameMinuteStamps(old)).not.toThrow();
     expect(() => clampFutureGameMinuteStamps(new Database(':memory:'))).not.toThrow();
+  });
+});
+
+describe('backfillRelationshipInteractionMinutes', () => {
+  it('starts NULL and future decay clocks at now, leaving the rest alone', () => {
+    const db = makeDb();
+    putWorld(db, 1);
+    db.exec('CREATE TABLE relationships (id INTEGER PRIMARY KEY, last_interaction_minute INTEGER)');
+    db.prepare('INSERT INTO relationships (last_interaction_minute) VALUES (?), (?), (?)').run(null, 100, 999_999);
+    backfillRelationshipInteractionMinutes(db);
+    const now = 3 * 1440 + 10 * 60;
+    expect((db.prepare('SELECT last_interaction_minute AS v FROM relationships ORDER BY id').all() as { v: number }[])
+      .map((r) => r.v)).toEqual([now, 100, now]);
+  });
+
+  it('is a no-op without the column or a world', () => {
+    const db = makeDb();
+    putWorld(db, 1);
+    db.exec('CREATE TABLE relationships (id INTEGER PRIMARY KEY)');
+    expect(() => backfillRelationshipInteractionMinutes(db)).not.toThrow();
+    expect(() => backfillRelationshipInteractionMinutes(new Database(':memory:'))).not.toThrow();
   });
 });
 

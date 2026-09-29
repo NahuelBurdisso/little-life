@@ -22,11 +22,9 @@ export interface RelationshipSeed {
 export function getRelationshipSeeds(
   agentMap: Map<string, number>
 ): RelationshipSeed[] {
-  // Wall-clock, not tick 0. The only consumer of `last_interaction` is the decay
-  // pass in engine/systems/relationships.ts, which computes `Date.now() - it`.
-  // Seeding 0 made every relationship read as ~57 years stale, so decay ran at
-  // full strength from the first hourly pass and pulled the seeded friendship,
-  // romance and trust toward 0 before the agents had ever met.
+  // Wall-clock, not 0: `last_interaction` is a Date.now() column. Decay now
+  // reads `last_interaction_minute` (game minutes), which seed.ts sets from the
+  // world's start time — this pure-data module doesn't know it.
   const now = Date.now();
   const createdPairs = new Set<string>();
   const results: RelationshipSeed[] = [];
