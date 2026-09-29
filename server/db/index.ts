@@ -212,9 +212,8 @@ export function initSchema(): void {
   installAgentStatesWriteHook();
   try {
     migrateSchema();
-    // After the column migrations; a missing table lands in the catch below and
-    // the rebase retries on the next initSchema() (it only marks itself done
-    // once it has run).
+    // After the column migrations, which add goals.completed_at. One-shot (see
+    // PRAGMA user_version); logs to the console when it rewrites a world.
     rebaseTickStampsToGameMinutes(sqlite);
   } catch (err) {
     // A missing table on a fresh DB is expected; anything else (a locked DB
