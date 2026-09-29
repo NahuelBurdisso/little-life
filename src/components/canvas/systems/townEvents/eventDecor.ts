@@ -228,12 +228,17 @@ type Recipe = (l: Layout) => void;
 const festival: Recipe = l => {
   l.bunting(l.r.y + 30, DECOR_FRAMES.bunting, DECOR_FRAMES.lantern, 'ground', 2);
   if (l.r.height >= 2 * TILE + 32) l.bunting(l.r.y + l.r.height - 4, DECOR_FRAMES.bunting, DECOR_FRAMES.lantern, 'over', 2);
-  const [wx, wy] = l.slot('w');
-  const [ex, ey] = l.slot('e');
-  l.add(DECOR_FRAMES.stallRed, wx, wy);
-  l.add(DECOR_FRAMES.crate, wx + 30, wy + 2);
-  l.add(DECOR_FRAMES.stallBlue, ex, ey);
-  l.add(DECOR_FRAMES.crate, ex - 30, ey + 2);
+  // Four stalls in the corners of the band around the well, lanterns and crates between.
+  (['nw', 'ne', 'sw', 'se'] as const).forEach((s, i) => {
+    const [x, y] = l.slot(s);
+    const inward = s.endsWith('w') ? 1 : -1;
+    l.add(i % 2 === 0 ? DECOR_FRAMES.stallRed : DECOR_FRAMES.stallBlue, x, y);
+    l.add(DECOR_FRAMES.crate, x + inward * 30, y + 2);
+  });
+  for (const s of ['w', 'e'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 7 });
+  }
 };
 
 const stalls = (points: Slot[], crates: Slot[]): Recipe => l => {
@@ -253,16 +258,28 @@ const wedding: Recipe = l => {
   l.add(DECOR_FRAMES.arch, l.ax, l.nFoot);
   for (const dx of [-32, 0, 32]) l.add(DECOR_FRAMES.petals, l.ax + dx, l.nFoot + 2, { solid: false });
   for (const dx of [-72, 72]) l.add(DECOR_FRAMES.bench, l.ax + dx, l.nFoot);
+  // Guests' benches and lanterns out in the side bands, all facing the arch.
+  for (const s of ['nw', 'ne'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.bench, x, y);
+  }
+  for (const s of ['w', 'e'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 7 });
+  }
 };
 
 const funeral: Recipe = l => {
   l.bunting(l.r.y + 38, DECOR_FRAMES.buntingDark, DECOR_FRAMES.post, 'ground', 1);
   l.add(DECOR_FRAMES.wreath, l.ax, l.nFoot);
   const flame = { frames: 3, fps: 5, solid: false } as const;
-  l.add(DECOR_FRAMES.candle, l.ax - 26, l.nFoot + 2, { ...flame, salt: 1 });
-  l.add(DECOR_FRAMES.candle, l.ax + 26, l.nFoot + 2, { ...flame, salt: 2 });
-  l.add(DECOR_FRAMES.candle, l.ax - 15, l.nFoot + 4, { ...flame, salt: 3 });
-  l.add(DECOR_FRAMES.candle, l.ax + 15, l.nFoot + 4, { ...flame, salt: 4 });
+  // Candle dishes are 16 px wide: keep them a dish apart so they read as separate vigil lights.
+  [-58, -28, 28, 58].forEach((dx, i) => l.add(DECOR_FRAMES.candle, l.ax + dx, l.nFoot + 2 + (i % 3 === 0 ? 3 : 0), { ...flame, salt: i + 1 }));
+  // Mourners' benches in the side bands.
+  for (const s of ['nw', 'ne'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.bench, x, y);
+  }
 };
 
 const harvest: Recipe = l => {
@@ -270,12 +287,15 @@ const harvest: Recipe = l => {
     const [x, y] = l.slot(s);
     offs.forEach(([dx, dy], i) => l.add(frame, x + dx + l.jit(i + 1, 3), y + dy + l.jit(i + 40, 2), { salt: i }));
   };
-  put('w', DECOR_FRAMES.hay, [[0, 0], [30, 6]]);
-  put('e', DECOR_FRAMES.hay, [[0, 0], [-30, 6]]);
-  put('nw', DECOR_FRAMES.pumpkin, [[0, 0], [22, 4], [-4, 14]]);
-  put('ne', DECOR_FRAMES.pumpkin, [[0, 0], [-22, 4], [4, 14]]);
-  put('sw', DECOR_FRAMES.basket, [[0, 0], [24, 2]]);
-  put('se', DECOR_FRAMES.basket, [[0, 0], [-24, 2]]);
+  put('w', DECOR_FRAMES.hay, [[0, 0], [36, 6]]);
+  put('e', DECOR_FRAMES.hay, [[0, 0], [-36, 6]]);
+  put('nw', DECOR_FRAMES.pumpkin, [[-10, 0], [28, 8]]);
+  put('ne', DECOR_FRAMES.pumpkin, [[10, 0], [-28, 8]]);
+  put('sw', DECOR_FRAMES.basket, [[-6, 0], [28, 4]]);
+  put('se', DECOR_FRAMES.basket, [[6, 0], [-28, 4]]);
+  // A few more along the north band, either side of the well's axis.
+  for (const dx of [-84, 84]) l.add(DECOR_FRAMES.pumpkin, l.ax + dx, l.nFoot + 2, { salt: dx });
+  for (const dx of [-124, 124]) l.add(DECOR_FRAMES.hay, l.ax + dx, l.nFoot + 6, { salt: dx });
 };
 
 const competition: Recipe = l => {
@@ -351,8 +371,8 @@ function fire(event: any, locations: any[], out: DecorPlacement[]): void {
     const fy = foot + l.jit(10 + i, 3);
     l.add(DECOR_FRAMES.fire, fx, fy, { layer: 'over', frames: 4, fps: 6, solid: false, salt: i });
     // Two puffs half a cycle apart read as a continuous plume.
-    l.add(DECOR_FRAMES.smoke, fx + 3, fy - 16, { layer: 'over', frames: 3, fps: 4, solid: false, salt: 20 + i });
-    l.add(DECOR_FRAMES.smoke, fx - 4, fy - 20, { layer: 'over', frames: 3, fps: 4, solid: false, salt: 40 + i });
+    l.add(DECOR_FRAMES.smoke, fx + 2, fy - 26, { layer: 'over', frames: 3, fps: 4, solid: false, salt: 20 + i });
+    l.add(DECOR_FRAMES.smoke, fx - 3, fy - 36, { layer: 'over', frames: 3, fps: 4, solid: false, salt: 40 + i });
   }
   out.push(...l.out);
 }
@@ -367,8 +387,8 @@ function sickness(event: any, locations: any[], out: DecorPlacement[]): void {
   const foot = p.y + p.height - 1;
   // Sign beside the door, herbs hung either side of it.
   l.add(DECOR_FRAMES.closedSign, doorX - 22, foot, { solid: false });
-  l.add(DECOR_FRAMES.herbs, doorX + 20, foot, { solid: false });
-  l.add(DECOR_FRAMES.herbs, doorX - 38, foot, { solid: false });
+  l.add(DECOR_FRAMES.herbs, doorX + 30, foot, { solid: false });
+  l.add(DECOR_FRAMES.herbs, doorX - 48, foot, { solid: false });
   out.push(...l.out);
 }
 
