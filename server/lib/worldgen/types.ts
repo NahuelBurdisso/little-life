@@ -41,6 +41,14 @@ export interface Zone {
 export interface RoadsOutput {
   tiles: Array<{ x: number; y: number }>;
   zones: Zone[];
+  /**
+   * The main street's rect, in tiles, when the road generator knows it. The
+   * organic layout sets it; `layout.ts` then emits the `mainstreet` location
+   * from it directly instead of inferring the busiest row from tile counts,
+   * which only works when the main street is the longest straight run on its
+   * row. The grid layout leaves it unset so its output stays byte-identical.
+   */
+  mainStreet?: { x: number; y: number; width: number; height: number };
 }
 
 /** Phase 4 may extend. Placeholder for Phase 1. */
