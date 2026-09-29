@@ -8,6 +8,7 @@ import { getLLMStats } from '../ai/llmSemaphore';
 import { getLLMMetrics } from '../ai/llmMetrics';
 import { startWorldEvent } from '../engine/systems/events';
 import { PLAYER_EVENT_TYPES } from '../data/worldEventCatalog';
+import { getRules, RuleOverridesSchema, setRuleOverrides } from '../lib/worldRules';
 
 export const worldRouter = router({
   getState: publicProcedure.query(() => {
@@ -59,6 +60,31 @@ export const worldRouter = router({
       emitter.markDirty('world.state');
       emitter.flush();
       return { ok: true };
+    }),
+
+  /** The rules the running world plays by: the wizard's, with any live overrides on top. */
+  getRules: publicProcedure.query(() => {
+    return getRules();
+  }),
+
+  /**
+   * Change some of the world's live rules (the Storyteller presets in the
+   * Autoplay panel). Partial: keys left out keep their current value. Every
+   * key and value is checked against the rule catalog — an unknown key or
+   * option is a BAD_REQUEST, not a silently ignored write. The overrides are
+   * saved with the world row, so they survive a server restart but not a
+   * Restart/replace (which replays the wizard's scenario).
+   */
+  setRules: publicProcedure
+    .input(RuleOverridesSchema)
+    .mutation(({ input }) => {
+      if (!db.select({ id: worldState.id }).from(worldState).get()) {
+        return { ok: false as const, error: 'No world yet' };
+      }
+      const rules = setRuleOverrides(input);
+      emitter.markDirty('world.state');
+      emitter.flush();
+      return { ok: true as const, rules };
     }),
 
   onStateChange: publicProcedure.subscription(async function* (opts) {

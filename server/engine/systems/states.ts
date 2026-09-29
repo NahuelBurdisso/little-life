@@ -28,7 +28,7 @@ import { createFact, deactivateStaleFacts, getAgentName, jealousRumorContext } f
 import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
-import { isDeathEnabled } from '../../lib/worldRules';
+import { contagionMultiplier, getRules, isDeathEnabled, sicknessMultiplier, type LiveRules } from '../../lib/worldRules';
 import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
@@ -363,6 +363,36 @@ function computeEffectivePersonality(
   return effective;
 }
 
+// ─── Sickness odds ────────────────────────────────────────────────────────────
+
+/**
+ * Per-game-minute chance of an agent falling ill on their own. Doubled in
+ * rain and storms, x1.5 in winter and x1.5 when exhausted, then scaled by the
+ * world's "Sickness Rate" (worldRules.ts): 'low', the default, is the tuned
+ * base of 0.0001; 'off' makes it 0, and a roll `Math.random() < 0` never
+ * passes.
+ */
+export function environmentSickChancePerMinute(
+  weather: string,
+  season: string,
+  energy: number | null,
+  rules: LiveRules = getRules(),
+): number {
+  const weatherMult = weather === 'rainy' || weather === 'stormy' ? 2 : 1;
+  const seasonMult = season === 'winter' ? 1.5 : 1;
+  const energyMult = energy != null && energy < 25 ? 1.5 : 1;
+  return 0.0001 * weatherMult * seasonMult * energyMult * sicknessMultiplier(rules);
+}
+
+/**
+ * Per-game-minute chance a sick agent passes it to someone who has shared the
+ * room with them for over 30 minutes. 1% at the default 'low' — low enough to
+ * prevent epidemics — scaled by the world's "Contagion Rate" ('off' = 0).
+ */
+export function contagionChancePerMinute(rules: LiveRules = getRules()): number {
+  return 0.01 * contagionMultiplier(rules);
+}
+
 // ─── evaluateTriggers ─────────────────────────────────────────────────────────
 
 function evaluateTriggers(
@@ -427,10 +457,7 @@ function evaluateTriggers(
     const lastRecovery = sickRecoveredAt.get(agent.id) ?? -9999;
     const immunityPeriod = 2880; // ~2 days of immunity after recovery
     if (nowMinutes - lastRecovery > immunityPeriod) {
-      const weatherMult = weather === 'rainy' || weather === 'stormy' ? 2 : 1;
-      const seasonMult = season === 'winter' ? 1.5 : 1;
-      const energyMult = agentNeeds && agentNeeds.energy < 25 ? 1.5 : 1;
-      const sickChance = 0.0001 * weatherMult * seasonMult * energyMult; // per game minute
+      const sickChance = environmentSickChancePerMinute(weather, season, agentNeeds?.energy ?? null);
       if (Math.random() < chancePerTick(sickChance, tickSpeed)) {
         const severity = 0.3 + Math.random() * 0.4;
         const duration = Math.floor(480 + Math.random() * 960); // 8-24 hours (shorter)
@@ -1497,9 +1524,8 @@ function processStateEffects(
           meta[coLocKey] = ((meta[coLocKey] as number | undefined) ?? 0) + tickSpeed;
           const coLocMinutes = meta[coLocKey] as number;
 
-          // Contagion: 1% chance per game minute after 30 minutes together — low
-          // enough to prevent epidemics (rolled per tick via chancePerTick).
-          if (coLocMinutes > 30 && Math.random() < chancePerTick(0.01, tickSpeed)) {
+          // Contagion after 30 minutes together, rolled per tick via chancePerTick.
+          if (coLocMinutes > 30 && Math.random() < chancePerTick(contagionChancePerMinute(), tickSpeed)) {
             // Spread sick only if other doesn't already have it
             const alreadySick = db
               .select()

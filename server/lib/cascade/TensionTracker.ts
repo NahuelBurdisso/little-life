@@ -93,11 +93,15 @@ export class TensionTracker {
   /**
    * CLOCK: GAME MINUTES. The cooldown was 200 TICKS, i.e. 800 game minutes
    * between snaps at 4x; it is now 200 game minutes at every speed.
+   *
+   * `thresholdScale` is the world's "Drama Intensity" (worldRules.ts
+   * `snapThresholdScale`): below 1 tempers run shorter. A parameter rather
+   * than a read here so the tracker stays free of the DB.
    */
-  shouldSnap(agentId: number, personality: PersonalityProfile, nowMinutes: number): boolean {
+  shouldSnap(agentId: number, personality: PersonalityProfile, nowMinutes: number, thresholdScale = 1): boolean {
     const state = this.states.get(agentId);
     if (!state) return false;
-    const threshold = this.getSnapThreshold(personality);
+    const threshold = this.getSnapThreshold(personality) * thresholdScale;
     const cooldownMet = (nowMinutes - state.lastSnapMinute) >= SNAP_COOLDOWN_MINUTES;
     return state.value >= threshold && cooldownMet;
   }

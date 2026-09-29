@@ -98,8 +98,8 @@ class AutoPlayer {
    * - conditionHistory would carry old-world sustained patterns forward.
    * - reports also back getAgentProfiles(), which matches affectedAgents
    *   against agent ids that restart at 1 after a wipe (misattribution).
-   * - the nudger's lastNudgeTick outlives totalTicks going back to 0, which
-   *   silently suppressed every nudge until ticks climbed past it again.
+   * - the nudger's last-nudge stamp outlives the clock going back to day 1,
+   *   which silently suppressed every nudge until the clock climbed past it.
    * - the health collector's lifetime timeout cursor outlives the scheduler
    *   counter, clamping the reported per-window delta to 0.
    *

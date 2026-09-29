@@ -144,6 +144,8 @@ function migrateSchema() {
   addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
   addColumnIfMissing('world_state', 'terrain_tiles', 'TEXT', "'[]'");
   addColumnIfMissing('world_state', 'money_target_per_capita', 'REAL');
+  // Live rule overrides (Storyteller / world.setRules), see lib/worldRules.ts.
+  addColumnIfMissing('world_state', 'rule_overrides', 'TEXT');
 
   // Backfills. Each runs independently — sharing one catch meant a failure on
   // the goals backfill skipped the aspirations one entirely. The first real

@@ -8,6 +8,18 @@ import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
 import { simEvents } from '../../lib/simEvents';
 import { WORLD_EVENTS, EVENT_WEATHER, type WorldEventDef, type WorldEventType } from '../../data/worldEventCatalog';
+import { dramaMultiplier, getRules, type LiveRules } from '../../lib/worldRules';
+
+/**
+ * The hourly chance of a random world event under the world's drama rule.
+ * RANDOM_EVENT_CHANCE_PER_HOUR is the 'medium' rate; 'low' halves it and
+ * 'chaos' makes an event about every other hour. Capped at 1 so a future
+ * base/multiplier pair can't turn the roll into nonsense — MAX_CONCURRENT_EVENTS
+ * still bounds how many run at once.
+ */
+export function randomEventChancePerHour(rules: LiveRules = getRules()): number {
+  return Math.min(1, CONFIG.EVENTS.RANDOM_EVENT_CHANCE_PER_HOUR * dramaMultiplier(rules));
+}
 
 // Season-based weather weights (including snowy for winter, windy for autumn)
 const WEATHER_WEIGHTS: Record<string, Record<string, number>> = {
@@ -178,7 +190,7 @@ export function eventsTick(): void {
     return;
   }
 
-  if (Math.random() >= CONFIG.EVENTS.RANDOM_EVENT_CHANCE_PER_HOUR) {
+  if (Math.random() >= randomEventChancePerHour()) {
     if (eventsChanged) emitter.markDirty('world.state');
     return;
   }

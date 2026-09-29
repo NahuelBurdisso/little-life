@@ -54,6 +54,7 @@ import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
 import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
+import { clearRulesCache } from '../lib/worldRules';
 import { statesTrackersSnapshotStore } from './systems/states';
 import { hobbySnapshotStore } from '../lib/hobbyEngine';
 import { favorSnapshotStore } from '../lib/favorEngine';
@@ -119,6 +120,11 @@ export function persistedStoreKeys(): string[] {
 export function clearPerWorldCaches(): void {
   // Game-minute stamps of recently stored perception lines (MemoryObserver).
   clearPerceptionDedup();
+  // The resolved world rules (wizard + Storyteller overrides). The new world
+  // row carries its own setup_config and no overrides; without this the old
+  // town's drama and sickness settings would keep ruling the new one until the
+  // server restarted.
+  clearRulesCache();
   // Tick-valued trackers
   clearStatesTrackers();
   clearLonelinessTracking();

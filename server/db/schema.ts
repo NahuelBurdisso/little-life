@@ -383,6 +383,11 @@ export const worldState = sqliteTable('world_state', {
   road_tiles: text('road_tiles', { mode: 'json' }).$type<Array<{x: number; y: number}>>().notNull().$defaultFn(() => []),
   terrain_tiles: text('terrain_tiles', { mode: 'json' }).$type<Array<{x: number; y: number; kind: string}>>().notNull().$defaultFn(() => []),
   setup_config: text('setup_config', { mode: 'json' }).$type<Record<string, any> | null>(),
+  // Rules the player changed while the town runs (the Storyteller presets,
+  // `world.setRules`), layered over `setup_config.rules` by lib/worldRules.ts.
+  // Kept apart from setup_config so a Restart replays the wizard's scenario
+  // without them. NULL = no overrides.
+  rule_overrides: text('rule_overrides', { mode: 'json' }).$type<Record<string, unknown> | null>(),
   // Money per resident the balancer steers to (townTreasury.ts moneyTargetFor),
   // stored at world creation from the starting cash. NULL on saves from before
   // it existed: CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY.

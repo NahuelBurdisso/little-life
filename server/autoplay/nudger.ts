@@ -28,22 +28,40 @@ interface AgentPlacement {
   y: number;
 }
 
+/**
+ * Game minutes between two auto-nudges. CLOCK: GAME MINUTES — it was 120
+ * TICKS, which at 4x let the storyteller poke the town every half game hour
+ * (and at 0.5x only every four), so the pace of a story depended on the speed
+ * the player watched it at.
+ */
+export const NUDGE_COOLDOWN_MINUTES = 120;
+
 export class SmartNudger {
   private nudgesToday = 0;
-  private lastNudgeTick = 0;
+  /** Game minute (`window.endMinutes`) of the last nudge; null = none yet this world. */
+  private lastNudgeMinute: number | null = null;
   private currentDay = 0;
-  private cooldownTicks = 120; // ~2 game hours
 
   /**
-   * Drop the tick/day cursors. Required when the world is wiped: totalTicks
-   * restarts at 0, so a surviving lastNudgeTick makes the cooldown check
-   * `window.startTick - lastNudgeTick < cooldownTicks` true for hours,
-   * silently disabling every nudge.
+   * Drop the day cursor and the cooldown stamp. Required when the world is
+   * wiped: the clock restarts at day 1, so a surviving stamp from late in the
+   * old world would sit in the future and hold the cooldown shut for days.
    */
   reset() {
     this.nudgesToday = 0;
-    this.lastNudgeTick = 0;
+    this.lastNudgeMinute = null;
     this.currentDay = 0;
+  }
+
+  /**
+   * Still inside the cooldown at game minute `now`? A stamp in the future
+   * (the clock went backwards without a reset) counts as expired rather than
+   * blocking every nudge until the clock catches up.
+   */
+  private coolingDown(now: number): boolean {
+    if (this.lastNudgeMinute == null) return false;
+    const elapsed = now - this.lastNudgeMinute;
+    return elapsed >= 0 && elapsed < NUDGE_COOLDOWN_MINUTES;
   }
 
   async applyNudges(
@@ -57,7 +75,9 @@ export class SmartNudger {
     }
 
     if (this.nudgesToday >= CONFIG.AUTOPLAY.MAX_NUDGES_PER_DAY) return [];
-    if (window.startTick - this.lastNudgeTick < this.cooldownTicks) return [];
+    // endMinutes, not startMinutes: the end is the exact clock the window was
+    // analysed at, the start an estimate from the current tick_speed.
+    if (this.coolingDown(window.endMinutes)) return [];
 
     const fixable = diagnoses
       .filter(d => d.autoFixable)
@@ -71,7 +91,7 @@ export class SmartNudger {
 
     this.execute(action);
     this.nudgesToday++;
-    this.lastNudgeTick = window.startTick;
+    this.lastNudgeMinute = window.endMinutes;
     return [action];
   }
 
