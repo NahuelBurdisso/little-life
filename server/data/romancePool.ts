@@ -22,8 +22,9 @@ export interface RomanceTemplate {
   /**
    * Slots of the fact's subject and target (default 0 and 1). The secret is
    * about whoever it names first: in a love triangle that is agent 2, and a
-   * subject outside the text made the wrong agent's secret — and setup adds
-   * the subject to known_by, so the wrong agent knew it.
+   * subject outside the text made the wrong agent's secret. `known_by` above
+   * is taken as-is (setup no longer adds the subject), so a sighting whose
+   * subject is not listed stays unknown to them.
    */
   secret_subject?: number;
   secret_target?: number;

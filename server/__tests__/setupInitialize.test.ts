@@ -547,8 +547,10 @@ describe('starting relationships and secrets through initialize', () => {
         scenario: { drama: 100, romance: 100, crime: 100, trust: 50, seed: `b17-${i}` },
       } as any);
       for (const f of db.select().from(shared_knowledge).all()) {
-        const sighting = f.type === 'witness' || / saw /.test(f.content);
-        if (!sighting || f.target_id == null) continue;
+        // Only the secrets-pool sightings: their target is the onlooker. The
+        // romance pool's jealousy_seed ("A saw B flirting with C") is also a
+        // sighting, but its target is the flirt partner, not the onlooker.
+        if (f.type !== 'witness' || f.target_id == null) continue;
         // About the person seen (subject); known to the onlooker (target) only.
         expect(f.known_by).not.toContain(f.subject_id);
         expect(f.known_by).toContain(f.target_id);
