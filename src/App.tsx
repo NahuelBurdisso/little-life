@@ -12,6 +12,7 @@ import { AgentTooltip } from "./components/overlays/AgentTooltip";
 import { DramaAlerts } from "./components/overlays/DramaAlerts";
 import { DirectorCaption, DirectorChip } from "./components/overlays/DirectorCaption";
 import { useDirector } from "./hooks/useDirector";
+import { useSpotlight } from "./hooks/useSpotlight";
 import { pushToast } from "./lib/toast";
 import { useDramaAlerts } from "./hooks/useDramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
@@ -267,6 +268,8 @@ export default function App() {
     favorites,
     followAgent: followAgentRaw,
   });
+  // Who is on screen → the server spends its LLM slots there first.
+  useSpotlight({ selectedAgentId, favorites, shot: director.shot, agents });
   const noteDirectorInput = director.notePlayerInput;
 
   const focusAgent = useCallback((agentId: string) => {

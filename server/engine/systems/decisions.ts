@@ -47,6 +47,10 @@ import { foodCount, isFood } from '../../lib/economyEngine';
 import { shopliftFrom } from '../../lib/economyTransfers';
 import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { parseWeddingTrigger } from '../../lib/marriage';
+import { chooseTier, conversationBacklog, hasDramaticState } from '../../lib/conversationTier';
+import { isAnyWatched } from '../../lib/spotlight';
+import { getLLMBacklog } from '../../ai/llmSemaphore';
+import { queueMaxWait, turnLatencyEstimateMs } from '../../lib/conversationPacing';
 import {
   PROPOSAL_SEEK_SCORE, canSeekPartner, inNoProposalState, pendingProposalPartner, queuePendingProposalNow,
   type SeekParty,
@@ -1485,6 +1489,22 @@ export function tick(world: WorldRow): void {
     return endedAt !== undefined && Date.now() - endedAt < pairCooldownMs;
   };
 
+  // What the model can afford this tick, read once for every conversation the
+  // pass queues (lib/conversationTier.ts): with the slots full and requests
+  // backed up, off-screen small talk becomes a template chat and the pair on
+  // screen goes first. Active conversations are LLM ones — a template chat is
+  // written already ended.
+  const tierBudget = {
+    backlog: conversationBacklog({
+      semaphoreWaiting: getLLMBacklog(),
+      activeLLMConversations: allActiveConvos.length,
+      maxConcurrentLLM: CONFIG.CONVERSATIONS.MAX_CONCURRENT_LLM,
+      queuedLLMEntries: allQueuedConvos.filter(q => q.tier !== 'template').length,
+    }),
+    population: activeAgents.length,
+    latencyMs: turnLatencyEstimateMs(gameMinutes(world.time)),
+  };
+
   // Cache shared_knowledge for arrest mechanic
   const allActiveKnowledge = db.select().from(shared_knowledge)
     .where(eq(shared_knowledge.is_active, true))
@@ -2182,44 +2202,34 @@ export function tick(world: WorldRow): void {
       // Depressed agents skip conversations entirely — don't queue them
       if ((agentStatesArr as string[]).includes('depressed')) continue;
       const targetStatesArr = getAgentStates(targetId);
-      const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'depressed', 'drunk', 'infatuated'] as const;
-      const hasDramaticState = dramaticStates.some(s => (agentStatesArr as string[]).includes(s) || (targetStatesArr as string[]).includes(s));
-
-      const dramaticTopics = ['gossip', 'flirting', 'confrontation', 'venting', 'seeking comfort'];
-      const hasDramaticTopic = topic ? dramaticTopics.some(t => topic!.includes(t)) : false;
-
-      const hasHighRomance = romance > 30;
-      const isEmotionalExtreme = agentNeeds.mood < 25 || agentNeeds.mood > 85;
 
       // Check familiarity for first meetings
       const relRow = allRelationships.find(
         r => (r.agent_a === agentId && r.agent_b === targetId) ||
              (r.agent_b === agentId && r.agent_a === targetId),
       );
-      const isFirstMeeting = !relRow || relRow.familiarity < 5;
 
-      // Check for gossip to share
-      const hasGossip = agentPersonality
-        ? getShareableFacts(agentId, targetId, agentPersonality).length > 0
-        : false;
-
-      let tier: string;
-      if (hasDramaticState || hasDramaticTopic || isFirstMeeting) {
-        tier = 'llm_deep'; // 6 turns — dramatic moments
-      } else if (hasHighRomance || isEmotionalExtreme || hasGossip) {
-        tier = 'llm_standard'; // 4 turns — notable situations
-      } else if (friendship > 40 || romance > 10 || agentNeeds.mood < 40 || agentNeeds.social < 30) {
-        tier = 'llm_standard'; // 4 turns — friends talking, lonely/sad agents
-      } else {
-        tier = CONFIG.CONVERSATIONS.SMALL_TALK_TIER; // acquaintances with nothing special to say
-      }
-
-      const priority = Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0));
-
-      // A comfort visit is the whole point of the walk over — never let it
-      // collapse into a one-line template exchange.
+      // A comfort visit is the whole point of the walk over — chooseTier never
+      // lets it collapse into a one-line template exchange.
       const isComfortVisit = decision.source === 'comfort_visit';
-      if (isComfortVisit && tier === 'template') tier = 'llm_standard';
+      const { tier, priority, maxWaitGameMin } = chooseTier({
+        ...tierBudget,
+        source: 'social',
+        friendship,
+        romance,
+        mood: agentNeeds.mood,
+        social: agentNeeds.social,
+        dramaticState: hasDramaticState(agentStatesArr, targetStatesArr),
+        topic,
+        firstMeeting: !relRow || relRow.familiarity < 5,
+        // Check for gossip to share
+        hasGossip: agentPersonality
+          ? getShareableFacts(agentId, targetId, agentPersonality).length > 0
+          : false,
+        comfortVisit: isComfortVisit,
+        watched: isAnyWatched([agentId, targetId]),
+        basePriority: Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0)),
+      });
 
       // Recorded in the per-tick snapshot too: it was read once at the top of the
       // pass, so when A and B each decided to socialize with the other in the
@@ -2233,7 +2243,7 @@ export function tick(world: WorldRow): void {
           trigger_reason: isComfortVisit ? 'comfort_visit' : 'needs_social',
           topic,
           queued_at: Date.now(),
-          max_wait: 10000,
+          max_wait: queueMaxWait(maxWaitGameMin),
         })
         .returning()
         .get());
@@ -2297,27 +2307,26 @@ export function tick(world: WorldRow): void {
     const friendship = rel?.friendship ?? 0;
     const romance = rel?.romance ?? 0;
 
-    // Use the same tier logic as regular socializing
+    // Same tier logic as regular socializing (lib/conversationTier.ts), with
+    // the signals an encounter has: no topic yet, hostility counts as drama.
     const aStates = getAgentStates(a.id);
     const bStates = getAgentStates(b.id);
     // Skip if either agent is depressed — they avoid conversations
     if ((aStates as string[]).includes('depressed') || (bStates as string[]).includes('depressed')) continue;
-    const dramaticStates = ['jealous', 'heartbroken', 'angry', 'alcoholic', 'in_debt', 'drunk', 'infatuated'] as const;
-    const hasDrama = dramaticStates.some(s => (aStates as string[]).includes(s) || (bStates as string[]).includes(s));
 
     const aNeeds = needsMap.get(a.id);
     const aMood = aNeeds?.mood ?? 50;
 
-    let tier: string;
-    if (hasDrama || friendship < -20) {
-      tier = 'llm_deep';
-    } else if (romance > 30 || aMood < 25 || aMood > 85) {
-      tier = 'llm_standard';
-    } else if (friendship > 40 || romance > 10 || aMood < 40) {
-      tier = 'llm_standard';
-    } else {
-      tier = CONFIG.CONVERSATIONS.SMALL_TALK_TIER;
-    }
+    const { tier, priority: encounterPriority, maxWaitGameMin: encounterWait } = chooseTier({
+      ...tierBudget,
+      source: 'encounter',
+      friendship,
+      romance,
+      mood: aMood,
+      dramaticState: hasDramaticState(aStates, bStates),
+      watched: isAnyWatched([a.id, b.id]),
+      basePriority: 50,
+    });
 
     const aPersonality = a.personality as PersonalityProfile | null;
     let topic: string | null = null;
@@ -2329,11 +2338,11 @@ export function tick(world: WorldRow): void {
     db.insert(conversationQueue).values({
       participants: [a.id, b.id],
       tier,
-      priority: 50,
+      priority: encounterPriority,
       trigger_reason: `location_encounter:${loc.type}`,
       topic,
       queued_at: Date.now(),
-      max_wait: 10000,
+      max_wait: queueMaxWait(encounterWait),
     }).run();
   }
 

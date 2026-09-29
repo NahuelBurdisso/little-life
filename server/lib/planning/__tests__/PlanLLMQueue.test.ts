@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PlanLLMQueue } from '../PlanLLMQueue';
+import { PlanLLMQueue, replanPriority } from '../PlanLLMQueue';
+import { clearSpotlight, setSpotlight } from '../../spotlight';
 
 /** A job whose completion the test controls. */
 function deferredJob() {
@@ -105,5 +106,25 @@ describe('PlanLLMQueue dedupe', () => {
     await flush();
     expect(q.isPending(1, 'generate')).toBe(true);
     fresh.release();
+  });
+});
+
+describe('replanPriority', () => {
+  it('an unwatched, non-dramatic replan waits at low priority', () => {
+    clearSpotlight();
+    expect(replanPriority({ agentId: 3, isDramatic: false })).toBe('low');
+  });
+
+  it('a dramatic replan keeps normal priority on or off screen', () => {
+    clearSpotlight();
+    expect(replanPriority({ agentId: 3, isDramatic: true })).toBe('normal');
+  });
+
+  it('a watched resident keeps normal priority until the spotlight expires', () => {
+    setSpotlight([3], 1_000);
+    expect(replanPriority({ agentId: 3, isDramatic: false }, 2_000)).toBe('normal');
+    expect(replanPriority({ agentId: 4, isDramatic: false }, 2_000)).toBe('low');
+    expect(replanPriority({ agentId: 3, isDramatic: false }, 1_000 + 60_000)).toBe('low');
+    clearSpotlight();
   });
 });

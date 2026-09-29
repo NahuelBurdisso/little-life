@@ -12,6 +12,7 @@
  * Anything that goes wrong returns null and the caller falls back to the gist.
  */
 import { callOllamaChat } from '../../ai/ollama';
+import type { LLMPriority } from '../../ai/llmSemaphore';
 import { CONFIG } from '../constants';
 import { firstName } from '../../ai/names';
 
@@ -22,6 +23,28 @@ export interface SummaryLine {
 
 /** Fewer spoken lines than this and there is nothing to summarise. */
 export const MIN_SUMMARY_LINES = 4;
+
+/**
+ * Fewer spoken lines than this and an OFF-SCREEN chat keeps the gist memory
+ * (conversationGist.ts, no LLM) instead of a summary. A standard chat runs up
+ * to MAX_TURNS_STANDARD (6) lines, and one of 4–5 is mostly greeting, one
+ * exchange and a goodbye: the gist quotes its loaded line just as well, and
+ * the summary call — one per conversation, in the same chat pool as the
+ * dialogue — is better spent on a chat the player is reading. On screen
+ * (lib/spotlight.ts) the MIN_SUMMARY_LINES floor applies as before.
+ */
+export const OFFSCREEN_MIN_SUMMARY_LINES = 6;
+
+/**
+ * Whether a finished conversation gets an LLM summary, and at what priority:
+ * null = keep the non-LLM gist memory. On screen: from MIN_SUMMARY_LINES, at
+ * 'normal'. Off screen: from OFFSCREEN_MIN_SUMMARY_LINES, at 'low' — a
+ * takeaway nobody is waiting to read can queue behind plans and dialogue.
+ */
+export function summaryPriority(spokenLines: number, watched: boolean): LLMPriority | null {
+  if (watched) return spokenLines >= MIN_SUMMARY_LINES ? 'normal' : null;
+  return spokenLines >= OFFSCREEN_MIN_SUMMARY_LINES ? 'low' : null;
+}
 
 export function buildSummaryPrompt(participants: string[], lines: SummaryLine[]): {
   system: string;
@@ -68,7 +91,11 @@ export function parseSummary(raw: string, participants: string[]): Map<string, s
   return out.size > 0 ? out : null;
 }
 
-export async function summarizeConversation(participants: string[], lines: SummaryLine[]): Promise<Map<string, string> | null> {
+export async function summarizeConversation(
+  participants: string[],
+  lines: SummaryLine[],
+  priority: LLMPriority = 'normal',
+): Promise<Map<string, string> | null> {
   if (participants.length < 2 || lines.length < MIN_SUMMARY_LINES) return null;
   const prompt = buildSummaryPrompt(participants, lines);
   try {
@@ -77,7 +104,7 @@ export async function summarizeConversation(participants: string[], lines: Summa
       purpose: 'conversation.summary',
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user }],
-      priority: 'normal',
+      priority,
       format: prompt.format,
       options: { temperature: 0.5, num_predict: 90 * participants.length },
     });

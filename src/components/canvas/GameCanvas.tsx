@@ -24,6 +24,7 @@ import { onCanvasEvent } from "../../lib/canvasBus";
 import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { ParticleContext } from "./particles/types";
 import { idString, pairKey } from "./idString";
+import { registerCameraView } from "../../lib/cameraView";
 
 // Held-pose emotes: action type -> looping emote key. Emotes only live ~1.5s,
 // so a pose that lasts minutes has to re-puff to stay legible.
@@ -429,6 +430,9 @@ export const GameCanvas = React.memo(function GameCanvas({
       onUserCameraInputRef.current?.();
     };
     cameraRef.current = camera;
+    // Pull-only: the spotlight hook asks for the view every few seconds, so
+    // nothing is computed per frame for it.
+    const unregisterCameraView = registerCameraView(() => camera.viewRect());
 
     // Lighting system (lightmap overlay, replaces DayNightCycle)
     const lighting = new LightingSystem(app, worldContainer);
@@ -502,6 +506,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       // remount — drive dead subsystems. Null them so those paths bail instead.
       tilemapRef.current = null;
       buildingRendererRef.current = null;
+      unregisterCameraView();
       cameraRef.current = null;
       lightingRef.current = null;
       weatherRef.current = null;

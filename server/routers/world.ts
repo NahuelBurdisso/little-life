@@ -12,6 +12,7 @@ import { getRules, RuleOverridesSchema, setRuleOverrides } from '../lib/worldRul
 import { populationTargets } from '../lib/populationFlow';
 import { getHealthSnapshot, HEALTH_CHANNEL } from '../lib/health';
 import { nightSkip, NIGHT_SKIP_CHANNEL } from '../engine/nightSkip';
+import { setSpotlight, SPOTLIGHT_MAX_AGENTS } from '../lib/spotlight';
 
 export const worldRouter = router({
   getState: publicProcedure.query(() => {
@@ -129,6 +130,19 @@ export const worldRouter = router({
       emitter.markDirty('world.state');
       emitter.flush();
       return { ok: true as const, rules };
+    }),
+
+  /**
+   * Who is on the player's screen (src/hooks/useSpotlight.ts): the LLM budget
+   * goes to these residents first (lib/spotlight.ts). Replaces the previous
+   * set; expires on its own after SPOTLIGHT_TTL_MS without a refresh. No
+   * channel to mark dirty — nothing on the client reads it back.
+   */
+  setSpotlight: publicProcedure
+    .input(z.object({ agentIds: z.array(z.number().int().positive()).max(SPOTLIGHT_MAX_AGENTS) }))
+    .mutation(({ input }) => {
+      setSpotlight(input.agentIds);
+      return { ok: true as const };
     }),
 
   onStateChange: publicProcedure.subscription(async function* (opts) {

@@ -131,6 +131,15 @@ export class PrioritySemaphore {
     return release;
   }
 
+  /**
+   * Requests waiting for a slot right now. O(1), unlike `stats()` (which
+   * filters the waiting list three times): the decisions phase reads it for
+   * every conversation it queues (lib/conversationTier.ts).
+   */
+  backlog(): number {
+    return this.waiting.length;
+  }
+
   /** Non-blocking stats snapshot for diagnostics / activity log */
   stats() {
     return {
@@ -200,4 +209,13 @@ export function acquireEmbeddingSlot(priority: LLMPriority = 'normal'): Promise<
 /** Non-blocking stats snapshot of the chat pool for diagnostics / activity log */
 export function getLLMStats() {
   return chatSemaphore.stats();
+}
+
+/**
+ * Chat requests queued behind a full pool. 0 means the next request would get a
+ * slot (or its side's reserve) at once; anything above means the model is the
+ * bottleneck and every extra request only lengthens the wait.
+ */
+export function getLLMBacklog(): number {
+  return chatSemaphore.backlog();
 }

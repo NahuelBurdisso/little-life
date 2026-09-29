@@ -8,6 +8,18 @@ async function fill(sem: PrioritySemaphore, n: number) {
 }
 
 describe('PrioritySemaphore', () => {
+  it('backlog() counts the requests waiting for a slot', async () => {
+    const sem = new PrioritySemaphore(1);
+    expect(sem.backlog()).toBe(0);
+    const [held] = await fill(sem, 1);
+    expect(sem.backlog()).toBe(0);
+    void sem.acquire('low');
+    void sem.acquire('critical');
+    expect(sem.backlog()).toBe(2);
+    held();
+    expect(sem.backlog()).toBe(1);
+  });
+
   it('serves a newer higher-priority waiter before an older low one', async () => {
     const sem = new PrioritySemaphore(2);
     const held = await fill(sem, 2);
