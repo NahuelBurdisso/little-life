@@ -22,6 +22,16 @@ interface RippleEngineOptions {
   dryRun?: boolean;
 }
 
+/**
+ * The party a cascade effect is aimed at, from the acting agent's side: the
+ * first of perpetrator/victim that is someone else. `perpetratorId` falls back
+ * to the acting agent when an event names no perpetrator, so a plain
+ * `perpetratorId ?? victimId` would pick the agent themself.
+ */
+function otherParty(metadata: CascadeMetadata, agentId: number): number | undefined {
+  return [metadata.perpetratorId, metadata.victimId].find((id) => id != null && id !== agentId);
+}
+
 export class RippleEngine {
   private rules: RippleRule[];
   private cooldowns: Map<string, Map<number, { tick: number; cooldownTicks: number }>>; // ruleId → agentId → {lastFiredTick, cooldown}
@@ -769,11 +779,17 @@ export class RippleEngine {
 
     // emitEvent
     if (fx.emitEvent) {
+      // Every emitting rule describes something the rule's agent does — a
+      // lash-out, a confrontation, begging, a drunken scene — so the agent is
+      // the new event's perpetrator and the other party its victim. Copying the
+      // parent chain's cast instead sent anger_lash_out's confrontation (Y
+      // lashing out after X's insult) with perpetratorId X, and every rule
+      // downstream treated the insulter as the aggressor of Y's outburst.
       const emitPayload = {
         ...(fx.emitPayload ?? {}),
         agentId,
-        perpetratorId: metadata.perpetratorId,
-        victimId: metadata.victimId,
+        perpetratorId: agentId,
+        victimId: otherParty(metadata, agentId),
         locationId: metadata.locationId,
         _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, parentRuleId: rule.id },
       };
@@ -804,8 +820,7 @@ export class RippleEngine {
       // back to the acting agent when an event names no perpetrator, and
       // `perpetratorId ?? victimId` then picked the agent themself and skipped
       // the delta — e.g. protect_gratitude never reached the protected person.
-      const targetId = [metadata.perpetratorId, metadata.victimId]
-        .find(id => id != null && id !== agentId);
+      const targetId = otherParty(metadata, agentId);
       if (targetId != null) {
         const a = Math.min(agentId, targetId);
         const b = Math.max(agentId, targetId);

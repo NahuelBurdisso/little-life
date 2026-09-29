@@ -12,7 +12,8 @@ import type { PersonalityProfile } from '../lib/personality';
  * Review finding: a witness rumor about a cascade-chained state blamed the
  * wrong person. X insults Y → insult_anger makes Y angry → anger_lash_out
  * fires on Y's state:triggered, whose payload still carries perpetratorId X,
- * and the bystander's rumor said "X flew into a rage".
+ * and the bystander's rumor said "X flew into a rage". The confrontation that
+ * anger_lash_out then emitted still named X as perpetrator, too.
  */
 
 const NEUTRAL: PersonalityProfile = {
@@ -77,6 +78,9 @@ describe('witness rumors through a cascade chain', () => {
   let insulter: number;
   let insulted: number;
   let bystander: number;
+  /** Events the chain itself emitted (anger_lash_out's confrontation). */
+  const emitted: any[] = [];
+  const capture = (p: any) => { if (p?._cascade) emitted.push(p); };
 
   beforeAll(() => {
     plaza = insertLocation();
@@ -89,6 +93,7 @@ describe('witness rumors through a cascade chain', () => {
     });
     engine.setWitnessAmplifier(new WitnessAmplifier());
     vi.spyOn(Math, 'random').mockReturnValue(0);
+    simEvents.on('interaction:completed', capture);
 
     simEvents.emit('interaction:completed', {
       agentId: insulter,
@@ -100,7 +105,18 @@ describe('witness rumors through a cascade chain', () => {
   });
 
   afterAll(() => {
+    simEvents.off('interaction:completed', capture);
     vi.restoreAllMocks();
+  });
+
+  it('casts the lash-out with the angry agent as aggressor and the insulter as target', () => {
+    const lashOut = emitted.find((p) => p._cascade?.parentRuleId === 'anger_lash_out');
+    expect(lashOut).toMatchObject({
+      action: 'confrontation',
+      agentId: insulted,
+      perpetratorId: insulted,
+      victimId: insulter,
+    });
   });
 
   it('pins the deed on the perpetrator when the parties are distinct', () => {
