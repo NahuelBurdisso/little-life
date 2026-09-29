@@ -81,6 +81,7 @@ class AudioSystem implements CanvasSystem {
     this.offBus = onCanvasEvent((e) => {
       if (e.type === 'lightning') this.thunder(e.strength);
       else if (e.type === 'intervention') this.god(e.kind);
+      else if (e.type === 'celebrate') this.celebrate(e.success);
     });
   }
 
@@ -215,6 +216,14 @@ class AudioSystem implements CanvasSystem {
   private god(kind: string): void {
     // The player's own action always answers, paused or not: it is feedback, not ambience.
     getSynth()?.god(godCueOf(kind));
+  }
+
+  private celebrate(success: boolean): void {
+    // Like the god cues: the player's own goal answers even while paused.
+    const s = getSynth();
+    if (!s) return;
+    if (success) s.god('fanfare');
+    else s.story('sad', 0.8);
   }
 
   destroy(): void {

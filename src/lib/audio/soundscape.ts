@@ -400,8 +400,10 @@ export function takeNewRows<T extends StoryRow>(watch: StoryWatch, rows: readonl
  * - whoosh: air moving (sending someone somewhere, weather, removing someone)
  * - coins: a purse's clink (give_money)
  * - nudge: one soft pluck (a plain suggestion, introductions, events)
+ * - fanfare: a rising arpeggio capped by a bell (a challenge completed, an achievement) —
+ *   not tied to an intervention kind, played for the canvas bus's `celebrate`
  */
-export type GodCue = 'sparkle' | 'whoosh' | 'coins' | 'nudge';
+export type GodCue = 'sparkle' | 'whoosh' | 'coins' | 'nudge' | 'fanfare';
 
 const GOD_CUE: Readonly<Record<string, GodCue>> = {
   whisper_thought: 'sparkle', stir_feeling: 'sparkle', tell_secret: 'sparkle', start_rumor: 'sparkle',

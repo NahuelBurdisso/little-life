@@ -44,6 +44,13 @@ export type CanvasBusEvent =
       x?: number;
       y?: number;
     }
+  /**
+   * One of the player's goals settled (hooks/useChallenges.ts): a challenge
+   * completed or failed, or an achievement unlocked. `success` picks a gold
+   * burst and a fanfare over a sigh; `agentIds` are the residents it was about
+   * (empty for town-wide goals: the burst then fills the screen).
+   */
+  | { type: 'celebrate'; kind: 'challenge' | 'achievement'; success: boolean; agentIds: number[] }
   /** Pan the camera to a world-pixel point (does not change the selection). */
   | { type: 'focus'; x: number; y: number }
   /** Pan the camera to a location's centre. */
