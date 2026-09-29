@@ -54,6 +54,7 @@ import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
 import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
+import { clearSpotlight } from '../lib/spotlight';
 import { nightSkip } from './nightSkip';
 import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
 import { clearRulesCache } from '../lib/worldRules';
@@ -195,6 +196,10 @@ export function clearPerWorldCaches(): void {
   // Turn-latency samples and the probe stamp are game-minute stamped; a new
   // world's clock can start earlier, and old samples belong to a different town.
   resetConversationPacing();
+  // Who the player is watching is a set of agent ids, and rowids restart with
+  // the new world: a stale spotlight would hand the old town's favourites'
+  // id-twins the LLM budget until the client's next refresh.
+  clearSpotlight();
 
   // A skip in progress belongs to the old town (its target is an absolute game
   // minute of the old clock, its sleepers are old agent ids). The new world has
