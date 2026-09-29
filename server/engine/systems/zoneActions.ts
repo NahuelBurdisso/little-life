@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { addToInventory } from '../../lib/economyEngine';
 import { practiceHobby, getSkillOutputMultiplier, getSkillNeedBonus } from '../../lib/hobbyEngine';
 import { gameMinutes } from '../../lib/gameClock';
+import { SEASON_PRODUCTION_MODIFIERS } from '../../data/economyData';
 
 interface ZoneActionEffect {
   // Need values in this codebase are SATISFACTION (0 = starving/exhausted), so a
@@ -25,6 +26,32 @@ const ZONE_ACTION_EFFECTS: Record<string, () => ZoneActionEffect> = {
   browse:      () => ({ needDeltas: { fun: 2 } }),
   jog:         () => ({ needDeltas: { fun: 3, mood: 2, energy: -4 } }),
 };
+
+/**
+ * How much a season shrinks what fishing and foraging bring home (E11).
+ *
+ * Farm output already follows SEASON_PRODUCTION_MODIFIERS (winter 0.4), but
+ * fish/forage produced a flat unit whatever the month, so the soak's winter
+ * food_raw was as high as spring's — the hobbies carried the town through a
+ * season that was meant to be lean. Foraging uses the farm table; fishing is
+ * milder (half way to 1: rivers don't stop, ice fishing is a thing).
+ *
+ * Capped at 1.0: the table's spring 1.2 would put MORE food on the table than
+ * the flat unit that the meal economy is balanced against (hunger already runs
+ * high), so a good season is "as before" and only the lean ones bite.
+ */
+export function gatherSeasonMultiplier(actionType: string, season: string | undefined): number {
+  const farm = Math.min(1, SEASON_PRODUCTION_MODIFIERS[season ?? ''] ?? 1);
+  if (actionType === 'forage') return farm;
+  if (actionType === 'fish') return (1 + farm) / 2;
+  return 1;
+}
+
+/** Round a fractional yield to a whole number without bias: 0.7 is 1 seven times in ten. */
+function stochasticRound(x: number): number {
+  const whole = Math.floor(x);
+  return whole + (Math.random() < x - whole ? 1 : 0);
+}
 
 // Need columns that exist in the needs table
 const NEED_COLUMNS = ['hunger', 'energy', 'social', 'comfort', 'fun', 'mood', 'stress'] as const;
@@ -74,14 +101,21 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
   if (effect.itemProduced) {
     const econ = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
     if (econ) {
-      const scaledQty = Math.max(1, Math.round(effect.itemProduced.qty * skillOutputMult));
-      const newInv = addToInventory(
-        econ.inventory as { itemId: string; quantity: number; acquiredAt: number }[],
-        effect.itemProduced.item,
-        scaledQty,
-        Date.now(),
-      );
-      db.update(economy).set({ inventory: newInv }).where(eq(economy.id, econ.id)).run();
+      // The old `max(1, round(...))` floor made a gathering trip always pay at
+      // least one unit; with a season cutting the yield the floor is gone and
+      // a fractional yield rounds by chance instead, so a winter forager brings
+      // back nothing some of the time rather than never.
+      const seasonMult = gatherSeasonMultiplier(actionType, world?.time?.season);
+      const scaledQty = stochasticRound(effect.itemProduced.qty * skillOutputMult * seasonMult);
+      if (scaledQty > 0) {
+        const newInv = addToInventory(
+          econ.inventory as { itemId: string; quantity: number; acquiredAt: number }[],
+          effect.itemProduced.item,
+          scaledQty,
+          Date.now(),
+        );
+        db.update(economy).set({ inventory: newInv }).where(eq(economy.id, econ.id)).run();
+      }
     }
   }
 
