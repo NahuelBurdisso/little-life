@@ -4,7 +4,13 @@ import { eq, inArray, like, sql } from 'drizzle-orm';
 // The LLM path must not actually run: accept every dispatch and do nothing, so
 // the conversation rows Step E creates stay `active` for the assertions.
 vi.mock('../../../ai/taskRunner', () => ({
-  taskRunner: { startConversation: vi.fn(() => true), abortConversation: vi.fn(), freeConversationSlots: 4 },
+  taskRunner: {
+    startConversation: vi.fn(() => true),
+    abortConversation: vi.fn(),
+    isRunning: vi.fn(() => false),
+    inFlightTurnMs: vi.fn(() => null),
+    freeConversationSlots: 4,
+  },
 }));
 // Pass-through, so a test can make one completion throw halfway.
 vi.mock('../../../lib/conversationEvaluator', async (importOriginal) => {

@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { applyWSSHandler } from '@trpc/server/adapters/ws';
 import { appRouter } from './router';
 import { startTickLoop, stopTickLoop } from './engine/tick';
+import { endOrphanedLLMConversations } from './engine/systems/conversations';
 import { taskRunner } from './ai/taskRunner';
 import { sqlite } from './db';
 import { memoryService } from './lib/memory/instance';
@@ -102,6 +103,15 @@ try {
   console.log(`Zone occupancy reconstructed (${activeAgents.length} agents, ${allLocations.length} locations)`);
 } catch (err) {
   console.warn('Zone occupancy reconstruction failed:', (err as Error).message);
+}
+
+// LLM conversations the previous process was running have no turn chain now
+// (the task runner is in-memory): end them and free their participants.
+try {
+  const ended = endOrphanedLLMConversations();
+  if (ended > 0) console.log(`Ended ${ended} LLM conversation(s) orphaned by the restart`);
+} catch (err) {
+  console.warn('Ending orphaned conversations failed:', (err as Error).message);
 }
 
 // Express for health check

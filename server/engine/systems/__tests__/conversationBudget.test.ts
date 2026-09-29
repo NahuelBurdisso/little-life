@@ -8,6 +8,8 @@ vi.mock('../../../ai/taskRunner', () => ({
   taskRunner: {
     startConversation: vi.fn(() => true),
     abortConversation: vi.fn(),
+    isRunning: vi.fn(() => false),
+    inFlightTurnMs: vi.fn(() => null),
     freeConversationSlots: 4,
   },
 }));
@@ -35,8 +37,9 @@ import {
   queueMaxWait,
   recordTurnLatency,
   resetConversationPacing,
+  turnLatencyEstimateMs,
 } from '../../../lib/conversationPacing';
-import { conversationsTick } from '../conversations';
+import { conversationsTick, endOrphanedLLMConversations } from '../conversations';
 
 /**
  * G1 (playtest #2): at 4x, LLM conversations ate whole nights. The budget was
@@ -54,6 +57,8 @@ const STANDARD = 6;
 const runner = taskRunner as unknown as {
   startConversation: ReturnType<typeof vi.fn>;
   abortConversation: ReturnType<typeof vi.fn>;
+  isRunning: ReturnType<typeof vi.fn>;
+  inFlightTurnMs: ReturnType<typeof vi.fn>;
   freeConversationSlots: number;
 };
 
@@ -289,6 +294,8 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
     db.update(agents).set({ current_action: { type: 'idle' } }).where(inArray(agents.id, [a, b])).run();
     runner.startConversation.mockClear();
     runner.abortConversation.mockClear();
+    runner.isRunning.mockReset().mockReturnValue(false);
+    runner.inFlightTurnMs.mockReset().mockReturnValue(null);
     runner.freeConversationSlots = 4;
   });
 
@@ -409,7 +416,75 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
     });
   });
 
+  describe('latency samples from closed turns', () => {
+    it('books nothing for a turn no chain is running (dead chain / restart), even at 1x', async () => {
+      // isRunning / inFlightTurnMs: nothing live (the mock default).
+      const { row } = await simulate([a, b], { speed: 1, turnSec: null, tier: 'llm_standard' });
+
+      expect(row.status).toBe('ended');
+      expect(turnLatencyEstimateMs(nowGameMin())).toBeNull();
+    });
+
+    it('books a live abandoned turn, capped at every attempt timing out', async () => {
+      runner.inFlightTurnMs.mockReturnValue(10 * 60_000);
+      await simulate([a, b], { speed: 1, turnSec: null, tier: 'llm_standard' });
+
+      expect(turnLatencyEstimateMs(nowGameMin())).toBe(CONFIG.AI.TIMEOUT_MS * CONFIG.AI.RETRY_ATTEMPTS);
+    });
+  });
+
+  describe('restart', () => {
+    async function openWithOneLine(): Promise<number> {
+      enqueue([a, b], 'llm_deep');
+      await conversationsTick();
+      const id = taggedConversations().find((c) => c.status === 'active')!.id;
+      addMessage(id, a, 'Did you hear about the mill?', 0.2, [], Date.now());
+      return id;
+    }
+
+    it('ends conversations the new process has no turn chain for, quietly', async () => {
+      const id = await openWithOneLine();
+      const relEventsBefore = db.select().from(relationshipEvents)
+        .where(inArray(relationshipEvents.agent_a, [a, b])).all().length;
+
+      expect(endOrphanedLLMConversations()).toBe(1);
+
+      const row = db.select().from(conversations).where(eq(conversations.id, id)).get()!;
+      expect(row.status).toBe('ended');
+      expect(db.select().from(conversationSchedulerState).get()!.active_llm_conversations).toEqual([]);
+      expectReleased();
+      expect(db.select().from(relationshipEvents)
+        .where(inArray(relationshipEvents.agent_a, [a, b])).all()).toHaveLength(relEventsBefore);
+      // Nothing left for Step A to book as a latency sample.
+      setClock(nowGameMin() + 500);
+      await conversationsTick();
+      expect(turnLatencyEstimateMs(nowGameMin())).toBeNull();
+    });
+
+    it('keeps a conversation whose chain is still alive', async () => {
+      const id = await openWithOneLine();
+      runner.isRunning.mockReturnValue(true);
+
+      expect(endOrphanedLLMConversations()).toBe(0);
+      expect(db.select().from(conversations).where(eq(conversations.id, id)).get()!.status).toBe('active');
+      expect(schedulerEntry(id)).toBeDefined();
+    });
+  });
+
   describe('task runner slots', () => {
+    it('does not use up the probe on a dispatch the runner rejects', async () => {
+      setClock(nowGameMin(), 4);
+      runner.startConversation.mockReturnValueOnce(false);
+      enqueue([a, b], 'llm_standard');
+
+      await conversationsTick();
+      expect(taggedConversations()).toHaveLength(0);
+
+      await conversationsTick();
+      const probe = taggedConversations().find((c) => c.status === 'active');
+      expect(probe?.max_turns).toBe(MIN_LLM_TURNS);
+    });
+
     it('keeps the entry queued while the runner has no free chain', async () => {
       runner.freeConversationSlots = 0;
       const id = enqueue([a, b], 'llm_standard');
@@ -591,15 +666,31 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       expectReleased();
     });
 
-    it('does not open an ordinary conversation someone must leave', async () => {
+    it('holds an ordinary conversation someone must leave, and opens it once they can stay', async () => {
       db.update(needs).set({ hunger: 3 }).where(eq(needs.agent_id, a)).run();
-      enqueue([a, b], 'llm_standard');
+      const id = enqueue([a, b], 'llm_standard');
 
+      await conversationsTick();
+      expect(runner.startConversation).not.toHaveBeenCalled();
+      expect(taggedConversations()).toHaveLength(0);
+      // Kept, not deleted: a perception reaction is never queued twice.
+      expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeDefined();
+
+      db.update(needs).set({ hunger: 60 }).where(eq(needs.agent_id, a)).run();
+      await conversationsTick();
+      expect(taggedConversations().filter((c) => c.status === 'active')).toHaveLength(1);
+    });
+
+    it('lets a held one-shot entry age out into a template chat if the need persists', async () => {
+      db.update(needs).set({ hunger: 3 }).where(eq(needs.agent_id, a)).run();
+      enqueue([a, b], 'llm_standard', { maxWait: 10_000 });
+
+      await conversationsTick();
+      setClock(nowGameMin() + 11);
       await conversationsTick();
 
       expect(runner.startConversation).not.toHaveBeenCalled();
-      expect(taggedConversations()).toHaveLength(0);
-      expect(db.select().from(conversationQueue).all()).toHaveLength(0);
+      expect(taggedConversations().map((c) => c.trigger_reason)).toEqual([`${TAG} (template)`]);
     });
 
     it('lets a player nudge at bedtime have its first exchange before anyone leaves', async () => {

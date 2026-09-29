@@ -271,6 +271,50 @@ export function pruneEndedConversations(keep: number = CONFIG.CONVERSATIONS.MAX_
   `).changes;
 }
 
+/**
+ * At boot: end every LLM conversation the scheduler still tracks but no turn
+ * chain in this process is running. The task runner is in-memory, so after a
+ * restart those entries have nobody generating their turns; they used to sit
+ * `active`, holding both agents `talking`, until their budget ran out — and
+ * Step A then booked their whole age as a turn latency. Ended quietly (no
+ * memories or relationship effects for a conversation cut by a restart) and
+ * the participants handed back. Returns the number of conversations ended.
+ */
+export function endOrphanedLLMConversations(): number {
+  return db.transaction(() => {
+    const schedulerState = db.select().from(conversationSchedulerState).get();
+    if (!schedulerState) return 0;
+    const entries = schedulerState.active_llm_conversations as ActiveLLMEntry[];
+    const keep: ActiveLLMEntry[] = [];
+    let ended = 0;
+    for (const entry of entries) {
+      if (taskRunner.isRunning(entry.conversationId)) {
+        keep.push(entry);
+        continue;
+      }
+      const row = db.select().from(conversations).where(eq(conversations.id, entry.conversationId)).get();
+      if (row) {
+        if (row.status !== 'ended') {
+          db.update(conversations)
+            .set({ status: 'ended', ended_at: Date.now() })
+            .where(eq(conversations.id, row.id))
+            .run();
+          ended++;
+        }
+        releaseTalkingParticipants(row);
+      }
+      clearConversationCache(entry.conversationId);
+    }
+    if (keep.length !== entries.length) {
+      db.update(conversationSchedulerState)
+        .set({ active_llm_conversations: keep })
+        .where(eq(conversationSchedulerState.id, schedulerState.id))
+        .run();
+    }
+    return ended;
+  });
+}
+
 export async function conversationsTick(): Promise<void> {
   // Collected LLM dispatch tasks — executed OUTSIDE the transaction (fire-and-forget async)
   const dispatches: Array<{
@@ -280,6 +324,8 @@ export async function conversationsTick(): Promise<void> {
     participantNames: string[];
     /** The queue row it came from, restored if the task runner refuses it. */
     entry: QueueRow;
+    /** Game minute to stamp as the latency probe, if this dispatch is one. */
+    probeAt: number | null;
   }> = [];
   // Completed LLM conversations to process asynchronously — OUTSIDE the transaction.
   // `truncated` marks conversations the game-minute budget cut before their
@@ -426,9 +472,16 @@ export async function conversationsTick(): Promise<void> {
             if (!landed) {
               // The turn in flight never landed. Book how long it had been running
               // as a (censored) latency sample: a model too slow to finish any
-              // turn would otherwise never be measured at all.
-              const lastAt = messages[messages.length - 1]?.timestamp ?? entry.startedAt;
-              recordTurnLatency(Math.max(0, now - lastAt), nowGameMin);
+              // turn would otherwise never be measured at all. Only for a turn
+              // that really is running in this process — a chain that died on a
+              // throw, or a scheduler entry a restart left behind, has no turn in
+              // flight, and booking its whole age sent the median through the roof
+              // (the town then ran on templates, even at 1x). Capped at what one
+              // turn can legitimately take: every attempt timing out.
+              const inFlightMs = taskRunner.inFlightTurnMs(conversation.id, now);
+              if (inFlightMs != null) {
+                recordTurnLatency(Math.min(inFlightMs, CONFIG.AI.TIMEOUT_MS * CONFIG.AI.RETRY_ATTEMPTS), nowGameMin);
+              }
             }
             closeWrappedTranscript(
               conversation,
@@ -663,14 +716,13 @@ export async function conversationsTick(): Promise<void> {
       const isProtected = isProtectedEntry(entry);
 
       // Don't open a conversation someone is about to walk out of. An ordinary
-      // entry is dropped (decisions queues a new one once they have slept or
-      // eaten); a protected one — the player asked for it — goes ahead, and Step
-      // A lets its first exchange land before needs can end it.
-      if (!isProtected && findNeedsInterrupt(entry.participants as number[], world)) {
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        changed = true;
-        continue;
-      }
+      // entry waits (unclaimed) instead: many are one-shot — a perception
+      // reaction (PerceptionSystem) is never queued again — so deleting lost
+      // them. If the need clears in time it opens then; otherwise it ages out
+      // through Step C into a brief template chat. A protected one — the player
+      // asked for it — goes ahead, and Step A lets its first exchange land
+      // before needs can end it.
+      if (!isProtected && findNeedsInterrupt(entry.participants as number[], world)) continue;
 
       // Size the conversation to the game time it may take (see
       // planConversation): a turn costs the model's latency × tick_speed game
@@ -782,7 +834,6 @@ export async function conversationsTick(): Promise<void> {
 
       // Over by its budget plus the wrap-up grace at the latest.
       claimParticipants(entry, { freeAt: nowGameMin + plan.budgetGameMin + plan.graceGameMin });
-      if (plan.probe) markLatencyProbe(nowGameMin);
 
       // Create conversation record
       const result = db
@@ -832,6 +883,9 @@ export async function conversationsTick(): Promise<void> {
         participantIds: entry.participants as number[],
         participantNames: [firstParticipant.name, secondParticipant.name],
         entry,
+        // Stamped only once the runner accepts it: a rejected dispatch measures
+        // nothing and must not use up the probe.
+        probeAt: plan.probe ? nowGameMin : null,
       });
 
       fillEntries.push({
@@ -872,6 +926,7 @@ export async function conversationsTick(): Promise<void> {
   for (const d of dispatches) {
     const accepted = taskRunner.startConversation(d.conversationId, d.speakerId);
     if (accepted) {
+      if (d.probeAt != null) markLatencyProbe(d.probeAt);
       simEvents.emit('conversation:started', { agentId: d.participantIds[0], otherName: d.participantNames[1] });
       simEvents.emit('conversation:started', { agentId: d.participantIds[1], otherName: d.participantNames[0] });
     }
