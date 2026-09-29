@@ -407,6 +407,16 @@ export function wholesaleBuyerOrder(
     .sort(([a], [b]) => Number(processesFood(b)) - Number(processesFood(a)));
 }
 
+/**
+ * Whole units in an accumulated production total. Per-tick increments like
+ * 4/60 don't add up exactly in floating point (fifteen of them are 0.99999…),
+ * so a plain floor lost a unit every few hours — a third of a 4x baker's
+ * output in a 3-hour test. The epsilon absorbs that drift.
+ */
+function wholeUnitsOf(total: number): number {
+  return Math.floor(total + 1e-9);
+}
+
 // --- Main tick ---
 
 export function economyTick(): void {
@@ -455,39 +465,59 @@ export function economyTick(): void {
     if (!recipe) continue;
 
     if (recipe.inputs) {
-      // Processing job: convert inputs to outputs — but not past what the shop
-      // can hold. There is no rate here (one batch per tick), so a bartender
-      // turned every food_raw the tavern restocked into drinks nobody bought
-      // (19 in stock after two soak days) and the tavern restocked more: once
-      // meals had to be real food (G2) that sink starved the town.
-      if (getInventoryCount(econ.inventory as any[], recipe.output) >= WHOLESALE_STOCK_TARGET) continue;
-      let canProduce = true;
-      for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
-        if (getInventoryCount(econ.inventory as any[], inputItem) < inputQty) {
-          canProduce = false;
-          break;
+      // Processing job: convert inputs to outputs at `recipe.rate` batches per
+      // game hour, with the same fractional accumulator as raw production. It
+      // used to run one batch per TICK, ignoring the rate, so output depended on
+      // tick speed: a stocked baker could bake 60 batches a game hour at 1x but
+      // only 15 at 4x.
+      //
+      // And not past what the shop can hold: a bartender turned every food_raw
+      // the tavern restocked into drinks nobody bought (19 in stock after two
+      // soak days) and the tavern restocked more — once meals had to be real
+      // food (G2) that sink starved the town.
+      if (getInventoryCount(econ.inventory as any[], recipe.output) >= WHOLESALE_STOCK_TARGET) {
+        // Idle time is not banked: a full shelf doesn't earn a burst later.
+        if (econ.production_remainder !== 0) {
+          db.update(economy).set({ production_remainder: 0 }).where(eq(economy.id, econ.id)).run();
+          econ.production_remainder = 0;
         }
+        continue;
       }
-      if (!canProduce) continue;
+      const progress = recipe.rate * gameHoursElapsed + econ.production_remainder;
+      const whole = wholeUnitsOf(progress);
+      let batches = whole;
+      for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
+        batches = Math.min(batches, Math.floor(getInventoryCount(econ.inventory as any[], inputItem) / inputQty));
+      }
+      // Batches the inputs couldn't cover are dropped, not banked — only the
+      // fraction toward the next batch carries over (so no ingredients means no
+      // pent-up burst when a delivery arrives).
+      const remainder = Math.max(0, progress - whole);
+      if (remainder !== econ.production_remainder) {
+        db.update(economy).set({ production_remainder: remainder }).where(eq(economy.id, econ.id)).run();
+        econ.production_remainder = remainder;
+      }
+      if (batches <= 0) continue;
 
       let inv = econ.inventory as any[];
       for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
-        inv = removeFromInventory(inv, inputItem, inputQty);
+        inv = removeFromInventory(inv, inputItem, inputQty * batches);
       }
-      inv = addToInventory(inv, recipe.output, recipe.outputQuantity, now);
+      const made = recipe.outputQuantity * batches;
+      inv = addToInventory(inv, recipe.output, made, now);
       db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
       econ.inventory = inv;
 
       const prevProc = productionThisTick.get(agent.id) ?? { item: recipe.output, qty: 0 };
-      prevProc.qty += recipe.outputQuantity;
+      prevProc.qty += made;
       productionThisTick.set(agent.id, prevProc);
     } else {
       // Raw production: rate-based with seasonal modifier and remainder
       const seasonMult = recipe.seasonal ? (SEASON_PRODUCTION_MODIFIERS[season] ?? 1.0) : 1.0;
       const eventMult = getEventProductionMultiplier();
       const rawProduction = recipe.rate * gameHoursElapsed * seasonMult * eventMult + econ.production_remainder;
-      const wholeUnits = Math.floor(rawProduction);
-      const remainder = rawProduction - wholeUnits;
+      const wholeUnits = wholeUnitsOf(rawProduction);
+      const remainder = Math.max(0, rawProduction - wholeUnits);
 
       db.update(economy).set({ production_remainder: remainder }).where(eq(economy.id, econ.id)).run();
       econ.production_remainder = remainder;

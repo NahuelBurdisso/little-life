@@ -498,6 +498,35 @@ describe('food supply', () => {
     expect(made).toEqual([]);
   });
 
+  /** Processing ran one batch per tick, ignoring recipe.rate: output tracked tick speed. */
+  it.each([1, 4])('a baker bakes by rate per game hour, the same at %ix', (speed) => {
+    n++;
+    const home = insertLocation(`bake home ${n}`, 'home', null);
+    const baker = insertAgent(`Baker ${n}`, home);
+    const bakery = insertLocation(`bake bakery ${n}`, 'bakery', baker);
+    insertEconomy(baker, 0, stock({ food_raw: 20 }));
+    db.update(economy).set({ job: 'baker' }).where(eq(economy.agent_id, baker)).run();
+    db.update(agents).set({ workplace: bakery }).where(eq(agents.id, baker)).run();
+    setAction(baker, { type: 'working' }, 100, bakery);
+    db.update(worldState).set({ tick_speed: speed }).run();
+
+    // Count production events: wholesale may sell the bread on to other files' shops.
+    let bread = 0;
+    const onMade = (p: { agentId: number; item: string; quantity: number }) => {
+      if (p.agentId === baker) bread += p.quantity;
+    };
+    simEvents.on('economy:production', onMade);
+    try {
+      ticks((3 * 60) / speed); // three game hours
+    } finally {
+      simEvents.off('economy:production', onMade);
+      db.update(worldState).set({ tick_speed: 1 }).run();
+    }
+
+    // Baker recipe: rate 1.0 batch/h, 1 food_raw -> 2 bread.
+    expect(bread).toBe(6);
+  });
+
   it('the bakery restocks farm surplus before the shop and the tavern', () => {
     const locs = [
       { type: 'shop', owner: 1 },
