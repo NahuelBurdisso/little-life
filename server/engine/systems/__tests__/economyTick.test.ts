@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { db } from '../../../db';
 import { activityLog, agents, economy, economyTransactions, locations, worldState } from '../../../db/schema';
 import { and, eq, like } from 'drizzle-orm';
-import { economyTick, clearPurchaseTracking } from '../economy';
+import {
+  economyTick,
+  clearPurchaseTracking,
+  WHOLESALE_STOCK_TARGET,
+  WHOLESALE_MAX_CASH_FRACTION,
+} from '../economy';
 
 /**
  * Playtest bug: eating at a shop bought one item EVERY tick of the meal, and a
@@ -320,5 +325,48 @@ describe('payday interval', () => {
 
     expect(salaryRows(agent)).toHaveLength(1);
     expect(econ(agent).last_payday).toBe(5 * 1440 + 20 * 60);
+  });
+});
+
+/**
+ * Wholesale used to buy every unit of producer surplus the owner could afford,
+ * every tick, with no stock cap — the owner's whole till went on stock.
+ */
+describe('wholesale restock', () => {
+  beforeAll(() => ensureWorld(6, 9, 0));
+
+  function supplyScene(ownerMoney: number, shopFoodRaw: number) {
+    n++;
+    const home = insertLocation(`wholesale home ${n}`, 'home', null);
+    const owner = insertAgent(`Grocer ${n}`, home);
+    const farmer = insertAgent(`Farmer ${n}`, home);
+    const shop = insertLocation(`wholesale shop ${n}`, 'shop', owner);
+    insertEconomy(owner, ownerMoney, stock({ food_raw: shopFoodRaw }));
+    insertEconomy(farmer, 0, stock({ food_raw: 200 }));
+    // Idle farmer: a recipe that outputs food_raw makes them a supplier, and
+    // not working means no production changes their stock under the test.
+    db.update(economy).set({ job: 'farmer' }).where(eq(economy.agent_id, farmer)).run();
+    return { owner, farmer, shop };
+  }
+
+  it('never spends more than the cash fraction in one tick', () => {
+    const { owner } = supplyScene(40, 0);
+    economyTick();
+    const spent = 40 - econ(owner).money;
+    expect(spent).toBeGreaterThan(0);
+    expect(spent).toBeLessThanOrEqual(40 * WHOLESALE_MAX_CASH_FRACTION);
+  });
+
+  it('stops restocking at the stock target', () => {
+    const { owner } = supplyScene(1000, WHOLESALE_STOCK_TARGET - 3);
+    for (let i = 0; i < 20; i++) economyTick();
+    expect(count(owner, 'food_raw')).toBe(WHOLESALE_STOCK_TARGET);
+  });
+
+  it('buys nothing when already stocked', () => {
+    const { owner } = supplyScene(1000, WHOLESALE_STOCK_TARGET);
+    for (let i = 0; i < 5; i++) economyTick();
+    expect(count(owner, 'food_raw')).toBe(WHOLESALE_STOCK_TARGET);
+    expect(econ(owner).money).toBe(1000);
   });
 });

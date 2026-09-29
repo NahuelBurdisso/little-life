@@ -59,6 +59,11 @@ export function clearPurchaseTracking(): void {
 /** Sentinel in the handled set for "this eating action has paid for its meal". */
 const MEAL = '__meal__';
 
+/** Wholesale stops restocking an item once the shop holds this many. */
+export const WHOLESALE_STOCK_TARGET = 10;
+/** Share of the owner's cash one tick's restock may spend, at most. */
+export const WHOLESALE_MAX_CASH_FRACTION = 0.5;
+
 /** A shopping trip skips an item the buyer already holds this many of. */
 const SHOPPING_STOCK_TARGET = 2;
 
@@ -237,6 +242,11 @@ export function economyTick(): void {
   }
 
   // ========== 1.5. SUPPLY CHAIN — producers sell surplus to shops ==========
+  // Owners used to buy every unit of producer surplus they could afford, every
+  // tick, with no stock cap — spending their whole till on stock that a handful
+  // of diners a day never drew down. Now a shop only restocks an item up to
+  // WHOLESALE_STOCK_TARGET, and never spends more than WHOLESALE_MAX_CASH_FRACTION
+  // of the cash it had when this tick's restock began.
   for (const [locType, rules] of Object.entries(TRADE_RULES)) {
     if (rules.buys.length === 0) continue;
 
@@ -244,6 +254,7 @@ export function economyTick(): void {
       if ((loc as any).type !== locType || !loc.owner) continue;
       const ownerEcon = econByAgent.get(loc.owner);
       if (!ownerEcon) continue;
+      let restockBudget = ownerEcon.money * WHOLESALE_MAX_CASH_FRACTION;
 
       for (const buyItem of rules.buys) {
         for (const agent of activeAgents) {
@@ -259,11 +270,15 @@ export function economyTick(): void {
           if (surplus <= 0) continue;
 
           const shopStock = getInventoryCount(ownerEcon.inventory as any[], buyItem);
+          const room = WHOLESALE_STOCK_TARGET - shopStock;
+          if (room <= 0) continue;
           const price = getMarketPrice(buyItem, season, shopStock);
-          const buyAmount = Math.min(surplus, Math.floor(ownerEcon.money / price));
-          if (buyAmount <= 0 || price <= 0) continue;
+          if (price <= 0) continue;
+          const buyAmount = Math.min(surplus, room, Math.floor(restockBudget / price));
+          if (buyAmount <= 0) continue;
 
           const totalCost = price * buyAmount;
+          restockBudget -= totalCost;
 
           const newProducerInv = removeFromInventory(agentEcon.inventory as any[], buyItem, buyAmount);
           const newShopInv = addToInventory(ownerEcon.inventory as any[], buyItem, buyAmount, now);
