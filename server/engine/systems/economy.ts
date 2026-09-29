@@ -272,6 +272,57 @@ export function pantryWouldServe(
   return broke || starving;
 }
 
+/**
+ * What one visit to this venue costs a patron: the tavern-style cover from
+ * TRADE_RULES, else the dearest priced non-food service it offers (the Dive's
+ * $3 fun, the pawnshop's $2, the clinic's $12 energy). Food is paid per meal
+ * (serveMeal). Zero for free places.
+ */
+export function visitFee(venue: Pick<LocationRow, 'type' | 'services'>): number {
+  const cover = getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0;
+  if (cover > 0) return cover;
+  let fee = 0;
+  for (const svc of venue.services ?? []) {
+    if (svc.needSatisfied !== 'hunger' && svc.cost > fee) fee = svc.cost;
+  }
+  return fee;
+}
+
+/**
+ * A visit fee at a venue nobody owns: paid to the town (tax pool), with the
+ * same ledger row and feed line as a sale, minus a seller.
+ */
+function chargeTownFee(
+  world: typeof worldState.$inferSelect,
+  patron: { id: number; name: string },
+  patronEcon: EconRecord,
+  fee: number,
+  venue: { id: number; name: string; type: string },
+  now: number,
+): void {
+  db.update(economy).set({ money: patronEcon.money - fee }).where(eq(economy.id, patronEcon.id)).run();
+  patronEcon.money -= fee;
+  db.update(worldState).set({ tax_pool: world.tax_pool + fee }).where(eq(worldState.id, world.id)).run();
+  world.tax_pool += fee;
+  db.insert(economyTransactions).values({
+    from_agent: patron.id,
+    to_agent: null,
+    amount: fee,
+    reason: `entertainment:${venue.type}`,
+    items_exchanged: null,
+    location_id: venue.id,
+    timestamp: now,
+  }).run();
+  logActivity({
+    type: 'purchase',
+    initiator: patron.id,
+    location: venue.id,
+    templateData: { agent: patron.name, item: `a visit to ${venue.name}`, amount: fee },
+  });
+  simEvents.emit('economy:purchase', { agentId: patron.id, item: `a visit to ${venue.name}`, price: fee, locationName: venue.name });
+  checkMilestone(patron.id, patronEcon.money);
+}
+
 function consumeItem(econ: EconRecord, item: string): void {
   const inv = removeFromInventory(econ.inventory as any[], item, 1);
   db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
@@ -802,14 +853,19 @@ export function economyTick(): void {
     }
   }
 
-  // ========== 3b. TAVERN VISITS: cover charge ==========
+  // ========== 3b. VENUE VISITS: cover charge / service fee ==========
   // Taverns had no patron income once eating stopped passing drinks off as meals
   // (no recipe makes the food_prepared a tavern sells). Their TRADE_RULES
   // `entertainmentCost` was defined but never charged; it is now the cover, paid
   // once per visit by patrons (not the owner, not staff whose workplace it is).
   // A drink in stock is poured as part of it, consumed from the owner's stock.
-  // The cover is what pays for the venue's priced non-food service (the
-  // tavern's `fun`): needs.ts only lets it work on a patron who paid.
+  //
+  // Every other venue with a priced non-food service charges that price the
+  // same way, once per visit (visitFee): needs.ts only lets a priced service
+  // work on someone who paid (or the owner, or off-shift staff). Before this,
+  // the Dive, the pawnshop and the clinic's paid services worked on nobody.
+  // An ownerless venue (nobody in town works the Dive) is run by the town: the
+  // fee goes to the tax pool.
   for (const agent of activeAgents) {
     const at = agent.current_location;
     const paidAt = venueVisitPaid.get(agent.id);
@@ -822,17 +878,25 @@ export function economyTick(): void {
     const venue = locationCache.get(at) ?? allLocations.find((l) => l.id === at);
     if (!venue) continue;
     locationCache.set(at, venue);
-    const fee = getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0;
-    if (fee <= 0 || !venue.owner) continue;
+    const fee = visitFee(venue);
+    if (fee <= 0 || !isOpenAt(venue.operating_hours, currentHour)) continue;
     if (venue.owner === agent.id || agent.workplace === at) continue;
 
     const patronEcon = econByAgent.get(agent.id);
-    const ownerEcon = econByAgent.get(venue.owner);
-    if (!patronEcon || !ownerEcon) continue;
+    if (!patronEcon) continue;
     // Can't pay: not charged yet, retried next tick (payday can land mid-visit).
     if (patronEcon.money < fee) continue;
 
-    const pours = getInventoryCount(ownerEcon.inventory as any[], 'drink') > 0;
+    if (venue.owner == null) {
+      chargeTownFee(world, agent, patronEcon, fee, venue, now);
+      venueVisitPaid.set(agent.id, at);
+      continue;
+    }
+    const ownerEcon = econByAgent.get(venue.owner);
+    if (!ownerEcon) continue;
+
+    const isCover = (getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0) > 0;
+    const pours = isCover && getInventoryCount(ownerEcon.inventory as any[], 'drink') > 0;
     if (pours) {
       const newInv = removeFromInventory(ownerEcon.inventory as any[], 'drink', 1);
       db.update(economy).set({ inventory: newInv }).where(eq(economy.id, ownerEcon.id)).run();
@@ -841,8 +905,8 @@ export function economyTick(): void {
     recordSale(world, agent, patronEcon, venue.owner, ownerEcon, fee, {
       reason: `entertainment:${venue.type}`,
       items: pours ? [{ itemId: 'drink', quantity: 1 }] : null,
-      feedItem: pours ? `a drink at ${venue.name}` : `a night out at ${venue.name}`,
-      memoryItem: pours ? 'a drink' : 'a night out',
+      feedItem: pours ? `a drink at ${venue.name}` : isCover ? `a night out at ${venue.name}` : `a visit to ${venue.name}`,
+      memoryItem: pours ? 'a drink' : isCover ? 'a night out' : `a visit to ${venue.name}`,
     }, venue, now);
     venueVisitPaid.set(agent.id, at);
   }

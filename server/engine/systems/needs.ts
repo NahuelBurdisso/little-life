@@ -127,9 +127,9 @@ type Service = NonNullable<LocationRow['services']>[number];
  * - hunger is only served with a meal had *here*: a priced menu (`cost`) needs
  *   a meal bought here (or the owner's own stock); a kitchen (`itemRequired`)
  *   needs a food item consumed here; the pantry safety net gets neither.
- * - any other paid service needs the owner, or a patron who paid the visit's
- *   cover (economy.ts, taverns). A priced service nobody sells — the clinic's
- *   $12 energy, an ownerless bar — is unavailable rather than free.
+ * - any other paid service needs the owner, off-shift staff, or a patron who
+ *   paid this visit's fee (economy.ts visitFee: the tavern cover, else the
+ *   service's own cost — the Dive's fun, the clinic's energy).
  * - any other `itemRequired` needs the item in the agent's inventory.
  */
 export function serviceApplies(
@@ -141,6 +141,8 @@ export function serviceApplies(
     meal: Meal | null;
     inventory: readonly { itemId: string; quantity: number }[];
     paidVisit: boolean;
+    /** The location is the agent's workplace (and they aren't working: see the action gate). */
+    isStaff?: boolean;
     actionType?: string;
   },
 ): boolean {
@@ -160,7 +162,10 @@ export function serviceApplies(
   if (service.itemRequired && !ctx.inventory.some((i) => i.itemId === service.itemRequired && i.quantity > 0)) {
     return false;
   }
-  if (service.cost > 0) return ctx.location.owner === ctx.agentId || ctx.paidVisit;
+  // Off-shift staff drink on the house: the bartender and the musician stay
+  // for the evening where they work, and charging them their own venue's cover
+  // (economy.ts exempts them) would just leave them without it.
+  if (service.cost > 0) return ctx.location.owner === ctx.agentId || ctx.isStaff === true || ctx.paidVisit;
   return true;
 }
 
@@ -373,6 +378,7 @@ export function needsTick(): void {
           meal,
           inventory: (economyByAgent.get(agent.id)?.inventory ?? []) as { itemId: string; quantity: number }[],
           paidVisit: hasPaidVisit(agent.id, location.id),
+          isStaff: agent.workplace === location.id,
           actionType,
         };
         for (const service of location.services) {

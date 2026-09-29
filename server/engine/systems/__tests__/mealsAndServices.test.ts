@@ -430,3 +430,63 @@ describe('meal edge cases', () => {
     expect(needsOf(a).hunger).toBeGreaterThan(10);
   });
 });
+
+describe('priced non-food services', () => {
+  beforeEach(() => { clearPurchaseTracking(); setClock(20, 0); });
+
+  const feesBy = (id: number) => db.select().from(economyTransactions)
+    .where(and(eq(economyTransactions.from_agent, id), like(economyTransactions.reason, 'entertainment:%'))).all();
+
+  function visit(type: string, services: Service[], owned: boolean, action: string, money = 100) {
+    const home = loc('home', HOME_SERVICES);
+    const owner = owned ? agent(home, { money: 0 }) : null;
+    const venue = loc(type, services, owner, 0, { open: 18, close: 2 });
+    const patron = agent(home, { money });
+    act(patron, { type: action }, venue);
+    setNeeds(patron, { fun: 50, energy: 50 });
+    return { patron, venue, owner };
+  }
+
+  it('an ownerless bar charges its fee once per visit, to the town, and then entertains', () => {
+    const pool0 = db.select().from(worldState).get()!.tax_pool;
+    const { patron } = visit('divebar', [{ needSatisfied: 'fun', amount: 6, cost: 3, itemRequired: null }], false, 'idle');
+    for (let i = 0; i < 60; i++) { needsTick(); economyTick(); }
+    const fees = feesBy(patron);
+    expect(fees).toHaveLength(1);
+    expect(fees[0].amount).toBe(3);
+    expect(fees[0].to_agent).toBeNull();
+    expect(db.select().from(worldState).get()!.tax_pool).toBeGreaterThanOrEqual(pool0 + 3);
+    // Idle alone decays fun (1.2 × 3.6/h); the paid service (+6/h) outweighs it.
+    expect(needsOf(patron).fun).toBeGreaterThan(50);
+  });
+
+  it('the pawnshop charges its owner-less $2 the same way', () => {
+    const { patron } = visit('pawnshop', [{ needSatisfied: 'fun', amount: 3, cost: 2, itemRequired: null }], false, 'socializing');
+    for (let i = 0; i < 5; i++) { needsTick(); economyTick(); }
+    expect(feesBy(patron).map((f) => f.amount)).toEqual([2]);
+  });
+
+  it('the clinic charges its owner for rest and then restores energy', () => {
+    const { patron, owner } = visit('clinic', [{ needSatisfied: 'energy', amount: 5, cost: 12, itemRequired: null }], true, 'idle');
+    for (let i = 0; i < 60; i++) { needsTick(); economyTick(); }
+    const fees = feesBy(patron);
+    expect(fees).toHaveLength(1);
+    expect(fees[0].to_agent).toBe(owner);
+    expect(needsOf(patron).energy).toBeGreaterThan(50);
+  });
+
+  it('someone who cannot pay gets no paid service', () => {
+    const { patron } = visit('divebar', [{ needSatisfied: 'fun', amount: 6, cost: 3, itemRequired: null }], false, 'idle', 1);
+    for (let i = 0; i < 60; i++) { needsTick(); economyTick(); }
+    expect(feesBy(patron)).toHaveLength(0);
+    expect(needsOf(patron).fun).toBeLessThan(50);
+  });
+
+  it('off-shift staff are entertained where they work without paying', () => {
+    const { patron, venue } = visit('tavern', TAVERN_SERVICES, true, 'idle');
+    db.update(agents).set({ workplace: venue }).where(eq(agents.id, patron)).run();
+    for (let i = 0; i < 60; i++) { needsTick(); economyTick(); }
+    expect(feesBy(patron)).toHaveLength(0);
+    expect(needsOf(patron).fun).toBeGreaterThan(50);
+  });
+});
