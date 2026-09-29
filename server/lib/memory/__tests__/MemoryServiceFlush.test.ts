@@ -3,6 +3,7 @@ import { MemoryService } from '../MemoryService';
 import type { MemoryStore } from '../MemoryStore';
 import type { EmbeddingBatcher } from '../EmbeddingBatcher';
 import { WRITE_QUEUE_MAX_SIZE, WRITE_QUEUE_HARD_CAP, WRITE_QUEUE_FLUSH_MS } from '../constants';
+import { bumpWorldEpoch } from '../../worldEpoch';
 
 /**
  * The write queue must survive slow embeddings: nothing stranded when a flush
@@ -269,5 +270,33 @@ describe('MemoryService flush after the world changed under it', () => {
     await expect(vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS)).resolves.not.toThrow();
     expect(store.insertBatch).toHaveBeenCalledTimes(1);
     expect(err).toHaveBeenCalled();
+  });
+});
+
+describe('MemoryService — world epoch', () => {
+  it('drops memories recorded in a world that was swapped out before the flush', async () => {
+    const { service, inserted, releaseFirst } = setup();
+    releaseFirst();
+
+    service.record(1, 'observation', 'old world');
+    // The swap bumps the epoch before resetWorldRuntime reaches clear(): a
+    // late LLM task recording in between must not land in the new world.
+    bumpWorldEpoch();
+    service.record(1, 'observation', 'new world');
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS * 2);
+
+    expect(inserted().map((m) => m.description)).toEqual(['new world']);
+  });
+
+  it('drops a batch whose world was swapped while it waited on its embeddings', async () => {
+    const { service, inserted, releaseFirst } = setup();
+
+    service.record(1, 'observation', 'mid-flight');
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS); // flush hangs on the embedding
+    bumpWorldEpoch();
+    releaseFirst();
+    await vi.advanceTimersByTimeAsync(WRITE_QUEUE_FLUSH_MS * 2);
+
+    expect(inserted()).toEqual([]);
   });
 });

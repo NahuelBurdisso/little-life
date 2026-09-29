@@ -5,6 +5,7 @@ import { callOllamaChat } from '../../ai/ollama';
 import { CONFIG } from '../../lib/constants';
 import { buildPersonalityDescription, type PersonalityProfile } from '../personality';
 import type { MemoryService } from './MemoryService';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 const REGENERATION_INTERVAL_DAYS = 3; // regenerate every 3 game days
 
@@ -17,11 +18,18 @@ export class SelfDescriptionGenerator {
     const lastDay = this.lastGenerated.get(agentId) ?? 0;
     if (currentDay - lastDay < REGENERATION_INTERVAL_DAYS) return;
 
+    const worldEpoch = currentWorldEpoch();
     await this.regenerate(agentId, currentDay);
+    // clear() ran during the await: this stamp belongs to the old world.
+    if (isStaleWorldEpoch(worldEpoch)) return;
     this.lastGenerated.set(agentId, currentDay);
   }
 
   async regenerate(agentId: number, currentDay: number): Promise<void> {
+    // Written by agent id after two awaits (retrieval, then the model): a world
+    // swap in between would hand this description to the new resident who
+    // reuses the id.
+    const worldEpoch = currentWorldEpoch();
     const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
     if (!agent) return;
     if ((agent.current_action as any)?.type === 'dead') return;
@@ -83,6 +91,7 @@ In 2 short sentences, third person, plain everyday words: who ${firstNameOf(agen
         options: { temperature: 0.7, num_predict: 160 },
       });
 
+      if (isStaleWorldEpoch(worldEpoch)) return;
       const description = cleanSelfDescription(response.text, agent.name);
       if (description.length > 10) {
         db.update(agents).set({ self_description: description }).where(eq(agents.id, agentId)).run();

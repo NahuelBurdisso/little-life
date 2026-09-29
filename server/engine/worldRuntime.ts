@@ -10,6 +10,25 @@ import { resetCascade } from '../lib/cascade';
 import { invalidateCostMap, clearMovementState } from './systems/movement';
 import { clearPerWorldCaches, restoreWorldCaches } from './worldCaches';
 import { autoPlayer } from '../autoplay';
+import { taskRunner } from '../ai/taskRunner';
+import { bumpWorldEpoch } from '../lib/worldEpoch';
+
+/**
+ * Disown every LLM task still running for the outgoing world. Call it after
+ * the bounded drain, before the tables are swapped, in all three swap flows.
+ *
+ * The drain only waits 10 s; whatever is slower — and only conversation turns
+ * were ever drained, never reflections, plans, goal reviews or summaries —
+ * used to finish after the wipe and write by agent id into the new world,
+ * whose residents reuse the old rowids. Bumping the world epoch makes every
+ * such task drop its result at its write-back check and aborts the model
+ * calls still in flight (lib/worldEpoch.ts); resetting the runner's slots
+ * cancels the conversation chains and writes their slots off.
+ */
+export function retireOutgoingWorldTasks(): void {
+  bumpWorldEpoch();
+  taskRunner.resetSlots();
+}
 
 /**
  * Forget every piece of in-process state that describes "the world in the DB",

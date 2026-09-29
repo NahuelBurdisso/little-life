@@ -11,6 +11,7 @@ import { EmbeddingBatcher } from './EmbeddingBatcher';
 import { QueryCache } from './QueryCache';
 import { getImportance, getTypePriority } from './ImportanceScorer';
 import { rankCandidates } from './RetrievalEngine';
+import { currentWorldEpoch } from '../worldEpoch';
 import {
   WRITE_QUEUE_FLUSH_MS,
   WRITE_QUEUE_MAX_SIZE,
@@ -36,6 +37,12 @@ interface QueueEntry {
   parentIds: number[];
   /** The tick the memory happened on (`created_at`), not the tick the batch is flushed on. */
   tick: number;
+  /**
+   * World epoch at record time (lib/worldEpoch.ts). A flush drops entries of a
+   * world that has since been swapped out, whatever the order in which the
+   * swap, `clear()` and the flush's own embedding await interleave.
+   */
+  epoch: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +189,7 @@ export class MemoryService {
       depth,
       parentIds,
       tick: this.currentTick,
+      epoch: currentWorldEpoch(),
     });
 
     if (this.queue.length > WRITE_QUEUE_HARD_CAP) this.dropLeastImportant();
@@ -473,10 +481,14 @@ export class MemoryService {
       // clear() already bumped the generation. The FK then failed the whole
       // batch, and the rejection — nobody awaits a timer flush — crashed the
       // server. Keep only rows whose agent still exists.
+      // Entries recorded in a world swapped out since go too: the swap bumps the
+      // epoch before `clear()` runs, and a caller can record in between — for
+      // an agent id the new world reuses, which the existence check can't see.
+      const worldEpoch = currentWorldEpoch();
       const live = this.store.existingAgentIds([...new Set(batch.map((e) => e.agentId))]);
-      const keep = batch.map((_, i) => i).filter((i) => live.has(batch[i].agentId));
+      const keep = batch.map((_, i) => i).filter((i) => batch[i].epoch === worldEpoch && live.has(batch[i].agentId));
       if (keep.length < batch.length) {
-        console.warn(`[memory] dropped ${batch.length - keep.length} memories for agents that no longer exist`);
+        console.warn(`[memory] dropped ${batch.length - keep.length} memories of agents or worlds that no longer exist`);
       }
 
       // Build insert items

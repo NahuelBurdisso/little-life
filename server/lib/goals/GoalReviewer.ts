@@ -14,6 +14,7 @@ import { GOAL_REGISTRY } from '../../data/goalRegistry';
 import { and, desc, eq, gt, or } from 'drizzle-orm';
 import { compareOp, getRelationship, getRelField } from './relationshipConditions';
 import { gameMinutesToMs } from '../worldClock';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 const MINUTES_PER_DAY = 1440;
 
@@ -142,6 +143,10 @@ export class GoalReviewer {
     }
     if (this.reviewedToday.has(agentId)) return;
     this.reviewedToday.add(agentId);
+    // Everything below writes by agent/goal id after awaiting the LLM; ids
+    // restart after a world swap, so each write-back first checks the world
+    // is still the one this review started in.
+    const worldEpoch = currentWorldEpoch();
 
     try {
       const agent = db
@@ -157,6 +162,7 @@ export class GoalReviewer {
 
       // Ensure agent has a life ambition
       const ambition = await this.ensureAmbition(agentId, agent, personality, nowMinutes);
+      if (isStaleWorldEpoch(worldEpoch)) return;
 
       // Load context
       const activeGoals = db
@@ -254,6 +260,7 @@ export class GoalReviewer {
         options: { temperature: 0.6, top_p: CONFIG.AI.CHAT_TOP_P, num_predict: 700 },
       });
 
+      if (isStaleWorldEpoch(worldEpoch)) return;
       const reviewResult = parseGoalReview(response.text);
       if (!reviewResult) {
         console.warn(`[GoalReviewer] Failed to parse review response for agent ${agentId}`);
@@ -300,8 +307,10 @@ export class GoalReviewer {
 
       // Process goal reviews
       for (const reviewAction of reviewResult.reviews) {
+        if (isStaleWorldEpoch(worldEpoch)) return;
         await this.processReview(reviewAction, agentId, nowMinutes);
       }
+      if (isStaleWorldEpoch(worldEpoch)) return;
 
       // Create new goals (up to MAX_LLM_GOALS)
       const currentLlmGoalCount = db
@@ -460,6 +469,7 @@ export class GoalReviewer {
       relationshipHighlights,
     });
 
+    const worldEpoch = currentWorldEpoch();
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
@@ -471,6 +481,9 @@ export class GoalReviewer {
         options: { temperature: CONFIG.AI.CHAT_TEMPERATURE, top_p: CONFIG.AI.CHAT_TOP_P, num_predict: 250 },
       });
 
+      // World swapped while the model answered: the aspiration would go to
+      // whoever holds this agent id now.
+      if (isStaleWorldEpoch(worldEpoch)) return null;
       const parsed = parseAmbitionGeneration(response.text);
       if (!parsed) {
         console.warn(`[GoalReviewer] Failed to parse ambition generation for agent ${agentId}`);

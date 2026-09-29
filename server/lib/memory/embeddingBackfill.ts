@@ -17,6 +17,7 @@ import { sqlite } from '../../db';
 import { CONFIG } from '../constants';
 import { EMBED_KEEP_ALIVE, EMBED_OPTIONS, EMBEDDING_DIMENSIONS } from './constants';
 import { float32ArrayToBuffer } from './MemoryService';
+import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 
 const META_KEY = 'embedding_model';
 const LEGACY_MODEL = 'mxbai-embed-large';
@@ -87,10 +88,16 @@ export async function backfillEmbeddings(): Promise<BackfillResult | null> {
   // reuses ids for different memories.
   const update = sqlite.prepare('UPDATE memories SET embedding = ? WHERE id = ? AND description = ?');
   let embedded = 0;
+  // The row list was read from the world running now. The description guard
+  // above covers most reuse, but a swap to the same seeded world recreates
+  // identical texts under the same ids: stop at the first batch after a swap
+  // (the next day change backfills the new world on its own).
+  const worldEpoch = currentWorldEpoch();
   try {
     for (let i = 0; i < rows.length; i += BATCH) {
       const batch = rows.slice(i, i + BATCH);
       const vectors = await embedBatch(batch.map((r) => r.description));
+      if (isStaleWorldEpoch(worldEpoch)) return null;
       if (vectors[0]?.length !== EMBEDDING_DIMENSIONS) {
         throw new Error(`model ${model} returns ${vectors[0]?.length} dimensions, the store expects ${EMBEDDING_DIMENSIONS}`);
       }

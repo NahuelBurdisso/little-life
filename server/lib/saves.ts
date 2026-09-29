@@ -10,7 +10,7 @@ import { isTickLoopRunning, startTickLoop, stopTickLoopAndWait } from '../engine
 import { taskRunner } from '../ai/taskRunner';
 import { memoryService } from './memory/instance';
 import { saveWorldCaches } from '../engine/worldCaches';
-import { resetWorldRuntime } from '../engine/worldRuntime';
+import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
 import { endOrphanedLLMConversations } from '../engine/systems/conversations';
 import { emitter } from '../engine/emitter';
 import { CONFIG } from './constants';
@@ -418,7 +418,7 @@ export function loadSave(id: string): Promise<SaveMeta> {
     // Written while the outgoing world is still in the DB, so a failed load
     // does not cost it the memories that were queued.
     await memoryService.flushPending(MEMORY_FLUSH_TIMEOUT_MS);
-    taskRunner.resetSlots();
+    retireOutgoingWorldTasks();
     // Checkpoint the outgoing world: on a rolled-back load this is what
     // `resetWorldRuntime` restores its hobbies, favors, tension... from.
     saveWorldCaches();

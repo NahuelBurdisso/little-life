@@ -36,7 +36,7 @@ import { buildSocialEdges } from '../lib/worldgen/social';
 import { buildStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
 import { saveWorldCaches } from '../engine/worldCaches';
-import { resetWorldRuntime } from '../engine/worldRuntime';
+import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -944,7 +944,7 @@ async function replaceWorld(
     taskRunner.drain(),
     new Promise(resolve => setTimeout(resolve, 10_000)),
   ]);
-  taskRunner.resetSlots();
+  retireOutgoingWorldTasks();
   // Checkpoint the outgoing world's in-memory state (never throws). On success
   // the rows are wiped with the world; on a rolled-back seed they come back
   // with it, and `restoreWorldCaches` below reloads them — so a failed replace
@@ -1131,7 +1131,7 @@ export const setupRouter = router({
       taskRunner.drain(),
       new Promise(resolve => setTimeout(resolve, 10_000)),
     ]);
-    taskRunner.resetSlots();
+    retireOutgoingWorldTasks();
     // As in `replaceWorld`: a rolled-back reset gets its state back below.
     saveWorldCaches();
 

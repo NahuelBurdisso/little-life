@@ -16,6 +16,7 @@ import { acquireLLMSlot, acquireEmbeddingSlot, type LLMPriority } from './llmSem
 import { LLMEmptyReplyError, LLMAbortedError } from './llmErrors';
 import { recordLLMCall, traceLLMCall, type LLMPurpose, type LLMCallSample } from './llmMetrics';
 import { llmHealth } from './llmHealth';
+import { worldAbortSignal } from '../lib/worldEpoch';
 
 export interface OllamaChatRequest {
   model: string;
@@ -34,7 +35,8 @@ export interface OllamaChatRequest {
   /**
    * Cancels the request (throws LLMAbortedError). A conversation turn passes
    * one so that closing the conversation frees its LLM and runner slots at once
-   * instead of when a reply nobody will read finally arrives.
+   * instead of when a reply nobody will read finally arrives. Every request is
+   * also cancelled by a world swap (`worldAbortSignal`), signal or not.
    */
   signal?: AbortSignal;
   options?: {
@@ -75,12 +77,18 @@ export async function callOllamaChat(
 ): Promise<OllamaChatResponse> {
   const send = CONFIG.AI.BACKEND === 'openai' ? sendOpenAI : sendOllama;
 
+  // The world this request is for: a world swap (lib/worldEpoch.ts) aborts it
+  // like the caller's own signal would. Captured now — a request made after
+  // the swap belongs to the new world and must not see the old abort.
+  const worldSignal = worldAbortSignal();
+  const cancelled = (): boolean => Boolean(request.signal?.aborted) || worldSignal.aborted;
+
   // Already cancelled: don't even queue for a slot.
-  if (request.signal?.aborted) throw new LLMAbortedError();
+  if (cancelled()) throw new LLMAbortedError();
   const queuedAt = performance.now();
   const release = await acquireLLMSlot(request.priority ?? 'normal');
   // Cancelled while queued for the slot: hand it straight back.
-  if (request.signal?.aborted) {
+  if (cancelled()) {
     release();
     throw new LLMAbortedError();
   }
@@ -97,6 +105,7 @@ export async function callOllamaChat(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.AI.TIMEOUT_MS);
   const unlink = linkAbort(request.signal, controller);
+  const unlinkWorld = linkAbort(worldSignal, controller);
   let answeredEmpty = false;
 
   try {
@@ -108,16 +117,17 @@ export async function callOllamaChat(
     sample.error = error?.message ?? String(error);
     answeredEmpty = error instanceof LLMEmptyReplyError;
     if (error.name === "AbortError") {
-      if (request.signal?.aborted) throw new LLMAbortedError();
+      if (cancelled()) throw new LLMAbortedError();
       throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
     unlink();
+    unlinkWorld();
     release();
     // A call its owner cancelled says nothing about the model: not booked.
-    if (!request.signal?.aborted) {
+    if (!cancelled()) {
       sample.totalMs = performance.now() - queuedAt;
       recordLLMCall(sample);
       // An empty reply is still an answer: the model is up, this request just
