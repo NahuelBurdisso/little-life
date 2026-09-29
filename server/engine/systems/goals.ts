@@ -3,7 +3,6 @@ import {
   agents,
   goals,
   aspirations,
-  agentStates,
   shared_knowledge,
   economy,
   relationships,
@@ -12,7 +11,7 @@ import {
 import { eq, and } from 'drizzle-orm';
 import { GOAL_REGISTRY, GOAL_TRIGGER_REGISTRY } from '../../data/goalRegistry';
 import { MAX_GOALS_PER_AGENT } from '../../lib/interactionConstants';
-import { getEffectivePersonality } from '../../lib/states';
+import { AgentStateRowsSnapshot, getEffectivePersonality, type AgentStateRow } from '../../lib/states';
 import { logActivity } from '../../lib/activityLogger';
 import type { GoalTriggerDef } from '../../lib/interactionConstants';
 import { simEvents } from '../../lib/simEvents';
@@ -71,14 +70,15 @@ function checkTriggerCondition(
   _currentTick: number,
   cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
   cachedRelationships: (typeof relationships.$inferSelect)[],
+  stateRows: AgentStateRowsSnapshot,
 ): number | null | false {
   const cond = trigger.condition;
 
   switch (cond.type) {
     case 'state_gained': {
-      const states = db.select().from(agentStates)
-        .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, cond.state!)))
-        .all();
+      // From the phase's row snapshot, not a query per trigger: ~3.5 state
+      // triggers per agent made this the goals phase's most frequent read.
+      const states = stateRows.forAgent(agent.id).filter((s) => s.type === cond.state);
       if (states.length === 0) return false;
       if (cond.has_target) {
         const targetState = states.find(s => s.target_agent_id != null);
@@ -148,19 +148,20 @@ function evaluateTriggers(
   nowMinutes: number,
   cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
   cachedRelationships: (typeof relationships.$inferSelect)[],
+  stateRows: AgentStateRowsSnapshot,
 ): void {
   const personality = getEffectivePersonality(agent.id);
-  const activeGoals = db.select().from(goals)
-    .where(and(eq(goals.agent_id, agent.id), eq(goals.status, 'active')))
-    .all();
+  // One read of the agent's goals serves both lists below (it was two queries,
+  // the second a superset of the first). Read here, not reused from the top of
+  // the agent's loop: abandonment and passive progress just changed statuses.
+  const agentGoalRows = db.select().from(goals).where(eq(goals.agent_id, agent.id)).all();
+  const activeGoals = agentGoalRows.filter(g => g.status === 'active');
 
   // Also load recently abandoned/completed goals to prevent create→abandon spam.
   // Without this, a persistent trigger (e.g., infatuated state) creates a goal every tick
   // that gets immediately abandoned, flooding the activity log.
   const COOLDOWN_MINUTES = 720; // 12 game hours — prevents goal→abandon spam for persistent triggers
-  const recentGoals = db.select().from(goals)
-    .where(eq(goals.agent_id, agent.id))
-    .all()
+  const recentGoals = agentGoalRows
     .filter(g => g.status !== 'active' && (nowMinutes - g.created_at) < COOLDOWN_MINUTES);
 
   for (const trigger of GOAL_TRIGGER_REGISTRY) {
@@ -168,7 +169,7 @@ function evaluateTriggers(
 
     if (trigger.personality_gate && !checkPersonalityGate(personality, trigger.personality_gate)) continue;
 
-    const targetId = checkTriggerCondition(trigger, agent, nowMinutes, cachedKnowledge, cachedRelationships);
+    const targetId = checkTriggerCondition(trigger, agent, nowMinutes, cachedKnowledge, cachedRelationships, stateRows);
     if (targetId === false) continue;
 
     // Don't duplicate: skip if agent already has this goal type targeting the same agent
@@ -213,7 +214,7 @@ function evaluateAbandonment(
   agent: any,
   goal: any,
   nowMinutes: number,
-  allAgentStates: (typeof agentStates.$inferSelect)[],
+  allAgentStates: readonly AgentStateRow[],
   tickSpeed: number,
 ): void {
   const def = GOAL_REGISTRY[goal.type];
@@ -318,7 +319,7 @@ export function goalEventCast(goal: { target_id: number | null }): { victimId?: 
 
 // ─── evaluatePassiveProgress ──────────────────────────────────────────────────
 
-function evaluatePassiveProgress(agent: any, goal: any, nowMinutes: number): void {
+function evaluatePassiveProgress(agent: any, goal: any, nowMinutes: number, stateRows: AgentStateRowsSnapshot): void {
   const def = GOAL_REGISTRY[goal.type];
   if (!def || def.valid_interactions.length > 0) return; // only passive goals
 
@@ -331,10 +332,7 @@ function evaluatePassiveProgress(agent: any, goal: any, nowMinutes: number): voi
       conditionMet = econ != null && econ.money > 0;
     } else if (pe.condition.startsWith('state_expired:')) {
       const stateType = pe.condition.split(':')[1];
-      const hasState = db.select().from(agentStates)
-        .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, stateType)))
-        .all();
-      conditionMet = hasState.length === 0;
+      conditionMet = stateRows.find(agent.id, stateType) === undefined;
     }
 
     if (conditionMet) {
@@ -409,7 +407,13 @@ export function goalsTick(): void {
     .where(eq(shared_knowledge.is_active, true))
     .all();
   const allRelationships = db.select().from(relationships).all();
-  const allAgentStates = db.select().from(agentStates).all();
+  // Live view of agent_states for the triggers and passive progress (it re-reads
+  // only after a write, e.g. a cascade rule reacting to 'goal:created').
+  const stateRows = new AgentStateRowsSnapshot();
+  // Abandonment deliberately judges every agent against the states as the phase
+  // began; `all()` returns the array of this read, which later refreshes of the
+  // snapshot replace rather than mutate.
+  const allAgentStates = stateRows.all();
 
   for (const agent of activeAgents) {
     const agentGoals = db.select().from(goals)
@@ -429,12 +433,12 @@ export function goalsTick(): void {
     // 3. Evaluate passive goal progress
     for (const goal of agentGoals) {
       if (goal.status === 'active') {
-        evaluatePassiveProgress(agent, goal, nowMinutes);
+        evaluatePassiveProgress(agent, goal, nowMinutes, stateRows);
       }
     }
 
     // 4. Check reactive triggers for new goals
-    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships);
+    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships, stateRows);
 
     // 5. Pivot evaluation (async fire-and-forget)
     void pivotEvaluator.evaluate(agent.id, nowMinutes);
