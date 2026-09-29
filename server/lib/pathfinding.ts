@@ -67,7 +67,12 @@ function warnThrottled(kind: WarnKind, message: string): void {
  * tallies these by reason and destination; tests assert on them directly.
  */
 export interface PathFallback {
-  kind: 'unroutable-destination' | 'no-route';
+  /**
+   * 'snapped-destination' is not a straight line: the destination tile was
+   * blocked, so the route ends on the nearest walkable tile and only the last
+   * partial step goes onto the blocked one. Reported so the rate stays visible.
+   */
+  kind: 'unroutable-destination' | 'no-route' | 'snapped-destination' | 'snapped-start';
   /** Tile coords on the grid that was searched. */
   start: [number, number];
   end: [number, number];
@@ -88,6 +93,44 @@ function heuristic(ax: number, ay: number, bx: number, by: number): number {
   const dx = Math.abs(ax - bx);
   const dy = Math.abs(ay - by);
   return Math.max(dx, dy) + (1.414 - 1) * Math.min(dx, dy);
+}
+
+/**
+ * How far (in tiles, Chebyshev) to look for a walkable stand-in when the
+ * destination tile itself is blocked. A zone point on a furniture tile or a
+ * riverbank spot on the park's impassable river is always within a tile or two
+ * of floor; a destination buried deeper than this is a caller bug and keeps the
+ * loud straight-line fallback.
+ */
+const SNAP_RADIUS = 3;
+
+/**
+ * Nearest tile to (x, y), within SNAP_RADIUS, that is walkable with a finite
+ * cost. Ties go to the closer tile by Euclidean distance, then scan order, so
+ * the choice is deterministic.
+ */
+function nearestRoutableTile(
+  x: number, y: number,
+  collisionGrid: string, mapWidth: number, mapHeight: number,
+  costs: Float32Array | undefined,
+): [number, number] | null {
+  let best: [number, number] | null = null;
+  let bestD = Infinity;
+  for (let r = 1; r <= SNAP_RADIUS && !best; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= mapWidth || ny >= mapHeight) continue;
+        const i = ny * mapWidth + nx;
+        if (collisionGrid[i] === '1') continue;
+        if (costs && !Number.isFinite(costs[i])) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = [nx, ny]; }
+      }
+    }
+  }
+  return best;
 }
 
 const DIRECTIONS: [number, number, number][] = [
@@ -139,15 +182,34 @@ export function computeAStarPath(
     return [[endPixel.x, endPixel.y]];
   }
 
-  // Unroutable destination — straight line, which walks through walls. Kept as a
-  // fallback rather than an error because callers have no recovery path, but it
-  // is logged: this used to be completely silent, so a blocked or
-  // infinite-cost entry point looked like a working route.
-  // `Infinity` is checked too — `getTileCost` skips those tiles, so the open set
-  // just drains and execution reaches the identical fallback at the end of the
-  // function, indistinguishable from a real path.
+  // Unroutable destination. `Infinity` is checked too — `getTileCost` skips
+  // those tiles, so the open set would just drain into the no-route fallback.
+  //
+  // First choice: route to the nearest walkable tile and take the last partial
+  // step onto the target from there. Every such target seen in soaks is a spot
+  // one tile off the floor (the park's riverside zone sits on the river the
+  // cost map makes impassable; a conversation partner standing at a counter),
+  // and a straight line from wherever the walker is instead cut through every
+  // building in between. The final exact point is kept so arrival (which
+  // measures distance to the destination) still fires.
   const endCost = grid ? grid[endY * mapWidth + endX] : 1;
   if (collisionGrid[endY * mapWidth + endX] === "1" || !Number.isFinite(endCost)) {
+    const snap = nearestRoutableTile(endX, endY, collisionGrid, mapWidth, mapHeight, grid);
+    if (snap) {
+      fallbackObserver?.({
+        kind: 'snapped-destination', start: [startX, startY], end: [endX, endY],
+        gridWidth: mapWidth, gridHeight: mapHeight, context,
+      });
+      const [snapPx, snapPy] = tileCenterToPixel(snap[0], snap[1], tileSize);
+      const toSnap = computeAStarPath(
+        startPixel, { x: snapPx, y: snapPy },
+        collisionGrid, mapWidth, mapHeight, tileSize, grid, context,
+      );
+      return [...toSnap, [endPixel.x, endPixel.y]];
+    }
+    // Nothing walkable nearby: straight line, which walks through walls. Kept as
+    // a fallback rather than an error because callers have no recovery path,
+    // but it is logged — this used to be completely silent.
     warnThrottled(
       'unroutable-destination',
       `[pathfinding] destination tile (${endX},${endY}) is unroutable ` +
@@ -162,6 +224,25 @@ export function computeAStarPath(
       [startPixel.x, startPixel.y],
       [endPixel.x, endPixel.y],
     ];
+  }
+
+  // A walker standing on a solid tile (the last partial step of a snapped route
+  // leaves it on the furniture or wall row it was sent to) cannot leave it if
+  // every neighbour is solid too: A* never checks the start tile, but a corner
+  // cell's diagonals need both orthogonals open. Step to the nearest open tile
+  // first rather than falling back to a straight line out through the wall.
+  if (collisionGrid[startY * mapWidth + startX] === '1') {
+    const snap = nearestRoutableTile(startX, startY, collisionGrid, mapWidth, mapHeight, grid);
+    if (snap && (snap[0] !== endX || snap[1] !== endY)) {
+      fallbackObserver?.({
+        kind: 'snapped-start', start: [startX, startY], end: [endX, endY],
+        gridWidth: mapWidth, gridHeight: mapHeight, context,
+      });
+      const [px, py] = tileCenterToPixel(snap[0], snap[1], tileSize);
+      return [[px, py], ...computeAStarPath(
+        { x: px, y: py }, endPixel, collisionGrid, mapWidth, mapHeight, tileSize, grid, context,
+      )];
+    }
   }
 
   function isBlocked(x: number, y: number): boolean {

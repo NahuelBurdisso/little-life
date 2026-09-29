@@ -5,7 +5,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { CONFIG } from '../../lib/constants';
 import { gameMinutes } from '../../lib/gameClock';
 import { distance } from '../../lib/utils';
-import { computeAStarPath, pixelToTile } from '../../lib/pathfinding';
+import { computeAStarPath } from '../../lib/pathfinding';
 import { emitter } from '../emitter';
 import { getAgentStates } from '../../lib/states';
 import { simEvents } from '../../lib/simEvents';
@@ -28,7 +28,6 @@ type WorldRow = {
 
 // Stuck detection: track positions for walking agents
 const stuckTracker = new Map<number, { x: number; y: number; minutes: number }>();
-const lastRecalcTick = new Map<number, number>();
 
 // Cached terrain cost map — rebuilt when season changes
 let cachedCostMap: Float32Array | null = null;
@@ -46,13 +45,11 @@ export function invalidateCostMap(): void {
 
 /**
  * Drop per-agent movement bookkeeping. Must be called whenever the world is
- * replaced: agent ids restart at 1 (SQLite reuses rowids after a DELETE) and
- * `totalTicks` resets to 0, so a stale `lastRecalcTick` of e.g. 5000 makes
- * `totalTicks - lastRecalc` negative forever and permanently disables
- * stuck-path recovery for the new agent that inherited the id.
+ * replaced: agent ids restart at 1 (SQLite reuses rowids after a DELETE), so a
+ * stale stuck-tracker entry would be charged to the new agent that inherited
+ * the id.
  */
 export function clearMovementState(): void {
-  lastRecalcTick.clear();
   stuckTracker.clear();
 }
 
@@ -164,13 +161,115 @@ export function interiorTransitionDuration(minDuration: number, tickSpeed: numbe
   return minDuration > 0 ? minDuration + Math.ceil(5 * tickSpeed) : null;
 }
 
-function isClosedBuilding(locType: string): boolean {
-  // Positive membership, not `!OPEN_AREA_TYPES.has(...)`. The derived locations
-  // (mainstreet, alley, farmyard, market_square) are open ground but have no
-  // template, so the negated test called them closed buildings. Every agent
-  // standing on Main Street was then routed via the strip's midpoint first —
-  // 76% of measured routes off that footprint detoured, mean 10 wasted tiles.
-  return ENCLOSED_BUILDING_TYPES.has(locType);
+/**
+ * The enclosed building whose footprint contains `pt`, if any.
+ *
+ * Geometric on purpose, not `agent.current_location`: that comes from
+ * `findContainingLocation`, which pads every rectangle by 16 px and returns the
+ * first hit, so an agent on a doorstep can read as "inside" the neighbour and an
+ * agent at a counter can read as standing in the derived street strip that
+ * overlaps it. What a route has to know is which grid the point is on — the
+ * world grid blocks every enclosed footprint wholesale — and only the footprint
+ * answers that. The entry_point sits exactly on the footprint's bottom edge, so
+ * the strict `<` keeps doorsteps outside.
+ *
+ * Positive membership in ENCLOSED_BUILDING_TYPES, not `!OPEN_AREA_TYPES.has(...)`:
+ * the derived locations (mainstreet, alley, farmyard, market_square) are open
+ * ground with no template, and the negated test once routed everyone on Main
+ * Street via the strip's midpoint.
+ */
+export function enclosingBuilding<L extends Pick<LocationRow, 'type' | 'position'>>(
+  pt: { x: number; y: number },
+  locs: readonly L[],
+): L | null {
+  for (const loc of locs) {
+    if (!ENCLOSED_BUILDING_TYPES.has(loc.type)) continue;
+    const p = loc.position;
+    if (pt.x >= p.x && pt.x < p.x + p.width && pt.y >= p.y && pt.y < p.y + p.height) return loc;
+  }
+  return null;
+}
+
+type RouteLocation = Pick<LocationRow, 'id' | 'type' | 'position' | 'entry_point'>;
+type RouteWorld = Pick<WorldRow, 'collision_grid' | 'map_width' | 'map_height'>;
+
+/**
+ * Walk inside one building on its interior grid, `from` and `to` in world pixels.
+ * A building type without a grid (none today) gets the straight step it always had.
+ */
+function interiorLeg(
+  building: RouteLocation,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): number[][] {
+  const grid = getInteriorGrid(building.type);
+  if (!grid) return [[to.x, to.y]];
+  const bx = building.position.x;
+  const by = building.position.y;
+  const leg = computeAStarPath(
+    { x: from.x - bx, y: from.y - by },
+    { x: to.x - bx, y: to.y - by },
+    grid.collisionString, grid.width, grid.height,
+    CONFIG.MOVEMENT.TILE_SIZE, undefined, building.type,
+  );
+  return leg.map(([px, py]) => [px + bx, py + by]);
+}
+
+/** Centre of a building's interior door cell, in world pixels. */
+function doorCellPixel(building: RouteLocation): { x: number; y: number } {
+  const grid = getInteriorGrid(building.type);
+  const T = CONFIG.MOVEMENT.TILE_SIZE;
+  if (!grid) return { x: building.entry_point.x, y: building.entry_point.y - T / 2 };
+  return {
+    x: building.position.x + grid.doorTile[0] * T + T / 2,
+    y: building.position.y + grid.doorTile[1] * T + T / 2,
+  };
+}
+
+/**
+ * The full route from `from` to `to`, as world-pixel waypoints, in up to three
+ * legs: out of the enclosed building `from` is in (interior grid, to its door
+ * and out onto the entry_point), across town (world grid, entry_point to
+ * entry_point), and into the enclosed building `to` is in (interior grid, from
+ * its door). A point inside a building's footprint is only reachable through
+ * that building's own grid — on the world grid every footprint tile is solid.
+ *
+ * This replaced a planner keyed on the walker's `current_location` alone, which
+ * never handled a destination inside a building (a conversation partner at the
+ * clinic's reception, a hop to a zone): those went to world A*, found the
+ * destination tile solid, and walked a straight line through every building in
+ * between — P1's "destination tile unroutable at work spots".
+ */
+export function planRoute(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  world: RouteWorld,
+  allLocations: readonly RouteLocation[],
+  costMap?: Float32Array,
+): number[][] {
+  const src = enclosingBuilding(from, allLocations);
+  const dst = enclosingBuilding(to, allLocations);
+  if (src && dst && src.id === dst.id) return interiorLeg(src, from, to);
+
+  const path: number[][] = [];
+  let cursor = from;
+  if (src) {
+    path.push(...interiorLeg(src, from, doorCellPixel(src)));
+    path.push([src.entry_point.x, src.entry_point.y]);
+    cursor = src.entry_point;
+  }
+  const outside = dst ? dst.entry_point : to;
+  path.push(...computeAStarPath(
+    cursor, outside,
+    world.collision_grid, world.map_width, world.map_height,
+    CONFIG.MOVEMENT.TILE_SIZE, costMap,
+  ));
+  if (dst) {
+    const door = doorCellPixel(dst);
+    path.push([door.x, door.y]);
+    path.push(...interiorLeg(dst, door, to));
+  }
+  return path;
 }
 
 /**
@@ -355,6 +454,74 @@ function handleArrival(
   }
 }
 
+/**
+ * A walker reached its destination: start the queued action (handleArrival) and
+ * move the agent's location bookkeeping to the place the destination is in.
+ */
+function completeArrival(
+  agent: AgentRow,
+  destPoint: { x: number; y: number },
+  world: WorldRow,
+  allLocations: LocationRow[],
+): void {
+  handleArrival(agent, world, allLocations);
+
+  // Handle zone transition on arrival
+  const oldLocationId = agent.current_location;
+  const newLocationId = findContainingLocation(destPoint, allLocations);
+
+  // Emit arrival event when entering a new location
+  if (newLocationId && newLocationId !== oldLocationId) {
+    const arrivedLoc = allLocations.find((l) => l.id === newLocationId);
+    if (arrivedLoc) {
+      simEvents.emit('agent:arrived', { agentId: agent.id, locationName: arrivedLoc.name });
+    }
+  }
+
+  // Emit departure event when leaving a location
+  if (oldLocationId && newLocationId !== oldLocationId) {
+    const departedLoc = allLocations.find((l) => l.id === oldLocationId);
+    if (departedLoc) {
+      simEvents.emit('agent:departed', { agentId: agent.id, locationName: departedLoc.name });
+    }
+  }
+
+  if (oldLocationId !== newLocationId) {
+    // Agent left a building — clear zone occupancy
+    if (oldLocationId) {
+      zoneOccupancy.leave(agent.id);
+
+      const oldLoc = allLocations.find((l) => l.id === oldLocationId);
+      if (oldLoc) {
+        const updatedOccupants = oldLoc.current_occupants.filter((id) => id !== agent.id);
+        db.update(locations)
+          .set({ current_occupants: updatedOccupants })
+          .where(eq(locations.id, oldLoc.id))
+          .run();
+        // Mirror change in local array so subsequent agents see fresh data
+        oldLoc.current_occupants = updatedOccupants;
+      }
+    }
+    if (newLocationId) {
+      const newLoc = allLocations.find((l) => l.id === newLocationId);
+      if (newLoc && !newLoc.current_occupants.includes(agent.id)) {
+        const updatedOccupants = [...newLoc.current_occupants, agent.id];
+        db.update(locations)
+          .set({ current_occupants: updatedOccupants })
+          .where(eq(locations.id, newLoc.id))
+          .run();
+        // Mirror change in local array so subsequent agents see fresh data
+        newLoc.current_occupants = updatedOccupants;
+      }
+    }
+
+    db.update(agents)
+      .set({ current_location: newLocationId })
+      .where(eq(agents.id, agent.id))
+      .run();
+  }
+}
+
 // --- Main Tick ---
 
 export function tick(world: WorldRow): void {
@@ -439,65 +606,10 @@ export function tick(world: WorldRow): void {
     const destPoint = { x: dest.x, y: dest.y };
     const distToDest = distance(agent.position, destPoint);
 
-    // Check arrival
+    // Check arrival (a walker that reached the spot on an earlier tick, e.g.
+    // one whose destination was set right on top of it).
     if (distToDest < CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX) {
-      handleArrival(agent, world, allLocations);
-
-      // Handle zone transition on arrival
-      const oldLocationId = agent.current_location;
-      const newLocationId = findContainingLocation(destPoint, allLocations);
-
-      // Emit arrival event when entering a new location
-      if (newLocationId && newLocationId !== oldLocationId) {
-        const arrivedLoc = allLocations.find((l) => l.id === newLocationId);
-        if (arrivedLoc) {
-          simEvents.emit('agent:arrived', { agentId: agent.id, locationName: arrivedLoc.name });
-        }
-      }
-
-      // Emit departure event when leaving a location
-      if (oldLocationId && newLocationId !== oldLocationId) {
-        const departedLoc = allLocations.find((l) => l.id === oldLocationId);
-        if (departedLoc) {
-          simEvents.emit('agent:departed', { agentId: agent.id, locationName: departedLoc.name });
-        }
-      }
-
-      if (oldLocationId !== newLocationId) {
-        // Agent left a building — clear zone occupancy
-        if (oldLocationId) {
-          zoneOccupancy.leave(agent.id);
-
-          const oldLoc = allLocations.find((l) => l.id === oldLocationId);
-          if (oldLoc) {
-            const updatedOccupants = oldLoc.current_occupants.filter((id) => id !== agent.id);
-            db.update(locations)
-              .set({ current_occupants: updatedOccupants })
-              .where(eq(locations.id, oldLoc.id))
-              .run();
-            // Mirror change in local array so subsequent agents see fresh data
-            oldLoc.current_occupants = updatedOccupants;
-          }
-        }
-        if (newLocationId) {
-          const newLoc = allLocations.find((l) => l.id === newLocationId);
-          if (newLoc && !newLoc.current_occupants.includes(agent.id)) {
-            const updatedOccupants = [...newLoc.current_occupants, agent.id];
-            db.update(locations)
-              .set({ current_occupants: updatedOccupants })
-              .where(eq(locations.id, newLoc.id))
-              .run();
-            // Mirror change in local array so subsequent agents see fresh data
-            newLoc.current_occupants = updatedOccupants;
-          }
-        }
-
-        db.update(agents)
-          .set({ current_location: newLocationId })
-          .where(eq(agents.id, agent.id))
-          .run();
-      }
-
+      completeArrival(agent, destPoint, world, allLocations);
       dirty = true;
       continue;
     }
@@ -514,148 +626,23 @@ export function tick(world: WorldRow): void {
     let remainingPath: number[][];
 
     {
-      // Get or compute A* path
+      // Get or compute the route. Computed once per walk: the world collision
+      // grid is fixed for a world's life (worldgen writes it, nothing edits it),
+      // so a route cannot become blocked under a walker. The old per-tick
+      // "next waypoint is on a blocked tile → recompute on the world grid" check
+      // fired on every interior leg (interior waypoints sit on footprint tiles,
+      // which the world grid marks solid) and replaced a correct indoor route
+      // with a world-grid one to an in-building point: an unroutable destination
+      // or, from inside a building, no route at all — both straight lines
+      // through walls. It was most of P1's fallbacks.
       let path = agent.current_path;
       if (!path || path.length === 0) {
-        // If agent is inside a building, first move to the door exit
-        let pathStart = agent.position;
-        const insideBuilding = agent.current_location != null
-          ? allLocations.find(l => l.id === agent.current_location)
-          : null;
-
-        if (insideBuilding && isClosedBuilding(insideBuilding.type)) {
-          const interiorGrid = getInteriorGrid(insideBuilding.type);
-          const buildingPos = insideBuilding.position;
-
-          // Check if destination is inside the same building (interior-to-interior)
-          const destInsideSameBuilding = isInsideLocation(destPoint, insideBuilding);
-
-          if (destInsideSameBuilding && interiorGrid) {
-            // Interior-to-interior: A* on interior grid
-            const relStartX = agent.position.x - buildingPos.x;
-            const relStartY = agent.position.y - buildingPos.y;
-            const relEndX = destPoint.x - buildingPos.x;
-            const relEndY = destPoint.y - buildingPos.y;
-
-            const interiorPath = computeAStarPath(
-              { x: relStartX, y: relStartY },
-              { x: relEndX, y: relEndY },
-              interiorGrid.collisionString,
-              interiorGrid.width,
-              interiorGrid.height,
-              CONFIG.MOVEMENT.TILE_SIZE,
-              undefined,
-              insideBuilding.type,
-            );
-
-            if (interiorPath && interiorPath.length > 0) {
-              path = interiorPath.map(([px, py]) => [px + buildingPos.x, py + buildingPos.y]);
-            } else {
-              path = [[destPoint.x, destPoint.y]];
-            }
-          } else if (interiorGrid) {
-            // Agent is inside a closed building, destination is outside.
-            // First: interior A* from current position to door tile, then world A* from door to destination.
-            const relStartX = agent.position.x - buildingPos.x;
-            const relStartY = agent.position.y - buildingPos.y;
-            const [doorGridX, doorGridY] = interiorGrid.doorTile;
-            const doorRelX = doorGridX * CONFIG.MOVEMENT.TILE_SIZE + CONFIG.MOVEMENT.TILE_SIZE / 2;
-            const doorRelY = doorGridY * CONFIG.MOVEMENT.TILE_SIZE + CONFIG.MOVEMENT.TILE_SIZE / 2;
-
-            const exitPath = computeAStarPath(
-              { x: relStartX, y: relStartY },
-              { x: doorRelX, y: doorRelY },
-              interiorGrid.collisionString,
-              interiorGrid.width,
-              interiorGrid.height,
-              CONFIG.MOVEMENT.TILE_SIZE,
-              undefined,
-              insideBuilding.type,
-            );
-
-            const exitWorldPath = (exitPath && exitPath.length > 0)
-              ? exitPath.map(([px, py]) => [px + buildingPos.x, py + buildingPos.y])
-              : [[insideBuilding.entry_point.x, insideBuilding.entry_point.y]];
-
-            // World A* from door to destination
-            const doorX = insideBuilding.entry_point.x;
-            const doorY = insideBuilding.entry_point.y;
-            const costMap = getWorldCostMap(world, allLocations);
-            const outerPath = computeAStarPath(
-              { x: doorX, y: doorY },
-              destPoint,
-              world.collision_grid,
-              world.map_width,
-              world.map_height,
-              CONFIG.MOVEMENT.TILE_SIZE,
-              costMap,
-            );
-
-            path = [...exitWorldPath, ...(outerPath ?? [[destPoint.x, destPoint.y]])];
-          } else {
-            // An enclosed type with no INTERIOR_GRIDS entry — route from the door.
-            // (`home` is no longer an example: it has a 3×3 interior grid now.)
-            const doorX = insideBuilding.entry_point.x;
-            const doorY = insideBuilding.entry_point.y;
-            const costMap = getWorldCostMap(world, allLocations);
-            const outerPath = computeAStarPath(
-              { x: doorX, y: doorY },
-              destPoint,
-              world.collision_grid,
-              world.map_width,
-              world.map_height,
-              CONFIG.MOVEMENT.TILE_SIZE,
-              costMap,
-            );
-            // Prepend the door as first waypoint so agent exits building first
-            path = [[doorX, doorY], ...(outerPath ?? [[destPoint.x, destPoint.y]])];
-          }
-        } else {
-          const costMap = getWorldCostMap(world, allLocations);
-          path = computeAStarPath(
-            pathStart,
-            destPoint,
-            world.collision_grid,
-            world.map_width,
-            world.map_height,
-            CONFIG.MOVEMENT.TILE_SIZE,
-            costMap,
-          );
-        }
-
-        if (!path || path.length === 0) {
-          path = [[destPoint.x, destPoint.y]];
-        }
-        // Store path immediately
+        path = planRoute(agent.position, destPoint, world, allLocations, getWorldCostMap(world, allLocations));
+        if (path.length === 0) path = [[destPoint.x, destPoint.y]];
         db.update(agents)
           .set({ current_path: path })
           .where(eq(agents.id, agent.id))
           .run();
-      }
-
-      // Path validity: check if next tile is blocked, recalculate if so
-      if (path.length > 0) {
-        const [nextWpX, nextWpY] = path[0];
-        const [tileX, tileY] = pixelToTile(nextWpX, nextWpY, CONFIG.MOVEMENT.TILE_SIZE);
-        const tileIdx = tileY * world.map_width + tileX;
-        if (tileX >= 0 && tileX < world.map_width && tileY >= 0 && tileY < world.map_height &&
-            world.collision_grid[tileIdx] === '1') {
-          const lastRecalc = lastRecalcTick.get(agent.id) ?? 0;
-          // TICKS on purpose: this throttles A* work per loop iteration, a CPU
-          // budget, not something that happens in the town's time.
-          if (world.time.totalTicks - lastRecalc > 10) {
-            const costMap = getWorldCostMap(world, allLocations);
-            path = computeAStarPath(
-              agent.position, destPoint,
-              world.collision_grid, world.map_width, world.map_height,
-              CONFIG.MOVEMENT.TILE_SIZE,
-              costMap,
-            );
-            if (!path || path.length === 0) path = [[destPoint.x, destPoint.y]];
-            db.update(agents).set({ current_path: path }).where(eq(agents.id, agent.id)).run();
-            lastRecalcTick.set(agent.id, world.time.totalTicks);
-          }
-        }
       }
 
       const result = advanceAlongPath(agent.position, path, moveDistance);
