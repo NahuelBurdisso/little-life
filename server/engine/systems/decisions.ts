@@ -42,6 +42,7 @@ import { getFavorSocialModifier } from '../../lib/favorEngine';
 import { getComfortVisit, completeComfortVisit } from '../../lib/lonelinessEngine';
 import { quoteMeal, pantryWouldServe } from './economy';
 import { foodCount, isFood } from '../../lib/economyEngine';
+import { shopliftFrom } from '../../lib/economyTransfers';
 import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 
 // --- Types ---
@@ -1095,7 +1096,10 @@ function scoreFreeTimeActions(
   // --- Opportunistic crime ---
   // Broke agents with low morality may attempt theft at shops or from nearby agents
   if (personality && agentEcon && agentEcon.money < 10 && personality.morality < 45) {
-    const shop = nearestLocation(agent.position, allLocations, 'shop');
+    // Not your own shop, and not one nobody owns: shoplifting takes from a
+    // shopkeeper's till (shopliftFrom), never from the town's.
+    const nearestShop = nearestLocation(agent.position, allLocations, 'shop');
+    const shop = nearestShop && nearestShop.owner != null && nearestShop.owner !== agent.id ? nearestShop : null;
     const desperation = Math.max(0, 10 - agentEcon.money) * 2; // 0-20
     const moralityFactor = (45 - personality.morality) * 0.4; // 0-18
     const impulseFactor = personality.impulsiveness > 50 ? (personality.impulsiveness - 50) * 0.2 : 0;
@@ -1779,31 +1783,25 @@ export function tick(world: WorldRow): void {
             }
           }
         } else if (decision.source === 'shoplifting') {
-          // Steal from the shop: the loss comes out of the owner's till (or the
-          // town's, for an ownerless shop). It used to come from nowhere —
-          // money minted outside the treasury loop (economy.ts, townTreasury.ts).
+          // Steal from the shop: the take comes out of the owner's till, capped
+          // at what it holds. It used to be minted — money from outside the
+          // treasury loop (economy.ts, townTreasury.ts). An empty till, or a
+          // shop without an owner, has nothing to lose.
           const shopOwner = allLocations.find((l) => l.id === decision.targetLocationId)?.owner ?? null;
-          const ownerEcon = shopOwner != null && shopOwner !== thief.id
-            ? db.select().from(economy).where(eq(economy.agent_id, shopOwner)).get()
-            : undefined;
-          if (ownerEcon) {
-            db.update(economy).set({ money: Math.max(0, ownerEcon.money - stolenAmount) }).where(eq(economy.id, ownerEcon.id)).run();
-          } else {
-            const world = db.select().from(worldState).get();
-            if (world) db.update(worldState).set({ tax_pool: world.tax_pool - stolenAmount }).where(eq(worldState.id, world.id)).run();
-          }
-          db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
-          if (caught) {
+          const taken = shopliftFrom(thief.id, shopOwner, stolenAmount);
+          if (taken <= 0) {
+            // nothing taken, nothing to report
+          } else if (caught) {
             createFact('theft', thief.id, null, 2, [thief.id], 'witnessed');
             simEvents.emit('economy:theft_caught', {
               agentId: thief.id, perpetratorId: thief.id,
               locationId: thief.current_location,
             });
             logActivity({ type: 'drama', initiator: thief.id,
-              templateData: { description: `${thief.name} was caught shoplifting $${stolenAmount} worth of goods!` } });
+              templateData: { description: `${thief.name} was caught shoplifting $${taken} worth of goods!` } });
           } else {
             logActivity({ type: 'drama', initiator: thief.id,
-              templateData: { description: `${thief.name} shoplifted $${stolenAmount} worth of goods` } });
+              templateData: { description: `${thief.name} shoplifted $${taken} worth of goods` } });
           }
         }
       }
