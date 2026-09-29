@@ -5,6 +5,12 @@ interface Particle {
   vx: number;
   vy: number;
   life: number;
+  /**
+   * Sideways wobble instead of a straight `vx` drift: x = baseX + amp * sin(age * freq).
+   * Heat shimmer needs it (a shimmer that only rises is just a rising rectangle).
+   */
+  wobble?: { baseX: number; amp: number; freq: number };
+  age: number;
 }
 
 export class WeatherEffects {
@@ -50,7 +56,9 @@ export class WeatherEffects {
     // Update existing particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
-      p.graphic.x += p.vx * delta;
+      p.age += delta;
+      if (p.wobble) p.graphic.x = p.wobble.baseX + p.wobble.amp * Math.sin(p.age * p.wobble.freq);
+      else p.graphic.x += p.vx * delta;
       p.graphic.y += p.vy * delta;
       p.life -= delta;
 
@@ -103,7 +111,9 @@ export class WeatherEffects {
       case "hot":
         this.spawnHeat(width, height, 1);
         break;
-      // sunny, cloudy: no particles
+      // sunny: nothing on purpose — a clear sky is the baseline the other weathers are read against.
+      // cloudy: no particles; its drifting cloud shadows live in the world, in SkyFxSystem, so
+      // they move with the terrain instead of sliding across the screen when the camera pans.
     }
   }
 
@@ -120,6 +130,7 @@ export class WeatherEffects {
         vx: -1 - Math.random(),
         vy: 8 + Math.random() * 4,
         life: 120,
+        age: 0,
       });
     }
   }
@@ -137,6 +148,7 @@ export class WeatherEffects {
         vx: 0.3 + Math.random() * 0.3,
         vy: -0.1 + Math.random() * 0.2,
         life: 300,
+        age: 0,
       });
     }
   }
@@ -154,6 +166,7 @@ export class WeatherEffects {
         vx: -0.5 + Math.random() * 1.0, // gentle drift
         vy: 1.5 + Math.random() * 1.5,   // slow fall
         life: 250,
+        age: 0,
       });
     }
   }
@@ -172,6 +185,7 @@ export class WeatherEffects {
         vx: 6 + Math.random() * 4, // fast horizontal
         vy: -1 + Math.random() * 2, // slight vertical drift
         life: 120,
+        age: 0,
       });
     }
   }
@@ -179,17 +193,20 @@ export class WeatherEffects {
   private spawnHeat(width: number, height: number, count: number) {
     for (let i = 0; i < count; i++) {
       const g = this.acquire((it) => {
-        // Rising heat shimmer
-        const w = 20 + Math.random() * 30;
-        it.rect(-w / 2, -2, w, 4).fill({ color: 0xffcc66, alpha: 0.06 });
+        // A warm band of shimmering air: wide and thin, with a fainter lip so it has no hard rim.
+        const w = 40 + Math.random() * 60;
+        it.rect(-w / 2, -3, w, 6).fill({ color: 0xffd080, alpha: 0.05 });
+        it.rect(-w / 2 + 6, -1, w - 12, 2).fill({ color: 0xffe6a8, alpha: 0.06 });
       });
       g.x = Math.random() * width;
-      g.y = height - Math.random() * (height * 0.3);
+      g.y = height - Math.random() * (height * 0.6);
       this.particles.push({
         graphic: g,
-        vx: Math.sin(g.y * 0.1) * 0.3, // wavering
-        vy: -0.3 - Math.random() * 0.3, // rising
-        life: 200,
+        vx: 0,
+        vy: -0.35 - Math.random() * 0.4, // rising
+        life: 170,
+        age: Math.random() * 6,
+        wobble: { baseX: g.x, amp: 5 + Math.random() * 7, freq: 0.05 + Math.random() * 0.05 },
       });
     }
   }

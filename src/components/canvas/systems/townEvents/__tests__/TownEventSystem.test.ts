@@ -125,12 +125,57 @@ describe('TownEventSystem', () => {
     sys.destroy();
   });
 
+  it('moves particles every frame and fades them in and out of their fall', async () => {
+    const { layers, sys } = setup();
+    await flush();
+    sys.onData(data([ev(1, 'blessing')]));
+    const t0 = performance.now();
+    sys.update(frame({ now: t0, seconds: 2 }));
+    const motes = (layers.overAgents.children[0] as PIXI.Container).children
+      .slice() as PIXI.Sprite[];
+    // Sparkles do not move; the mote clusters do. Find one whose position changes.
+    const before = motes.map(s => s.y);
+    sys.update(frame({ now: t0 + 1500, seconds: 0.016 }));
+    const moved = motes.filter((s, i) => s.y !== before[i]);
+    expect(moved.length).toBeGreaterThanOrEqual(3);
+    const alphas = new Set(moved.map(s => s.alpha));
+    expect(Math.max(...alphas)).toBeLessThanOrEqual(1);
+    expect(Math.min(...alphas)).toBeGreaterThanOrEqual(0);
+    sys.destroy();
+  });
+
+  it('runs a cart in from the side and leaves it parked at its spot', async () => {
+    const { layers, sys } = setup();
+    await flush();
+    const home = { id: 9, type: 'home', position: { x: 448, y: 640, width: 96, height: 96 }, entry_point: { x: 496, y: 736 } };
+    sys.onData({ ...data([{ ...ev(1, 'new_arrival'), location_id: 9 }]), locations: [square, home] });
+    const t0 = performance.now();
+    sys.update(frame({ now: t0, seconds: 2 }));
+    const sprites = [...(layers.ground.children[0] as PIXI.Container).children] as PIXI.Sprite[];
+    // The cart is the only sprite off the door line at the start: 170 px further east than at rest.
+    const cartAtStart = sprites.find(s => s.x > 496 + 100)!;
+    expect(cartAtStart).toBeDefined();
+    sys.update(frame({ now: t0 + 9000, seconds: 0.016 }));
+    expect(cartAtStart.x).toBe(536);
+    sys.destroy();
+  });
+
+  it('tints the cells that ask for it', async () => {
+    const { layers, sys } = setup();
+    await flush();
+    sys.onData(data([ev(1, 'sickness')]));    // town has a bakery + square but no clinic/hall: the square gets the sign
+    const all = [...layers.ground.children, ...layers.overAgents.children]
+      .flatMap(g => (g as PIXI.Container).children) as PIXI.Sprite[];
+    expect(all.some(s => s.tint === 0xa8d890)).toBe(true);
+    sys.destroy();
+  });
+
   it('cleans up its display objects on destroy', async () => {
     const { layers, sys } = setup();
     await flush();
     sys.onData(data([ev(1, 'festival'), ev(2, 'fire_outbreak')]));
     sys.destroy();
-    expect(DECOR_FRAME_COUNT).toBe(39);
+    expect(DECOR_FRAME_COUNT).toBe(69);
     for (const g of [...layers.ground.children, ...layers.overAgents.children]) {
       expect((g as PIXI.Container).destroyed).toBe(true);
     }

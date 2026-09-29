@@ -10,8 +10,10 @@
  * `DECOR_FRAMES` in sync with the cell list in that script's header comment.
  */
 
+import { INTERIOR_ZONES } from '../../../../../server/data/interiors';
+
 export const DECOR_URL = '/sprites/fx/decor.png';
-export const DECOR_FRAME_COUNT = 39;
+export const DECOR_FRAME_COUNT = 69;
 
 /**
  * First cell of each sprite; animated ones name their first frame and run for `DECOR_ANIM.frames`
@@ -44,6 +46,23 @@ export const DECOR_FRAMES = {
   sparkle: 34,       // 34-36
   herbs: 37,         //      herb bundle
   closedSign: 38,
+  stranger: 39,      // 39-40 hooded figure with a lantern, flicker
+  fishCrate: 41,
+  netRack: 42,
+  fishJump: 43,      // 43-48 ripple, fin, rise, apex, fall, splash (two rest cells, then a leap)
+  cart: 49,          // 49-50 hand cart heaped with belongings, wheels turn
+  luggage: 51,
+  welcome: 52,       // 52-53 welcome banner between two posts, flutter
+  parasol: 54,
+  waterBarrel: 55,
+  petalFall: 56,     // 56-60 particle clusters: the renderer drifts them (see DecorMotion)
+  moteFall: 57,
+  leafFall: 58,
+  confettiFall: 59,
+  paperFall: 60,
+  heatHaze: 61,      //       wavy warm streaks that rise
+  firefly: 62,       // 62-64 blink
+  owl: 65,           // 65-68 owl on a post: look centre, left, right, blink
 } as const;
 
 /** Row of a cell (0-31) where objects touch the ground; the sprite anchor is (16, 30). */
@@ -51,6 +70,21 @@ export const DECOR_FOOT_X = 16;
 export const DECOR_FOOT_Y = 30;
 
 export type DecorLayer = 'ground' | 'over';
+
+/**
+ * Motion on top of the cell animation, evaluated per frame by the renderer from time alone (no
+ * state, so a placement is still plain data). `phase` staggers neighbours.
+ *
+ * - `fall`: drifts by (dx, dy) over `period` seconds, fading in and out, then starts again.
+ *   Petals, gold motes, leaves, confetti and blown papers are clusters that do this.
+ * - `wander`: loops a small Lissajous figure of radius (rx, ry): fireflies.
+ * - `arrive`: starts (dx, dy) away and eases to its rest position over `period` seconds from
+ *   when the decoration appeared, wheels turning only while it moves. A cart pulling up.
+ */
+export type DecorMotion =
+  | { kind: 'fall'; dx: number; dy: number; period: number }
+  | { kind: 'wander'; rx: number; ry: number; period: number }
+  | { kind: 'arrive'; dx: number; dy: number; period: number };
 
 export interface DecorPlacement {
   /** First atlas cell. */
@@ -65,6 +99,9 @@ export interface DecorPlacement {
   fps: number;
   /** 0..1 offset into the animation so neighbours don't flutter in lockstep. */
   phase: number;
+  motion?: DecorMotion;
+  /** Multiplied into the cell's colours (0xRRGGBB): one haze cell serves as heat and as sickly air. */
+  tint?: number;
 }
 
 export interface EventDecorPlan {
@@ -75,7 +112,10 @@ export interface EventDecorPlan {
 
 export interface MapPx { w: number; h: number }
 
-interface Rect { x: number; y: number; width: number; height: number }
+/** A road tile from `world.road_tiles` (tile coordinates). */
+export interface RoadTile { x: number; y: number }
+
+export interface Rect { x: number; y: number; width: number; height: number }
 
 const TILE = 32;
 
@@ -177,7 +217,7 @@ class Layout {
   }
 
   /** Round to whole pixels: the atlas is pixel art and half-pixel sprites shimmer. */
-  add(frame: number, x: number, y: number, o: { layer?: DecorLayer; frames?: number; fps?: number; solid?: boolean; salt?: number } = {}): boolean {
+  add(frame: number, x: number, y: number, o: { layer?: DecorLayer; frames?: number; fps?: number; solid?: boolean; salt?: number; motion?: DecorMotion; tint?: number } = {}): boolean {
     x = Math.round(x); y = Math.round(y);
     const solid = o.solid ?? true;
     if (solid ? !this.free(x, y) : !(x >= this.r.x && x <= this.r.x + this.r.width && y >= this.r.y && y <= this.r.y + this.r.height)) {
@@ -189,9 +229,28 @@ class Layout {
       layer: o.layer ?? 'ground',
       frames,
       fps: frames > 1 ? (o.fps ?? 4) : 0,
-      phase: frames > 1 ? unit(this.seed + (o.salt ?? 0) * 31 + x * 7, y * 13 + frame) : 0,
+      // Moving placements need a phase too, or every petal of a shower would fall in step.
+      phase: frames > 1 || o.motion ? unit(this.seed + (o.salt ?? 0) * 31 + x * 7, y * 13 + frame) : 0,
+      ...(o.motion ? { motion: o.motion } : {}),
+      ...(o.tint !== undefined ? { tint: o.tint } : {}),
     });
     return true;
+  }
+
+  /**
+   * `count` particle clusters spread across x0..x1, each starting at `y` and drifting (dx, dy)
+   * over about `period` seconds. Above the agents: they are in the air.
+   */
+  falling(frame: number, count: number, x0: number, x1: number, y: number, o: { dx?: number; dy: number; period: number; salt?: number }): void {
+    for (let i = 0; i < count; i++) {
+      const k = (o.salt ?? 0) + i;
+      const x = x0 + ((x1 - x0) * (i + 0.5)) / count + this.jit(600 + k, 10);
+      const period = o.period * (0.8 + 0.4 * unit(this.seed, 700 + k));
+      this.add(frame, x, y + this.jit(650 + k, 6), {
+        layer: 'over', solid: false, salt: k,
+        motion: { kind: 'fall', dx: o.dx ?? 0, dy: o.dy, period },
+      });
+    }
   }
 
   /** Jitter in [-amp, amp], stable per (slot key). */
@@ -239,9 +298,12 @@ const festival: Recipe = l => {
     const [x, y] = l.slot(s);
     l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 7 });
   }
+  // Confetti drifting down over the crowd, so a festival is never a still picture.
+  l.falling(DECOR_FRAMES.confettiFall, 4, l.r.x + 40, l.r.x + l.r.width - 40, l.r.y + 70, { dy: 96, dx: 14, period: 8 });
 };
 
-const stalls = (points: Slot[], crates: Slot[]): Recipe => l => {
+const stalls = (points: Slot[], crates: Slot[], extra?: Recipe): Recipe => l => {
+  extra?.(l);
   points.forEach((s, i) => {
     const [x, y] = l.slot(s);
     l.add(i % 2 === 0 ? DECOR_FRAMES.stallRed : DECOR_FRAMES.stallBlue, x, y + l.jit(i, 3));
@@ -251,6 +313,21 @@ const stalls = (points: Slot[], crates: Slot[]): Recipe => l => {
     l.add(DECOR_FRAMES.crate, x + l.jit(20 + i, 4), y + 4 + l.jit(30 + i, 3), { salt: i });
     if (i % 2 === 0) l.add(DECOR_FRAMES.crate, x + 12, y + 10, { salt: i + 9 });
   });
+};
+
+/** Colourful string along the north edge: the market's flutter (its stalls are otherwise still). */
+const marketBunting: Recipe = l => {
+  l.bunting(l.r.y + 34, DECOR_FRAMES.bunting, DECOR_FRAMES.post, 'ground', 1);
+};
+
+/** The merchant's cart pulls up to the stall from the east and parks beside it. */
+const merchantCart: Recipe = l => {
+  const [x, y] = l.slot('w');
+  l.add(DECOR_FRAMES.cart, x + 8, y + 10, {
+    frames: 2, fps: 6, solid: false, salt: 3,
+    motion: { kind: 'arrive', dx: 150, dy: 0, period: 6 },
+  });
+  l.add(DECOR_FRAMES.luggage, x - 36, y + 6, { solid: false });
 };
 
 const wedding: Recipe = l => {
@@ -267,6 +344,8 @@ const wedding: Recipe = l => {
     const [x, y] = l.slot(s);
     l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 7 });
   }
+  // Petals drifting down from the arch.
+  l.falling(DECOR_FRAMES.petalFall, 4, l.ax - 70, l.ax + 70, l.nFoot - 34, { dy: 64, dx: 8, period: 7 });
 };
 
 const funeral: Recipe = l => {
@@ -296,6 +375,8 @@ const harvest: Recipe = l => {
   // A few more along the north band, either side of the well's axis.
   for (const dx of [-84, 84]) l.add(DECOR_FRAMES.pumpkin, l.ax + dx, l.nFoot + 2, { salt: dx });
   for (const dx of [-124, 124]) l.add(DECOR_FRAMES.hay, l.ax + dx, l.nFoot + 6, { salt: dx });
+  // Leaves of the season, blowing across.
+  l.falling(DECOR_FRAMES.leafFall, 4, l.r.x + 30, l.r.x + l.r.width - 30, l.r.y + 50, { dy: 90, dx: 40, period: 9 });
 };
 
 const competition: Recipe = l => {
@@ -316,6 +397,11 @@ const townMeeting: Recipe = l => {
     const [x, y] = l.slot(s);
     l.add(DECOR_FRAMES.bench, x, y);
   }
+  // It is held in the evening: lamps lit either side of the hall.
+  for (const s of ['sw', 'se'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 11 });
+  }
 };
 
 const scandal: Recipe = l => {
@@ -323,6 +409,8 @@ const scandal: Recipe = l => {
   const [nx, ny] = l.slot('ne');
   l.add(DECOR_FRAMES.board, wx, wy);
   l.add(DECOR_FRAMES.board, nx, ny);
+  // Torn-off notices blowing across the square: the news is out.
+  l.falling(DECOR_FRAMES.paperFall, 3, l.r.x + 24, l.r.x + l.r.width * 0.6, l.r.y + 60, { dy: 26, dx: 150, period: 10 });
 };
 
 const sparkles = (count: number): Recipe => l => {
@@ -334,19 +422,63 @@ const sparkles = (count: number): Recipe => l => {
   }
 };
 
+/** Gold motes sinking through a shaft of light, over a few slow twinkles. */
+const blessing: Recipe = l => {
+  sparkles(4)(l);
+  l.falling(DECOR_FRAMES.moteFall, 5, l.r.x + 30, l.r.x + l.r.width - 30, l.r.y + 40, { dy: 84, dx: -10, period: 9 });
+};
+
+/**
+ * Fireflies wandering over the grass and an owl on a post at the edge. The moon itself is a halo
+ * drawn by the sky system; this is what lives under it.
+ */
+const fullMoon: Recipe = l => {
+  const [ox, oy] = l.slot('ne');
+  l.add(DECOR_FRAMES.owl, ox, oy, { frames: 4, fps: 1.3, salt: 5 });
+  const spots: Slot[] = ['nw', 'w', 'e', 'sw', 'se'];
+  spots.forEach((sl, i) => {
+    const [x, y] = l.slot(sl);
+    l.add(DECOR_FRAMES.firefly, x + l.jit(800 + i, 24), y - 10 + l.jit(830 + i, 10), {
+      layer: 'over', solid: false, frames: 3, fps: 1.6 + (i % 3) * 0.5, salt: 20 + i,
+      motion: { kind: 'wander', rx: 12 + (i % 2) * 6, ry: 7, period: 6 + i * 1.7 },
+    });
+  });
+};
+
+/** Shade and water: parasols over the benches, a barrel of water to cool off at. */
+const heatwave: Recipe = l => {
+  for (const s of ['nw', 'ne', 'w', 'e'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.parasol, x, y + 4);
+  }
+  l.add(DECOR_FRAMES.waterBarrel, l.ax + 64, l.nFoot + 4);
+  // The air itself shimmering upward over the stones.
+  const haze = 5;
+  for (let i = 0; i < haze; i++) {
+    const x = l.r.x + 24 + ((l.r.width - 48) * (i + 0.5)) / haze + l.jit(900 + i, 12);
+    const y = l.r.y + l.r.height * (0.55 + 0.3 * unit(l.seed, 940 + i));
+    l.add(DECOR_FRAMES.heatHaze, x, y, {
+      layer: 'over', solid: false, salt: 60 + i,
+      motion: { kind: 'fall', dx: l.jit(960 + i, 6), dy: -34, period: 4 + (i % 3) },
+    });
+  }
+};
+
 const RECIPES: Record<string, { prefer: readonly string[]; recipe: Recipe }> = {
   festival: { prefer: SQUARE_FIRST, recipe: festival },
-  market_day: { prefer: MARKET_FIRST, recipe: stalls(['nw', 'ne', 'sw', 'se'], ['w', 'e']) },
-  traveling_merchant: { prefer: MARKET_FIRST, recipe: stalls(['e'], ['e']) },
+  market_day: { prefer: MARKET_FIRST, recipe: stalls(['nw', 'ne', 'sw', 'se'], ['w', 'e'], marketBunting) },
+  traveling_merchant: { prefer: MARKET_FIRST, recipe: stalls(['e'], ['e'], merchantCart) },
   wedding: { prefer: SQUARE_FIRST, recipe: wedding },
   funeral: { prefer: SQUARE_FIRST, recipe: funeral },
   harvest: { prefer: SQUARE_FIRST, recipe: harvest },
   competition: { prefer: SQUARE_FIRST, recipe: competition },
   town_meeting: { prefer: SQUARE_FIRST, recipe: townMeeting },
   scandal: { prefer: SQUARE_FIRST, recipe: scandal },
-  blessing: { prefer: SQUARE_FIRST, recipe: sparkles(7) },
-  starry_night: { prefer: SQUARE_FIRST, recipe: sparkles(6) },
-  full_moon: { prefer: SQUARE_FIRST, recipe: sparkles(4) },
+  blessing: { prefer: SQUARE_FIRST, recipe: blessing },
+  // The stars are the sky system's shooting stars; a few twinkles on the ground echo them.
+  starry_night: { prefer: SQUARE_FIRST, recipe: sparkles(3) },
+  full_moon: { prefer: SQUARE_FIRST, recipe: fullMoon },
+  heatwave: { prefer: SQUARE_FIRST, recipe: heatwave },
 };
 
 // ── Building events ───────────────────────────────────────────────────────────────────────────
@@ -377,30 +509,169 @@ function fire(event: any, locations: any[], out: DecorPlacement[]): void {
   out.push(...l.out);
 }
 
-function sickness(event: any, locations: any[], out: DecorPlacement[]): void {
-  let clinic: any = null;
-  for (const l of locations) if (l?.type === 'clinic' && l.position && (clinic === null || l.id < clinic.id)) clinic = l;
-  if (!clinic) return;
-  const p = clinic.position as Rect;
-  const l = new Layout(p, 'clinic', event.id);
-  const doorX = clinic.entry_point && Number.isFinite(clinic.entry_point.x) ? clinic.entry_point.x : p.x + p.width / 2;
+function sickness(event: any, locations: any[], map: MapPx | null, out: DecorPlacement[]): void {
+  // The clinic first; a town without one still quarantines somewhere, so the sign goes up at the
+  // town hall (a building with a door), and failing that on the square itself.
+  const lowest = (type: string) => {
+    let best: any = null;
+    for (const l of locations) if (l?.type === type && l.position && (best === null || l.id < best.id)) best = l;
+    return best;
+  };
+  const host = lowest('clinic') ?? lowest('town_hall');
+  if (!host) {
+    const anchor = findAnchor(SQUARE_FIRST, locations, map, null);
+    if (!anchor) return;
+    const l = new Layout(anchor.rect, anchor.type, hash(event.id, 0x51c));
+    const [wx, wy] = l.slot('w');
+    l.add(DECOR_FRAMES.closedSign, wx, wy, { solid: false });
+    l.add(DECOR_FRAMES.herbs, wx + 34, wy + 2, { solid: false });
+    l.add(DECOR_FRAMES.herbs, wx - 34, wy + 2, { solid: false });
+    sicklyAir(l, wx, wy - 8);
+    out.push(...l.out);
+    return;
+  }
+  const p = host.position as Rect;
+  const l = new Layout(p, host.type, event.id);
+  const doorX = host.entry_point && Number.isFinite(host.entry_point.x) ? host.entry_point.x : p.x + p.width / 2;
   const foot = p.y + p.height - 1;
   // Sign beside the door, herbs hung either side of it.
   l.add(DECOR_FRAMES.closedSign, doorX - 22, foot, { solid: false });
   l.add(DECOR_FRAMES.herbs, doorX + 30, foot, { solid: false });
   l.add(DECOR_FRAMES.herbs, doorX - 48, foot, { solid: false });
+  sicklyAir(l, doorX, foot - 8);
   out.push(...l.out);
+}
+
+/** Greenish haze drifting up in front of the door: the sign says closed, the air says why. */
+function sicklyAir(l: Layout, x: number, y: number): void {
+  for (let i = 0; i < 3; i++) {
+    l.add(DECOR_FRAMES.heatHaze, x - 30 + i * 30 + l.jit(970 + i, 6), y, {
+      layer: 'over', solid: false, salt: 80 + i, tint: 0xa8d890,
+      motion: { kind: 'fall', dx: l.jit(980 + i, 8), dy: -30, period: 5 + i },
+    });
+  }
+}
+
+/**
+ * Where the stranger stands: the road tile closest to the map's border, i.e. where the main road
+ * enters town, so they appear to have just walked in. Without roads (or a map) the west edge of
+ * the square stands in. Lowest (y, x) breaks ties so every client picks the same tile.
+ */
+export function strangerSpot(locations: any[], map: MapPx | null, roads: readonly RoadTile[] | null | undefined): { x: number; y: number } | null {
+  if (map && roads && roads.length > 0) {
+    const wT = Math.floor(map.w / TILE), hT = Math.floor(map.h / TILE);
+    let best: RoadTile | null = null, bestD = Infinity;
+    for (const t of roads) {
+      if (!t || !Number.isFinite(t.x) || !Number.isFinite(t.y)) continue;
+      const d = Math.min(t.x, t.y, wT - 1 - t.x, hT - 1 - t.y);
+      if (d < bestD || (d === bestD && best && (t.y < best.y || (t.y === best.y && t.x < best.x)))) { best = t; bestD = d; }
+    }
+    if (best) return { x: best.x * TILE + TILE / 2, y: best.y * TILE + TILE - 3 };
+  }
+  const anchor = findAnchor(SQUARE_FIRST, locations, map, null);
+  if (!anchor) return null;
+  return { x: Math.round(anchor.rect.x - 12), y: Math.round(anchor.rect.y + anchor.rect.height * 0.62) };
+}
+
+function stranger(event: any, locations: any[], map: MapPx | null, roads: readonly RoadTile[] | null | undefined, out: DecorPlacement[]): void {
+  const spot = strangerSpot(locations, map, roads);
+  if (!spot) return;
+  const area: Rect = { x: spot.x - 64, y: spot.y - 64, width: 128, height: 96 };
+  const l = new Layout(area, 'open', event.id);
+  l.add(DECOR_FRAMES.stranger, spot.x, spot.y, { frames: 2, fps: 3, solid: false, salt: 1 });
+  out.push(...l.out);
+}
+
+/** The river's edge as a pixel rect: the park's `riverside` zone, so it follows the zone table. */
+export function riverRect(park: any): Rect | null {
+  const zone = INTERIOR_ZONES.park?.find(z => z.id === 'riverside');
+  if (!zone || zone.tiles.length === 0 || !park?.position) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [tx, ty] of zone.tiles) { x0 = Math.min(x0, tx); y0 = Math.min(y0, ty); x1 = Math.max(x1, tx); y1 = Math.max(y1, ty); }
+  return {
+    x: park.position.x + x0 * TILE, y: park.position.y + y0 * TILE,
+    width: (x1 - x0 + 1) * TILE, height: (y1 - y0 + 1) * TILE,
+  };
+}
+
+function bountifulCatch(event: any, locations: any[], map: MapPx | null, out: DecorPlacement[]): void {
+  let park: any = null;
+  for (const l of locations) if (l?.type === 'park' && l.position && (park === null || l.id < park.id)) park = l;
+  const river = riverRect(park);
+  if (park && river) {
+    const l = new Layout(park.position, 'park', event.id);
+    // Fish break the surface in three places, each on its own beat so the water never leaps in unison.
+    // The jump cell has its water line 8 px above the foot row and the fish's launch point 6 px left of centre.
+    [[0.3, 0.32, 2.0], [0.62, 0.7, 2.5], [0.78, 0.3, 1.7]].forEach(([fx, fy, fps], i) => {
+      l.add(DECOR_FRAMES.fishJump, river.x + river.width * fx + 4, river.y + river.height * fy + 8, {
+        layer: 'over', solid: false, frames: 6, fps, salt: 30 + i,
+      });
+    });
+    // Landed catch on the bank below the water: crates to the left, a net drying to the right.
+    const bank = river.y + river.height + 16;
+    l.add(DECOR_FRAMES.fishCrate, river.x + 22, bank, { solid: false });
+    l.add(DECOR_FRAMES.fishCrate, river.x + 46, bank + 3, { solid: false });
+    l.add(DECOR_FRAMES.netRack, river.x + river.width + 26, bank - 2, { solid: false });
+    out.push(...l.out);
+    return;
+  }
+  // No park (or no river in it): the catch is sold from the square, no leaping fish.
+  const anchor = findAnchor(SQUARE_FIRST, locations, map, null);
+  if (!anchor) return;
+  const l = new Layout(anchor.rect, anchor.type, hash(event.id, 0xf15));
+  const [cx, cy] = l.slot('sw');
+  l.add(DECOR_FRAMES.fishCrate, cx, cy);
+  l.add(DECOR_FRAMES.fishCrate, cx + 26, cy + 4, { salt: 2 });
+  const [nx, ny] = l.slot('se');
+  l.add(DECOR_FRAMES.netRack, nx, ny);
+  out.push(...l.out);
+}
+
+/**
+ * A newcomer's belongings pull up at their new home's door: a cart rolls in from the east and
+ * parks, luggage waits by the door, a welcome banner is strung up beside it.
+ */
+function newArrival(event: any, locations: any[], out: DecorPlacement[]): void {
+  if (typeof event.location_id !== 'number') return;
+  const home = locations.find(l => l?.id === event.location_id);
+  if (!home?.position) return;
+  const p = home.position as Rect;
+  const ex = home.entry_point && Number.isFinite(home.entry_point.x) ? home.entry_point.x : p.x + p.width / 2;
+  const ey = home.entry_point && Number.isFinite(home.entry_point.y) ? home.entry_point.y : p.y + p.height;
+  const l = new Layout({ x: p.x - 128, y: p.y - 32, width: p.width + 256, height: p.height + 128 }, 'open', event.id);
+  l.add(DECOR_FRAMES.welcome, ex - 56, ey + 2, { frames: 2, fps: 3, solid: false, salt: 1 });
+  l.add(DECOR_FRAMES.luggage, ex - 24, ey + 3, { solid: false });
+  l.add(DECOR_FRAMES.cart, ex + 40, ey + 9, {
+    frames: 2, fps: 6, solid: false, salt: 2,
+    motion: { kind: 'arrive', dx: 170, dy: 0, period: 6 },
+  });
+  // A little confetti over the door for the welcome.
+  l.falling(DECOR_FRAMES.confettiFall, 2, ex - 40, ex + 16, ey - 60, { dy: 50, dx: 6, period: 6, salt: 40 });
+  out.push(...l.out);
+}
+
+/**
+ * The open area an anchored event (festival, blessing, full moon...) decorates, for effects that
+ * live outside the decor atlas (light shafts, a moon halo) yet must sit on the same square.
+ */
+export function eventAnchorRect(event: any, locations: any[], map: MapPx | null): Rect | null {
+  const spec = event && typeof event.type === 'string' ? RECIPES[event.type] : undefined;
+  if (!spec || !Array.isArray(locations)) return null;
+  return findAnchor(spec.prefer, locations, map, event.location_id)?.rect ?? null;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────────────────────
 
 /** Placements for one event, sorted back to front (by foot y). Empty for undecorated types. */
-export function planEvent(event: any, locations: any[], map: MapPx | null): DecorPlacement[] {
+export function planEvent(event: any, locations: any[], map: MapPx | null, roads?: readonly RoadTile[] | null): DecorPlacement[] {
   if (!event || typeof event.type !== 'string' || !Array.isArray(locations)) return [];
   const id = Number.isFinite(event.id) ? (event.id as number) : 0;
   const out: DecorPlacement[] = [];
   if (event.type === 'fire_outbreak') fire({ ...event, id }, locations, out);
-  else if (event.type === 'sickness') sickness({ ...event, id }, locations, out);
+  else if (event.type === 'sickness') sickness({ ...event, id }, locations, map, out);
+  else if (event.type === 'mysterious_stranger') stranger({ ...event, id }, locations, map, roads, out);
+  else if (event.type === 'bountiful_catch') bountifulCatch({ ...event, id }, locations, map, out);
+  else if (event.type === 'new_arrival') newArrival({ ...event, id }, locations, out);
   else {
     const spec = RECIPES[event.type];
     if (!spec) return [];
@@ -417,17 +688,20 @@ export function planEvent(event: any, locations: any[], map: MapPx | null): Deco
     .map(e => e[0]);
 }
 
+const PER_PLACE = new Set(['fire_outbreak', 'new_arrival']);
+
 /**
  * Plans for every active event that has decorations. A type is decorated once — two festivals
- * would stack identical bunting — except fires, which burn different roofs.
+ * would stack identical bunting — except events tied to a building, which happen in different
+ * places: fires burn different roofs, and two newcomers arrive at two doors.
  */
-export function planEventDecor(events: any[], locations: any[], map: MapPx | null): EventDecorPlan[] {
+export function planEventDecor(events: any[], locations: any[], map: MapPx | null, roads?: readonly RoadTile[] | null): EventDecorPlan[] {
   const plans: EventDecorPlan[] = [];
   const seen = new Set<string>();
   for (const e of events ?? []) {
     if (!e || typeof e.type !== 'string') continue;
-    if (e.type !== 'fire_outbreak' && seen.has(e.type)) continue;
-    const placements = planEvent(e, locations, map);
+    if (!PER_PLACE.has(e.type) && seen.has(e.type)) continue;
+    const placements = planEvent(e, locations, map, roads);
     if (placements.length === 0) continue;
     seen.add(e.type);
     plans.push({ eventId: e.id, type: e.type, placements });

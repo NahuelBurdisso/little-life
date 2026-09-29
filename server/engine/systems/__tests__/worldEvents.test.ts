@@ -260,6 +260,30 @@ describe('storm weather', () => {
   });
 });
 
+describe('heatwave weather', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const heatMinutes = WORLD_EVENTS.heatwave.durationHours * 60;
+  const weather = () => db.select({ weather: worldState.weather, duration: worldState.weather_duration })
+    .from(worldState).get()!;
+
+  it('turns the sky hot for the length of the event', () => {
+    resetClock(15, 1);
+    startWorldEvent('heatwave', { triggeredBy: 'player', announce: false });
+    expect(weather()).toEqual({ weather: 'hot', duration: heatMinutes });
+  });
+
+  it('keeps it hot when the weather spell runs out mid-heatwave', () => {
+    let time = resetClock(15, 4);
+    startWorldEvent('heatwave', { triggeredBy: 'player', announce: false });
+    vi.spyOn(Math, 'random').mockReturnValue(0.999); // a seasonal roll would give a fresh 1-4h spell, not the event's remainder
+    for (let i = 0; i < 5; i++) time = tickEvents(time, 4);
+    db.update(worldState).set({ weather: 'sunny', weather_duration: 0 }).run();
+    time = tickEvents(time, 4);
+    expect(weather()).toEqual({ weather: 'hot', duration: heatMinutes - 6 * 4 });
+  });
+});
+
 describe('world event expiry', () => {
   afterEach(() => vi.restoreAllMocks());
 

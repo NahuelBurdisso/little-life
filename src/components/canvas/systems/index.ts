@@ -1,5 +1,6 @@
 import type { SystemFactory } from "./types";
 import { createTownEventSystem } from "./townEvents/TownEventSystem";
+import { createSkyFxSystem } from "./skyFx/SkyFxSystem";
 import { createAmbientLifeSystem } from "./ambientLife/AmbientLifeSystem";
 import { createHeldItemSystem } from "./held/HeldItemSystem";
 import { createBeatSystem } from "./beats/BeatSystem";
@@ -14,6 +15,7 @@ import { createPlaceLifeSystem } from "./placeLife/PlaceLifeSystem";
 export const SYSTEM_FACTORIES: SystemFactory[] = [
   // Event decorations are set dressing: critters walk over them, beats play above both.
   createTownEventSystem,
+  createSkyFxSystem,
   createPlaceLifeSystem,
   createAmbientLifeSystem,
   createHeldItemSystem,
