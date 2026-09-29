@@ -393,6 +393,12 @@ export const worldState = sqliteTable('world_state', {
   // Kept apart from setup_config so a Restart replays the wizard's scenario
   // without them. NULL = no overrides.
   rule_overrides: text('rule_overrides', { mode: 'json' }).$type<Record<string, unknown> | null>(),
+  // Identity of this town, minted when a world is built (setup.replaceWorld)
+  // and carried by its saves: autosaves rotate per world and the Saves dialog
+  // tells this town's saves from other towns' (lib/saves.ts). Two Restarts of
+  // one seed are two worlds. NULL on worlds from before it existed; the first
+  // save of such a world assigns one.
+  world_id: text('world_id'),
   // Money per resident the balancer steers to (townTreasury.ts moneyTargetFor),
   // stored at world creation from the starting cash. NULL on saves from before
   // it existed: CONFIG.ECONOMY.TARGET_PER_CAPITA_MONEY.

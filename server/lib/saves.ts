@@ -14,6 +14,7 @@ import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRunt
 import { endOrphanedLLMConversations } from '../engine/systems/conversations';
 import { emitter } from '../engine/emitter';
 import { CONFIG } from './constants';
+import { randomUUID } from 'crypto';
 
 // ─── Save slots ───────────────────────────────────────────────────────────────
 // There is one world per DB file, and Restart / Reset to Wizard destroy it. A
@@ -69,6 +70,12 @@ export interface SaveMeta {
   residents: string[];
   /** Worldgen seed from the setup config; null for worlds built without one. */
   seed: string | null;
+  /**
+   * `world_state.world_id` of the saved town. Autosaves rotate per world and
+   * the list tells this town's saves from others' by it. Absent on saves from
+   * before it existed (those fall back to the seed, see `sameWorld`).
+   */
+  worldId?: string | null;
   /** `PRAGMA user_version` of the saved file (migration level of its rows). */
   userVersion: number;
   sizeBytes: number;
@@ -157,19 +164,71 @@ function userVersion(conn: Database.Database, schema = 'main'): number {
 
 // ─── Save ─────────────────────────────────────────────────────────────────────
 
-function readWorldInfo(): Pick<SaveMeta, 'day' | 'season' | 'hour' | 'minute' | 'residents' | 'seed'> {
+// ─── World identity ───────────────────────────────────────────────────────────
+// Autosaves of different towns used to share one list and one last-3 rotation:
+// starting a new town pruned the previous town's autosaves after three days.
+// Each save now records which world it is (`world_state.world_id`, minted by
+// replaceWorld; seed as a fallback for saves and worlds from before ids).
+
+export interface WorldIdentity {
+  worldId: string | null;
+  seed: string | null;
+}
+
+function seedOf(setupConfig: unknown): string | null {
+  const seed = (setupConfig as { worldgen?: { seed?: unknown } } | null)?.worldgen?.seed;
+  return typeof seed === 'string' ? seed : null;
+}
+
+/** The running world's identity, without writing anything. */
+export function currentWorldIdentity(): WorldIdentity {
+  const world = db.select({ world_id: worldState.world_id, setup_config: worldState.setup_config })
+    .from(worldState).limit(1).get();
+  return { worldId: world?.world_id ?? null, seed: seedOf(world?.setup_config) };
+}
+
+/**
+ * The running world's id, minted now if it has none (a world from before ids,
+ * or a legacy save just loaded). Written to the DB before the backup, so the
+ * save carries it and loading it back keeps its identity.
+ */
+function ensureWorldId(): string {
+  const world = db.select({ id: worldState.id, world_id: worldState.world_id }).from(worldState).limit(1).get();
+  if (!world) throw new SaveRejectedError('There is no town to save yet');
+  if (world.world_id) return world.world_id;
+  const worldId = randomUUID();
+  db.update(worldState).set({ world_id: worldId }).where(eq(worldState.id, world.id)).run();
+  return worldId;
+}
+
+/**
+ * Is this save of the given world? By id when both have one; a save from
+ * before ids matches by seed (the best it can do — two runs of one seed look
+ * alike); a save with an id never matches a world without one.
+ */
+export function sameWorld(meta: Pick<SaveMeta, 'worldId' | 'seed'>, world: WorldIdentity): boolean {
+  if (meta.worldId) return meta.worldId === world.worldId;
+  return meta.seed != null && meta.seed === world.seed;
+}
+
+/** Which rotation an autosave belongs to. */
+function worldKey(meta: Pick<SaveMeta, 'worldId' | 'seed'>): string {
+  return meta.worldId ? `id:${meta.worldId}` : meta.seed != null ? `seed:${meta.seed}` : 'legacy';
+}
+
+function readWorldInfo(): Pick<SaveMeta, 'day' | 'season' | 'hour' | 'minute' | 'residents' | 'seed' | 'worldId'> {
   const world = db.select({ time: worldState.time, setup_config: worldState.setup_config }).from(worldState).limit(1).get();
   const residents = db.select({ name: agents.name }).from(agents).where(eq(agents.is_active, true)).all().map((a) => a.name);
   // The wizard placeholder (`resetToWizard`) has a world row but no town.
   if (!world || residents.length === 0) throw new SaveRejectedError('There is no town to save yet');
-  const seed = (world.setup_config as { worldgen?: { seed?: unknown } } | null)?.worldgen?.seed;
   return {
     day: world.time.day,
     season: world.time.season,
     hour: world.time.hour,
     minute: world.time.minute,
     residents,
-    seed: typeof seed === 'string' ? seed : null,
+    seed: seedOf(world.setup_config),
+    worldId: ensureWorldId(),
   };
 }
 
@@ -274,7 +333,7 @@ function readMeta(id: string): SaveMeta | null {
 }
 
 /** Every save with a readable sidecar and its DB file, newest first. */
-export function listSaves(): SaveMeta[] {
+function readAllSaves(): SaveMeta[] {
   if (!fs.existsSync(savesDir)) return [];
   const saves: SaveMeta[] = [];
   for (const f of fs.readdirSync(savesDir)) {
@@ -285,6 +344,19 @@ export function listSaves(): SaveMeta[] {
     if (meta) saves.push(meta);
   }
   return saves.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export type ListedSave = SaveMeta & {
+  /** A save of the town running now (`sameWorld`); the dialog badges the rest "other town". */
+  currentWorld: boolean;
+};
+
+/** Every save, the running town's first, newest first within each group. */
+export function listSaves(): ListedSave[] {
+  const world = currentWorldIdentity();
+  const listed = readAllSaves().map((s) => ({ ...s, currentWorld: sameWorld(s, world) }));
+  // Stable sort: newest-first order is kept inside each group.
+  return listed.sort((a, b) => Number(b.currentWorld) - Number(a.currentWorld));
 }
 
 /** Delete one save's files. Only ever touches the saves directory. */
@@ -453,15 +525,26 @@ export function loadSave(id: string): Promise<SaveMeta> {
 /** For a save whose sidecar went missing: the file still loads. */
 const EMPTY_META: SaveMeta = {
   format: 1, id: '', name: 'Save', kind: 'manual', createdAt: 0, day: 0, season: '',
-  hour: 0, minute: 0, residents: [], seed: null, userVersion: 0, sizeBytes: 0,
+  hour: 0, minute: 0, residents: [], seed: null, worldId: null, userVersion: 0, sizeBytes: 0,
 };
 
 // ─── Autosave ─────────────────────────────────────────────────────────────────
 
-/** Delete autosaves beyond the newest `keep`. Manual saves are never touched. */
+/**
+ * Delete autosaves beyond the newest `keep` of each world. Manual saves are
+ * never touched, and one town's autosaves never push out another's.
+ */
 export function pruneAutosaves(keep: number = CONFIG.SAVES.AUTOSAVE_KEEP): Promise<string[]> {
   return withSavesLock(async () => {
-    const stale = listSaves().filter((s) => s.kind === 'auto').slice(Math.max(0, keep));
+    const seen = new Map<string, number>();
+    const stale: SaveMeta[] = [];
+    for (const s of readAllSaves()) {
+      if (s.kind !== 'auto') continue;
+      const key = worldKey(s);
+      const n = (seen.get(key) ?? 0) + 1;
+      seen.set(key, n);
+      if (n > Math.max(0, keep)) stale.push(s);
+    }
     for (const s of stale) removeSaveFiles(s.id);
     return stale.map((s) => s.id);
   });

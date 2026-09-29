@@ -37,6 +37,7 @@ import { buildStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
 import { saveWorldCaches } from '../engine/worldCaches';
 import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
+import { randomUUID } from 'crypto';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -877,6 +878,8 @@ function seedWorld(
     road_tiles: genResult.roads,
     terrain_tiles: genResult.terrainTiles,
     setup_config: config as any,
+    // A new town, even from the same seed: its saves rotate on their own.
+    world_id: randomUUID(),
   }).run();
 
   // 10. Create conversationSchedulerState singleton
