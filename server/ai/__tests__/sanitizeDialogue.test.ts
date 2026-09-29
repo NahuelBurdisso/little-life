@@ -116,18 +116,15 @@ describe('sanitizeDialogue — names', () => {
       .toBe('Morning, Carlos. Sleep well?');
   });
 
-  it('fixes a wrong opening vocative', () => {
+  it('fixes a wrong opening vocative addressed to the listener', () => {
     expect(clean('Oh, Diego, you seem deep in thought.', { speakerName: 'Lucia Romano', listenerName: 'Rosa Delgado' }))
       .toBe('Oh, Rosa, you seem deep in thought.');
-    expect(clean('Morning, Elena. Sleep well?', { listenerName: 'Carlos Mendez' })).toBe('Morning, Carlos. Sleep well?');
+    expect(clean('Morning, Elena... you look tired.', { listenerName: 'Carlos Mendez' })).toBe('Morning, Carlos... you look tired.');
     expect(clean('Marco, you look tired.')).toBe('Sofia, you look tired.');
+    expect(clean("Marco! You're late again.")).toBe("Sofia! You're late again.");
   });
 
-  it('fixes a wrong sentence-final vocative', () => {
-    expect(clean('Good to see you, Diego! How was the trip?')).toBe('Good to see you, Sofia! How was the trip?');
-  });
-
-  it('never touches names mentioned as third parties', () => {
+  it('never touches names mentioned as third parties or appositives', () => {
     for (const line of [
       'I saw Diego at the tavern last night.',
       'Diego? He left an hour ago.',
@@ -136,8 +133,22 @@ describe('sanitizeDialogue — names', () => {
       'Yes, Diego. He came by yesterday.',
       'Ask Diego about it.',
       'Oh, Sofia, you remembered!',
+      'I ran into your ex, Diego.',
+      'Say hello to my friend, Marco.',
+      'Diego, of all people, told me.',
+      'Marco, the baker, said so.',
+      'Good to see you, Diego! How was the trip?',
+      // No second-person cue: may be about Elena, not to her.
+      'Morning, Elena. Sleep well?',
     ]) {
       expect(clean(line)).toBe(line);
+    }
+  });
+
+  it('never "corrects" names that are also ordinary words', () => {
+    const town = [...TOWN, 'Will Turner', 'Hope Adams', 'May Chen', 'Grace Kim'];
+    for (const line of ['Will, you coming or not?', 'Hope, you are late.', 'May, you look well.', 'Grace, your cake was lovely.']) {
+      expect(clean(line, { townNames: town })).toBe(line);
     }
   });
 

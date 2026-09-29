@@ -219,15 +219,32 @@ function tidy(text: string): string {
 const GREETING_PREFIX =
   /^((?:(?:oh|ah|aw|hey|hi|hello|morning|good morning|good afternoon|good evening|evening|afternoon|well|thanks|thank you|sorry|dear|oh my|why|listen|look)[,!.…]*\s+){1,2})/i;
 
-// What follows a name used as a topic rather than as a vocative:
-// "Diego, he's been acting strange", "Diego, Rosa and I went fishing".
-const THIRD_PARTY_FOLLOW = /^\s*(?:and|or|he|she|they|him|her|his|hers|their|them|that|who|whose|is|was|has|had)\b/i;
+// What follows a name used as a topic or with an appositive rather than as a
+// vocative: "Diego, he's been acting strange", "Diego, of all people, told me",
+// "Marco, the baker, said so", "Diego, Rosa and I went fishing".
+const THIRD_PARTY_FOLLOW =
+  /^\s*(?:of all people|the|a|an|my|your|told|said|says|he|she|they|and|or|is|was|has|had|him|her|his|hers|their|them|that|who|whose)\b/i;
+
+// The clause after a real vocative is addressed to the listener.
+const SECOND_PERSON = /\b(?:you|your|you're|you've|you'll|you'd|yours|yourself)\b/i;
+
+// First names that are also ordinary English words: too easy to misread as a
+// vocative ("Will, you coming?"), so never "corrected".
+const WORD_NAMES = new Set([
+  'Hope', 'May', 'Will', 'Grace', 'Faith', 'Joy', 'June', 'April', 'Rose', 'Mark', 'Bill',
+  'Pat', 'Sue', 'Art', 'Ray', 'Dawn', 'Summer', 'Autumn', 'Frank', 'Jack', 'Rich', 'Chance',
+  'Sky', 'Iris', 'Ivy', 'Holly', 'Daisy', 'Violet', 'Lily', 'Ruby', 'Amber', 'Pearl', 'Honey',
+  'Sunny', 'Melody', 'Hunter', 'Bob', 'Guy', 'Destiny', 'Harmony', 'Patience', 'Prudence',
+]);
 
 /**
  * Repair a vocative that names the wrong townsperson. Conservative on purpose:
- * only the opening vocative ("Oh, Diego, you seem…", "Morning, Elena…") and a
- * sentence-final ", Diego!" are rewritten, only for known townsfolk, and never a
- * name mentioned as a third party ("I saw Diego at the tavern", "Diego? He left").
+ * only an OPENING vocative whose clause is plainly addressed to the listener
+ * ("Oh, Diego, you seem deep in thought") and the self-correction
+ * "Elena... wait, Carlos" are touched, only for known townsfolk. Names anywhere
+ * else — "I ran into your ex, Diego.", "Diego, of all people, told me." — are
+ * left alone: an appositive or a third party reads exactly like a misplaced
+ * vocative, and rewriting it would put words in the speaker's mouth.
  */
 function fixWrongVocatives(
   text: string,
@@ -236,25 +253,31 @@ function fixWrongVocatives(
   townNames: readonly string[],
 ): string {
   if (!listener) return text;
-  const others = [...new Set(townNames.map(firstName))].filter(
+  const allOthers = [...new Set(townNames.map(firstName))].filter(
     (n) => n && n !== listener && n !== speaker,
   );
-  if (others.length === 0) return text;
-  const otherAlt = others.map(escapeRegExp).join('|');
-  const namesAfter = new RegExp(`^\\s*(?:${otherAlt}|${escapeRegExp(listener)})\\b`);
+  if (allOthers.length === 0) return text;
+  const allAlt = allOthers.map(escapeRegExp).join('|');
   let out = text;
 
-  // Self-correction: "Morning, Elena... wait, Carlos" → "Morning, Carlos".
+  // Self-correction: "Morning, Elena... wait, Carlos" → "Morning, Carlos". The
+  // model names the listener itself, so this holds even for word-names.
   out = out.replace(
     new RegExp(
-      `\\b(?:${otherAlt})\\b\\s*(?:\\.{2,}|…|—|–|-|,)\\s*(?:wait|no|sorry|I mean|er|uh|um)\\b[,.!…]*\\s*(?=${escapeRegExp(listener)}\\b)`,
+      `\\b(?:${allAlt})\\b\\s*(?:\\.{2,}|…|—|–|-|,)\\s*(?:wait|no|sorry|I mean|er|uh|um)\\b[,.!…]*\\s*(?=${escapeRegExp(listener)}\\b)`,
       'g',
     ),
     '',
   );
 
+  const others = allOthers.filter((n) => !WORD_NAMES.has(n));
+  if (others.length === 0) return out;
+  const otherAlt = others.map(escapeRegExp).join('|');
+  const namesAfter = new RegExp(`^\\s*(?:${allAlt}|${escapeRegExp(listener)})\\b`);
+
   // Opening vocative. Bare at the start it needs a comma or "!" after it; after a
-  // greeting, "Morning, Elena." / "Oh, Diego…" count too.
+  // greeting, "Morning, Elena… you look tired" counts too. Either way the rest
+  // of the clause must address someone ("you", "your").
   const prefix = GREETING_PREFIX.exec(out)?.[1] ?? '';
   const afterPrefix = out.slice(prefix.length);
   const nameMatch = new RegExp(`^(${otherAlt})\\b`).exec(afterPrefix);
@@ -263,21 +286,12 @@ function fixWrongVocatives(
     const punct = /^\s*(,|!|\.{2,}|…|—|–|\.(?=\s|$))/.exec(rest);
     if (punct && (prefix || punct[1] === ',' || punct[1] === '!')) {
       const follow = rest.slice(punct[0].length);
-      if (!THIRD_PARTY_FOLLOW.test(follow) && !namesAfter.test(follow)) {
+      const clause = follow.split(/[.!?…]/)[0] ?? '';
+      if (!THIRD_PARTY_FOLLOW.test(follow) && !namesAfter.test(follow) && SECOND_PERSON.test(clause)) {
         out = prefix + listener + rest;
       }
     }
   }
-
-  // Sentence-final vocative: "…good to see you, Diego!". Needs a real clause
-  // before the comma — "Yes, Diego." may well be an answer about Diego.
-  out = out.replace(
-    new RegExp(`,\\s*(?:${otherAlt})(?=\\s*[!.…]+(?:\\s|$))`, 'g'),
-    (match: string, offset: number, whole: string) => {
-      const clause = whole.slice(0, offset).split(/[.!?…]\s+/).pop() ?? '';
-      return clause.trim().split(/\s+/).length >= 3 ? `, ${listener}` : match;
-    },
-  );
   return out;
 }
 
