@@ -12,6 +12,7 @@ import { knowledgeRouter } from './routers/knowledge';
 import { setupRouter } from './routers/setup';
 import { autoplayRouter } from './routers/autoplay';
 import { gazetteRouter } from './routers/gazette';
+import { savesRouter } from './routers/saves';
 
 export const appRouter = router({
   world: worldRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   setup: setupRouter,
   autoplay: autoplayRouter,
   gazette: gazetteRouter,
+  saves: savesRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -20,6 +20,8 @@ docs/scratch/shots/
 vite.config.ts.timestamp-*
 
 data/backup-*/
+# Save slots and autosaves (server/lib/saves.ts): whole copies of a world DB.
+data/saves/
 
 # LLM traces (full prompts) and bench reports from scripts/llm-bench.ts.
 data/trace/

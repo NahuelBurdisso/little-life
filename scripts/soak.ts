@@ -88,6 +88,9 @@ if (SOURCE_DB) {
 // server/db reads this once at import; every server import below is dynamic
 // so it happens after this line. dotenv does not override an existing value.
 process.env.DATABASE_PATH = tmpDb;
+// No day-change autosaves (lib/saves.ts): a throwaway world, and a save pauses
+// and resumes the tick loop, which the soak does not run.
+process.env.AUTOSAVE = '0';
 
 // ─── LLM off ──────────────────────────────────────────────────────────────────
 

@@ -370,6 +370,22 @@ export async function gameTick(): Promise<void> {
     runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents(gameMinutes(newTime)));
     // Cap the conversation archive (each row holds its full transcript)
     runGuarded('pruneEndedConversations', () => pruneEndedConversations());
+    // A copy of the town as the new day starts (lib/saves.ts), last 3 kept.
+    // Not awaited: the save pauses the loop itself, and it has to wait for
+    // this very tick to finish first — awaiting it here would deadlock on
+    // `stopTickLoopAndWait`. `autosave` never throws (it logs).
+    //
+    // A dynamic import because saves.ts imports this module (to pause and
+    // resume the loop): a static import both ways made the pair a cycle, and
+    // whichever loaded second saw the other half-initialised.
+    if (CONFIG.SAVES.AUTOSAVE) {
+      const day = newTime.day;
+      runGuarded('autosave', () => {
+        void import('../lib/saves')
+          .then(({ autosave }) => autosave(day))
+          .catch((err) => console.warn('[saves] autosave failed:', (err as Error).message));
+      });
+    }
   }
 
   // Checkpoint the in-memory sim state (hobbies, favors, tension, momentum,
@@ -439,6 +455,15 @@ export function startTickLoop(): void {
   }
 
   loop();
+}
+
+/**
+ * Whether the loop is scheduled to keep ticking. A save pauses it and must
+ * resume only what it paused: after `resetToWizard` the loop is deliberately
+ * left stopped, and a save taken then must not start it.
+ */
+export function isTickLoopRunning(): boolean {
+  return running;
 }
 
 export function stopTickLoop(): void {

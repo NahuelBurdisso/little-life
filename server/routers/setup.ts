@@ -9,28 +9,15 @@ import {
   needs,
   economy,
   relationships,
-  conversations,
-  conversationQueue,
   conversationSchedulerState,
   memories,
   locations,
   worldState,
-  worldEvents,
   templates,
-  templateUsage,
-  activityLog,
-  economyTransactions,
   shared_knowledge,
-  agentStates,
-  relationshipEvents,
-  interactions,
-  interactionParticipants,
-  goals,
   aspirations,
-  interactionCooldowns,
-  gazetteIssues,
-  simSnapshots,
 } from '../db/schema';
+import { ALL_TABLES } from '../db/worldTables';
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
 import { CONVERSATION_TEMPLATES } from '../data/templates';
 import { CONFIG } from '../lib/constants';
@@ -42,21 +29,14 @@ import { z } from 'zod';
 import { logActivity } from '../lib/activityLogger';
 import { startTickLoop, stopTickLoopAndWait } from '../engine/tick';
 import { taskRunner } from '../ai/taskRunner';
-import { memoryService, reflectionTrigger, reflectionRunner, selfDescriptionGenerator } from '../lib/memory/instance';
-import { planCache, planLLMQueue, replanEvaluator } from '../lib/planning/instance';
-import { clearEffectivePersonalities, clearAgentStatesCache } from '../lib/states';
-import { perceptionSystem } from '../lib/perception/instance';
 import { emitter } from '../engine/emitter';
 import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges } from '../lib/worldgen/social';
 import { buildStartingTies } from '../lib/startingTies';
 import { startingNeeds } from '../lib/startingNeeds';
-import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
-import { resetCascade } from '../lib/cascade';
-import { invalidateCostMap, clearMovementState } from '../engine/systems/movement';
-import { clearPerWorldCaches, restoreWorldCaches, saveWorldCaches } from '../engine/worldCaches';
-import { autoPlayer } from '../autoplay';
+import { saveWorldCaches } from '../engine/worldCaches';
+import { resetWorldRuntime } from '../engine/worldRuntime';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -216,35 +196,7 @@ const PlacementRelationshipSchema = RelationshipConfigSchema.pick({
   tags: true,
 });
 
-// ─── Table reset order (reverse-dependency) ───────────────────────────────────
-
-const ALL_TABLES = [
-  simSnapshots,
-  gazetteIssues,
-  interactionCooldowns,
-  interactionParticipants,
-  interactions,
-  goals,
-  aspirations,
-  activityLog,
-  templateUsage,
-  templates,
-  worldEvents,
-  worldState,
-  memories,
-  conversationSchedulerState,
-  conversationQueue,
-  conversations,
-  relationshipEvents,
-  relationships,
-  economyTransactions,
-  economy,
-  shared_knowledge,
-  agentStates,
-  needs,
-  agents,
-  locations,
-] as const;
+// ─── Table reset order: `ALL_TABLES` in db/worldTables.ts (shared with lib/saves.ts) ───
 
 // ─── Helper: job-based starting money ────────────────────────────────────────
 
@@ -954,13 +906,6 @@ function seedWorld(
   return { agentCount: agentMap.size, locationCount: locationMap.size };
 }
 
-// ─── Helper: reload memory service caches ─────────────────────────────────────
-
-/** Clear MemoryService caches so they reload lazily on next access. */
-function reloadMemoryService() {
-  memoryService.clear();
-}
-
 /**
  * Tear the running world down, seed a new one from `config`, and start it.
  *
@@ -1058,43 +1003,10 @@ async function replaceWorld(
     // ordering is unchanged on the happy path, so the caches are still cleared
     // before any tick can observe them.
     try {
-      clearEffectivePersonalities();
-      clearAgentStatesCache();
-      reloadMemoryService();
-      reflectionTrigger.clear();
-      reflectionRunner.clearQueue();
-      selfDescriptionGenerator.clear();
-      planCache.clear();
-      planLLMQueue.clear();
-      replanEvaluator.clear();
-      perceptionSystem.clear();
-      zoneOccupancy.clear();
-      resetCascade();
-      autoPlayer.reset();
-      // The terrain cost map was keyed on season only, so it survived into the new
-      // world and was read out of range whenever the map size changed.
-      invalidateCostMap();
-      // Agent ids restart at 1 after a wipe and totalTicks resets, so stale
-      // per-agent recalc/stuck timestamps would disable re-pathing in the new world.
-      clearMovementState();
-      clearPerWorldCaches();
-      // Whatever world the DB now holds: nothing for the fresh one, the
-      // checkpoint taken above if the seed rolled back.
-      restoreWorldCaches();
-
-      // Reconstruct zone occupancy from the agent positions actually in the DB —
-      // the freshly seeded ones on success, the rolled-back ones on failure.
-      const activeAgentsForZone = db.select({
-        id: agents.id,
-        current_location: agents.current_location,
-        position: agents.position,
-      }).from(agents).where(eq(agents.is_active, true)).all();
-      const allLocsForZone = db.select({
-        id: locations.id,
-        type: locations.type,
-        position: locations.position,
-      }).from(locations).all();
-      reconstructZoneOccupancy(activeAgentsForZone, allLocsForZone);
+      // Every service cache and per-agent map, then the snapshot restore and
+      // zone reconstruction for whatever world the DB now holds — the freshly
+      // seeded one on success, the checkpoint taken above if the seed rolled back.
+      resetWorldRuntime();
     } catch (err) {
       console.error('[setup] replaceWorld cache reset failed (tick loop still restarts):', err);
     }
@@ -1286,25 +1198,7 @@ export const setupRouter = router({
       // emitter calls below, so the client would never learn the world was reset
       // while the tick loop is already stopped.
       try {
-        clearEffectivePersonalities();
-        clearAgentStatesCache();
-        memoryService.clear();
-        reflectionTrigger.clear();
-        reflectionRunner.clearQueue();
-        selfDescriptionGenerator.clear();
-        planCache.clear();
-        planLLMQueue.clear();
-        replanEvaluator.clear();
-        perceptionSystem.clear();
-        zoneOccupancy.clear();
-        resetCascade();
-        autoPlayer.reset();
-        // The terrain cost map was keyed on season only, so it survived into the new
-        // world and was read out of range whenever the map size changed.
-        invalidateCostMap();
-        clearMovementState();
-        clearPerWorldCaches();
-        restoreWorldCaches();
+        resetWorldRuntime();
       } catch (err) {
         console.error('[setup] resetToWizard cache reset failed (client is still notified):', err);
       }
