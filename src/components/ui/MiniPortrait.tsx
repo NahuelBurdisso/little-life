@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { getAgentColor } from "../../lib/spriteConfig";
+import { isPlaceholderSpriteKey } from "../../lib/residentArt/look";
+import { generatedPortraitSrc } from "./generatedPortrait";
 import { portraitSrc, type PortraitMood } from "./portraitMood";
 
 interface MiniPortraitProps {
-  agent: { name: string; portrait_sprite?: string; portraitSprite?: string };
+  /** `gender`/`age` pick a generated face's odds; pass the agent row so they match its sprite. */
+  agent: { name: string; portrait_sprite?: string; portraitSprite?: string; gender?: string | null; age?: number | null };
   size?: number;
   /** Greyed out (asleep / unavailable). */
   dim?: boolean;
@@ -14,8 +17,8 @@ interface MiniPortraitProps {
 /**
  * Small portrait for lists and pickers. AgentPortrait is the full mood-reactive
  * one for the panel header; this skips the crossfade machinery, wears a mood
- * only when the caller passes one, and falls back to a coloured initial tile when
- * the PNG is missing.
+ * only when the caller passes one, and falls back to the generated portrait when
+ * the PNG is missing (a coloured initial tile only where no canvas exists).
  */
 export function MiniPortrait({ agent, size = 20, dim = false, mood = "neutral" }: MiniPortraitProps) {
   // Sources that failed to load. Keyed by URL so one missing expression (the art
@@ -32,9 +35,12 @@ export function MiniPortrait({ agent, size = 20, dim = false, mood = "neutral" }
     filter: dim ? "grayscale(1)" : undefined,
   } as const;
 
-  const moodUrl = key ? portraitSrc(key, mood) : null;
-  const neutralUrl = key ? portraitSrc(key, "neutral") : null;
-  const src = moodUrl && !failed.has(moodUrl) ? moodUrl : neutralUrl;
+  const handDrawn = !isPlaceholderSpriteKey(key);
+  const moodUrl = handDrawn ? portraitSrc(key!, mood) : null;
+  const neutralUrl = handDrawn ? portraitSrc(key!, "neutral") : null;
+  let src = moodUrl && !failed.has(moodUrl) ? moodUrl : neutralUrl;
+  // No art for this key (nudged / custom residents): the generated face, in the same mood.
+  if (!src || failed.has(src)) src = generatedPortraitSrc(agent, mood);
 
   if (!src || failed.has(src)) {
     const color = "#" + getAgentColor(agent.name).toString(16).padStart(6, "0");
