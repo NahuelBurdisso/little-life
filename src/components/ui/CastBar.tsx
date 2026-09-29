@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MiniPortrait } from "./MiniPortrait";
 import { portraitMood } from "./portraitMood";
 import { actionIcon, describeAction } from "../../lib/actionText";
+import { displayPlaceName } from "../../lib/locationInfo";
 
 /** The slice of an `agents.getActive` row the bar reads. */
 interface CastAgent {
@@ -129,7 +130,7 @@ export function CastBar({
             const doing = describeAction(agent.current_action, place);
             // "Sleeping at X" already names the place; other verbs get it appended
             // only when the sentence doesn't carry it.
-            const where = place && !doing.includes(place) ? ` · ${place}` : "";
+            const where = place && !doing.includes(place) ? ` · ${displayPlaceName(place, { sentenceStart: true })}` : "";
             const summary = `${agent.name}: ${doing}${where}`;
             // "Dr. Sofia Petrov" should read Sofia, not "Dr.".
             const nameParts = agent.name.split(" ").filter(Boolean);

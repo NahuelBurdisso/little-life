@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hoursSummary, locationAt, locationIcon, prettyLocationType } from '../locationInfo';
+import { displayPlaceName, hoursSummary, locationAt, locationIcon, prettyLocationType } from '../locationInfo';
 import { eventFocusLocation, formatTimeLeft, EVENT_UI } from '../eventUi';
 import { WORLD_EVENTS } from '../../../server/data/worldEventCatalog';
 
@@ -53,5 +53,20 @@ describe('event ui', () => {
     expect(eventFocusLocation('harvest', locs)).toBe(9);
     expect(eventFocusLocation('festival', locs)).toBe(3);
     expect(eventFocusLocation('festival', [])).toBeNull();
+  });
+});
+
+describe('displayPlaceName', () => {
+  it('capitalises a leading lowercase "the" for labels and titles', () => {
+    expect(displayPlaceName('the Fernandez house', { sentenceStart: true })).toBe('The Fernandez house');
+  });
+  it('leaves the stored name alone mid-sentence', () => {
+    expect(displayPlaceName('the Fernandez house')).toBe('the Fernandez house');
+    expect(displayPlaceName('the Fernandez house', { sentenceStart: false })).toBe('the Fernandez house');
+  });
+  it('does not touch names that already start capitalised, or empty ones', () => {
+    expect(displayPlaceName("Rosa's cottage", { sentenceStart: true })).toBe("Rosa's cottage");
+    expect(displayPlaceName('Main Street', { sentenceStart: true })).toBe('Main Street');
+    expect(displayPlaceName('', { sentenceStart: true })).toBe('');
   });
 });

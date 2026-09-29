@@ -1,6 +1,6 @@
 import { useNudge } from "../../hooks/useNudge";
 import { eventBlurb, eventIcon, formatTimeLeft } from "../../lib/eventUi";
-import { hoursSummary, locationIcon, prettyLocationType, type LocationLike } from "../../lib/locationInfo";
+import { displayPlaceName, hoursSummary, locationIcon, prettyLocationType, type LocationLike } from "../../lib/locationInfo";
 import { eventMinutesLeft } from "../../../server/lib/gameClock";
 import { MiniPortrait } from "./MiniPortrait";
 import { W } from "./warmClasses";
@@ -66,13 +66,13 @@ export function LocationPanel({
       className="fixed top-[92px] z-30 w-[270px] max-h-[55vh] flex flex-col overflow-hidden bg-[var(--ui-bg-panel)] border border-[var(--ui-border-accent)] shadow-2xl text-[var(--ui-text-primary)]"
       style={{ left }}
       role="dialog"
-      aria-label={location.name}
+      aria-label={displayPlaceName(location.name, { sentenceStart: true })}
     >
       <div className={W.modalHeader}>
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-lg leading-none">{locationIcon(location.type)}</span>
           <div className="min-w-0">
-            <div className={`${W.title} truncate`}>{location.name}</div>
+            <div className={`${W.title} truncate`}>{displayPlaceName(location.name, { sentenceStart: true })}</div>
             {/* Derived outdoor spots are named after their type ("Town Hall"): don't say it twice. */}
             {kind !== location.name && <div className={`text-[10px] ${W.muted}`}>{kind}</div>}
           </div>

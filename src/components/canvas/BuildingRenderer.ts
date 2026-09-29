@@ -1,5 +1,6 @@
 import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
+import { displayPlaceName } from "../../lib/locationInfo";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getFurnitureTexture, getFloorTexture, getRoofTexture, getPropTexture } from "./textures";
 import {
@@ -761,7 +762,7 @@ export class BuildingRenderer {
     this.buildingLayer.addChild(roof);
 
     // Name label centered below the building
-    const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE.clone() });
+    const label = new PIXI.Text({ text: displayPlaceName(loc.name, { sentenceStart: true }), style: LABEL_STYLE.clone() });
     label.anchor.set(0.5, 0);
     label.x = x + width / 2;
     label.y = y + height + 2;
@@ -1183,7 +1184,7 @@ export class BuildingRenderer {
       this.buildingLayer.addChild(well);
     }
 
-    const label = new PIXI.Text({ text: loc.name, style: LABEL_STYLE.clone() });
+    const label = new PIXI.Text({ text: displayPlaceName(loc.name, { sentenceStart: true }), style: LABEL_STYLE.clone() });
     label.anchor.set(0.5, 0.5);
     label.x = x + width / 2;
     label.y = y + height / 2;
