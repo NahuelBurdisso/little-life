@@ -464,6 +464,22 @@ export function rasterizeBlobs(tiles: readonly TileXY[], style: BlobStyle): Blob
     }
   }
 
+  return classifyInside({ x0, y0, width, height, cellsPerTile: C, active }, inside);
+}
+
+/**
+ * Turn an `inside` mask into outline-classified cells. The caller guarantees
+ * the raster's outermost cell ring holds no real inside cell, so every inside
+ * cell has its full 8-neighbourhood in bounds and classification indexes
+ * blindly; and that every inside and halo cell lies in an `active` tile.
+ */
+function classifyInside(
+  frame: Omit<BlobRaster, 'cells'>,
+  inside: Uint8Array,
+): BlobRaster {
+  const { x0, y0, width, height, cellsPerTile: C, active } = frame;
+  const tw = width / C;
+  const th = height / C;
   // Real inside cells, gathered from active tiles only (every shape, fillet,
   // bridge and halo cell lies in a shape tile or one of its 8 neighbours).
   let count = 0;
@@ -484,7 +500,7 @@ export function rasterizeBlobs(tiles: readonly TileXY[], style: BlobStyle): Blob
   forActiveCells((i) => { insideIdx[count++] = i; });
 
   // Classify: EDGE/BODY from `inside`, RING from EDGE, HALO by stamping the
-  // outside 4-neighbours of lip cells. No bounds checks needed — see `mark`.
+  // outside 4-neighbours of lip cells. No bounds checks needed — see the contract above.
   const cells = new Uint8Array(width * height);
   const n8 = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1];
   const n4 = [-width, -1, 1, width];
@@ -509,6 +525,159 @@ export function rasterizeBlobs(tiles: readonly TileXY[], style: BlobStyle): Blob
   }
 
   return { x0, y0, width, height, cells, cellsPerTile: C, active };
+}
+
+export interface SoftBlobStyle {
+  /** Cells per tile edge (TILE_SIZE / cell px). */
+  cellsPerTile: number;
+  /** Metaball radius, in tiles, of each tile's contribution (centred on the
+   *  tile). The field is Σ (1 - d²/R²)² over tiles within R. */
+  radius: number;
+  /** Field level the outline sits at. A lone tile's blob radius is
+   *  R·sqrt(1 - sqrt(threshold)). */
+  threshold: number;
+  /** ± swing of the threshold from smooth value noise, so outlines wobble. */
+  noiseAmp: number;
+  /** Value-noise lattice spacing in cells: the size of an outline wobble. */
+  noiseCells: number;
+  /** Max cells a shape may spill past its own tiles into a neighbour tile.
+   *  Keeps a patch from reaching far under flowers or up to a doorstep. */
+  maxBleed: number;
+  /** Salt for the noise, so different layers don't wobble in lockstep. */
+  salt?: number;
+}
+
+/** Smooth value noise on the cell grid, in [0, 1): hashed lattice values every
+ *  `spacing` cells, smoothstep-interpolated. Deterministic in (cx, cy, salt). */
+function cellValueNoise(cx: number, cy: number, spacing: number, salt: number): number {
+  const gx = Math.floor(cx / spacing);
+  const gy = Math.floor(cy / spacing);
+  const fx = cx / spacing - gx;
+  const fy = cy / spacing - gy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const v = (x: number, y: number) => (hash2(x, y, salt) & 0xffff) / 0x10000;
+  const top = v(gx, gy) + (v(gx + 1, gy) - v(gx, gy)) * sx;
+  const bot = v(gx, gy + 1) + (v(gx + 1, gy + 1) - v(gx, gy + 1)) * sx;
+  return top + (bot - top) * sy;
+}
+
+/**
+ * Rasterise a tile set as one organic blob: a metaball field over the tile
+ * centres, cut at a noise-wobbled threshold, into the same outline classes as
+ * `rasterizeBlobs` (so `bucketCellRects` fills it the same way).
+ *
+ * Why not `rasterizeBlobs` with an inset: its outline follows tile edges, so a
+ * worn patch read as a stack of rounded squares on a 32px grid — "rubble"
+ * rather than trodden earth. A field has no grid in it: a lone tile is a
+ * lopsided oval, neighbours melt into one shape, and an L-shaped cluster gets a
+ * soft inside curve. Only for decoration — roads keep the tile-exact outline
+ * because lanes must line up with the collision grid.
+ *
+ * Cells outside the shape's own tiles are allowed only within `maxBleed` cells
+ * of one of them, which also keeps the outer cell ring of the one-tile-margin
+ * raster clear (the `classifyInside` contract).
+ */
+export function rasterizeSoftBlob(tiles: readonly TileXY[], style: SoftBlobStyle): BlobRaster {
+  const unique = uniqueTiles(tiles);
+  if (unique.length === 0) return EMPTY_RASTER;
+  const C = style.cellsPerTile;
+  const set = buildTileSet(unique);
+  const salt = style.salt ?? 0;
+  const maxBleed = Math.max(0, Math.min(style.maxBleed, C - 2));
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const t of unique) {
+    if (t.x < minX) minX = t.x;
+    if (t.y < minY) minY = t.y;
+    if (t.x > maxX) maxX = t.x;
+    if (t.y > maxY) maxY = t.y;
+  }
+  const tx0 = minX - 1;
+  const ty0 = minY - 1;
+  const tw = maxX - minX + 3;
+  const th = maxY - minY + 3;
+  const x0 = tx0 * C;
+  const y0 = ty0 * C;
+  const width = tw * C;
+  const height = th * C;
+
+  // Accumulate the field from each tile over the cells within its radius.
+  const field = new Float32Array(width * height);
+  const Rc = style.radius * C;
+  const R2 = Rc * Rc;
+  const reach = Math.ceil(Rc);
+  for (const t of unique) {
+    const cx = (t.x - tx0) * C + C / 2;
+    const cy = (t.y - ty0) * C + C / 2;
+    const lx0 = Math.max(0, Math.floor(cx - reach));
+    const lx1 = Math.min(width - 1, Math.ceil(cx + reach));
+    const ly0 = Math.max(0, Math.floor(cy - reach));
+    const ly1 = Math.min(height - 1, Math.ceil(cy + reach));
+    for (let ly = ly0; ly <= ly1; ly++) {
+      const dy = ly + 0.5 - cy;
+      for (let lx = lx0; lx <= lx1; lx++) {
+        const dx = lx + 0.5 - cx;
+        const u = (dx * dx + dy * dy) / R2;
+        if (u >= 1) continue;
+        const k = 1 - u;
+        field[ly * width + lx] += k * k;
+      }
+    }
+  }
+
+  const active = new Uint8Array(tw * th);
+  for (const { x, y } of unique) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) active[(y - ty0 + dy) * tw + (x - tx0 + dx)] = 1;
+    }
+  }
+
+  // Cells into a non-shape tile from its nearest shape neighbour (Chebyshev
+  // across the shared edge/corner); Infinity when no neighbour is a shape tile.
+  const bleedDepth = (tx: number, ty: number, lx: number, ly: number): number => {
+    let best = Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if ((dx === 0 && dy === 0) || !set.has(tileKey(tx + dx, ty + dy))) continue;
+        const ddx = dx < 0 ? lx + 1 : dx > 0 ? C - lx : 0;
+        const ddy = dy < 0 ? ly + 1 : dy > 0 ? C - ly : 0;
+        const d = Math.max(ddx, ddy);
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  };
+
+  const inside = new Uint8Array(width * height);
+  const lo = style.threshold - Math.abs(style.noiseAmp);
+  const hi = style.threshold + Math.abs(style.noiseAmp);
+  for (let ty = 0; ty < th; ty++) {
+    for (let tx = 0; tx < tw; tx++) {
+      if (!active[ty * tw + tx]) continue;
+      const atx = tx0 + tx;
+      const aty = ty0 + ty;
+      const own = set.has(tileKey(atx, aty));
+      for (let ly = 0; ly < C; ly++) {
+        for (let lx = 0; lx < C; lx++) {
+          const i = (ty * C + ly) * width + tx * C + lx;
+          const f = field[i];
+          // The noise can only move the cut within ±noiseAmp: skip it (and the
+          // bleed check) wherever the field is decided either way.
+          if (f <= lo) continue;
+          if (!own && bleedDepth(atx, aty, lx, ly) > maxBleed) continue;
+          if (f <= hi) {
+            const cut = style.threshold
+              + style.noiseAmp * (2 * cellValueNoise(x0 + tx * C + lx, y0 + ty * C + ly, style.noiseCells, salt) - 1);
+            if (f <= cut) continue;
+          }
+          inside[i] = IN_REAL;
+        }
+      }
+    }
+  }
+
+  return classifyInside({ x0, y0, width, height, cellsPerTile: C, active }, inside);
 }
 
 /** Rectangle in absolute cell coordinates. */

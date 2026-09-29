@@ -4,10 +4,10 @@ import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
 import { getTerrainTexture } from "./textures";
 import {
-  type BlobRaster, type BlobStyle, type Side,
+  type BlobRaster, type BlobStyle, type SoftBlobStyle,
   bucketCellRects, buildTileSet, classifyRoadTile, connectedComponents, hash2, hasTile,
-  isInsideCell, isOffMap, rasterizeBlobs, uniqueTiles,
-  CELL_BODY, CELL_EDGE, CELL_HALO, CELL_RING,
+  isInsideCell, isOffMap, rasterizeBlobs, rasterizeSoftBlob, uniqueTiles,
+  CELL_EDGE, CELL_HALO, CELL_RING,
 } from "../../lib/autotile";
 
 import { OPEN_AREA_TYPES, OUTDOOR_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
@@ -24,7 +24,12 @@ const CELLS_PER_TILE = TILE_SIZE / CELL_PX;
 const ROAD_COLOR = 0x6b5a3e;
 const ROAD_EDGE_COLOR = 0x4e4029;
 const ROAD_DUST_COLOR = 0x85714c;
-const DIRT_COLOR = 0x5a4a2e;
+/** Trodden earth: a notch lighter and warmer than the road so a worn patch
+ *  never reads as a stub of street, and near-opaque — at the old 0x5a4a2e/α.4
+ *  the grass texture showed through as a muddy grey-olive. */
+const DIRT_COLOR = 0x7d6a48;
+const DIRT_PEBBLE_COLOR = 0x5c4a32;
+const DIRT_DUST_COLOR = 0x9a845c;
 
 /** Terrain kinds only worldgen v2 emits — their presence marks a v2 world. */
 const V2_TERRAIN_KINDS: ReadonlySet<string> = new Set(['grass_tuft', 'tree', 'bush', 'rock']);
@@ -49,18 +54,20 @@ const WEAR_STYLE: BlobStyle = {
   bridgeSize: 0,
 };
 
-const SIDE_SALT: Record<Side, number> = { n: 11, e: 23, s: 37, w: 41 };
-
-/** Dirt: exposed sides pull in 4-8px (more top/bottom, so a lone patch reads as
- *  the flattened stain the old ellipse was), jittered per side so merged patches
- *  get a slightly ragged outline instead of a ruled one. */
-const DIRT_STYLE: BlobStyle = {
+/** Dirt: one organic blob per patch (`rasterizeSoftBlob`). A lone tile comes
+ *  out a ~26px lopsided oval; neighbours melt into one shape with soft inside
+ *  curves. Tuned on ASCII rasters: at threshold .9 lone tiles shrank to specks;
+ *  a 3-cell bleed cap cut ruler-straight edges along clusters; and a ±.14
+ *  wobble on 5-cell noise left a 2×2 patch a rounded square with 18-cell
+ *  straight sides. ±.24 on 7-cell noise makes it lopsided. */
+const DIRT_STYLE: SoftBlobStyle = {
   cellsPerTile: CELLS_PER_TILE,
-  inset: (x, y, side) =>
-    (side === 'n' || side === 's' ? 3 : 2) + (hash2(x, y, SIDE_SALT[side]) & 1),
-  outerProfile: [3, 2, 1],
-  filletSize: 2,
-  bridgeSize: 0,
+  radius: 1.3,
+  threshold: 0.74,
+  noiseAmp: 0.24,
+  noiseCells: 7,
+  maxBleed: 4,
+  salt: 29,
 };
 
 /** Sort raster cells into buckets in one scan, then one path + one fill per
@@ -490,12 +497,42 @@ export class TilemapRenderer {
 
     type PropKind = 'tree' | 'bush' | 'rock';
     const props: Array<{ x: number; y: number; kind: PropKind; h: number }> = [];
-    const dirt: Array<{ x: number; y: number }> = [];
     // Only a tile list with none of the kinds worldgen v2 introduced predates
     // it; only then keep growing boulders out of dirt patches. Keyed on every
     // v2-only kind, not `rock` alone: a v2 world can roll zero rocks and would
     // otherwise sprout derived ones.
     const deriveDirtRocks = !tiles.some((t) => V2_TERRAIN_KINDS.has(t.kind));
+
+    // ── Dirt, first ── worldgen clusters dirt into worn patches; each
+    // 4-connected patch is one organic blob (`rasterizeSoftBlob`) instead of a
+    // stack of per-tile rounded squares, which read as rubble on the 32px grid.
+    // Drawn before the rest of the ground because a blob spills up to 8px into
+    // neighbouring tiles: flowers and tufts there then sit on its fringe instead
+    // of being painted over.
+    const dirt = ordered.filter((t) => t.kind === 'dirt_patch');
+    for (const patch of connectedComponents(dirt)) {
+      const raster = rasterizeSoftBlob(patch, DIRT_STYLE);
+      // Per-patch tone jitter so neighbouring patches aren't identical stamps.
+      const first = patch[0];
+      const alpha = 0.8 + (hash2(first.x, first.y, 7) % 3) * 0.04;
+      // A solid body with a lighter-alpha lip (soft edge, no checkerboard — the
+      // old checkered rim read as a dotted grid), sparse single-cell pebbles and
+      // dust for grain, and a few specks of earth kicked just past the edge.
+      fillCellBuckets(g, raster, (c, cx, cy) => {
+        if (c === CELL_HALO) return hash2(cx, cy, 3) % 7 === 0 ? 5 : 0;
+        if (c === CELL_EDGE) return 2;
+        const r = hash2(cx, cy, 5) % 29;
+        if (r === 0 || r === 1) return 3;
+        if (r === 2) return 4;
+        return 1;
+      }, [
+        { color: DIRT_COLOR, alpha },
+        { color: DIRT_COLOR, alpha: alpha * 0.55 },
+        { color: DIRT_PEBBLE_COLOR, alpha: 0.7 },
+        { color: DIRT_DUST_COLOR, alpha: 0.6 },
+        { color: DIRT_COLOR, alpha: alpha * 0.35 },
+      ]);
+    }
 
     // ── Ground pass ──
     for (const tile of ordered) {
@@ -520,37 +557,13 @@ export class TilemapRenderer {
         else if (roll < 82) props.push({ x: tile.x, y: tile.y, kind: 'bush', h });
         else this.drawBlotch(g, px, py, h, 0x3a5a2a, 0.3);
       } else if (tile.kind === 'dirt_patch') {
-        dirt.push(tile);
-        // A boulder on some patches gives the bare earth a reason to be bare —
+        // Drawn above as merged blobs. A boulder on some patches gives the bare earth a reason to be bare —
         // legacy worlds only. Worldgen v2 places explicit `rock` tiles, mostly
         // beside dirt, so deriving more here would double them up.
         if (deriveDirtRocks && (h >>> 17) % 100 < 22) props.push({ x: tile.x, y: tile.y, kind: 'rock', h });
       } else if (tile.kind === 'tree' || tile.kind === 'bush' || tile.kind === 'rock') {
         props.push({ x: tile.x, y: tile.y, kind: tile.kind, h });
       }
-    }
-
-    // Dirt as merged blobs: worldgen clusters dirt into worn patches, and the
-    // old per-tile ellipse turned a patch into a string of beads. Each 4-connected
-    // patch is rasterised as one shape (autotile inset/rounding/chamfer) with a
-    // dithered rim. Flat ground kinds never share a tile, so drawing dirt after
-    // the flowers/tufts in this pass doesn't hide anything.
-    for (const patch of connectedComponents(dirt)) {
-      // Per-patch tone jitter so neighbouring patches aren't identical stamps.
-      const first = patch[0];
-      const alpha = 0.36 + (hash2(first.x, first.y, 7) % 3) * 0.03;
-      const raster = rasterizeBlobs(patch, DIRT_STYLE);
-      // Body at full strength; the rim cells alternate full/faded on a
-      // checkerboard and a few stray cells land just outside — a soft, dithered
-      // edge instead of a ruled one.
-      fillCellBuckets(g, raster, (c, cx, cy) => {
-        if (c === CELL_BODY || c === CELL_RING) return 1;
-        if (c === CELL_EDGE) return onChecker(cx, cy) ? 1 : 2;
-        return onChecker(cx, cy) && hash2(cx, cy, 3) % 3 === 0 ? 2 : 0; // halo
-      }, [
-        { color: DIRT_COLOR, alpha },
-        { color: DIRT_COLOR, alpha: alpha * 0.5 },
-      ]);
     }
 
     // ── Prop pass ── painter's order by row (stable sort keeps x order within a row).

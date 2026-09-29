@@ -4,9 +4,9 @@ import {
   buildTileSet, hasTile, tileKey, neighbourMask,
   exposedEdges, outerCorners, innerCorners, diagonalSteps,
   runLengths, classifyRoadTile, connectedComponents, hash2,
-  rasterizeBlobs, bucketCellRects, isInsideCell, isOffMap, uniqueTiles,
+  rasterizeBlobs, rasterizeSoftBlob, bucketCellRects, isInsideCell, isOffMap, uniqueTiles,
   CELL_OUT, CELL_BODY, CELL_EDGE, CELL_RING, CELL_HALO,
-  type BlobRaster, type BlobStyle, type TileXY,
+  type BlobRaster, type BlobStyle, type SoftBlobStyle, type TileXY,
 } from '../autotile';
 
 const C = 16;
@@ -485,5 +485,143 @@ describe('uniqueTiles', () => {
     const a = { x: 1, y: 1, tag: 'a' };
     const b = { x: 2, y: 1, tag: 'b' };
     expect(uniqueTiles([a, b, { x: 1, y: 1, tag: 'dup' }, b])).toEqual([a, b]);
+  });
+});
+
+describe('rasterizeSoftBlob', () => {
+  const SOFT: SoftBlobStyle = {
+    cellsPerTile: C, radius: 1.3, threshold: 0.74, noiseAmp: 0.24, noiseCells: 7, maxBleed: 4, salt: 29,
+  };
+  const insideCells = (r: BlobRaster) => {
+    const out: Array<{ cx: number; cy: number }> = [];
+    for (let ly = 0; ly < r.height; ly++) {
+      for (let lx = 0; lx < r.width; lx++) {
+        if (isInsideCell(r.cells[ly * r.width + lx])) out.push({ cx: r.x0 + lx, cy: r.y0 + ly });
+      }
+    }
+    return out;
+  };
+  /** Cells an inside cell lies past its nearest shape tile (0 = in one). */
+  const spill = (set: Set<number>, cx: number, cy: number) => {
+    const tx = Math.floor(cx / C);
+    const ty = Math.floor(cy / C);
+    if (hasTile(set, tx, ty)) return 0;
+    let best = Infinity;
+    for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
+      if (!hasTile(set, tx + dx, ty + dy)) continue;
+      const lx = cx - tx * C;
+      const ly = cy - ty * C;
+      const ddx = dx < 0 ? lx + 1 : dx > 0 ? C - lx : 0;
+      const ddy = dy < 0 ? ly + 1 : dy > 0 ? C - ly : 0;
+      best = Math.min(best, Math.max(ddx, ddy));
+    }
+    return best;
+  };
+  const shapes: Record<string, TileXY[]> = {
+    lone: pic(['#'], 3, 3),
+    pair: pic(['##'], 3, 3),
+    L: pic(['###', '#..', '#..'], 3, 3),
+    blob: pic(['.##.', '####', '.###', '..#.'], 3, 3),
+  };
+
+  it('returns an empty raster for no tiles', () => {
+    expect(rasterizeSoftBlob([], SOFT).width).toBe(0);
+  });
+
+  it('is deterministic and ignores duplicates and input order', () => {
+    const a = rasterizeSoftBlob(shapes.blob, SOFT);
+    const b = rasterizeSoftBlob([...shapes.blob].reverse().concat(shapes.blob[0]), SOFT);
+    expect(b.x0).toBe(a.x0);
+    expect(Array.from(b.cells)).toEqual(Array.from(a.cells));
+  });
+
+  it('gives a lone tile a solid oval of roughly 20-30px across, centred in its tile', () => {
+    const cells = insideCells(rasterizeSoftBlob(shapes.lone, SOFT));
+    const xs = cells.map((c) => c.cx);
+    const ys = cells.map((c) => c.cy);
+    const w = (Math.max(...xs) - Math.min(...xs) + 1) * 2;
+    const h = (Math.max(...ys) - Math.min(...ys) + 1) * 2;
+    expect(w).toBeGreaterThanOrEqual(20);
+    expect(w).toBeLessThanOrEqual(40);
+    expect(h).toBeGreaterThanOrEqual(20);
+    expect(h).toBeLessThanOrEqual(40);
+    // The tile centre is inside the shape.
+    expect(cells.some((c) => c.cx === 3 * C + C / 2 && c.cy === 3 * C + C / 2)).toBe(true);
+  });
+
+  it('never spills more than maxBleed cells past its own tiles, and keeps the raster rim clear', () => {
+    const bad: string[] = [];
+    for (const [name, tiles] of Object.entries(shapes)) {
+      const r = rasterizeSoftBlob(tiles, SOFT);
+      const set = buildTileSet(tiles);
+      for (const { cx, cy } of insideCells(r)) {
+        const d = spill(set, cx, cy);
+        if (d > SOFT.maxBleed) bad.push(`${name} (${cx},${cy}) spill ${d}`);
+        const lx = cx - r.x0;
+        const ly = cy - r.y0;
+        if (lx < 1 || ly < 1 || lx >= r.width - 1 || ly >= r.height - 1) bad.push(`${name} rim (${cx},${cy})`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('melts adjacent tiles into one 4-connected shape', () => {
+    for (const name of ['pair', 'L', 'blob']) {
+      const r = rasterizeSoftBlob(shapes[name], SOFT);
+      const cells = insideCells(r);
+      const key = (x: number, y: number) => `${x},${y}`;
+      const all = new Set(cells.map((c) => key(c.cx, c.cy)));
+      const seen = new Set<string>([key(cells[0].cx, cells[0].cy)]);
+      const stack = [cells[0]];
+      while (stack.length) {
+        const { cx, cy } = stack.pop()!;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const k = key(cx + dx, cy + dy);
+          if (all.has(k) && !seen.has(k)) { seen.add(k); stack.push({ cx: cx + dx, cy: cy + dy }); }
+        }
+      }
+      expect(seen.size, name).toBe(all.size);
+    }
+  });
+
+  it('classifies the outline like rasterizeBlobs: lip touches outside, halo touches lip', () => {
+    const r = rasterizeSoftBlob(shapes.blob, SOFT);
+    const at = (lx: number, ly: number) => r.cells[ly * r.width + lx];
+    const bad: string[] = [];
+    for (let ly = 1; ly < r.height - 1; ly++) {
+      for (let lx = 1; lx < r.width - 1; lx++) {
+        const c = at(lx, ly);
+        const n8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]].map(([dx, dy]) => at(lx + dx, ly + dy));
+        const n4 = [[0, -1], [-1, 0], [1, 0], [0, 1]].map(([dx, dy]) => at(lx + dx, ly + dy));
+        const outside = (v: number) => v === CELL_OUT || v === CELL_HALO;
+        if (c === CELL_EDGE && !n8.some(outside)) bad.push(`edge ${lx},${ly}`);
+        if (c === CELL_BODY && n8.some(outside)) bad.push(`body ${lx},${ly}`);
+        if (c === CELL_HALO && !n4.includes(CELL_EDGE)) bad.push(`halo ${lx},${ly}`);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(Array.from(r.cells).filter((c) => c === CELL_RING).length).toBeGreaterThan(0);
+  });
+
+  it('does not trace the tile grid: a 2×2 block has no straight outline run longer than a tile', () => {
+    const r = rasterizeSoftBlob(pic(['##', '##'], 3, 3), SOFT);
+    // Longest run of lip cells in one row or column — a tile-aligned inset
+    // outline runs ~2 tiles straight; an organic one bends well before that.
+    let longest = 0;
+    for (let ly = 0; ly < r.height; ly++) {
+      let run = 0;
+      for (let lx = 0; lx < r.width; lx++) {
+        run = r.cells[ly * r.width + lx] === CELL_EDGE ? run + 1 : 0;
+        longest = Math.max(longest, run);
+      }
+    }
+    for (let lx = 0; lx < r.width; lx++) {
+      let run = 0;
+      for (let ly = 0; ly < r.height; ly++) {
+        run = r.cells[ly * r.width + lx] === CELL_EDGE ? run + 1 : 0;
+        longest = Math.max(longest, run);
+      }
+    }
+    expect(longest).toBeLessThan(C);
   });
 });
