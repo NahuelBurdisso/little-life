@@ -8,6 +8,7 @@ import { createPlayerFxSystem } from "./playerFx/PlayerFxSystem";
 import { createActivityFxSystem } from "./activityFx/ActivityFxSystem";
 import { createPlaceLifeSystem } from "./placeLife/PlaceLifeSystem";
 import { createFuseSystem } from "./fuse/FuseSystem";
+import { createAudioSystem } from "./audio/AudioSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -26,4 +27,6 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   createFuseSystem,
   // The player's own actions draw last: they should never be hidden under a story beat.
   createPlayerFxSystem,
+  // Draws nothing: the soundscape (weather, places near the camera, story cues, thunder).
+  createAudioSystem,
 ];

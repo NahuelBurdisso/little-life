@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '../lib/trpc';
 import type { ActivityEntry } from '../lib/activityMessage';
 import type { AlertTier } from '../../server/lib/alertTiers';
+import { playAlertChime } from '../lib/audio/synth';
 import {
   inboxReducer,
   loadInbox,
@@ -84,7 +85,11 @@ export function useDramaAlerts(seed: string, favorites: ReadonlySet<string>) {
     const incoming = data.alerts.filter((row) => !shownRef.current.has(row.id));
     if (incoming.length > 0) {
       const now = Date.now();
-      for (const row of incoming) shownRef.current.add(row.id);
+      for (const row of incoming) {
+        shownRef.current.add(row.id);
+        // Rate-limited inside: a burst of alerts rings the most important one once.
+        playAlertChime(row.tier);
+      }
       setAlerts((prev) => [
         ...prev,
         ...incoming.map((row) => ({ ...(row as unknown as ActivityEntry), id: row.id, tier: row.tier, shownAt: now })),
