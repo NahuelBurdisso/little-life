@@ -272,6 +272,18 @@ describe('saves', () => {
     expect(await pruneAutosaves(3)).toEqual([]);
   });
 
+  it('router: saves and lists, validates ids, and hands refusals back as BAD_REQUEST', async () => {
+    const { savesRouter } = await import('../../routers/saves');
+    const caller = savesRouter.createCaller({} as never);
+
+    const meta = await caller.save({ name: 'Via the router' });
+    expect((await caller.list()).map((s) => s.id)).toContain(meta.id);
+
+    await expect(caller.load({ id: '../little-life' })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(caller.load({ id: 'no-such-save' })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Save not found' });
+    expect(await caller.delete({ id: meta.id })).toEqual({ deleted: true });
+  });
+
   it('delete removes both files and rejects ids that could leave the saves dir', async () => {
     const meta = await saveWorld('Doomed');
     expect(await deleteSave(meta.id)).toBe(true);

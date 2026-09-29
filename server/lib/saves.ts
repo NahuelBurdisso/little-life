@@ -46,6 +46,12 @@ import { CONFIG } from './constants';
 
 export type SaveKind = 'manual' | 'auto';
 
+/**
+ * A refusal the player should read (no town yet, a save from a newer build,
+ * not a save at all) rather than a failure of the operation itself.
+ */
+export class SaveRejectedError extends Error {}
+
 export interface SaveMeta {
   /** Sidecar format, for whoever reads these later. */
   format: 1;
@@ -159,7 +165,7 @@ function readWorldInfo(): Pick<SaveMeta, 'day' | 'season' | 'hour' | 'minute' | 
   const world = db.select({ time: worldState.time, setup_config: worldState.setup_config }).from(worldState).limit(1).get();
   const residents = db.select({ name: agents.name }).from(agents).where(eq(agents.is_active, true)).all().map((a) => a.name);
   // The wizard placeholder (`resetToWizard`) has a world row but no town.
-  if (!world || residents.length === 0) throw new Error('There is no town to save yet');
+  if (!world || residents.length === 0) throw new SaveRejectedError('There is no town to save yet');
   const seed = (world.setup_config as { worldgen?: { seed?: unknown } } | null)?.worldgen?.seed;
   return {
     day: world.time.day,
@@ -308,9 +314,6 @@ function columnsOf(schema: string, table: string): string[] {
 }
 
 const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
-
-/** Refusals that are about the file, not a failure of the load itself. */
-export class SaveRejectedError extends Error {}
 
 /**
  * Check a save before anything is stopped or touched: readable, a Little Life
