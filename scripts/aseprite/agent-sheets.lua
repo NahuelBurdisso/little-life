@@ -360,7 +360,7 @@ local dir = app.params.dir or "public/sprites/agents"
 local only = app.params.only
 for _, f in ipairs(app.fs.listFiles(dir)) do
   local name = f:match("^(.-)%.png$")
-  if name and not name:find("_portrait$") and not name:find("_sheet$")
+  if name and not name:find("_portrait") and not name:find("_sheet$")
      and (not only or only == name) then
     build(dir, name)
   end
