@@ -5,8 +5,19 @@
  * To add a new setting: add one entry here.
  * - UI auto-generates the control
  * - Server accepts it without schema changes
- * - Simulation reads it with fallback to default
+ * - Simulation reads it with fallback to default — but only once a system
+ *   actually reads the key. The live rules go through server/lib/worldRules.ts
+ *   (option lists and defaults from server/data/rulesCatalog.ts, used below so
+ *   the two can't drift); tickSpeed and startingMoney are applied once by
+ *   setup.ts. A key nothing reads is a control that lies to the player.
+ *
+ * There is no LLM category any more: the model, temperature and token limits
+ * are the server's `.env` / CONFIG.AI, shared by every world. The wizard's
+ * copies were never read, and the model default had gone stale (a model the
+ * project no longer runs), so they only misled.
  */
+
+import { DEFAULT_LIVE_RULES, DRAMA_LEVELS, SICKNESS_LEVELS } from '../../../server/data/rulesCatalog';
 
 export interface ConfigParam {
   key: string;
@@ -14,7 +25,7 @@ export interface ConfigParam {
   description: string;
   type: 'toggle' | 'slider' | 'select' | 'text';
   default: boolean | number | string;
-  category: 'simulation' | 'llm' | 'economy';
+  category: 'simulation' | 'economy';
   min?: number;
   max?: number;
   step?: number;
@@ -27,25 +38,25 @@ export const CONFIG_REGISTRY: ConfigParam[] = [
   {
     key: 'deathEnabled', label: 'Death Enabled',
     description: 'Agents can die from neglect, sickness, or old age',
-    type: 'toggle', default: true, category: 'simulation',
+    type: 'toggle', default: DEFAULT_LIVE_RULES.deathEnabled, category: 'simulation',
   },
   {
     key: 'sicknessRate', label: 'Sickness Rate',
     description: 'How often agents get sick from the environment',
-    type: 'select', default: 'low', category: 'simulation',
-    options: ['off', 'low', 'medium', 'high'],
+    type: 'select', default: DEFAULT_LIVE_RULES.sicknessRate, category: 'simulation',
+    options: [...SICKNESS_LEVELS],
   },
   {
     key: 'contagionRate', label: 'Contagion Rate',
     description: 'How easily sickness spreads between agents',
-    type: 'select', default: 'low', category: 'simulation',
-    options: ['off', 'low', 'medium', 'high'],
+    type: 'select', default: DEFAULT_LIVE_RULES.contagionRate, category: 'simulation',
+    options: [...SICKNESS_LEVELS],
   },
   {
     key: 'dramaIntensity', label: 'Drama Intensity',
-    description: 'Controls frequency of dark dynamics (theft, jealousy, conflict)',
-    type: 'select', default: 'medium', category: 'simulation',
-    options: ['low', 'medium', 'high', 'chaos'],
+    description: 'Random events, dark dynamics (theft, jealousy, grudges) and how short tempers run',
+    type: 'select', default: DEFAULT_LIVE_RULES.dramaIntensity, category: 'simulation',
+    options: [...DRAMA_LEVELS],
   },
   {
     key: 'tickSpeed', label: 'Tick Speed',
@@ -60,25 +71,6 @@ export const CONFIG_REGISTRY: ConfigParam[] = [
     description: 'How much money each agent starts with',
     type: 'slider', default: 50, category: 'economy',
     min: 10, max: 500, step: 10, unit: '$',
-  },
-
-  // === LLM / AI ===
-  {
-    key: 'llmModel', label: 'LLM Model',
-    description: 'Ollama model name for agent conversations',
-    type: 'text', default: 'huihui_ai/gemma-4-abliterated:e4b', category: 'llm',
-  },
-  {
-    key: 'llmTemperature', label: 'Temperature',
-    description: 'Higher = more creative, lower = more focused',
-    type: 'slider', default: 0.8, category: 'llm',
-    min: 0.1, max: 2.0, step: 0.1,
-  },
-  {
-    key: 'llmMaxTokens', label: 'Max Tokens',
-    description: 'Maximum response length per conversation turn',
-    type: 'slider', default: 250, category: 'llm',
-    min: 100, max: 500, step: 50,
   },
 ];
 
@@ -103,7 +95,6 @@ export function getParamsByCategory(category: string): ConfigParam[] {
 const CATEGORY_LABELS: Record<string, { label: string; icon: string }> = {
   simulation: { label: 'Simulation', icon: '🎮' },
   economy: { label: 'Economy', icon: '💰' },
-  llm: { label: 'LLM / AI', icon: '🤖' },
 };
 
 export function getCategoryLabel(category: string): { label: string; icon: string } {
