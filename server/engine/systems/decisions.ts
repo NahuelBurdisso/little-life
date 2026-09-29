@@ -340,6 +340,7 @@ export function checkEmergency(
   otherAgents: AgentRow[],
   activeEventTypes?: Set<string>,
   mealTarget?: () => MealPlan | null,
+  hour?: number,
 ): ScoredAction | null {
   const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
 
@@ -364,7 +365,18 @@ export function checkEmergency(
     if (hungerMeal != null) crises.push({ need: 'hunger', value: agentNeeds.hunger });
   }
   if (agentNeeds.energy < critical) crises.push({ need: 'energy', value: agentNeeds.energy });
-  if (agentNeeds.social < critical) crises.push({ need: 'social', value: agentNeeds.social });
+  // Same rule for company: only a crisis if there is someone to see. The target
+  // used to be the nearest friend whatever they were doing, so a lonely agent
+  // who woke at 2 a.m. walked across town to a sleeping friend's house and sat
+  // "socializing" in it until morning, re-issuing the walk every 16 minutes (a
+  // G10 night walker; 3 h of walking in one soak trace). Friends who are asleep
+  // don't count; with nobody awake to see, a crisis inside the agent's own
+  // sleeping hours is left to the schedule (bed), not sent to an empty square.
+  let socialTarget: ScoredAction | null = null;
+  if (agentNeeds.social < critical) {
+    socialTarget = socialCrisisTarget(agent, allLocations, allRelationships, otherAgents, hour);
+    if (socialTarget) crises.push({ need: 'social', value: agentNeeds.social });
+  }
 
   // Mood is a weighted average of the other needs, so a critical mood almost always
   // means a critical hunger/energy too. Checking it FIRST sent starving agents home
@@ -394,32 +406,124 @@ export function checkEmergency(
       return { action: 'sleeping', score: 9999, targetLocationId: agent.home };
     }
     case 'social': {
-      let bestTarget: { agentId: number; locationId: number | null; dist: number } | null = null;
-      for (const other of otherAgents) {
-        if (other.id === agent.id || !other.is_active) continue;
-        const rel = getRelationshipValues(allRelationships, agent.id, other.id);
-        if (rel && rel.friendship > 20) {
-          const d = distance(agent.position, other.position);
-          if (!bestTarget || d < bestTarget.dist) {
-            bestTarget = { agentId: other.id, locationId: other.current_location, dist: d };
-          }
-        }
-      }
-      if (bestTarget) {
-        const targetLoc = bestTarget.locationId
-          ? bestTarget.locationId
-          : nearestLocation(agent.position, allLocations, 'town_square')?.id ?? undefined;
-        return { action: 'socializing', score: 9999, targetLocationId: targetLoc, targetAgentId: bestTarget.agentId };
-      }
-      const social = nearestLocation(agent.position, allLocations, ['tavern', 'town_square']);
-      if (social) {
-        return { action: 'socializing', score: 9999, targetLocationId: social.id };
-      }
-      return null;
+      return socialTarget;
     }
     default:
       return null;
   }
+}
+
+/** Where a lonely agent in a social crisis goes, or null if nobody is to be had. */
+function socialCrisisTarget(
+  agent: AgentRow,
+  allLocations: LocationRow[],
+  allRelationships: RelRow[],
+  otherAgents: AgentRow[],
+  hour: number | undefined,
+): ScoredAction | null {
+  let bestTarget: { agentId: number; locationId: number | null; dist: number } | null = null;
+  for (const other of otherAgents) {
+    if (other.id === agent.id || !other.is_active) continue;
+    const otherAction = (other.current_action as { type?: string } | null)?.type;
+    if (otherAction === 'sleeping' || otherAction === 'dead') continue;
+    const rel = getRelationshipValues(allRelationships, agent.id, other.id);
+    if (rel && rel.friendship > 20) {
+      const d = distance(agent.position, other.position);
+      if (!bestTarget || d < bestTarget.dist) {
+        bestTarget = { agentId: other.id, locationId: other.current_location, dist: d };
+      }
+    }
+  }
+  if (bestTarget) {
+    const targetLoc = bestTarget.locationId
+      ? bestTarget.locationId
+      : nearestLocation(agent.position, allLocations, 'town_square')?.id ?? undefined;
+    return { action: 'socializing', score: 9999, targetLocationId: targetLoc, targetAgentId: bestTarget.agentId };
+  }
+  if (hour !== undefined) {
+    const { sleep, wake } = sleepWindow(agent, getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null);
+    const asleepHours = sleep > wake ? hour >= sleep || hour < wake : hour >= sleep && hour < wake;
+    if (asleepHours) return null;
+  }
+  const venues = allLocations.filter((l) =>
+    l.type === 'town_square' || (l.type === 'tavern' && (hour === undefined || isOpenAt(l.operating_hours, hour))));
+  const social = nearestLocation(agent.position, venues, ['tavern', 'town_square']);
+  return social ? { action: 'socializing', score: 9999, targetLocationId: social.id } : null;
+}
+
+/**
+ * The hours an agent sleeps, after the personality chronotype shift.
+ *
+ * Night owls (high impulsiveness, high sensuality) stay up later and wake later;
+ * early birds (high morality, low impulsiveness) sleep earlier and wake earlier.
+ * A worker never sleeps into their shift: a +2 h owl on an 8:00 shift slept
+ * through the first two hours of it every day (part of the soak's "sleeping
+ * during the shift", ~1 h per worker a day).
+ */
+export function sleepWindow(
+  agent: Pick<AgentRow, 'schedule' | 'workplace'>,
+  personality: PersonalityProfile | null,
+): { sleep: number; wake: number } {
+  const sched = agent.schedule;
+  let sleepShift = 0; // hours to shift sleep schedule (positive = later, negative = earlier)
+  if (personality) {
+    // Impulsive/sensual agents are night owls: up to +2 hours later
+    sleepShift += (personality.impulsiveness - 50) * 0.02;
+    sleepShift += (personality.sensuality - 50) * 0.01;
+    // Conscientious/moral agents are early birds: up to -1.5 hours earlier
+    sleepShift -= (personality.morality - 50) * 0.015;
+    // Neurotic agents need more regular sleep: dampen the shift
+    if (personality.neuroticism > 60) sleepShift *= 0.5;
+    // Clamp to reasonable range
+    sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
+  }
+
+  const baseSleepTime = sched.sleepTime === 0 ? 24 : sched.sleepTime;
+  const sleep = Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24;
+  let wake = Math.max(4, Math.min(12, sched.wakeTime + sleepShift));
+  // An hour before the shift (the commute is ~1 h in a mid-sized town), or the
+  // schedule's own wake time if that is later.
+  if (agent.workplace && sched.workStart > sched.wakeTime) {
+    wake = Math.min(wake, Math.max(sched.wakeTime, sched.workStart - 1));
+  }
+  return { sleep, wake };
+}
+
+/**
+ * Game minutes to allow for the walk from home to work: straight-line door to
+ * door at walking speed, plus 30% for streets that do not run straight and ten
+ * minutes for the legs inside the two buildings. Capped at two hours so a
+ * broken location can't send someone off in the middle of the night.
+ */
+export function commuteLeadMinutes(
+  agent: Pick<AgentRow, 'home' | 'workplace'>,
+  allLocations: Pick<LocationRow, 'id' | 'entry_point'>[],
+): number {
+  const home = allLocations.find((l) => l.id === agent.home);
+  const work = allLocations.find((l) => l.id === agent.workplace);
+  if (!home || !work) return 0;
+  const walk = distance(home.entry_point, work.entry_point) / CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE;
+  return Math.min(120, Math.round(walk * 1.3 + 10));
+}
+
+/**
+ * How long a sleep started now lasts: the usual night, but never past the
+ * wake-up time. Sleep is one fixed-length action (360 minutes), so a second
+ * sleep started in the small hours — after a night-time errand, or when a
+ * 22:00 bedtime ended at 04:00 still inside the sleep window — ran six more
+ * hours, to 10:00 and into the shift. An energy emergency keeps the full
+ * length: that sleep is about the tank, not the clock.
+ */
+export function sleepDurationMinutes(
+  nowHour: number,
+  nowMinute: number,
+  wakeHour: number,
+  fullLength: number,
+  emergency: boolean,
+): number {
+  if (emergency) return fullLength;
+  const untilWake = (wakeHour * 60 - (nowHour * 60 + nowMinute) + 1440) % 1440;
+  return Math.max(60, Math.min(fullLength, untilWake));
 }
 
 // --- Schedule Check ---
@@ -475,25 +579,7 @@ function checkSchedule(
     }
   }
 
-  // Sleep time: personality-adjusted chronotype
-  // Night owls (high impulsiveness, high sensuality) stay up later and wake later
-  // Early birds (high morality, low impulsiveness) sleep earlier and wake earlier
-  let sleepShift = 0; // hours to shift sleep schedule (positive = later, negative = earlier)
-  if (personality) {
-    // Impulsive/sensual agents are night owls: up to +2 hours later
-    sleepShift += (personality.impulsiveness - 50) * 0.02;
-    sleepShift += (personality.sensuality - 50) * 0.01;
-    // Conscientious/moral agents are early birds: up to -1.5 hours earlier
-    sleepShift -= (personality.morality - 50) * 0.015;
-    // Neurotic agents need more regular sleep: dampen the shift
-    if (personality.neuroticism > 60) sleepShift *= 0.5;
-    // Clamp to reasonable range
-    sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
-  }
-
-  const baseSleepTime = sched.sleepTime === 0 ? 24 : sched.sleepTime;
-  const effectiveSleepTime = Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24;
-  const effectiveWakeTime = Math.max(4, Math.min(12, sched.wakeTime + sleepShift));
+  const { sleep: effectiveSleepTime, wake: effectiveWakeTime } = sleepWindow(agent, personality);
 
   if (effectiveSleepTime > effectiveWakeTime) {
     // Normal case: sleep 22 → wake 7 → sleeping when hour >= 22 OR hour < 7
@@ -504,6 +590,21 @@ function checkSchedule(
     // Inverted case: sleep 2 → wake 10 → sleeping when hour >= 2 AND hour < 10
     if (hour >= effectiveSleepTime && hour < effectiveWakeTime) {
       return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+    }
+  }
+
+  // Set off for work in time to be there when the shift starts. The work branch
+  // below only fires from `workStart`, so the whole commute — 67 minutes on
+  // average door to door in the soak town — came out of the shift every day
+  // (the soak's biggest "away from work" item, ~1.4 h per worker). Above the
+  // morning routine, which would otherwise hold the window with a jog or a
+  // coffee; below the sleep check, so nobody is got out of bed for it.
+  if (agent.workplace && agent.workplace !== agent.home) {
+    const lead = commuteLeadMinutes(agent, allLocations);
+    const now = hour * 60 + minute;
+    const start = sched.workStart * 60;
+    if (now < start && now >= start - lead) {
+      return { action: 'working', score: 4000, targetLocationId: agent.workplace };
     }
   }
 
@@ -1408,6 +1509,7 @@ export function tick(world: WorldRow): void {
         activeAgents,
         activeEventTypes,
         () => mealPlan(agent.home ?? undefined),
+        world.time.hour,
       );
     }
 
@@ -1658,7 +1760,14 @@ export function tick(world: WorldRow): void {
       decision.action === 'idle' &&
       agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD
         ? 120
-        : minDuration;
+        : decision.action === 'sleeping'
+          ? sleepDurationMinutes(
+              world.time.hour, world.time.minute,
+              sleepWindow(agent, getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null).wake,
+              minDuration,
+              agentNeeds.energy < critical,
+            )
+          : minDuration;
 
     // If a zone target exists, embed its coordinates into the queued action so that
     // movement.ts can teleport the agent to the exact zone position on arrival.

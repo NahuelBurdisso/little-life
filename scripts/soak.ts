@@ -8,6 +8,7 @@
  *   npm run soak -- --tick-speed 5 --keep --verbose
  *   npm run soak -- --season winter       # start in another season (fresh world or --db copy)
  *   npm run soak -- --preset soap         # drama preset for a fresh world (default: the wizard's)
+ *   npm run soak -- --trace "Elena Voss"  # print one agent's every action change
  *
  * A fresh world is built exactly as the setup wizard's Start button builds it
  * with nothing edited: the wizard's default cast and relationships, its default
