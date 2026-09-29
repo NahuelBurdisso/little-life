@@ -67,6 +67,7 @@ import { hungerSnapshotStore } from '../lib/lifeEventsEngine';
 import { tensionSnapshotStore } from '../lib/cascade';
 import { clearMilestones, milestonesSnapshotStore } from '../lib/milestonesEngine';
 import { clearPopulationFlow, populationFlowSnapshotStore } from '../lib/populationFlow';
+import { clearVacancies } from '../lib/vacancies';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
 import type { SnapshotStore } from './snapshotCodec';
 
@@ -187,6 +188,8 @@ export function clearPerWorldCaches(): void {
   clearMilestones();
   // Leavers, thinkers and arrival timers: agent ids and game minutes of the old town.
   clearPopulationFlow();
+  // Posted trades and planned career moves (lib/vacancies.ts).
+  clearVacancies();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();

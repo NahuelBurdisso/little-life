@@ -48,7 +48,7 @@ import { agents, agentStates, economy, locations, needs, relationships, worldSta
 import { CONFIG } from './constants';
 import { getRules } from './worldRules';
 import { POPULATION_TARGET_MAX, POPULATION_TARGET_MIN } from '../data/rulesCatalog';
-import { JOBS, type JobKey } from '../data/jobs';
+import { ESSENTIAL_JOBS, JOBS, isJobKey, type JobKey } from '../data/jobs';
 import { PERIOD_FAMILY_NAMES, PERIOD_FIRST_NAMES } from '../data/residentNames';
 import {
   createResident, emptyHomes, feelingsToward, livingTiesOf, residentsByHome, retireResident, townEdgePoint,
@@ -163,6 +163,12 @@ const state = {
   arrivedAt: new Map<number, number>(),
   /** Game minute each resident last decided to stay (they don't reconsider at once). */
   stayedAt: new Map<number, number>(),
+  /**
+   * Trades the town posted and could not fill from its own people
+   * (lib/vacancies.ts). Not checkpointed: the vacancy pass rewrites it at
+   * every day change, before `populationFlowDaily` reads it.
+   */
+  wantedTrades: [] as string[],
 };
 
 /** Forget everything (world replace: ids and the clock restart). */
@@ -174,6 +180,20 @@ export function clearPopulationFlow(): void {
   state.departing.clear();
   state.arrivedAt.clear();
   state.stayedAt.clear();
+  state.wantedTrades = [];
+}
+
+/**
+ * The vacancy pass's signal (lib/vacancies.ts): these trades are open and
+ * nobody in town can take them, so the next stranger should be one of them.
+ * Replaces the previous list — a trade filled since drops out.
+ */
+export function setWantedTrades(jobs: readonly string[]): void {
+  state.wantedTrades = [...jobs];
+}
+
+export function getWantedTrades(): readonly string[] {
+  return state.wantedTrades;
 }
 
 /** Read-only view, for tests, diagnostics and the Brewing tab. */
@@ -314,33 +334,44 @@ export function departureAllowed(p: { living: number; leaving: number; target: n
   return p.lastDepartureAt == null || p.now - p.lastDepartureAt >= POPULATION_FLOW.DEPARTURE_GAP_DAYS * DAY;
 }
 
-/** Whether a newcomer may be scheduled now. */
+/**
+ * Whether a newcomer may be scheduled now. `wanted`: a trade is posted that
+ * nobody in town can take (lib/vacancies.ts) — the town takes one stranger
+ * past its target for it. A town that lost its doctor to a move while a
+ * musician moved in is at target and would otherwise never get a doctor.
+ */
 export function arrivalAllowed(p: {
   living: number; leaving: number; target: number; emptyHomes: number; lastArrivalAt: number | null; now: number;
+  wanted?: boolean;
 }): boolean {
   if (p.emptyHomes <= 0) return false;
   if (p.living >= CONFIG.MAX_AGENTS) return false;
-  if (p.living - p.leaving >= p.target) return false;
+  if (p.living - p.leaving >= p.target + (p.wanted ? 1 : 0)) return false;
   return p.lastArrivalAt == null || p.now - p.lastArrivalAt >= POPULATION_FLOW.ARRIVAL_GAP_DAYS * DAY;
 }
 
-/**
- * Trades a town can't do without, in the order a gap hurts: nobody to treat
- * the sick, bake, grow food, sell it, pour a drink, keep the peace, run the
- * town. Only trades whose building exists count.
- */
-const ESSENTIAL_JOBS: readonly JobKey[] = ['doctor', 'baker', 'farmer', 'shopkeeper', 'bartender', 'constable', 'mayor'];
 /** A town with every trade covered gets a pair of hands. */
 const HELPER_JOBS: readonly JobKey[] = ['farmhand', 'shop_assistant', 'medical_assistant', 'handyperson', 'musician'];
 
-/** The newcomer's trade: the first missing essential one, else a helper the town has a workplace for. */
-export function pickArrivalJob(livingJobs: readonly string[], locationTypes: readonly string[], rng: { pick<T>(a: readonly T[]): T }): string {
+/**
+ * The newcomer's trade: a trade the vacancy pass asked for (`wanted`), else
+ * the first missing essential one (data/jobs.ts ESSENTIAL_JOBS, the same list
+ * the vacancy pass posts from), else a helper the town has a workplace for.
+ */
+export function pickArrivalJob(
+  livingJobs: readonly string[],
+  locationTypes: readonly string[],
+  rng: { pick<T>(a: readonly T[]): T },
+  wanted: readonly string[] = [],
+): string {
   const types = new Set(locationTypes);
   const held = new Set(livingJobs);
   const hasPlace = (job: JobKey) => {
     const t = JOBS[job].workplaceType;
     return t != null && types.has(t);
   };
+  const asked = wanted.find((j): j is JobKey => isJobKey(j) && hasPlace(j) && !held.has(j));
+  if (asked) return asked;
   const missing = ESSENTIAL_JOBS.find((j) => hasPlace(j) && !held.has(j));
   if (missing) return missing;
   const helpers = HELPER_JOBS.filter(hasPlace);
@@ -549,7 +580,10 @@ export function populationFlowDaily(time: ClockTime, nowMinutes: number): void {
   if (state.pendingArrivalAt == null) {
     const living_ = db.select({ home: agents.home }).from(agents).where(eq(agents.is_active, true)).all();
     const empty = emptyHomes(db.select().from(locations).all(), residentsByHome(living_)).length;
-    if (arrivalAllowed({ living, leaving: state.departing.size, target, emptyHomes: empty, lastArrivalAt: state.lastArrivalAt, now: nowMinutes })) {
+    if (arrivalAllowed({
+      living, leaving: state.departing.size, target, emptyHomes: empty, lastArrivalAt: state.lastArrivalAt, now: nowMinutes,
+      wanted: state.wantedTrades.length > 0,
+    })) {
       state.pendingArrivalAt = dayStart + POPULATION_FLOW.ARRIVE_HOUR * 60;
     }
   }
@@ -658,7 +692,7 @@ function runArrival(time: ClockTime, nowMinutes: number): void {
   const rng = makeRng(stringToSeed(`arrival|${String(seed)}|${time.day}|${living.length}`));
 
   const livingJobs = economyJobsOf(living.map((a) => a.id));
-  const job = pickArrivalJob(livingJobs, allLocations.map((l) => l.type), rng);
+  const job = pickArrivalJob(livingJobs, allLocations.map((l) => l.type), rng, state.wantedTrades);
   const allNames = db.select({ name: agents.name }).from(agents).all().map((r) => r.name);
   const { name, gender } = pickArrivalName(allNames, rng);
 
