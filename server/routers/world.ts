@@ -9,6 +9,7 @@ import { getLLMMetrics } from '../ai/llmMetrics';
 import { startWorldEvent } from '../engine/systems/events';
 import { PLAYER_EVENT_TYPES } from '../data/worldEventCatalog';
 import { getRules, RuleOverridesSchema, setRuleOverrides } from '../lib/worldRules';
+import { populationTargets } from '../lib/populationFlow';
 import { getHealthSnapshot, HEALTH_CHANNEL } from '../lib/health';
 import { nightSkip, NIGHT_SKIP_CHANNEL } from '../engine/nightSkip';
 
@@ -99,6 +100,15 @@ export const worldRouter = router({
   /** The rules the running world plays by: the wizard's, with any live overrides on top. */
   getRules: publicProcedure.query(() => {
     return getRules();
+  }),
+
+  /**
+   * The town's size and the bounds population flow keeps it in (living,
+   * target, floor, cap), for the Storyteller's population row.
+   */
+  getPopulation: publicProcedure.query(() => {
+    if (!db.select({ id: worldState.id }).from(worldState).get()) return null;
+    return populationTargets();
   }),
 
   /**

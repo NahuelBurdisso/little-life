@@ -30,6 +30,7 @@ import { rumorReachedSubject } from '../lib/gossip';
 import { nightSkip } from '../engine/nightSkip';
 import { perceptionSystem } from '../lib/perception/instance';
 import { createResident, retireResident } from '../lib/residents';
+import { notePlayerCare } from '../lib/populationFlow';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -217,6 +218,8 @@ export const nudgeRouter = router({
           // The player brought these two together: whatever perception was
           // holding back between them (a flirt it considered a rerun) is stale.
           perceptionSystem.forgetPair(agentAId, agentBId);
+          // Someone thinking of leaving town who is sent a visitor stays.
+          notePlayerCare([agentAId, agentBId]);
 
           logActivity({
             type: 'player_nudge',
@@ -325,6 +328,8 @@ export const nudgeRouter = router({
               timestamp: Date.now(),
             })
             .run();
+
+          notePlayerCare([agentId]);
 
           logActivity({
             type: 'player_gift',
@@ -583,6 +588,7 @@ export const nudgeRouter = router({
         // ─── whisper_thought / start_rumor / stir_feeling ──────────────────
         case 'whisper_thought': {
           const result = whisperThought(action.agentId, action.text);
+          if (result.success) notePlayerCare([action.agentId]);
           emitter.flush();
           return result;
         }
@@ -596,6 +602,7 @@ export const nudgeRouter = router({
           // A feeling stirred toward someone is exactly "something changed":
           // a fresh infatuation should be free to send them over at once.
           if (result.success && action.targetId != null) perceptionSystem.forgetPair(action.agentId, action.targetId);
+          if (result.success) notePlayerCare([action.agentId]);
           emitter.flush();
           return result;
         }

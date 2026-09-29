@@ -7,6 +7,8 @@ import {
   DRAMA_LEVELS,
   DRAMA_MULTIPLIER,
   DRAMA_SNAP_THRESHOLD_SCALE,
+  POPULATION_TARGET_MAX,
+  POPULATION_TARGET_MIN,
   SICKNESS_LEVELS,
   SICKNESS_MULTIPLIER,
   type LiveRules,
@@ -54,6 +56,12 @@ function pickValid(raw: unknown): Partial<LiveRules> {
   if ((SICKNESS_LEVELS as readonly unknown[]).includes(r.sicknessRate)) out.sicknessRate = r.sicknessRate as LiveRules['sicknessRate'];
   if ((SICKNESS_LEVELS as readonly unknown[]).includes(r.contagionRate)) out.contagionRate = r.contagionRate as LiveRules['contagionRate'];
   if ((DRAMA_LEVELS as readonly unknown[]).includes(r.dramaIntensity)) out.dramaIntensity = r.dramaIntensity as LiveRules['dramaIntensity'];
+  if (typeof r.populationFlow === 'boolean') out.populationFlow = r.populationFlow;
+  if (r.populationTarget === null) out.populationTarget = null;
+  else if (
+    typeof r.populationTarget === 'number' && Number.isInteger(r.populationTarget)
+    && r.populationTarget >= POPULATION_TARGET_MIN && r.populationTarget <= POPULATION_TARGET_MAX
+  ) out.populationTarget = r.populationTarget;
   return out;
 }
 
@@ -89,6 +97,8 @@ export const RuleOverridesSchema = z
     sicknessRate: z.enum(SICKNESS_LEVELS),
     contagionRate: z.enum(SICKNESS_LEVELS),
     dramaIntensity: z.enum(DRAMA_LEVELS),
+    populationFlow: z.boolean(),
+    populationTarget: z.number().int().min(POPULATION_TARGET_MIN).max(POPULATION_TARGET_MAX).nullable(),
   })
   .partial()
   .strict()
@@ -124,6 +134,11 @@ export function setRuleOverrides(patch: RuleOverrides): LiveRules {
 /** "Death Enabled" (default on): whether agents can die of neglect, sickness, age or accidents. */
 export function isDeathEnabled(): boolean {
   return getRules().deathEnabled;
+}
+
+/** "Population flow" (default on): residents may move away and newcomers arrive on their own. */
+export function isPopulationFlowOn(): boolean {
+  return getRules().populationFlow;
 }
 
 /** Scale on the hourly random-event roll and the dark cascade rules. */

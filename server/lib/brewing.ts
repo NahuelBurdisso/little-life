@@ -28,8 +28,9 @@ import { getTensionSnapshot, type TensionSnapshotEntry } from './cascade';
 import { snapThreshold } from './cascade/TensionTracker';
 import type { PersonalityProfile } from './personality';
 import { isCommonKnowledge } from '../engine/systems/gossipEngine';
+import { leavingThoughts, REASON_PHRASES, type DepartureReason } from './populationFlow';
 
-export type BrewingKind = 'snap' | 'secret' | 'confrontation' | 'nudge' | 'goal' | 'relationship';
+export type BrewingKind = 'snap' | 'secret' | 'confrontation' | 'nudge' | 'goal' | 'relationship' | 'leaving';
 
 export interface BrewingItem {
   /** Stable across recomputes so the UI can key rows and animate heat. */
@@ -175,6 +176,11 @@ export interface BrewingInput {
     romance_ba: number;
     status: string;
   }[];
+  /**
+   * Residents thinking of leaving town, or decided and going in the morning
+   * (lib/populationFlow.ts). Optional: fixtures written before it existed.
+   */
+  leaving?: { agentId: number; reasons: DepartureReason[]; decided: boolean }[];
 }
 
 /**
@@ -348,6 +354,25 @@ export function buildBrewing(input: BrewingInput): BrewingItem[] {
     });
   }
 
+  // ── Thinking of leaving town ──────────────────────────────────────────────
+  // The day's warning the population flow gives: a friend's visit or a nudge
+  // can still keep them. Hot, because it is a whole person the town may lose;
+  // hotter once they have made up their mind.
+  for (const l of input.leaving ?? []) {
+    if (!alive(l.agentId)) continue;
+    const name = nameOf.get(l.agentId)!;
+    const why = l.reasons.length > 0 ? ` — ${joinList(l.reasons.map((r) => REASON_PHRASES[r]))}` : '';
+    items.push({
+      id: `leaving-${l.agentId}`,
+      kind: 'leaving',
+      agentIds: [l.agentId],
+      text: l.decided
+        ? `${name} has decided to leave town in the morning${why}`
+        : `${name} is thinking of leaving town${why}`,
+      heat: l.decided ? 0.8 : 0.65,
+    });
+  }
+
   // Ties broken by id so the order is stable between recomputes.
   items.sort((x, y) => y.heat - x.heat || x.id.localeCompare(y.id));
   return items.slice(0, MAX_ITEMS);
@@ -397,6 +422,7 @@ export function getBrewing(now: number = Date.now()): BrewingItem[] {
       status: goals.status,
     }).from(goals).where(eq(goals.status, 'active')).all(),
     relationships: db.select().from(relationships).all(),
+    leaving: leavingThoughts(),
   });
   cache = { at: now, items };
   return items;
