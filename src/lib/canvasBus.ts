@@ -1,7 +1,8 @@
 /**
  * Fire-and-forget events from the React UI to the Pixi canvas — things the canvas
  * can't learn from a query because they happen on the client first (the player
- * clicked something). Canvas systems subscribe; UI components emit.
+ * clicked something). Canvas systems subscribe; UI components emit. A few are
+ * canvas → canvas (`lightning`), where one renderer owns a moment another reacts to.
  *
  * Kept tiny and synchronous: listeners must not throw or do heavy work.
  */
@@ -46,7 +47,12 @@ export type CanvasBusEvent =
   /** Pan the camera to a world-pixel point (does not change the selection). */
   | { type: 'focus'; x: number; y: number }
   /** Pan the camera to a location's centre. */
-  | { type: 'focusLocation'; locationId: number };
+  | { type: 'focusLocation'; locationId: number }
+  /**
+   * Lightning just flashed (canvas → canvas: LightingSystem owns the only lightning, the
+   * audio system rolls the thunder after it). `strength` 0..1.
+   */
+  | { type: 'lightning'; strength: number };
 
 type Listener = (e: CanvasBusEvent) => void;
 const listeners = new Set<Listener>();

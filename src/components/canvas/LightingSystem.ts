@@ -7,6 +7,7 @@ import {
 // derived open-ground types — see buildingTemplates.ts.
 import { OUTDOOR_TYPES } from '../../../server/lib/worldgen/buildingTemplates';
 import { carriesLantern } from './lanterns';
+import { emitCanvasEvent } from '../../lib/canvasBus';
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
 import {
   type AmbientProfile, PHASE_AMBIENT, computeAmbient, ambientKey, weatherMod,
@@ -500,6 +501,9 @@ export class LightingSystem {
       if (this.lightningTimer > 180 && Math.random() < chanceOverDelta(0.02, deltaFrames)) {
         this.lightningIntensity = 1.0;
         this.lightningTimer = 0;
+        // The thunder that follows is the audio system's (systems/audio); it only hears
+        // about the flash through the bus, so there is still one owner of the lightning.
+        emitCanvasEvent({ type: 'lightning', strength: 0.6 + Math.random() * 0.4 });
       }
     }
 
