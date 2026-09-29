@@ -263,9 +263,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', description, { subtype: 'economy' });
   });
 
-  simEvents.on('event:world', ({ agentId, event }: { agentId: number; event: string }) => {
-    const description = describeEvent('world_event', { event, location: 'town' });
-    memoryService.record(agentId, 'observation', description, { subtype: 'event', event });
+  simEvents.on('event:world', ({ agentId, name, description }: { agentId: number; name: string; description: string }) => {
+    const text = description?.trim()
+      ? describeEvent('world_event', { name, description })
+      : `Word around town: ${endSentence(name)}`;
+    memoryService.record(agentId, 'observation', text, { subtype: 'event', event: name });
   });
 
   simEvents.on(

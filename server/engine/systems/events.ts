@@ -96,7 +96,8 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
     });
     const activeAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
     for (const agent of activeAgents) {
-      simEvents.emit('event:world', { agentId: agent.id, event: `${name}: ${description}` });
+      // Name and description apart: the memory puts each in its own sentence.
+      simEvents.emit('event:world', { agentId: agent.id, name, description });
     }
   }
 
