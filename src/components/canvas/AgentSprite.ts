@@ -5,6 +5,21 @@ import { loadAgentSheet } from "./agentSheet";
 import { newPoseOffsets, poseOffsets, type PoseKind, type StatePose } from "./statePose";
 
 const LERP_SPEED = 0.12;
+/**
+ * Walking between two server positions. The server moves a walker once per tick
+ * (48 px a game minute: 48 px per real second at 1x, 192 px per 250 ms at 4x);
+ * the exponential lerp above covered most of each step in its first few frames
+ * and then stood still until the next one — a dash-and-stop that spun the legs
+ * (the walk cycle advances per pixel, WALK_PX_PER_FRAME) at the start of every
+ * tick. A step is instead spread at constant speed over the time the previous
+ * step took to arrive, so legs turn at the walker's real pace at any tick speed.
+ * The measured gap is clamped: a long pause (the agent stood still) must not
+ * make the first step crawl, and a burst of refetches must not make it jump.
+ */
+const STEP_GAP_MIN_MS = 150;
+const STEP_GAP_MAX_MS = 1100;
+/** Farther than this is a teleport (jail, a reseed), not a walk step: ease there. */
+const STEP_MAX_PX = 400;
 
 // Procedural animation tuning (audit H1: static sprites glide like chess pieces).
 const WALK_BOB_RATE = 0.55;      // walk-cycle radians advanced per pixel traveled
@@ -122,6 +137,9 @@ export class AgentSprite {
   private stateRing: PIXI.Graphics;
 
   private targetPos = { x: 0, y: 0 };
+  /** px per ms for the current server step; 0 = ease (see setTarget). */
+  private stepSpeed = 0;
+  private lastTargetAt = 0;
 
   // Procedural animation state
   private walkPhase = 0;
@@ -301,15 +319,28 @@ export class AgentSprite {
    * from the data path too would give sprites extra frames on every sim tick.
    */
   setTarget(targetX: number, targetY: number) {
+    if (targetX === this.targetPos.x && targetY === this.targetPos.y) return;
+    const now = performance.now();
+    const gap = this.lastTargetAt ? now - this.lastTargetAt : STEP_GAP_MAX_MS;
+    this.lastTargetAt = now;
     this.targetPos.x = targetX;
     this.targetPos.y = targetY;
+    const dist = Math.hypot(targetX - this.container.x, targetY - this.container.y);
+    const span = Math.max(STEP_GAP_MIN_MS, Math.min(STEP_GAP_MAX_MS, gap));
+    this.stepSpeed = dist > STEP_MAX_PX ? 0 : dist / span;
   }
 
   /** Lerp container position toward stored target without changing it. */
   lerp(deltaTime: number) {
     const dx = this.targetPos.x - this.container.x;
     const dy = this.targetPos.y - this.container.y;
-    const t = Math.min(1, deltaTime * LERP_SPEED);
+    // Constant speed toward the latest server position (see STEP_GAP_*); the
+    // old exponential ease for teleports and first frames. deltaTime is in
+    // 60 fps frames.
+    const remaining = Math.hypot(dx, dy);
+    const t = this.stepSpeed > 0 && remaining > 0
+      ? Math.min(1, (this.stepSpeed * deltaTime * (1000 / 60)) / remaining)
+      : Math.min(1, deltaTime * LERP_SPEED);
     const stepX = dx * t;
     const stepY = dy * t;
     this.container.x += stepX;
