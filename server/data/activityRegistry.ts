@@ -87,4 +87,6 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   rejection:  { category: 'drama', base_importance: 0.85, retention: 'long', template: '{description}' },
   wedding:    { category: 'relationship', base_importance: 1.0, retention: 'permanent', template: '{description}' },
   engagement_ended: { category: 'drama', base_importance: 0.7, retention: 'long', template: '{description}' },
+  // Newlyweds sharing a house (lib/residents.ts rehomeCouple, at the wedding).
+  moved_in:   { category: 'relationship', base_importance: 0.6, retention: 'long', template: '{description}' },
 };

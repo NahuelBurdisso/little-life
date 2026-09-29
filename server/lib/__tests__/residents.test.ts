@@ -6,7 +6,7 @@ import {
   worldState,
 } from '../../db/schema';
 import {
-  NEWCOMER_TIE_SCALE, createResident, findHousing, retireResident, townEdgePoint,
+  NEWCOMER_TIE_SCALE, createResident, findHousing, rehomeCouple, retireResident, townEdgePoint,
 } from '../residents';
 import { processAgentDeath } from '../lifeEventsEngine';
 import { memoryService } from '../memory/instance';
@@ -15,7 +15,8 @@ import { CONFIG } from '../constants';
 import { MAX_AGENTS } from '../worldgen/config';
 import { jobSalary } from '../../data/jobs';
 import { nudgeRouter } from '../../routers/nudge';
-import { NOW, freshTown, insertResident, relate, type Town } from './populationFixtures';
+import { milestonesTick, clearMilestones } from '../milestonesEngine';
+import { DAY, NOW, TIME, freshTown, insertResident, relate, type Town } from './populationFixtures';
 
 /**
  * The resident lifecycle (lib/residents.ts): one factory every newcomer comes
@@ -218,3 +219,46 @@ describe('retireResident', () => {
   });
 });
 
+describe('married couples move in together', () => {
+  it('into the larger house, freeing the other', () => {
+    const [small, , big] = town.homes; // capacity 2 and 4
+    const a = insertResident('Harold Pickett', small);
+    const b = insertResident('Violet Stroud', big);
+    const moved = rehomeCouple(a, b);
+    expect(moved).toMatchObject({ moverId: a, hostId: b, homeId: big, leftHomeId: small });
+    expect(db.select().from(agents).where(eq(agents.id, a)).get()!.home).toBe(big);
+    const living = db.select().from(agents).where(eq(agents.is_active, true)).all();
+    expect(findHousing(db.select().from(locations).all(), living, { emptyOnly: true })?.location.id).toBe(small);
+    // Renamed for the household now living there.
+    expect(db.select().from(locations).where(eq(locations.id, big)).get()!.name).toMatch(/house/);
+    // Already together: nothing to do.
+    expect(rehomeCouple(a, b)).toBeNull();
+  });
+
+  it('stays put when neither house has room', () => {
+    const [h1, h2] = town.homes; // both capacity 2
+    const a = insertResident('Ada A', h1);
+    insertResident('Ada Sister', h1);
+    const b = insertResident('Bert B', h2);
+    insertResident('Bert Brother', h2);
+    expect(rehomeCouple(a, b)).toBeNull();
+  });
+
+  it('happens at the wedding', () => {
+    clearMilestones();
+    const [small, , big] = town.homes;
+    const a = insertResident('Cora Lowry', small);
+    const b = insertResident('Silas Thorne', big);
+    relate(a, b, {
+      friendship_ab: 80, friendship_ba: 80, romance_ab: 90, romance_ba: 90, trust_ab: 70, trust_ba: 70,
+      tags: ['partner', 'engaged'], status: 'partners', status_since_minute: NOW - 10 * DAY,
+    });
+    // First pass starts the engagement clock; a day later at noon, the wedding.
+    milestonesTick({ ...TIME, hour: 12 }, NOW);
+    milestonesTick({ ...TIME, day: TIME.day + 1, hour: 12 }, NOW + DAY + 12 * 60);
+    const rel = db.select().from(relationships).get()!;
+    expect(rel.tags).toContain('married');
+    expect(db.select().from(agents).where(eq(agents.id, a)).get()!.home).toBe(big);
+    clearMilestones();
+  });
+});

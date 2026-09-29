@@ -19,6 +19,7 @@ import {
   ENGAGED_TAG, MARRIED_AFFAIR_SENSITIVITY, MARRIED_TAG, isSpokenFor, weddingTriggeredBy,
 } from './marriage';
 import { asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
+import { rehomeCouple } from './residents';
 import type { PersonalityProfile } from './personality';
 import type { ClockTime } from './gameClock';
 
@@ -722,6 +723,22 @@ function holdWedding(rel: RelRow, a: AgentRow, b: AgentRow, now: number): boolea
   remember(b.id, `Today I married ${a.name} on the square, with the whole town looking on.`, 1, 10, a.id);
   addMood(a.id, 20, 'wedding', 24 * 60, now);
   addMood(b.id, 20, 'wedding', 24 * 60, now);
+
+  // Married couples share a house: the larger of the two, freeing the other
+  // for a newcomer (lib/populationFlow.ts). Nothing moves when there is no room.
+  const moved = rehomeCouple(a.id, b.id);
+  if (moved) {
+    const mover = moved.moverId === a.id ? a : b;
+    const host = mover === a ? b : a;
+    logActivity({
+      type: 'moved_in',
+      agents: [mover.id, host.id],
+      location: moved.homeId,
+      templateData: { description: `${mover.name} has moved into ${moved.homeName} with ${host.name}.` },
+    });
+    remember(mover.id, `I moved into ${moved.homeName} with ${host.name}. It's our home now.`, 0.7, 7, host.id);
+    remember(host.id, `${mover.name} moved in with me at ${moved.homeName}. It's our home now.`, 0.7, 6, mover.id);
+  }
 
   // An affair either of them was already known for now betrays a marriage.
   // createFact judges new affairs at birth; the ones already in circulation

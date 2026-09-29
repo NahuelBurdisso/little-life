@@ -555,3 +555,61 @@ export function livingTiesOf(agentId: number): Array<typeof relationships.$infer
   return rows.filter((r) => alive.has(r.agent_a === agentId ? r.agent_b : r.agent_a));
 }
 
+// ─── Moving in together ──────────────────────────────────────────────────────
+
+export interface Rehome {
+  /** The spouse who moved. */
+  moverId: number;
+  /** The one whose house they moved into. */
+  hostId: number;
+  homeId: number;
+  homeName: string;
+  /** The house the mover left: empty now unless they shared it with others. */
+  leftHomeId: number;
+}
+
+/**
+ * A married couple moves in together (milestonesEngine, at the wedding): into
+ * the larger of their two houses, if it has a bed for the one moving. Before
+ * this, newlyweds went home to separate cottages every night for the rest of
+ * the game, and the flow of newcomers (lib/populationFlow.ts) never had a
+ * house freed by a marriage to move into.
+ *
+ * Larger = more capacity; on a tie the house with more people already in it
+ * (the smaller household moves), then the lower id. Lodging at the tavern is
+ * not a home to bring a spouse to: a lodger always moves out to the other's
+ * house. Both houses are renamed for who lives there now ("Rosa's cottage" →
+ * "the Rivera house"); a house left empty keeps its name until someone new
+ * moves in. Null when they already share a home or neither house has room.
+ */
+export function rehomeCouple(aId: number, bId: number): Rehome | null {
+  const pair = db.select().from(agents).where(inArray(agents.id, [aId, bId])).all();
+  const a = pair.find((x) => x.id === aId);
+  const b = pair.find((x) => x.id === bId);
+  if (!a || !b || !a.is_active || !b.is_active || a.home === b.home) return null;
+
+  const homeRows = db.select().from(locations).where(inArray(locations.id, [a.home, b.home])).all();
+  const living = db.select({ home: agents.home }).from(agents).where(eq(agents.is_active, true)).all();
+  const counts = residentsByHome(living);
+
+  const options = [
+    { host: a, mover: b, home: homeRows.find((l) => l.id === a.home) },
+    { host: b, mover: a, home: homeRows.find((l) => l.id === b.home) },
+  ]
+    .filter((o): o is { host: AgentRow; mover: AgentRow; home: LocationRow } => o.home?.type === 'home')
+    .sort((x, y) =>
+      y.home.capacity - x.home.capacity
+      || (counts.get(y.home.id) ?? 0) - (counts.get(x.home.id) ?? 0)
+      || x.home.id - y.home.id);
+
+  const pick = options.find((o) => (counts.get(o.home.id) ?? 0) + 1 <= o.home.capacity);
+  if (!pick) return null;
+
+  const leftHomeId = pick.mover.home;
+  db.update(agents).set({ home: pick.home.id }).where(eq(agents.id, pick.mover.id)).run();
+  nameHomes(sqlite, { homeIds: [pick.home.id, leftHomeId] });
+  const homeName = db.select({ name: locations.name }).from(locations).where(eq(locations.id, pick.home.id)).get()?.name
+    ?? pick.home.name;
+  emitter.markDirty('agents.all');
+  return { moverId: pick.mover.id, hostId: pick.host.id, homeId: pick.home.id, homeName, leftHomeId };
+}
