@@ -39,6 +39,25 @@ const FRONTAGE_CAP = 8;
 const FRONTAGE_BONUS = 12;
 
 /**
+ * Organic towns only: a lot whose front door is at most this many tiles from a
+ * road is taken before any lot further out, whatever the weights say.
+ *
+ * FRONTAGE_BONUS is a weight in an exponential race over hundreds of
+ * candidates, so it only tilts the odds. On the grid that is enough, because
+ * every block is ringed by road and road-front lots are plentiful. An organic
+ * town has less road (~316 tiles against ~380 at 56×43) and its public
+ * buildings now claim the lane frontage first (see LANE_FRONT_DOOR in
+ * layout.ts), so the lots left on a lane are a small share of the pool and the
+ * race kept drawing back lots: 25.8% of front doors ended up more than 6 tiles
+ * from any road at 13 agents (grid: 11.6%); with the tier, 4%. The weights
+ * still choose *among* the lane-front lots, social placement still decides who
+ * lives in which, and once the lane-front lots run out the race continues over
+ * the rest exactly as before, so no home becomes unplaceable because of it —
+ * W2's custom 56×43 failures at 30-32 agents went down, not up (9/400 → 6/400).
+ */
+const HOME_LANE_DOOR = 3;
+
+/**
  * Home services — matches what getDefaultServices('home') in maps.ts returns.
  * Kept inline here so we don't depend on maps.ts internals that may change.
  */
@@ -183,16 +202,23 @@ export const homesStage: Stage<{ homes: LocationSeed[] }> = {
       const d = Math.min(roadDist[dy * width + dx], FRONTAGE_CAP);
       return 1 + FRONTAGE_BONUS * (1 - d / FRONTAGE_CAP);
     };
+    // Organic towns only: lots whose door is on a lane go first, as a tier
+    // rather than a weight. See HOME_LANE_DOOR.
+    const tierOf = cfg.layoutStyle === 'organic'
+      ? (c: { tx: number; ty: number }) =>
+        (roadDist[(c.ty + HOME_TILES) * width + c.tx + 1] <= HOME_LANE_DOOR ? 0 : 1)
+      : () => 0;
     const shuffled = candidates
       .map((c) => ({
         c,
+        tier: tierOf(c),
         // Centre tile of the 3×3 footprint, so a home straddling a zone edge is
         // attributed to the zone it mostly sits in.
         key:
           -Math.log(1 - rng.next()) /
           ((residentialAt(c.tx + 1, c.ty + 1) + 1) * frontage(c.tx, c.ty)),
       }))
-      .sort((a, b) => a.key - b.key)
+      .sort((a, b) => a.tier - b.tier || a.key - b.key)
       .map((e) => e.c);
 
     // Greedy select with Chebyshev spacing rule.
