@@ -29,6 +29,14 @@ export function useKeyboardControls(callbacks: {
   agentKeysEnabled: boolean;
   /** "?" opens the help overlay (src/lib/helpContent.ts lists every key). */
   onToggleHelp?: () => void;
+  /** J: open or close the Town Journal. */
+  onToggleJournal?: () => void;
+  /**
+   * Like `agentKeysEnabled`, except that the Journal itself doesn't count as a
+   * blocking overlay: J must also close it. False while any OTHER modal or menu
+   * is open, so J never stacks the Journal over a dialog.
+   */
+  journalKeyEnabled?: boolean;
 }) {
   // Callers pass a fresh object literal every render, and the app re-renders on
   // every subscription push — several times a second. Read the callbacks through
@@ -110,6 +118,10 @@ export function useKeyboardControls(callbacks: {
           // Same guard as F: with a dialog open the key belongs to the dialog.
           if (!cbRef.current.agentKeysEnabled) break;
           cbRef.current.onToggleCaptions?.();
+          break;
+        case "KeyJ":
+          if (!(cbRef.current.journalKeyEnabled ?? cbRef.current.agentKeysEnabled)) break;
+          cbRef.current.onToggleJournal?.();
           break;
         // Escape is owned by App's overlay handler, which closes only the topmost
         // layer. Deselecting here too would close the agent panel underneath it.

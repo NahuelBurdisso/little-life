@@ -52,7 +52,7 @@ interface TimelineListProps {
  * Days as sections, newest first: "Day 12 · autumn · yesterday", that day's
  * Town Crier headline, then the events that mattered with their game time.
  * Scrolling to the end pulls the next page back through the server's cursor.
- * Shared by the town Timeline modal and a resident's Story tab.
+ * Shared by the Journal's Timeline tab and a resident's Story tab.
  */
 export function TimelineList({
   days, isLoading, isError, hasMore, isFetchingMore, onLoadMore, nowMinute,

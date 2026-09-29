@@ -18,6 +18,7 @@ import { callOllamaChat } from '../ai/ollama';
 import { CONFIG } from './constants';
 import { TOWN_SETTING } from '../ai/setting';
 import { renderMessage } from './activityMessage';
+import { storyKey } from './factText';
 import { detectStoryArcs } from './chronicle';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
@@ -32,11 +33,6 @@ const MIN_IMPORTANCE = 0.45;
 const MAX_ITEMS = 24;
 const MIN_ITEMS = 3;
 
-/** What a feed line is about, ignoring who passed it on. */
-function storyKey(text: string): string {
-  const m = text.match(/\b(?:that|:)\s+(.+)$/i);
-  return (m && /\b(told|overheard|learned|discovered|knows|heard)\b/i.test(text) ? m[1] : text).toLowerCase();
-}
 
 export interface GazetteMaterial {
   /** What residents did, oldest first. */

@@ -32,8 +32,8 @@ const STEPS: Step[] = [
   },
   {
     icon: "⚡",
-    title: "Events, weather and the Paper",
-    body: "Events (top right) starts a festival, a storm or a scandal and sets the weather. The Paper prints one edition a day of what the town got up to. Press ? any time for the hotkeys.",
+    title: "Events, weather and the Journal",
+    body: "Events (top right) starts a festival, a storm or a scandal and sets the weather. Journal: the paper, alerts and stories — the Town Crier's daily edition, what your meddling came to, and what is about to boil over (J opens it). Press ? any time for the hotkeys.",
     anchors: ["events", "paper"],
     place: "top-right",
   },
@@ -69,7 +69,7 @@ function useAnchorRects(anchors: string[] | undefined, active: boolean) {
 }
 
 /**
- * Three dismissible cards after "Meet the town": inspect, meddle, events/paper.
+ * Three dismissible cards after "Meet the town": inspect, meddle, events/journal.
  * Non-blocking - the map stays clickable underneath, so step 1 and 2 can be tried
  * while they are on screen.
  */

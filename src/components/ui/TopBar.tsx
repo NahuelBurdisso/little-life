@@ -3,6 +3,7 @@ import { formatTime, weatherEmoji, seasonEmoji } from "../../lib/formatters";
 import { SpeedControls } from "./SpeedControls";
 import { SavesDialog } from "./SavesDialog";
 import { trpc } from "../../lib/trpc";
+import { badgeText } from "../../lib/journal";
 
 interface TopBarProps {
   world: {
@@ -18,12 +19,12 @@ interface TopBarProps {
   awakeAgents: number;
   onShowEvents: () => void;
   onShowStats: () => void;
-  onShowGazette: () => void;
-  /** An edition of The Town Crier the player hasn't opened yet. */
-  hasNewGazette: boolean;
-  onShowInbox: () => void;
-  /** Alerts that arrived since the inbox was last opened (useDramaAlerts). */
-  unreadAlerts: number;
+  /** Opens the Town Journal (paper, alerts, stories) on its most relevant tab. */
+  onShowJournal: () => void;
+  /** Unread alerts plus one for a new paper (lib/journal.ts `journalUnread`). */
+  journalUnread: number;
+  /** An edition of The Town Crier the player hasn't opened yet (for the label). */
+  hasNewPaper: boolean;
   /**
    * Called after this tab replaced the world. Agent ids restart at 1, so App
    * must drop its selection — its own clock-drop check misses a restart of a
@@ -69,7 +70,7 @@ function MoreItem({
   );
 }
 
-export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onShowInbox, unreadAlerts, onWorldReplaced }: TopBarProps) {
+export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowJournal, journalUnread, hasNewPaper, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [showSaves, setShowSaves] = useState(false);
@@ -191,7 +192,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
 
         {/* Right: Menu buttons. Labels fold to icons below xl and the secondary
             buttons (Stats, saves, restart, reset) fold into a "more" menu below lg,
-            so the bar stays one row down to ~800px. Paper and Events stay put:
+            so the bar stays one row down to ~800px. Journal and Events stay put:
             the first-run coach marks ring them. */}
         <div className="flex items-center gap-2 shrink-0">
           <button
@@ -204,33 +205,27 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             <span aria-hidden="true">📊</span>
             <span className="hidden xl:inline">Stats</span>
           </button>
+          {/* The paper, the alert inbox, brewing trouble, story arcs, the
+              timeline and every conversation: one button, one badge. The
+              `paper` coach anchor is historical — the Journal holds the paper. */}
           <button
-            onClick={onShowInbox}
+            onClick={onShowJournal}
             disabled={isResetting}
-            title="Inbox — every alert, including what your nudges came to"
-            aria-label={unreadAlerts > 0 ? `Inbox, ${unreadAlerts} unread` : "Inbox"}
-            className={`${BAR_BTN} relative !px-2`}
-          >
-            🔔
-            {unreadAlerts > 0 && (
-              <span className="absolute -top-1 -right-1 bg-ui-alert-player text-ui-deep font-bold text-[10px] rounded-full min-w-4 px-1 h-4 flex items-center justify-center">
-                {unreadAlerts > 9 ? "9+" : unreadAlerts}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={onShowGazette}
-            disabled={isResetting}
-            title="The Town Crier — the town's daily paper"
-            aria-label={hasNewGazette ? "Paper, new edition" : "Paper"}
+            title="Journal — the paper, alerts and stories (J)"
+            aria-label={
+              journalUnread > 0
+                ? `Journal, ${journalUnread} unread${hasNewPaper ? ", new paper" : ""}`
+                : "Journal"
+            }
+            aria-keyshortcuts="J"
             data-coach="paper"
             className={`${BAR_BTN} relative inline-flex items-center gap-1.5 whitespace-nowrap`}
           >
-            <span aria-hidden="true">📰</span>
-            <span className="hidden xl:inline">Paper</span>
-            {hasNewGazette && (
-              <span className="absolute -top-1 -right-1 bg-ui-gold text-ui-deep font-bold text-[10px] rounded-full px-1 h-4 flex items-center justify-center">
-                new
+            <span aria-hidden="true">📖</span>
+            <span className="hidden xl:inline">Journal</span>
+            {journalUnread > 0 && (
+              <span className="absolute -top-1 -right-1 bg-ui-alert-player text-ui-deep font-bold text-[10px] rounded-full min-w-4 px-1 h-4 flex items-center justify-center">
+                {badgeText(journalUnread)}
               </span>
             )}
           </button>

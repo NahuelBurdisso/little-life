@@ -29,7 +29,7 @@ export interface DramaAlert extends ActivityEntry {
 
 /**
  * Alert toasts plus the inbox that keeps them. Lives in App (not in the toast
- * overlay) because the TopBar bell and the Inbox panel read the same state.
+ * overlay) because the TopBar's Journal badge and the Journal's Inbox tab read the same state.
  *
  * `seed` scopes the stored inbox to its world (see alertInbox.ts);
  * `favorites` are the cast bar's starred ids, whose rows the server alerts on
@@ -157,5 +157,3 @@ export function useDramaAlerts(seed: string, favorites: ReadonlySet<string>) {
     reset,
   };
 }
-
-export type DramaAlertsState = ReturnType<typeof useDramaAlerts>;

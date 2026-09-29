@@ -29,8 +29,8 @@ export function ConversationDetail({ conversationId, onClose, onSelectAgent }: C
   );
 
   if (!conversationId) return null;
-  // ConversationHistory renders this inside its own click-to-close backdrop; without
-  // stopping the event, dismissing the detail also closed the whole history list.
+  // The Journal's Talks tab renders this inside the Journal's click-to-close backdrop;
+  // without stopping the event, dismissing the detail also closed the whole Journal.
   const dismiss = (e: { stopPropagation: () => void }) => {
     e.stopPropagation();
     onClose();

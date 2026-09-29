@@ -3,11 +3,10 @@ import { trpc } from "../../lib/trpc";
 import { ConversationDetail } from "./ConversationDetail";
 import { EmptyState } from "./EmptyState";
 import { Skeleton } from "./Skeleton";
+import { useEscapeClose } from "../../hooks/useEscapeClose";
 
-interface ConversationHistoryProps {
-  isOpen: boolean;
-  onClose: () => void;
-  /** Participant names jump to that resident (the caller closes this modal). */
+interface ConversationHistoryViewProps {
+  /** Participant names jump to that resident (the caller closes the Journal). */
   onSelectAgent?: (agentId: string) => void;
 }
 
@@ -39,15 +38,20 @@ function timeAgoReal(timestamp: number | null): string {
   return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
-export function ConversationHistory({ isOpen, onClose, onSelectAgent }: ConversationHistoryProps) {
-  const { data: allConvos } = trpc.conversations.getAll.useQuery(
-    { limit: 200 },
-    { enabled: isOpen },
-  );
+/**
+ * The Journal's Talks tab: every finished conversation, searchable by name,
+ * topic or line. Mounted only while the tab shows, so the 200-row query runs
+ * only then.
+ */
+export function ConversationHistoryView({ onSelectAgent }: ConversationHistoryViewProps) {
+  const { data: allConvos } = trpc.conversations.getAll.useQuery({ limit: 200 });
   const [search, setSearch] = useState("");
   const [sentimentFilter, setSentimentFilter] = useState<SentimentFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [selectedConvoId, setSelectedConvoId] = useState<number | null>(null);
+  // The transcript opens over the Journal; Escape closes just it (capture phase,
+  // so App's chain doesn't also close the Journal underneath).
+  useEscapeClose(selectedConvoId != null, () => setSelectedConvoId(null));
 
   const filtered = useMemo(() => {
     if (!allConvos) return [];
@@ -77,27 +81,8 @@ export function ConversationHistory({ isOpen, onClose, onSelectAgent }: Conversa
     });
   }, [allConvos, search, sentimentFilter, typeFilter]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="bg-ui-panel border border-ui-line shadow-2xl w-[700px] max-w-[95vw] max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-ui-line shrink-0">
-          <h2 className="text-sm font-bold text-ui-text">Conversation History</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-ui-muted">
-              {filtered.length}/{allConvos?.length ?? 0}
-            </span>
-            <button onClick={onClose} className="text-ui-dim hover:text-ui-text text-lg leading-none">
-              &times;
-            </button>
-          </div>
-        </div>
-
+    <div className="h-full flex flex-col">
         {/* Search + Filters */}
         <div className="px-4 py-2 border-b border-ui-line space-y-2 shrink-0">
           <input
@@ -107,7 +92,7 @@ export function ConversationHistory({ isOpen, onClose, onSelectAgent }: Conversa
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-ui-deep border border-ui-line rounded-sm px-3 py-1.5 text-xs text-ui-text placeholder-ui-muted focus:outline-none focus:border-ui-gold"
           />
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             {/* Sentiment filters */}
             {(["all", "positive", "neutral", "negative"] as SentimentFilter[]).map((f) => (
               <button
@@ -137,11 +122,14 @@ export function ConversationHistory({ isOpen, onClose, onSelectAgent }: Conversa
                 {f === "llm" ? "🤖" : f === "template" ? "📝" : "📋"} {f}
               </button>
             ))}
+            <span className="ml-auto self-center text-[10px] text-ui-muted">
+              {filtered.length}/{allConvos?.length ?? 0}
+            </span>
           </div>
         </div>
 
         {/* Conversation List */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {!allConvos ? (
             <div className="divide-y divide-ui-line/50" role="status" aria-label="Loading conversations">
               {[0, 1, 2, 3, 4].map((i) => (
@@ -253,7 +241,6 @@ export function ConversationHistory({ isOpen, onClose, onSelectAgent }: Conversa
             </div>
           )}
         </div>
-      </div>
 
       {/* Detail modal */}
       <ConversationDetail
