@@ -13,6 +13,8 @@ import { DramaAlerts } from "./components/overlays/DramaAlerts";
 import { NudgeMenu } from "./components/overlays/NudgeMenu";
 import { EventMenu } from "./components/ui/EventMenu";
 import { TownStats } from "./components/ui/TownStats";
+import { Gazette } from "./components/ui/Gazette";
+import { useGazette } from "./hooks/useGazette";
 import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
 import { ConversationHistory } from "./components/ui/ConversationHistory";
@@ -37,6 +39,8 @@ export default function App() {
   const [focusNonce, setFocusNonce] = useState(0);
   const [showEventMenu, setShowEventMenu] = useState(false);
   const [showTownStats, setShowTownStats] = useState(false);
+  const [showGazette, setShowGazette] = useState(false);
+  const gazette = useGazette();
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
@@ -55,6 +59,7 @@ export default function App() {
       setSelectedAgentId(null);
       setShowEventMenu(false);
       setShowTownStats(false);
+      setShowGazette(false);
       setShowNewAgent(false);
       setShowRelGraph(false);
       setShowConvoHistory(false);
@@ -120,6 +125,8 @@ export default function App() {
           setContextMenuPos(null);
         } else if (showEventMenu) {
           setShowEventMenu(false);
+        } else if (showGazette) {
+          setShowGazette(false);
         } else if (showTownStats) {
           setShowTownStats(false);
         } else if (showNewAgent) {
@@ -137,7 +144,7 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, showConvoHistory, selectedAgentId]);
+  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, selectedAgentId]);
 
   // Keyboard controls
   useKeyboardControls({
@@ -218,6 +225,8 @@ export default function App() {
         }).length}
         onShowEvents={() => setShowEventMenu(true)}
         onShowStats={() => setShowTownStats(true)}
+        onShowGazette={() => { setShowGazette(true); gazette.markSeen(); }}
+        hasNewGazette={gazette.hasNew}
         onWorldReplaced={handleWorldReplaced}
       />
       <div className="flex-1 flex overflow-hidden">
@@ -323,6 +332,10 @@ export default function App() {
         onClose={() => setShowEventMenu(false)}
         activeEvents={events ?? []}
         nowMinutes={world?.time ? gameMinutes(world.time) : null}
+      />
+      <Gazette
+        isOpen={showGazette}
+        onClose={() => { setShowGazette(false); gazette.markSeen(); }}
       />
       <TownStats
         isOpen={showTownStats}

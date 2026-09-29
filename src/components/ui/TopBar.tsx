@@ -17,6 +17,9 @@ interface TopBarProps {
   awakeAgents: number;
   onShowEvents: () => void;
   onShowStats: () => void;
+  onShowGazette: () => void;
+  /** An edition of The Town Crier the player hasn't opened yet. */
+  hasNewGazette: boolean;
   /**
    * Called after this tab replaced the world. Agent ids restart at 1, so App
    * must drop its selection — its own clock-drop check misses a restart of a
@@ -25,7 +28,7 @@ interface TopBarProps {
   onWorldReplaced: () => void;
 }
 
-export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onWorldReplaced }: TopBarProps) {
+export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -130,6 +133,19 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
           >
             📊 Stats
+          </button>
+          <button
+            onClick={onShowGazette}
+            disabled={isResetting}
+            title="The Town Crier — the town's daily paper"
+            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors relative disabled:opacity-50"
+          >
+            📰 Paper
+            {hasNewGazette && (
+              <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[10px] rounded-full px-1 h-4 flex items-center justify-center">
+                new
+              </span>
+            )}
           </button>
           <button
             onClick={onShowEvents}
