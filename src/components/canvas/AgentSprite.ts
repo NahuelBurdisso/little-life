@@ -71,9 +71,33 @@ const STATE_PRIORITY: string[] = [
   'euphoric', 'confident', 'grieving',
 ];
 
+/**
+ * Where a held item sits relative to the rig origin (the feet), for an agent facing
+ * right. The rig mirrors with `facing`, so the item swaps hands with the body.
+ */
+const HAND_X = 7;
+const HAND_Y = -10;
+/** Top of the head above the feet anchor, standing. */
+export const HEAD_HEIGHT = 27;
+
 /** Represents a single agent's visual on the canvas: pixel-art sprite with rings + label. */
 export class AgentSprite {
   container: PIXI.Container;
+  /**
+   * Everything that moves with the body — the body sprite plus attachments. All pose
+   * transforms (walk sway, sitting, lying down, facing flip) are applied here rather
+   * than to the sprite, so attachments inherit them. Pixi 8 sprites can't hold
+   * children, hence a container.
+   */
+  readonly rig: PIXI.Container;
+  /**
+   * Attach held items here (canvas systems, e.g. tools while working). Positioned at
+   * the right hand of a right-facing body; it flips, bobs and lies down with the rig.
+   * Drawn in front of the body.
+   */
+  readonly hand: PIXI.Container;
+  /** Attachments drawn behind the body (e.g. a bag on the back, a shadow prop). */
+  readonly behind: PIXI.Container;
 
   private interiorGlow: PIXI.Graphics;
   private selectionRing: PIXI.Graphics;
@@ -84,6 +108,8 @@ export class AgentSprite {
   private sheetFacing: SheetFacing = 'down';
   private walkDistance = 0;
   private idleFrames = 0;
+  private walkingNow = false;
+  private strokeNow = 0;
   private blinkCountdown = BLINK_MIN_GAP + Math.random() * BLINK_GAP_SPREAD;
   private fallback: PIXI.Graphics | null = null;
   private nameLabel: PIXI.Text;
@@ -124,6 +150,14 @@ export class AgentSprite {
     // --- Mood ring under feet (colored ellipse) ---
     this.moodRing = new PIXI.Graphics();
     this.container.addChild(this.moodRing);
+
+    // --- Body rig: behind-attachments, body sprite (inserted on load), hand ---
+    this.rig = new PIXI.Container();
+    this.behind = new PIXI.Container();
+    this.hand = new PIXI.Container();
+    this.hand.position.set(HAND_X, HAND_Y);
+    this.rig.addChild(this.behind, this.hand);
+    this.container.addChild(this.rig);
 
     // --- Sprite or fallback circle+letter ---
     if (spriteKey) {
@@ -206,14 +240,13 @@ export class AgentSprite {
         }
       }
     }
-    // Insert sprite below state ring (which is last-added before name label).
-    const stateRingIdx = this.container.getChildIndex(this.stateRing);
-    this.container.addChildAt(sprite, stateRingIdx);
+    // Between the behind-attachments and the hand.
+    this.rig.addChildAt(sprite, this.rig.getChildIndex(this.hand));
   }
 
   private onSpriteLoadFailed(name: string) {
     if (this.sprite) {
-      this.container.removeChild(this.sprite);
+      this.rig.removeChild(this.sprite);
       this.sprite.destroy();
       this.sprite = null;
     }
@@ -278,6 +311,34 @@ export class AgentSprite {
     this.seated = seated;
   }
 
+  /** Horizontal facing: 1 = right, -1 = left. The rig is mirrored accordingly. */
+  get facingDir(): 1 | -1 {
+    return this.facing;
+  }
+
+  /** Which sheet view is showing: 'down' = face to camera, 'up' = back to camera. */
+  get viewFacing(): SheetFacing {
+    return this.sheetFacing;
+  }
+
+  /** Server action type last handed to `setActionType`. */
+  get currentAction(): string {
+    return this.actionType;
+  }
+
+  /** Whether the body moved this frame. */
+  get isWalking(): boolean {
+    return this.walkingNow;
+  }
+
+  /**
+   * 0..1 effort stroke while working (0 = rest, 1 = bottom of the stroke), for
+   * syncing a held tool's swing to the body. 0 when not working.
+   */
+  get workStroke(): number {
+    return this.workBlend > 0.01 && !this.walkingNow ? this.strokeNow : 0;
+  }
+
   /**
    * 0 = upright, 1 = fully lying down. Head-anchored overlays (bubbles, emotes)
    * use this to drop with the body instead of floating where the head used to be.
@@ -298,7 +359,9 @@ export class AgentSprite {
    * bubbles at standing head height. Only the sprite transforms are guarded.
    */
   private animate(stepX: number, stepY: number, deltaTime: number) {
-    const body = this.sprite;
+    // Transforms go on the rig so attachments follow; without a loaded sprite the rig
+    // only holds attachments, which should still move with the (invisible) body.
+    const body = this.rig;
 
     const dist = Math.hypot(stepX, stepY);
 
@@ -331,6 +394,7 @@ export class AgentSprite {
     if (body) body.x *= SETTLE; // decay the lying offset after waking
 
     const walking = dist > WALK_MIN_STEP * deltaTime;
+    this.walkingNow = walking;
 
     // Standing poses blend rather than snap, so an agent dropping onto a bar
     // stool eases into it the same way a sleeper eases into the bed.
@@ -377,6 +441,7 @@ export class AgentSprite {
         const breath = Math.sin(this.idlePhase) * IDLE_BREATH_SCALE;
         // Half-wave: the effort stroke dips and returns, it does not rise above rest.
         const stroke = Math.abs(Math.sin(this.workPhase)) * this.workBlend;
+        this.strokeNow = stroke;
         body.y = SIT_DROP * this.sitBlend + stroke * WORK_BOB_HEIGHT;
         body.rotation = this.facing * (SIT_LEAN * this.sitBlend + WORK_LEAN * stroke);
         body.scale.set(

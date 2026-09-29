@@ -18,6 +18,21 @@ export interface AgentData {
     thresholds?: { critical?: number };
   } | null;
   activeStates?: Array<{ type: string; severity?: number; target_agent_id?: number | null; metadata?: any }>;
+  /** Location id of the agent's workplace (look its `type` up in the locations list). */
+  workplace?: number | null;
+  home?: number | null;
+  age?: number;
+  gender?: string;
+  /** Hobbies with level > 0. Kept in server memory, so levels reset on a server restart. */
+  hobbies?: Array<{ hobby: string; level: number }>;
+}
+
+/** An agent whose sprite was dropped by the last `update` (died, removed, world reset). */
+export interface RemovedAgent {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
 }
 
 /** `current_action` arrives as either a bare string or a `{ type }` object. */
@@ -38,7 +53,13 @@ export function poseOf(agent: { current_action?: { pose?: string } | string }): 
 /** Manages all AgentSprite instances, creating/removing as needed. */
 export class SpritePool {
   private sprites: Map<string, AgentSprite> = new Map();
+  private names: Map<string, string> = new Map();
   readonly container: PIXI.Container;
+  /**
+   * Agents removed by the most recent `update`, with where they last stood. Refilled on
+   * every update, so read it right after (canvas systems' `onData` runs after it).
+   */
+  readonly recentlyRemoved: RemovedAgent[] = [];
 
   constructor(parentContainer: PIXI.Container) {
     this.container = new PIXI.Container();
@@ -62,6 +83,7 @@ export class SpritePool {
       let sprite = this.sprites.get(id);
       if (!sprite) {
         sprite = new AgentSprite(agent.name ?? "Agent", agent.sprite_sheet);
+        this.names.set(id, agent.name ?? "Agent");
         sprite.setPositionImmediate(px, py);
         this.sprites.set(id, sprite);
         this.container.addChild(sprite.container);
@@ -77,8 +99,11 @@ export class SpritePool {
     }
 
     // Remove sprites for agents no longer present
+    this.recentlyRemoved.length = 0;
     for (const [id, sprite] of this.sprites) {
       if (!activeIds.has(id)) {
+        this.recentlyRemoved.push({ id, name: this.names.get(id) ?? "Agent", x: sprite.x, y: sprite.y });
+        this.names.delete(id);
         sprite.destroy();
         this.sprites.delete(id);
       }

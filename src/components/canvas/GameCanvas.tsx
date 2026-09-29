@@ -10,6 +10,10 @@ import { SpritePool, actionTypeOf } from "./SpritePool";
 import { BubbleSystem } from "./BubbleSystem";
 import { InteractionLayer } from "./InteractionLayer";
 import { ParticleEngine } from "./particles/ParticleEngine";
+import { SYSTEM_FACTORIES } from "./systems";
+import type { CanvasSystem, DataContext, FrameContext } from "./systems/types";
+import type { ViewRect } from "./systems/view";
+import { useCanvasActivity } from "../../hooks/useCanvasActivity";
 import type { ParticleContext } from "./particles/types";
 
 // Day phases during which each building type's chimney smokes.
@@ -106,6 +110,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   focusNonce,
 }: GameCanvasProps) {
   const { app, containerRef } = useGameCanvas();
+  const activity = useCanvasActivity();
 
   // Refs for subsystems
   const tilemapRef = useRef<TilemapRenderer | null>(null);
@@ -120,6 +125,14 @@ export const GameCanvas = React.memo(function GameCanvas({
   const tensionLinesRef = useRef<Graphics | null>(null);
   const pathTrailRef = useRef<Graphics | null>(null);
   const particleEngineRef = useRef<ParticleEngine | null>(null);
+  /** Pluggable feature systems (systems/index.ts), created with the other subsystems. */
+  const systemsRef = useRef<CanvasSystem[]>([]);
+  // One data/frame context object each, refilled in place.
+  const systemDataRef = useRef<DataContext>({
+    agents: [], world: null, events: [], locations: [], conversations: [], relationships: [], activity: [],
+  });
+  const systemViewRef = useRef<ViewRect>({ x: 0, y: 0, w: 0, h: 0, scale: 1 });
+  const systemFrameRef = useRef<FrameContext | null>(null);
 
   // Layer containers
   const worldContainerRef = useRef<Container | null>(null);
@@ -341,6 +354,11 @@ export const GameCanvas = React.memo(function GameCanvas({
     worldContainer.addChild(pathTrail);
     pathTrailRef.current = pathTrail;
 
+    // Ground layer for pluggable systems — decorations and critters under the agents
+    const systemGround = new Container();
+    systemGround.eventMode = 'none';
+    worldContainer.addChild(systemGround);
+
     // Sprite pool (agent circles) — inside world so it moves with camera
     const spritePool = new SpritePool(worldContainer);
     spritePoolRef.current = spritePool;
@@ -350,6 +368,11 @@ export const GameCanvas = React.memo(function GameCanvas({
     relLines.eventMode = 'none'; // transparent to clicks
     worldContainer.addChild(relLines);
     relationshipLinesRef.current = relLines;
+
+    // Over-agents layer for pluggable systems — beat effects, flying critters
+    const systemOver = new Container();
+    systemOver.eventMode = 'none';
+    worldContainer.addChild(systemOver);
 
     // Particle engine — data-driven visual effects below speech bubbles
     const particleEngine = new ParticleEngine(worldContainer, 1000);
@@ -361,6 +384,19 @@ export const GameCanvas = React.memo(function GameCanvas({
     // Bubble system — also inside world container so bubbles track agents
     const bubbleSystem = new BubbleSystem(worldContainer);
     bubbleSystemRef.current = bubbleSystem;
+
+    // A system that fails to build must not take the canvas down with it.
+    systemsRef.current = [];
+    for (const make of SYSTEM_FACTORIES) {
+      try {
+        systemsRef.current.push(make(
+          { ground: systemGround, overAgents: systemOver },
+          { sprites: spritePool, bubbles: bubbleSystem },
+        ));
+      } catch (err) {
+        console.warn('[canvas systems] factory failed:', err);
+      }
+    }
 
     // Camera — dimensions will be set by the resize effect below
     const camera = new CameraController(app, worldContainer);
@@ -420,6 +456,9 @@ export const GameCanvas = React.memo(function GameCanvas({
       // entry suppresses the pose emote for up to POSE_PUFF_INTERVAL_MS.
       prevActionsRef.current.clear();
       lastPosePuffRef.current.clear();
+      for (const sys of systemsRef.current) sys.destroy();
+      systemsRef.current = [];
+      systemFrameRef.current = null;
       interaction.destroy();
       camera.destroy();
       lighting.destroy();
@@ -573,11 +612,23 @@ export const GameCanvas = React.memo(function GameCanvas({
       }
       buildingRendererRef.current.update(agentLocations);
     }
+
+    const data = systemDataRef.current;
+    data.agents = agents;
+    data.world = world;
+    data.events = events ?? [];
+    data.locations = locations ?? [];
+    data.conversations = conversations ?? [];
+    data.relationships = relationships ?? [];
+    data.activity = activity;
+    for (const sys of systemsRef.current) {
+      try { sys.onData?.(data); } catch (err) { console.warn('[canvas systems] onData failed:', err); }
+    }
     // `world` is a real dependency — this effect reads road/terrain tiles, day
     // phase, weather and time. It only appeared to work because `agents` gets a
     // fresh identity on the same poll; changing the weather while paused
     // updates `world` alone, and the lighting never saw it.
-  }, [agents, selectedAgentId, locations, world, events, app, mapW, mapH]);
+  }, [agents, selectedAgentId, locations, world, events, conversations, relationships, activity, app, mapW, mapH]);
 
   // Per-frame rendering loop — lerps sprites toward targets, no data dependency
   useEffect(() => {
@@ -683,6 +734,28 @@ export const GameCanvas = React.memo(function GameCanvas({
         const cameraY = wc ? -wc.y / wc.scale.y + (app.renderer.height / 2) / wc.scale.y : 0;
 
         particleEngine.update(delta / 60, ctx, cameraX, cameraY);
+      }
+
+      const systems = systemsRef.current;
+      const wc = worldContainerRef.current;
+      if (systems.length > 0 && wc) {
+        const view = systemViewRef.current;
+        view.scale = wc.scale.x || 1;
+        view.x = -wc.x / view.scale;
+        view.y = -wc.y / view.scale;
+        view.w = app.renderer.width / view.scale;
+        view.h = app.renderer.height / view.scale;
+        let frame = systemFrameRef.current;
+        if (!frame) {
+          frame = { dt: 0, seconds: 0, now: 0, view, data: systemDataRef.current };
+          systemFrameRef.current = frame;
+        }
+        frame.dt = delta;
+        frame.seconds = delta / 60;
+        frame.now = performance.now();
+        for (const sys of systems) {
+          try { sys.update(frame); } catch (err) { console.warn('[canvas systems] update failed:', err); }
+        }
       }
     };
 
