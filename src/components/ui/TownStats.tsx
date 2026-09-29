@@ -1,6 +1,9 @@
 import { trpc } from "../../lib/trpc";
 import { useAgents } from "../../hooks/useAgents";
 import { COLORS } from "../../lib/constants";
+import { describeAction } from "../../lib/actionText";
+import { EmptyState } from "./EmptyState";
+import { Skeleton } from "./Skeleton";
 
 interface TownStatsProps {
   isOpen: boolean;
@@ -26,21 +29,25 @@ function moodLabel(mood: number): string {
 function NeedBar({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="text-[10px] text-gray-400 w-14 text-right">{label}</div>
-      <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+      <div className="text-[10px] text-ui-dim w-14 text-right">{label}</div>
+      <div className="flex-1 h-1.5 bg-ui-raised rounded-full overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${value}%`, backgroundColor: color }} />
       </div>
-      <div className="text-[10px] text-gray-500 w-6 text-right">{Math.round(value)}</div>
+      <div className="text-[10px] text-ui-muted w-6 text-right">{Math.round(value)}</div>
     </div>
   );
 }
 
-function StatCard({ label, value, color, subtitle }: { label: string; value: string | number; color?: string; subtitle?: string }) {
+function StatCard({ label, value, color, subtitle, loading }: { label: string; value: string | number; color?: string; subtitle?: string; loading?: boolean }) {
   return (
     <div className="text-center">
-      <div className="text-xl font-bold" style={{ color: color ?? '#fff' }}>{value}</div>
-      <div className="text-[10px] text-gray-400 uppercase">{label}</div>
-      {subtitle && <div className="text-[9px] text-gray-500">{subtitle}</div>}
+      {loading ? (
+        <div className="h-7 flex items-center justify-center"><Skeleton className="h-4 w-10" /></div>
+      ) : (
+        <div className="text-xl font-bold" style={{ color: color ?? 'var(--ui-text-primary)' }}>{value}</div>
+      )}
+      <div className="text-[10px] text-ui-dim uppercase">{label}</div>
+      {subtitle && <div className="text-[9px] text-ui-muted">{subtitle}</div>}
     </div>
   );
 }
@@ -71,6 +78,11 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
     stress: a.needs?.stress ?? 0,
     states: (a.activeStates ?? []).map((s: any) => s.type as string),
     action: (a.current_action as any)?.type ?? 'idle',
+    // `plan:decomposed` / `goal:...` are decision sources, not activities (see lib/actionText.ts).
+    zone: (() => {
+      const z = (a.current_action as any)?.zoneActivity as string | undefined;
+      return z && !z.includes(':') ? z : null;
+    })(),
   }));
 
   const avgMood = agentData.length > 0
@@ -91,10 +103,12 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
   }
   const sortedStates = Object.entries(stateCounts).sort((a, b) => b[1] - a[1]);
 
-  // Action counts
+  // Action counts. Keyed by the specific thing they're doing (fishing beats "idle")
+  // and labelled in plain words rather than the raw simulation type.
   const actionCounts: Record<string, number> = {};
   for (const a of agentData) {
-    actionCounts[a.action] = (actionCounts[a.action] ?? 0) + 1;
+    const key = a.zone ?? a.action;
+    actionCounts[key] = (actionCounts[key] ?? 0) + 1;
   }
   const sortedActions = Object.entries(actionCounts).sort((a, b) => b[1] - a[1]);
 
@@ -116,7 +130,13 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
   const ACTION_EMOJIS: Record<string, string> = {
     sleeping: '💤', eating: '🍽️', working: '🔨', talking: '💬',
     walking: '🚶', shopping: '🛒', socializing: '👋', idle: '⏸️',
+    fish: '🎣', garden: '🌱', forage: '🌿', perform: '🎭', jog: '🏃', browse: '🛍️',
+    rest: '🛋️', contemplate: '🌊', comfort: '🫂', cook: '🍳', watch: '👀',
   };
+  /** "fish" -> "Fishing by the river"; "sleeping" -> "Sleeping". */
+  const TYPE_KEYS = new Set(['sleeping', 'eating', 'working', 'talking', 'walking', 'shopping', 'socializing', 'idle']);
+  const actionLabel = (key: string) =>
+    describeAction(TYPE_KEYS.has(key) ? { type: key } : { type: 'idle', zoneActivity: key });
 
   // Widest-spread first: a secret half the town knows is the live scandal, a
   // secret one agent holds is a fuse that hasn't been lit.
@@ -135,33 +155,33 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl w-[600px] max-h-[85vh] overflow-y-auto"
+        className="bg-ui-panel border border-ui-line shadow-2xl w-[600px] max-w-[95vw] max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-sm font-bold text-white">Town Dashboard</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-ui-line">
+          <h2 className="text-sm font-bold text-ui-text">Town Dashboard</h2>
+          <button onClick={onClose} className="text-ui-dim hover:text-ui-text text-lg leading-none">
             &times;
           </button>
         </div>
 
         {/* Top Summary */}
-        <div className="px-5 py-3 border-b border-gray-700">
+        <div className="px-5 py-3 border-b border-ui-line">
           <div className="grid grid-cols-5 gap-3">
             <StatCard label="Population" value={agents.length} />
             <StatCard label="Avg Mood" value={Math.round(avgMood)} color={moodColor(avgMood)} subtitle={moodLabel(avgMood)} />
-            <StatCard label="Total Coins" value={Math.floor(economyStats?.totalMoney ?? 0)} color="#eab308" />
+            <StatCard label="Total Coins" value={Math.floor(economyStats?.totalMoney ?? 0)} color="var(--ui-accent-gold)" loading={!economyStats} />
             <StatCard label="Partners" value={partners} color="#ec4899" />
             <StatCard label="Rivals" value={rivals + grudges} color="#ef4444" />
           </div>
         </div>
 
         {/* Two-column layout */}
-        <div className="grid grid-cols-2 gap-0 border-b border-gray-700">
+        <div className="grid grid-cols-2 gap-0 border-b border-ui-line">
           {/* Left: Town Needs */}
-          <div className="px-5 py-3 border-r border-gray-700">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+          <div className="px-5 py-3 border-r border-ui-line">
+            <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
               Town Average Needs
             </div>
             <div className="space-y-1.5">
@@ -174,15 +194,15 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
 
           {/* Right: Current Activities */}
           <div className="px-5 py-3">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+            <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
               Current Activities
             </div>
             <div className="space-y-1">
               {sortedActions.map(([action, count]) => (
                 <div key={action} className="flex items-center gap-2 text-xs">
                   <span>{ACTION_EMOJIS[action] ?? '❓'}</span>
-                  <span className="text-gray-300 capitalize flex-1">{action}</span>
-                  <span className="text-gray-500 font-mono">{count}</span>
+                  <span className="text-ui-text flex-1">{actionLabel(action)}</span>
+                  <span className="text-ui-muted font-mono">{count}</span>
                 </div>
               ))}
             </div>
@@ -191,8 +211,8 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
 
         {/* Active States */}
         {sortedStates.length > 0 && (
-          <div className="px-5 py-3 border-b border-gray-700">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+          <div className="px-5 py-3 border-b border-ui-line">
+            <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
               Active States
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -215,13 +235,13 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
 
         {/* Trouble Alerts */}
         {(sickCount > 0 || drunkCount > 0 || inDebtCount > 0 || alcoholicCount > 0 || jealousCount > 0 || depressedCount > 0) && (
-          <div className="px-5 py-3 border-b border-gray-700">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+          <div className="px-5 py-3 border-b border-ui-line">
+            <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
               ⚠️ Trouble Alerts
             </div>
             <div className="grid grid-cols-3 gap-2">
               {sickCount > 0 && (
-                <div className="text-xs text-yellow-300">🤒 {sickCount} sick</div>
+                <div className="text-xs text-ui-warn">🤒 {sickCount} sick</div>
               )}
               {drunkCount > 0 && (
                 <div className="text-xs text-amber-400">🥴 {drunkCount} drunk</div>
@@ -230,7 +250,7 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
                 <div className="text-xs text-orange-400">🍺 {alcoholicCount} alcoholic</div>
               )}
               {inDebtCount > 0 && (
-                <div className="text-xs text-red-400">💰 {inDebtCount} in debt</div>
+                <div className="text-xs text-ui-bad">💰 {inDebtCount} in debt</div>
               )}
               {jealousCount > 0 && (
                 <div className="text-xs text-pink-400">😒 {jealousCount} jealous</div>
@@ -243,52 +263,58 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
         )}
 
         {/* Social Overview */}
-        <div className="px-5 py-3 border-b border-gray-700">
-          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+        <div className="px-5 py-3 border-b border-ui-line">
+          <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
             Social Overview
           </div>
           <div className="grid grid-cols-4 gap-3 text-center">
             <div>
               <div className="text-lg font-bold text-pink-400">{partners}</div>
-              <div className="text-[9px] text-gray-500">Partners</div>
+              <div className="text-[9px] text-ui-muted">Partners</div>
             </div>
             <div>
-              <div className="text-lg font-bold text-blue-400">{bestFriends}</div>
-              <div className="text-[9px] text-gray-500">Best Friends</div>
+              <div className="text-lg font-bold text-ui-blue">{bestFriends}</div>
+              <div className="text-[9px] text-ui-muted">Best Friends</div>
             </div>
             <div>
-              <div className="text-lg font-bold text-red-400">{rivals}</div>
-              <div className="text-[9px] text-gray-500">Rivals</div>
+              <div className="text-lg font-bold text-ui-bad">{rivals}</div>
+              <div className="text-[9px] text-ui-muted">Rivals</div>
             </div>
             <div>
               <div className="text-lg font-bold text-red-800">{grudges}</div>
-              <div className="text-[9px] text-gray-500">Grudges</div>
+              <div className="text-[9px] text-ui-muted">Grudges</div>
             </div>
           </div>
         </div>
 
         {/* Social Circles */}
-        {(cliques?.length ?? 0) > 0 && (
-          <div className="px-5 py-3 border-b border-gray-700">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+        {(cliques === undefined || cliques.length > 0) && (
+          <div className="px-5 py-3 border-b border-ui-line">
+            <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
               👥 Social Circles
             </div>
+            {cliques === undefined && (
+              <div className="space-y-1.5" role="status" aria-label="Loading social circles">
+                <Skeleton className="h-3" />
+                <Skeleton className="h-3 w-2/3" />
+              </div>
+            )}
             <div className="space-y-1.5">
-              {cliques!.map((clique) => (
+              {(cliques ?? []).map((clique) => (
                 <div key={clique.id}>
                   <div className="flex items-center gap-2">
-                    <div className="text-[11px] text-white flex-1 truncate">{clique.name}</div>
-                    <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                    <div className="text-[11px] text-ui-text flex-1 truncate">{clique.name}</div>
+                    <div className="w-16 h-1.5 bg-ui-raised rounded-full overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-sky-400"
+                        className="h-full rounded-full bg-ui-blue"
                         style={{ width: `${clique.cohesion * 100}%` }}
                       />
                     </div>
-                    <div className="text-[10px] text-gray-500 w-10 text-right">
+                    <div className="text-[10px] text-ui-muted w-10 text-right">
                       {clique.members.length}
                     </div>
                   </div>
-                  <div className="text-[10px] text-gray-500 truncate">
+                  <div className="text-[10px] text-ui-muted truncate">
                     {clique.memberNames.join(', ')}
                   </div>
                 </div>
@@ -298,11 +324,18 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
         )}
 
         {/* Town Secrets */}
-        {secrets.length > 0 && (
-          <div className="px-5 py-3 border-b border-gray-700">
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
-              🤫 Town Secrets
+        <div className="px-5 py-3 border-b border-ui-line">
+          <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
+            🤫 Town Secrets
+          </div>
+          {secretNetwork === undefined ? (
+            <div className="space-y-1.5" role="status" aria-label="Loading secrets">
+              <Skeleton className="h-3" />
+              <Skeleton className="h-3 w-3/4" />
             </div>
+          ) : secrets.length === 0 ? (
+            <EmptyState compact icon="🕊" title="No secrets are going around." hint="Rumours and confidences, and how far each has spread, are listed here." />
+          ) : (
             <div className="space-y-1">
               {secrets.map((secret) => {
                 const spread = secret.totalAgents > 0
@@ -311,17 +344,17 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
                 return (
                   <div key={secret.id} className="flex items-center gap-2">
                     {secret.isPublic && (
-                      <span className="text-[9px] font-bold uppercase tracking-wide px-1 py-px rounded bg-red-500/20 text-red-300 shrink-0">
+                      <span className="text-[9px] font-bold uppercase tracking-wide px-1 py-px rounded-sm bg-ui-bad/20 text-ui-bad shrink-0">
                         Public
                       </span>
                     )}
                     <div
-                      className="text-[11px] text-gray-300 flex-1 truncate"
+                      className="text-[11px] text-ui-text flex-1 truncate"
                       title={`${secret.content}\nKnown by: ${secret.knownByNames.join(', ')}`}
                     >
                       {secret.content}
                     </div>
-                    <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                    <div className="w-16 h-1.5 bg-ui-raised rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full"
                         style={{
@@ -330,19 +363,19 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
                         }}
                       />
                     </div>
-                    <div className="text-[10px] text-gray-500 w-10 text-right">
+                    <div className="text-[10px] text-ui-muted w-10 text-right">
                       {secret.knownByCount}/{secret.totalAgents}
                     </div>
                   </div>
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Per-agent mood breakdown */}
         <div className="px-5 py-3">
-          <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-medium">
+          <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
             Agent Wellbeing
           </div>
           <div className="space-y-1">
@@ -351,14 +384,14 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
               .sort((a, b) => a.mood - b.mood)
               .map((agent) => (
                 <div key={agent.id} className="flex items-center gap-2">
-                  <div className="text-[11px] text-white w-28 truncate">{agent.name}</div>
-                  <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div className="text-[11px] text-ui-text w-28 truncate">{agent.name}</div>
+                  <div className="flex-1 h-1.5 bg-ui-raised rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full"
                       style={{ width: `${agent.mood}%`, backgroundColor: moodColor(agent.mood) }}
                     />
                   </div>
-                  <div className="text-[10px] text-gray-500 w-6 text-right">{Math.round(agent.mood)}</div>
+                  <div className="text-[10px] text-ui-muted w-6 text-right">{Math.round(agent.mood)}</div>
                   {agent.states.length > 0 && (
                     <div className="flex gap-0.5 w-16 justify-end">
                       {agent.states.slice(0, 3).map((s: string) => (

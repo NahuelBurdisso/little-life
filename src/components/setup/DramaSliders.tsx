@@ -64,9 +64,9 @@ const SLIDERS: SliderMeta[] = [
     highLabel: 'Open',
     colour: {
       accent: '#10b981',
-      track: 'bg-emerald-500',
-      value: 'text-emerald-400',
-      badge: 'bg-emerald-900/40 text-emerald-300 border-emerald-700/50',
+      track: 'bg-ui-good',
+      value: 'text-ui-good',
+      badge: 'bg-ui-good/15 text-ui-good border-ui-good/40',
     },
   },
 ];
@@ -83,12 +83,12 @@ function SingleSlider({ meta, value, onChange }: SingleSliderProps) {
   const fillPct = value; // 0–100
 
   return (
-    <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+    <div className="bg-ui-panel rounded-sm p-4 border border-ui-line">
       {/* Header row */}
       <div className="flex items-start justify-between mb-1.5">
         <div>
-          <span className="text-sm font-semibold text-white">{meta.label}</span>
-          <p className="text-[11px] text-gray-400 mt-0.5 leading-tight max-w-xs">
+          <span className="text-sm font-semibold text-ui-text">{meta.label}</span>
+          <p className="text-[11px] text-ui-dim mt-0.5 leading-tight max-w-xs">
             {meta.description}
           </p>
         </div>
@@ -109,7 +109,7 @@ function SingleSlider({ meta, value, onChange }: SingleSliderProps) {
           We render a custom track behind the native range so we can colour the
           filled portion without browser-specific pseudo-element hacks.
         */}
-        <div className="relative h-2 rounded-full bg-gray-700 overflow-hidden">
+        <div className="relative h-2 rounded-full bg-ui-raised overflow-hidden">
           <div
             className={`absolute left-0 top-0 h-full ${meta.colour.track} transition-all duration-75`}
             style={{ width: `${fillPct}%` }}
@@ -129,8 +129,8 @@ function SingleSlider({ meta, value, onChange }: SingleSliderProps) {
 
       {/* Low / high labels */}
       <div className="flex justify-between mt-1.5">
-        <span className="text-[10px] text-gray-500">{meta.lowLabel}</span>
-        <span className="text-[10px] text-gray-500">{meta.highLabel}</span>
+        <span className="text-[10px] text-ui-muted">{meta.lowLabel}</span>
+        <span className="text-[10px] text-ui-muted">{meta.highLabel}</span>
       </div>
     </div>
   );
@@ -150,8 +150,8 @@ export function DramaSliders({ values, onChange }: DramaSlidersProps) {
   return (
     <div>
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-white">Fine-Tune Sliders</h3>
-        <p className="text-[11px] text-gray-500 mt-0.5">
+        <h3 className="text-sm font-semibold text-ui-text">Fine-Tune Sliders</h3>
+        <p className="text-[11px] text-ui-muted mt-0.5">
           Adjust each axis to match the tone you want for this simulation run.
         </p>
       </div>

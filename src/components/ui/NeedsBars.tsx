@@ -30,11 +30,11 @@ export function NeedsBars({ needs }: NeedsBarsProps) {
   ];
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700 space-y-1.5">
+    <div className="px-3 py-2 border-b border-ui-line space-y-1.5">
       {bars.map(({ label, value, key }) => (
         <div key={key} className="flex items-center gap-2 text-xs">
-          <span className="w-14 text-gray-400">{label}</span>
-          <div className="flex-1 h-2.5 bg-gray-700 rounded-full overflow-hidden">
+          <span className="w-14 text-ui-dim">{label}</span>
+          <div className="flex-1 h-2.5 bg-ui-raised rounded-full overflow-hidden">
             <div
               className="h-full rounded-full transition-all duration-300"
               style={{
@@ -48,15 +48,15 @@ export function NeedsBars({ needs }: NeedsBarsProps) {
               }}
             />
           </div>
-          <span className="w-6 text-right text-gray-500">
+          <span className="w-6 text-right text-ui-muted">
             {Math.round(value)}
           </span>
         </div>
       ))}
       {/* Mood bar - wider, separate */}
-      <div className="flex items-center gap-2 text-xs pt-1 border-t border-gray-700/50 mt-1">
-        <span className="w-14 text-gray-300 font-medium">Mood</span>
-        <div className="flex-1 h-3 bg-gray-700 rounded-full overflow-hidden">
+      <div className="flex items-center gap-2 text-xs pt-1 border-t border-ui-line/50 mt-1">
+        <span className="w-14 text-ui-text font-medium">Mood</span>
+        <div className="flex-1 h-3 bg-ui-raised rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-300"
             style={{
@@ -65,7 +65,7 @@ export function NeedsBars({ needs }: NeedsBarsProps) {
             }}
           />
         </div>
-        <span className="w-6 text-right text-gray-300">
+        <span className="w-6 text-right text-ui-text">
           {Math.round(needs.mood)}
         </span>
       </div>
@@ -73,7 +73,7 @@ export function NeedsBars({ needs }: NeedsBarsProps) {
       {needs.stress > 30 && (
         <div className="flex items-center gap-2 text-xs">
           <span className="w-14 text-red-400">Stress</span>
-          <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+          <div className="flex-1 h-2 bg-ui-raised rounded-full overflow-hidden">
             <div
               className="h-full rounded-full bg-red-500/80 transition-all duration-300"
               style={{ width: `${needs.stress}%` }}

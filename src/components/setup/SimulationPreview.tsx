@@ -14,7 +14,7 @@ import { trpc } from '../../lib/trpc';
 // ── Display helpers ───────────────────────────────────────────────────────────
 
 const SENSITIVITY_META: Record<number, { label: string; colour: string }> = {
-  1: { label: 'Low', colour: 'bg-gray-700/50 text-gray-400' },
+  1: { label: 'Low', colour: 'bg-ui-raised/50 text-ui-dim' },
   2: { label: 'Medium', colour: 'bg-orange-900/40 text-orange-300' },
   3: { label: 'Explosive', colour: 'bg-red-900/50 text-red-300 font-bold' },
 };
@@ -22,7 +22,7 @@ const SENSITIVITY_META: Record<number, { label: string; colour: string }> = {
 /** The generator emits mood/stress numbers; these are the bands the sim reads. */
 function moodMeta(mood: number, stress: number): { emoji: string; label: string; colour: string } {
   if (stress >= 40) return { emoji: '😰', label: 'stressed', colour: 'bg-purple-900/30 text-purple-300 border-purple-700/40' };
-  if (mood < 45) return { emoji: '😔', label: 'low', colour: 'bg-gray-700/40 text-gray-400 border-gray-600/40' };
+  if (mood < 45) return { emoji: '😔', label: 'low', colour: 'bg-ui-raised/40 text-ui-dim border-ui-line/40' };
   if (mood >= 70) return { emoji: '😊', label: 'happy', colour: 'bg-yellow-500/20 text-yellow-300 border-yellow-700/40' };
   return { emoji: '😌', label: 'content', colour: 'bg-green-900/30 text-green-300 border-green-700/40' };
 }
@@ -62,14 +62,14 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
     <div>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Simulation Preview</h3>
-          <p className="text-[11px] text-gray-500 mt-0.5">
+          <h3 className="text-sm font-semibold text-ui-text">Simulation Preview</h3>
+          <p className="text-[11px] text-ui-muted mt-0.5">
             Exactly what your town starts with. Seed {scenario.seed}.
           </p>
         </div>
         <button
           onClick={onRegenerate}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 hover:text-white transition-colors border border-gray-600"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-ui-raised hover:bg-ui-hover rounded-lg text-ui-text hover:text-ui-text transition-colors border border-ui-line"
         >
           <span>↺</span>
           Regenerate
@@ -79,7 +79,7 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
       {error && (
         <p className="text-xs text-red-400 mb-3">Could not build the scenario: {error.message}</p>
       )}
-      {isLoading && <p className="text-xs text-gray-500">Generating…</p>}
+      {isLoading && <p className="text-xs text-ui-muted">Generating…</p>}
 
       {data && (
         <>
@@ -90,7 +90,7 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
             <Stat
               label="Trust δ"
               value={(data.trustDelta >= 0 ? '+' : '') + data.trustDelta}
-              colour={data.trustDelta >= 0 ? 'text-emerald-400' : 'text-red-400'}
+              colour={data.trustDelta >= 0 ? 'text-ui-good' : 'text-red-400'}
             />
           </div>
 
@@ -114,7 +114,7 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
 
           {money.length > 0 && (
             <Section title="Starting Money">
-              <p className="text-[11px] text-gray-400">
+              <p className="text-[11px] text-ui-dim">
                 {Math.min(...money)}–{Math.max(...money)} coins, average{' '}
                 {Math.round(money.reduce((s, m) => s + m, 0) / money.length)}. Higher crime widens
                 the gap.
@@ -130,11 +130,11 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
                   return (
                     <div
                       key={`${s.template_id}-${i}`}
-                      className="flex items-start gap-2 bg-gray-800 rounded-lg p-2.5 border border-gray-700"
+                      className="flex items-start gap-2 bg-ui-panel rounded-lg p-2.5 border border-ui-line"
                     >
-                      <span className="text-gray-500 text-xs mt-0.5 shrink-0">🤫</span>
-                      <p className="text-[11px] text-gray-300 flex-1 leading-snug">{s.content}</p>
-                      <span className="shrink-0 text-[9px] text-gray-500">
+                      <span className="text-ui-muted text-xs mt-0.5 shrink-0">🤫</span>
+                      <p className="text-[11px] text-ui-text flex-1 leading-snug">{s.content}</p>
+                      <span className="shrink-0 text-[9px] text-ui-muted">
                         {s.known_by_indices.length} know
                       </span>
                       <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded-full ${sm.colour}`}>
@@ -155,20 +155,20 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
                   return (
                     <div
                       key={`${t.template_id}-${i}`}
-                      className="flex items-center gap-2 bg-gray-800 rounded-lg p-2.5 border border-gray-700"
+                      className="flex items-center gap-2 bg-ui-panel rounded-lg p-2.5 border border-ui-line"
                     >
                       <span className="text-pink-400 text-xs">💕</span>
-                      <span className="text-[11px] text-white">
+                      <span className="text-[11px] text-ui-text">
                         {t.agent_indices.map(nameOf).map(firstName).join(' & ')}
                       </span>
                       <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-pink-900/30 text-pink-300 border border-pink-700/40">
                         {t.romance_values.length > 1 ? 'mutual' : 'one-sided'}
                       </span>
                       <div className="ml-auto flex items-center gap-1.5">
-                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                        <div className="w-16 h-1.5 bg-ui-raised rounded-full overflow-hidden">
                           <div className="h-full bg-pink-500 rounded-full" style={{ width: `${tension}%` }} />
                         </div>
-                        <span className="text-[10px] text-gray-500">{tension}</span>
+                        <span className="text-[10px] text-ui-muted">{tension}</span>
                       </div>
                     </div>
                   );
@@ -183,15 +183,15 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
                 {data.rivalPairs.map(([a, b], i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-2 bg-gray-800 rounded-lg p-2.5 border border-gray-700"
+                    className="flex items-center gap-2 bg-ui-panel rounded-lg p-2.5 border border-ui-line"
                   >
                     <span className="text-red-400 text-xs">⚔️</span>
-                    <span className="text-[11px] text-white">
+                    <span className="text-[11px] text-ui-text">
                       {firstName(nameOf(a))}
-                      <span className="text-gray-500 mx-1">vs</span>
+                      <span className="text-ui-muted mx-1">vs</span>
                       {firstName(nameOf(b))}
                     </span>
-                    <span className="ml-auto text-[10px] text-gray-500 italic">
+                    <span className="ml-auto text-[10px] text-ui-muted italic">
                       starts hostile and distrustful
                     </span>
                   </div>
@@ -207,9 +207,9 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
 
 function Stat({ label, value, colour }: { label: string; value: number | string; colour: string }) {
   return (
-    <div className="bg-gray-800 rounded-lg p-3 text-center border border-gray-700">
+    <div className="bg-ui-panel rounded-lg p-3 text-center border border-ui-line">
       <div className={`text-xl font-bold ${colour}`}>{value}</div>
-      <div className="text-[10px] text-gray-500 mt-0.5">{label}</div>
+      <div className="text-[10px] text-ui-muted mt-0.5">{label}</div>
     </div>
   );
 }
@@ -217,7 +217,7 @@ function Stat({ label, value, colour }: { label: string; value: number | string;
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
-      <h4 className="text-xs text-gray-500 uppercase font-medium mb-2">{title}</h4>
+      <h4 className="text-xs text-ui-muted uppercase font-medium mb-2">{title}</h4>
       {children}
     </div>
   );

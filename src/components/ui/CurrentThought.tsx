@@ -1,3 +1,5 @@
+import { describeAction } from "../../lib/actionText";
+
 interface CurrentThoughtProps {
   agent: {
     name: string;
@@ -114,28 +116,13 @@ function assembleThought(
   return `${agent.name} feels a bit off and can't quite put their finger on why.`;
 }
 
-function describeAction(action: Record<string, any>): string {
-  if (!action) return "Idle";
-  if (typeof action === "string") return action as string;
-  if (action.type) {
-    const type = action.type as string;
-    const label = type
-      .replace(/_/g, " ")
-      .replace(/\b\w/g, (c: string) => c.toUpperCase());
-    if (action.target) return `${label} (${action.target})`;
-    if (action.locationName) return `${label} at ${action.locationName}`;
-    return label;
-  }
-  return "Idle";
-}
-
 const STATE_COLORS: Record<string, string> = {
   in_love: "bg-pink-900/40 text-pink-300 border-pink-800/40",
   heartbroken: "bg-rose-900/40 text-rose-300 border-rose-800/40",
   sick: "bg-yellow-900/40 text-yellow-300 border-yellow-800/40",
   injured: "bg-orange-900/40 text-orange-300 border-orange-800/40",
   euphoric: "bg-purple-900/40 text-purple-300 border-purple-800/40",
-  grieving: "bg-gray-700/60 text-gray-300 border-gray-600/40",
+  grieving: "bg-ui-raised/60 text-ui-text border-ui-line/40",
   enraged: "bg-red-900/40 text-red-300 border-red-800/40",
   jealous: "bg-amber-900/40 text-amber-300 border-amber-800/40",
 };
@@ -145,11 +132,11 @@ export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
   const thought = assembleThought(agent, needs, states);
 
   return (
-    <div className="px-3 py-2 border-b border-gray-700">
-      <div className="text-xs text-gray-500 font-medium mb-1.5">Inner Monologue</div>
+    <div className="px-3 py-2 border-b border-ui-line">
+      <div className="text-xs text-ui-dim font-medium mb-1.5">Inner Monologue</div>
 
       {/* Thought sentence */}
-      <p className="text-[11px] text-blue-200 leading-relaxed italic mb-2">
+      <p className="text-[11px] text-ui-blue leading-relaxed italic mb-2">
         "{thought}"
       </p>
 
@@ -159,7 +146,7 @@ export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
         <span className={`text-xs font-medium ${getMoodColor(mood)}`}>
           {getMoodLabel(mood)}
         </span>
-        <span className="text-[10px] text-gray-600">({Math.round(mood)})</span>
+        <span className="text-[10px] text-ui-muted">({Math.round(mood)})</span>
       </div>
 
       {/* Active states badges */}
@@ -169,7 +156,7 @@ export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
             <span
               key={s.id}
               className={`text-[10px] px-1.5 py-0.5 rounded border capitalize ${
-                STATE_COLORS[s.type] ?? "bg-gray-700/60 text-gray-300 border-gray-600/40"
+                STATE_COLORS[s.type] ?? "bg-ui-raised/60 text-ui-text border-ui-line/40"
               }`}
             >
               {s.type.replace(/_/g, " ")}
@@ -184,9 +171,9 @@ export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
       )}
 
       {/* Current action */}
-      <div className="text-[11px] text-gray-400">
-        <span className="text-gray-600">Doing: </span>
-        {describeAction(agent.current_action)}
+      <div className="text-[11px] text-ui-dim">
+        <span className="text-ui-muted">Doing: </span>
+        {describeAction(agent.current_action, agent.current_action?.locationName as string | undefined)}
       </div>
     </div>
   );

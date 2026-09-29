@@ -26,6 +26,9 @@ import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
 import { useKeyboardControls } from "./hooks/useKeyboardControls";
 import { Toasts } from "./components/ui/Toasts";
+import { LoadingScreen } from "./components/ui/LoadingScreen";
+import { FloatingToolbar } from "./components/ui/FloatingToolbar";
+import { AutoplayPanel } from "./components/ui/AutoplayPanel";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -48,6 +51,7 @@ export default function App() {
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
   const [showConvoHistory, setShowConvoHistory] = useState(false);
+  const [showAutoplay, setShowAutoplay] = useState(false);
   const [autoCut, setAutoCut] = useState(false);
 
   // Reset all UI state when world returns to wizard state (after resetToWizard)
@@ -68,6 +72,7 @@ export default function App() {
       setShowNewAgent(false);
       setShowRelGraph(false);
       setShowConvoHistory(false);
+      setShowAutoplay(false);
     }
   }, [isNewSimulation]);
 
@@ -87,7 +92,7 @@ export default function App() {
   }, []);
 
   // Tooltip state
-  const [hoveredAgent, setHoveredAgent] = useState<{ name: string; currentAction: { type?: string } | string | null } | null>(null);
+  const [hoveredAgent, setHoveredAgent] = useState<{ name: string; currentAction: unknown; place: string | null } | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
   // Context menu state
@@ -137,6 +142,8 @@ export default function App() {
           setShowTownStats(false);
         } else if (showNewAgent) {
           setShowNewAgent(false);
+        } else if (showAutoplay) {
+          setShowAutoplay(false);
         } else if (showConvoHistory) {
           // Escape closes the topmost layer, so this chain must match paint
           // order: ConversationHistory is rendered last and covers the graph.
@@ -153,7 +160,7 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, selectedLocationId, selectedAgentId]);
+  }, [contextMenuAgent, showEventMenu, showGazette, showTownStats, showNewAgent, showRelGraph, showConvoHistory, showAutoplay, selectedLocationId, selectedAgentId]);
 
   // Keyboard controls
   useKeyboardControls({
@@ -175,11 +182,13 @@ export default function App() {
       }
       const agent = agents.find((a) => String(a.id) === agentId);
       if (agent) {
-        setHoveredAgent({ name: agent.name, currentAction: agent.current_action });
+        // The building the agent is in, so "working" can say where.
+        const place = locations?.find((l) => l.id === (agent as { current_location?: number | null }).current_location)?.name ?? null;
+        setHoveredAgent({ name: agent.name, currentAction: agent.current_action, place });
         setHoverPos(pos);
       }
     },
-    [agents]
+    [agents, locations]
   );
 
   // Select an agent AND re-center on them, even if they were already selected.
@@ -218,18 +227,11 @@ export default function App() {
   }
 
   if (worldLoading || !world) {
-    return (
-      <div className="h-screen w-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-4">
-        <p className="text-lg">Loading Little Life...</p>
-        <p className="text-sm text-gray-500">
-          Connecting to server...
-        </p>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
-    <div className="h-screen w-screen bg-gray-900 text-white flex flex-col overflow-hidden">
+    <div className="h-screen w-screen bg-ui-deep text-ui-text flex flex-col overflow-hidden">
       <TopBar
         world={world}
         events={events ?? []}
@@ -247,7 +249,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Conversations sidebar */}
         <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-hidden">
-          <ConversationPanel />
+          <ConversationPanel onSelectAgent={focusAgent} />
         </div>
         <ResizeHandle direction="horizontal" onResize={handleLeftResize} />
         {/* PixiJS game canvas */}
@@ -274,6 +276,7 @@ export default function App() {
               <AgentPanel
                 agentId={selectedAgentId}
                 onClose={() => setSelectedAgentId(null)}
+                onSelectAgent={focusAgent}
               />
             </div>
           </>
@@ -285,41 +288,15 @@ export default function App() {
       </div>
 
       {/* Floating toolbar for extra actions */}
-      <div className="fixed bottom-16 right-4 z-30 flex flex-col gap-2">
-        <button
-          onClick={() => setShowNewAgent(true)}
-          className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow transition-colors"
-          title="Add new agent"
-        >
-          ➕ New Resident
-        </button>
-        <button
-          onClick={() => setShowRelGraph(true)}
-          className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow transition-colors"
-          title="View relationships"
-        >
-          🔗 Relationships
-        </button>
-        <button
-          onClick={() => setAutoCut(v => !v)}
-          aria-pressed={autoCut}
-          className={`px-3 py-1.5 text-xs border rounded-lg shadow transition-colors ${
-            autoCut
-              ? "bg-[#a03028] hover:bg-[#8a2822] border-[#c04038]"
-              : "bg-gray-700 hover:bg-gray-600 border-gray-600"
-          }`}
-          title="Jump the camera to whoever the next dramatic event is about"
-        >
-          🎬 Auto-Cut{autoCut ? " On" : " Off"}
-        </button>
-        <button
-          onClick={() => setShowConvoHistory(true)}
-          className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow transition-colors"
-          title="Conversation history"
-        >
-          📜 History
-        </button>
-      </div>
+      <FloatingToolbar
+        onNewAgent={() => setShowNewAgent(true)}
+        onShowRelationships={() => setShowRelGraph(true)}
+        onShowHistory={() => setShowConvoHistory(true)}
+        onShowAutoplay={() => setShowAutoplay(true)}
+        autoCut={autoCut}
+        onToggleAutoCut={() => setAutoCut(v => !v)}
+        rightOffset={selectedAgentId ? rightWidth + 16 : 16}
+      />
 
       {/* Clicked building / open area */}
       {selectedLocation && (
@@ -392,10 +369,17 @@ export default function App() {
       <ConversationHistory
         isOpen={showConvoHistory}
         onClose={() => setShowConvoHistory(false)}
+        onSelectAgent={(id) => {
+          // Close first: the history modal covers the map, so the camera move
+          // would otherwise happen behind it.
+          setShowConvoHistory(false);
+          focusAgent(id);
+        }}
       />
+      <AutoplayPanel isOpen={showAutoplay} onClose={() => setShowAutoplay(false)} />
 
       {/* Attribution */}
-      <div className="fixed bottom-1 left-1 z-10 text-[8px] text-gray-500 opacity-40 pointer-events-none">
+      <div className="fixed bottom-1 left-1 z-10 text-[8px] text-ui-muted opacity-40 pointer-events-none">
         Art: LimeZu (CC-BY 4.0)
       </div>
     </div>

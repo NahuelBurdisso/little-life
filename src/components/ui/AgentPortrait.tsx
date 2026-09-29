@@ -15,6 +15,8 @@ interface AgentPortraitProps {
   /** Active states (`{ type }` rows from getAgentSummary); they steer the portrait's expression. */
   states?: ReadonlyArray<{ type: string }>;
   size?: number;
+  /** Memorial view: the frame is greyed out and the live mood line is dropped. */
+  deceased?: boolean;
 }
 
 const FADE_MS = 250;
@@ -27,7 +29,7 @@ function moodEmoji(mood: number): string {
   return "\u{1F62D}";
 }
 
-export function AgentPortrait({ agent, economy, mood, states, size = 48 }: AgentPortraitProps) {
+export function AgentPortrait({ agent, economy, mood, states, size = 48, deceased = false }: AgentPortraitProps) {
   // Sources that failed to load. Keyed by URL rather than a boolean so one missing expression
   // (the art script skips portraits it can't read) only demotes that expression to neutral.
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
@@ -66,6 +68,7 @@ export function AgentPortrait({ agent, economy, mood, states, size = 48 }: Agent
     flexShrink: 0,
     border: "1px solid #3d3a2e",
     backgroundColor: "#1a1814",
+    filter: deceased ? "grayscale(1) brightness(0.75)" : undefined,
   };
   const layerStyle = {
     position: "absolute" as const,
@@ -105,18 +108,19 @@ export function AgentPortrait({ agent, economy, mood, states, size = 48 }: Agent
             color: "white",
             fontFamily: "monospace",
             flexShrink: 0,
+            filter: deceased ? "grayscale(1) brightness(0.75)" : undefined,
           }}
         >
           {letter}
         </div>
       )}
       <div>
-        <div className="font-bold text-white">{agent.name}</div>
-        <div className="text-sm text-gray-400">
+        <div className="font-bold text-ui-text">{agent.name}</div>
+        <div className="text-sm text-ui-dim">
           {economy?.job_title ?? "Unknown"}, age {agent.age}
         </div>
-        {mood !== undefined && (
-          <div className="text-xs text-gray-500">
+        {mood !== undefined && !deceased && (
+          <div className="text-xs text-ui-muted">
             {formatMood(mood)} {moodEmoji(mood)}
           </div>
         )}

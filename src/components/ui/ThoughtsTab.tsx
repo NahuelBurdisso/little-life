@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { CurrentThought } from "./CurrentThought";
 import { GoalsView } from "./GoalsView";
 import { SecretsOpinions } from "./SecretsOpinions";
@@ -50,14 +50,14 @@ function CollapsibleSection({
 }: {
   title: string;
   defaultOpen: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between py-1.5 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors px-3"
+        className="w-full flex items-center justify-between py-1.5 text-xs font-medium text-ui-dim hover:text-ui-text transition-colors px-3"
       >
         <span>{title}</span>
         <span className="text-[10px]">{open ? "▾" : "▸"}</span>
@@ -90,21 +90,21 @@ export function ThoughtsTab({
       />
 
       {/* Layer 2: Goals & Ambition */}
-      <div className="border-t border-gray-700">
+      <div className="border-t border-ui-line">
         <CollapsibleSection title="Goals & Ambition" defaultOpen={false}>
           <GoalsView agentId={agentId} nowMinutes={nowMinutes} />
         </CollapsibleSection>
       </div>
 
       {/* Layer 3: Secrets & Opinions */}
-      <div className="border-t border-gray-700">
+      <div className="border-t border-ui-line">
         <CollapsibleSection title="Secrets & Opinions" defaultOpen={false}>
           <SecretsOpinions agentId={agentId} agentName={agent.name} />
         </CollapsibleSection>
       </div>
 
       {/* Layer 4: Recent Memories */}
-      <div className="border-t border-gray-700">
+      <div className="border-t border-ui-line">
         <CollapsibleSection title="Recent Memories" defaultOpen={false}>
           <MemoryLog
             memories={recentMemories}

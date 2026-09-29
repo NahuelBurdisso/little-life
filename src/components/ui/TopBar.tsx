@@ -28,6 +28,10 @@ interface TopBarProps {
   onWorldReplaced: () => void;
 }
 
+/** Shared look for the top-bar buttons: flat, warm, bordered like the panels below. */
+const BAR_BTN =
+  "px-3 py-1 text-sm bg-ui-raised hover:bg-ui-hover border border-ui-line hover:border-ui-line-accent rounded-sm transition-colors disabled:opacity-50";
+
 export function TopBar({ world, events, liveConversations, awakeAgents, onShowEvents, onShowStats, onShowGazette, hasNewGazette, onWorldReplaced }: TopBarProps) {
   const [confirmAction, setConfirmAction] = useState<'restart' | 'reset' | null>(null);
   const [isResetting, setIsResetting] = useState(false);
@@ -93,25 +97,24 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
 
   return (
     <>
-      <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center px-4 gap-4 shrink-0">
-        {/* Left: Time info */}
-        <div className="flex items-center gap-3 text-sm">
-          <span className="font-bold">Day {world.time.day}</span>
+      <div className="h-12 bg-ui-panel border-b border-ui-line flex items-center px-4 gap-4 shrink-0">
+        {/* Left: Time info. The raw tick counter lives in the tooltip: it is a debugging figure, not something to read. */}
+        <div className="flex items-center gap-3 text-sm" title={`Tick ${world.time.totalTicks}`}>
+          <span className="font-bold text-ui-gold">Day {world.time.day}</span>
           <span>{formatTime(world.time)}</span>
           <span>{weatherEmoji(world.weather)}</span>
-          <span className="text-gray-400 capitalize">
+          <span className="text-ui-dim capitalize">
             {seasonEmoji(world.time.season)} {world.time.season}
           </span>
-          <span className="text-gray-600 text-xs">tick:{world.time.totalTicks}</span>
         </div>
 
         {/* Live activity readout */}
-        <div className="flex items-center gap-3 text-xs text-gray-400">
+        <div className="flex items-center gap-3 text-xs text-ui-dim">
           <span title="Conversations happening right now">💬 {liveConversations}</span>
           <span title="Agents awake">🚶 {awakeAgents}</span>
           {llm && (
             <span
-              className={llm.waiting > 0 ? "text-yellow-400" : ""}
+              className={llm.waiting > 0 ? "text-ui-warn" : ""}
               title={llmTitle}
             >
               🧠 {llm.active}
@@ -130,7 +133,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           <button
             onClick={onShowStats}
             disabled={isResetting}
-            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
+            className={BAR_BTN}
           >
             📊 Stats
           </button>
@@ -138,11 +141,11 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             onClick={onShowGazette}
             disabled={isResetting}
             title="The Town Crier — the town's daily paper"
-            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors relative disabled:opacity-50"
+            className={`${BAR_BTN} relative`}
           >
             📰 Paper
             {hasNewGazette && (
-              <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[10px] rounded-full px-1 h-4 flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 bg-ui-gold text-ui-deep font-bold text-[10px] rounded-full px-1 h-4 flex items-center justify-center">
                 new
               </span>
             )}
@@ -150,21 +153,21 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           <button
             onClick={onShowEvents}
             disabled={isResetting}
-            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors relative disabled:opacity-50"
+            className={`${BAR_BTN} relative`}
           >
             ⚡ Events
             {events.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-xs rounded-full w-4 h-4 flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 bg-ui-warn text-ui-deep font-bold text-xs rounded-full w-4 h-4 flex items-center justify-center">
                 {events.length}
               </span>
             )}
           </button>
-          <div className="w-px h-6 bg-gray-600" />
+          <div className="w-px h-6 bg-ui-line" />
           <button
             onClick={() => setConfirmAction('restart')}
             disabled={isResetting || !hasConfig}
             title={hasConfig ? "Restart with same settings" : "No saved config — use Reset to Wizard"}
-            className="px-2 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`${BAR_BTN} !px-2 disabled:cursor-not-allowed`}
           >
             {isResetting && confirmAction === 'restart' ? '...' : '↻'}
           </button>
@@ -172,7 +175,7 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             onClick={() => setConfirmAction('reset')}
             disabled={isResetting}
             title="Reset to Setup Wizard"
-            className="px-2 py-1 text-sm bg-gray-700 hover:bg-red-700 rounded transition-colors disabled:opacity-50"
+            className={`${BAR_BTN} !px-2 hover:!bg-ui-bad/30 hover:!border-ui-bad/60`}
           >
             {isResetting && confirmAction === 'reset' ? '...' : '⟲'}
           </button>
@@ -182,11 +185,11 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
       {/* Confirmation dialog overlay */}
       {confirmAction && !isResetting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-sm mx-4 shadow-xl">
+          <div className="bg-ui-panel border border-ui-line p-6 max-w-sm mx-4 shadow-xl">
             <h3 className="text-lg font-bold mb-2">
               {confirmAction === 'restart' ? 'Restart Simulation?' : 'Reset to Setup Wizard?'}
             </h3>
-            <p className="text-sm text-gray-300 mb-6">
+            <p className="text-sm text-ui-dim mb-6">
               {confirmAction === 'restart'
                 ? 'All progress will be lost. The simulation will restart with the same settings.'
                 : "All progress will be lost. You'll return to the setup wizard to reconfigure everything."}
@@ -194,16 +197,16 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setConfirmAction(null)}
-                className="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                className="px-4 py-2 text-sm bg-ui-raised hover:bg-ui-hover border border-ui-line rounded-sm transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirm}
-                className={`px-4 py-2 text-sm rounded transition-colors font-medium ${
+                className={`px-4 py-2 text-sm rounded-sm transition-colors font-medium ${
                   confirmAction === 'reset'
-                    ? 'bg-red-600 hover:bg-red-500'
-                    : 'bg-blue-600 hover:bg-blue-500'
+                    ? 'bg-ui-bad text-ui-deep font-semibold hover:brightness-110'
+                    : 'bg-ui-gold text-ui-deep font-semibold hover:brightness-110'
                 }`}
               >
                 {confirmAction === 'restart' ? 'Restart' : 'Reset'}

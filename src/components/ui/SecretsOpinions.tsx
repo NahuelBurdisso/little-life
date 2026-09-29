@@ -1,4 +1,6 @@
 import { trpc } from "../../lib/trpc";
+import { EmptyState } from "./EmptyState";
+import { SkeletonSection } from "./Skeleton";
 
 interface SecretsOpinionsProps {
   agentId: number;
@@ -18,7 +20,7 @@ const FACT_COLORS: Record<string, string> = {
   work_issue: "text-orange-300",
   drunk_incident: "text-amber-300",
   rumor: "text-purple-400",
-  confession: "text-blue-400",
+  confession: "text-ui-blue",
   seduction: "text-pink-300",
   reputation: "text-red-300",
   secret_told: "text-indigo-400",
@@ -67,8 +69,17 @@ function opinionTemplate(
 }
 
 export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
-  const { data: knownFacts } = trpc.knowledge.getKnownBy.useQuery({ agentId });
-  const { data: relationships } = trpc.relationships.getAgentRelationships.useQuery({ agentId });
+  const { data: knownFacts, isLoading: factsLoading } = trpc.knowledge.getKnownBy.useQuery({ agentId });
+  const { data: relationships, isLoading: relsLoading } = trpc.relationships.getAgentRelationships.useQuery({ agentId });
+
+  if (factsLoading || relsLoading) {
+    return (
+      <>
+        <SkeletonSection rows={3} />
+        <SkeletonSection rows={3} />
+      </>
+    );
+  }
 
   // Filter to secrets (sensitivity >= 2), sort by sensitivity desc
   const secrets = (knownFacts ?? [])
@@ -91,15 +102,18 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
   return (
     <div>
       {/* Secrets section */}
-      <div className="px-3 py-2 border-b border-gray-700">
-        <div className="text-xs text-gray-500 font-medium mb-1.5">
+      <div className="px-3 py-2 border-b border-ui-line">
+        <div className="text-xs text-ui-dim font-medium mb-1.5">
           Secrets Known ({secrets.length})
         </div>
 
         {secrets.length === 0 ? (
-          <p className="text-[11px] text-gray-600 italic">
-            Hasn't heard any secrets yet.
-          </p>
+          <EmptyState
+            compact
+            icon="🤐"
+            title="Hasn't heard any secrets yet."
+            hint="Confessions, crushes and scandals they learn about are kept here."
+          />
         ) : (
           <div className="space-y-1.5">
             {secrets.map((fact: any) => {
@@ -109,8 +123,8 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
                   key={fact.id}
                   className={`text-[11px] rounded px-1.5 py-1 ${
                     isHighSecret
-                      ? "bg-red-900/20 border border-red-900/30"
-                      : "bg-yellow-900/10 border border-yellow-900/20"
+                      ? "bg-ui-bad/10 border border-ui-bad/25"
+                      : "bg-ui-warn/10 border border-ui-warn/20"
                   }`}
                 >
                   <div className="flex items-start gap-1">
@@ -119,17 +133,17 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
                     </span>
                     <span
                       className={`capitalize font-medium shrink-0 ${
-                        FACT_COLORS[fact.type] ?? "text-gray-400"
+                        FACT_COLORS[fact.type] ?? "text-ui-dim"
                       }`}
                     >
                       {fact.type.replace(/_/g, " ")}
                     </span>
-                    <span className="text-gray-400 flex-1">{fact.content}</span>
+                    <span className="text-ui-dim flex-1">{fact.content}</span>
                   </div>
-                  <div className="text-[9px] text-gray-600 mt-0.5">
+                  <div className="text-[9px] text-ui-muted mt-0.5">
                     Known by {(fact.known_by as number[]).length} people
                     {fact.reliability && fact.reliability !== "confirmed" && (
-                      <span className="ml-2 text-yellow-600 capitalize">
+                      <span className="ml-2 text-ui-warn capitalize">
                         {fact.reliability}
                       </span>
                     )}
@@ -142,15 +156,18 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
       </div>
 
       {/* Opinions section */}
-      <div className="px-3 py-2 border-b border-gray-700">
-        <div className="text-xs text-gray-500 font-medium mb-1.5">
+      <div className="px-3 py-2 border-b border-ui-line">
+        <div className="text-xs text-ui-dim font-medium mb-1.5">
           Opinions
         </div>
 
         {topRelationships.length === 0 ? (
-          <p className="text-[11px] text-gray-600 italic">
-            No strong opinions about anyone yet.
-          </p>
+          <EmptyState
+            compact
+            icon="🗨"
+            title="No strong opinions yet."
+            hint="As friendships and grudges form, what they think of each person appears here."
+          />
         ) : (
           <div className="space-y-1.5">
             {topRelationships.map((entry: any) => {
@@ -172,21 +189,21 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
 
               const friendshipColor =
                 friendship > 40
-                  ? "text-blue-400"
+                  ? "text-ui-blue"
                   : friendship < -20
-                  ? "text-red-400"
-                  : "text-gray-400";
+                  ? "text-ui-bad"
+                  : "text-ui-dim";
 
               return (
                 <div key={other.id} className="text-[11px]">
                   <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-gray-300 font-medium">{other.name}</span>
+                    <span className="text-ui-text font-medium">{other.name}</span>
                     <span className={`text-[10px] ${friendshipColor}`}>
                       {friendship > 0 ? "+" : ""}
                       {Math.round(friendship)}
                     </span>
                   </div>
-                  <p className="text-gray-500 italic">{opinion}</p>
+                  <p className="text-ui-muted italic">{opinion}</p>
                 </div>
               );
             })}
