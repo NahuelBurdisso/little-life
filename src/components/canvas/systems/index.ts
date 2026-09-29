@@ -3,6 +3,7 @@ import { createTownEventSystem } from "./townEvents/TownEventSystem";
 import { createAmbientLifeSystem } from "./ambientLife/AmbientLifeSystem";
 import { createHeldItemSystem } from "./held/HeldItemSystem";
 import { createBeatSystem } from "./beats/BeatSystem";
+import { createActivityFxSystem } from "./activityFx/ActivityFxSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -13,5 +14,6 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   createTownEventSystem,
   createAmbientLifeSystem,
   createHeldItemSystem,
+  createActivityFxSystem,
   createBeatSystem,
 ];
