@@ -64,10 +64,13 @@ export const PARTICLE_PROFILES: ParticleProfile[] = [
     id: 'chimney_smoke',
     trigger: { type: 'location_type', locType: 'chimney' },
     appearance: {
-      shape: 'square', // maps to Kenney large soft glow — reads as puff, not ring
-      colors: [0x8a8a88, 0x6f6f6d, 0x9a9a96],
-      sizeRange: [0.03, 0.07],
-      alpha: 0.3,
+      shape: 'puff',
+      // Light warm greys: mid grey vanished against the grass once the puff lost its hot white ring.
+      colors: [0xd6d2c8, 0xbdb8ae, 0xe4e0d8],
+      // The puff texture is 128 px (the Kenney glows were 512), hence the larger scale.
+      sizeRange: [0.13, 0.28],
+      // The puff's layered discs already thin the rim; the ring texture needed less.
+      alpha: 0.7,
     },
     motion: {
       speedRange: [5, 11],

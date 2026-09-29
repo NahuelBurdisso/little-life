@@ -5,7 +5,7 @@ import type { ParticleShape } from './types';
  * Loads Kenney particle textures (CC0 license) and maps them to particle shapes.
  *
  * The Kenney pack provides 5 soft-glow circle variants (512x512, white on transparent);
- * the first four are used.
+ * circle_01, 02 and 04 are used.
  * These are the industry standard for particle effects — they look beautiful when
  * tinted, scaled, and layered. Different shapes reuse the same glow textures at
  * different scales and with programmatic overlays for variety.
@@ -16,7 +16,8 @@ import type { ParticleShape } from './types';
 const KENNEY_TEXTURES = [
   '/particles/circle_01.png', // soft round glow
   '/particles/circle_02.png', // harder edge glow
-  '/particles/circle_03.png', // large soft glow
+  // circle_03 was the chimney-smoke 'square': it is a ring (hollow centre), so smoke
+  // rose as stacked hoops. Smoke now uses the procedural 'puff' below.
   '/particles/circle_04.png', // medium sharp glow
   // circle_05 (small tight glow) was only ever the 'raindrop' shape, which went
   // with the duplicate rain profile — WeatherEffects draws all precipitation.
@@ -75,8 +76,21 @@ export async function createShapeTextures(
   // Primary shapes use Kenney glow textures (beautiful soft rendering)
   textures.set('circle', kenneyTextures[0] ?? own(createCircleFallback(renderer)));
   textures.set('spark', kenneyTextures[1] ?? own(createCircleFallback(renderer)));    // harder edge = spark feel
-  textures.set('leaf', kenneyTextures[3] ?? own(createCircleFallback(renderer)));     // medium = leaf
-  textures.set('square', kenneyTextures[2] ?? own(createCircleFallback(renderer)));   // large soft = ambient
+  textures.set('leaf', kenneyTextures[2] ?? own(createCircleFallback(renderer)));     // medium = leaf
+
+  // Smoke puff: a filled, lumpy blob, dense in the middle and soft at the rim. Every
+  // Kenney glow is ring-shaped (transparent centre), which read as hoops, not smoke.
+  // Stacked translucent discs fake the radial falloff without a gradient texture.
+  textures.set('puff', own(createFallbackTexture(renderer, (g) => {
+    const s = FALLBACK_SIZE;
+    const lobes: Array<[number, number, number]> = [
+      [0.5, 0.56, 0.3], [0.36, 0.5, 0.2], [0.64, 0.48, 0.22], [0.5, 0.38, 0.2],
+    ];
+    for (const k of [1, 0.78, 0.56]) {
+      for (const [x, y, r] of lobes) g.circle(s * x, s * y, s * r * k);
+      g.fill({ color: 0xffffff, alpha: 0.34 });
+    }
+  })));
 
   // Specialty shapes: programmatic at FALLBACK_SIZE resolution
   // These need to match the visual weight of Kenney 512px textures when scaled
