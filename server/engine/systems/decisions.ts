@@ -1779,7 +1779,19 @@ export function tick(world: WorldRow): void {
             }
           }
         } else if (decision.source === 'shoplifting') {
-          // Steal from shop — no specific victim, just gain money
+          // Steal from the shop: the loss comes out of the owner's till (or the
+          // town's, for an ownerless shop). It used to come from nowhere —
+          // money minted outside the treasury loop (economy.ts, townTreasury.ts).
+          const shopOwner = allLocations.find((l) => l.id === decision.targetLocationId)?.owner ?? null;
+          const ownerEcon = shopOwner != null && shopOwner !== thief.id
+            ? db.select().from(economy).where(eq(economy.agent_id, shopOwner)).get()
+            : undefined;
+          if (ownerEcon) {
+            db.update(economy).set({ money: Math.max(0, ownerEcon.money - stolenAmount) }).where(eq(economy.id, ownerEcon.id)).run();
+          } else {
+            const world = db.select().from(worldState).get();
+            if (world) db.update(worldState).set({ tax_pool: world.tax_pool - stolenAmount }).where(eq(worldState.id, world.id)).run();
+          }
           db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
           if (caught) {
             createFact('theft', thief.id, null, 2, [thief.id], 'witnessed');

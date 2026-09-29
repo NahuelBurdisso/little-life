@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, needs, economy, agentStates, locations } from '../db/schema';
+import { agents, needs, economy, agentStates, locations, worldState } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { getEffectivePersonality } from './states';
@@ -80,9 +80,22 @@ export function tavernTick(nowMinutes: number): void {
 
     if (Math.random() > drinkChance) continue;
 
-    // Buy a drink
+    // Buy a drink. The $2 goes to whoever runs the tavern; it used to vanish,
+    // a money sink the treasury loop (server/lib/townTreasury.ts) doesn't
+    // want: money now only moves between residents and the town. The drinker
+    // tending their own bar pays nobody.
     state.drinks++;
-    db.update(economy).set({ money: econ.money - 2 }).where(eq(economy.id, econ.id)).run();
+    const tavernOwner = allLocations.find((l) => l.id === agent.current_location)?.owner ?? null;
+    if (tavernOwner !== agent.id) {
+      db.update(economy).set({ money: econ.money - 2 }).where(eq(economy.id, econ.id)).run();
+      if (tavernOwner != null) {
+        const ownerEcon = db.select().from(economy).where(eq(economy.agent_id, tavernOwner)).get();
+        if (ownerEcon) db.update(economy).set({ money: ownerEcon.money + 2 }).where(eq(economy.id, ownerEcon.id)).run();
+      } else {
+        const world = db.select().from(worldState).get();
+        if (world) db.update(worldState).set({ tax_pool: world.tax_pool + 2 }).where(eq(worldState.id, world.id)).run();
+      }
+    }
 
     // Apply drink effects to needs
     const agentNeeds = db.select().from(needs).where(eq(needs.agent_id, agent.id)).get();
