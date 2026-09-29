@@ -283,6 +283,13 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
     db.delete(locations).where(eq(locations.id, locId)).run();
   });
 
+  // The scenarios here are a slow model: an unmeasured turn is assumed to take
+  // 20 s (the shipped prior is lower; conversationPacing.test.ts covers it).
+  const shippedPrior = CONFIG.CONVERSATIONS.TURN_LATENCY_PRIOR_MS;
+  const pacing = CONFIG.CONVERSATIONS as { TURN_LATENCY_PRIOR_MS: number };
+  beforeAll(() => { pacing.TURN_LATENCY_PRIOR_MS = 20_000; });
+  afterAll(() => { pacing.TURN_LATENCY_PRIOR_MS = shippedPrior; });
+
   beforeEach(() => {
     resetConversationPacing();
     resetScheduler();
