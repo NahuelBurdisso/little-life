@@ -1,4 +1,5 @@
 import { EmptyState } from "./EmptyState";
+import type { DecomposedAction } from "../../../server/lib/planning/types";
 
 interface PlanBlock {
   id: string | number;
@@ -7,7 +8,10 @@ interface PlanBlock {
   broad_action: string;
   location_hint?: string;
   status: "completed" | "active" | "pending" | "interrupted" | "replanned" | "skipped";
-  decomposed_actions?: Array<{ action: string; duration_min: number }>;
+  // The server's field names (planning/types.ts DecomposedAction). The client
+  // once declared `action`/`duration_min`, which the server never sends, so the
+  // active block listed "undefined (undefinedmin)".
+  decomposed_actions?: Array<Pick<DecomposedAction, "description" | "duration_minutes">>;
 }
 
 interface DailyPlan {
@@ -159,8 +163,8 @@ export function PlanTimeline({ dailyPlan }: PlanTimelineProps) {
                       >
                         <span className="text-ui-muted">•</span>
                         <span>
-                          {da.action}{" "}
-                          <span className="text-ui-muted">({da.duration_min}min)</span>
+                          {da.description}{" "}
+                          <span className="text-ui-muted">({da.duration_minutes}min)</span>
                         </span>
                       </div>
                     ))}
