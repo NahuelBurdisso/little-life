@@ -15,7 +15,7 @@ const MEANINGFUL_STATUSES = new Set([
   'romantic_interest', 'partners', 'complicated',
 ]);
 
-// Expected max durations for states (in ticks) — used to detect stuck states
+// Expected max durations for states (in game minutes, the agent-state clock) — used to detect stuck states
 const STATE_EXPECTED_DURATIONS: Record<string, number> = {
   drunk: 480,
   hungover: 360,
