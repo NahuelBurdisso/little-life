@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 187 files / 2113 tests passing (autonomous improvement session, wave 1–2 merged).
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 211 files / 2336 tests passing (autonomous improvement session, waves 1–3 merged).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -126,20 +126,12 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 Evidence in the session scratchpad; line numbers approximate.
 - **G5 [L]** Template conversations (now ~25%, was ~half) still read as non-sequiturs; they remain
   the fallback when LLM slots are full (`SMALL_TALK_TIER`, `planConversation`).
-- **G6 [L]** Some openers still "how are you doing today" (topic labels are now intents,
-  `topicIntent` in `prompts.ts`).
-- **G7 [L]** Gossip residue: 2 self-gossip cases via a third party's sighting ("Diego told Marco that
-  Yuki spotted Diego…"). (Contentless "confided something personal" rumors fixed: the shared
-  secret's text is stored.)
 - **L2 [L]** `plan.decompose` was the largest call count (~90/game day). Sleep, own-shift and
   home-meal blocks now skip the LLM (`deterministicDecompose.ts`); re-measure with an LLM_TRACE and
   widen its word lists (`:38-46`) if the saving is small.
 
 ### Client
 - **C10 [L]** Old conversations stored before 2026-09-29 render canned fallback lines as speech.
-- **C11 [L]** Residents without a hand-drawn base sprite (nudge "New Resident" → `sprite_sheet:
-  'default'`, wizard custom names) have no `<key>.png`, so no sheet either: they render as the
-  fallback circle. Needs a parametric body generator in `scripts/aseprite/`.
 - **C13 [L]** Story beats classify `drama` activity rows by their English wording
   (`systems/beats/beatDetect.ts`); a reworded server template silently stops its beat. A `beat`
   subtype on `logActivity` would make it robust. Weddings carry no couple ids, so the wedding
@@ -169,7 +161,7 @@ Evidence in the session scratchpad; line numbers approximate.
   only for a deliberate change and say so in the commit — saved worlds rebuild from their seed.
 
 ### Dead code
-`npm run deadcode`: 0 orphans; `WeatherType` in `server/lib/types.ts` unused.
+`npm run deadcode`: 0 orphans, 0 unused exports (2026-09-29).
 
 ## Tech debt
 
@@ -220,6 +212,25 @@ Player-facing:
   secrets about to become public, queued confrontations, goals near done, couples near a flip;
   canvas fuse over anyone ≥85% of their snap threshold (`systems/fuse/`).
 - **C8** per-frame allocations removed from bubbles, particles, lighting, occupancy dots.
+
+- **Wave 3:** town **Timeline** 🕰 + resident **Story** tab (`activity_log.game_minute`,
+  `server/lib/timeline.ts`; `getRecent` agent filter now includes what happened *to* them);
+  **Pair dossier** (`server/lib/pairDossier.ts`, `relationships.getPair`, graph edge click / 📖 on
+  relationship rows / nudge menu); **generated resident art** (C11: `src/lib/residentArt/`, bodies +
+  5 mood portraits seeded by name, fallback for any missing sprite); **player outcomes** (the
+  `player_outcome` / `player_nudge_expired` feed rows after a nudge's conversation settles,
+  `server/lib/playerOutcomes.ts`; `newsworthy: false` keeps them out of the paper) + **alert tiers**
+  (`alertTiers.ts`) + **🔔 Inbox** (`alertInbox.ts`, last 50 per world); **health banner**
+  (`world.getHealth`, WS state, LLM ok/degraded/down, tick lag); **⏩ skip the night** (raises
+  `tick_speed` to 30 until 06:00, stops on wakers/disruptive events, `server/engine/nightSkip.ts`;
+  retention keeps the player's speed); leftovers batch (gift ids, impulsive gifts by wealth, autoplay
+  window in game minutes + autoplay config persisted in `rule_overrides.autoplay`, memory tick
+  advanced every tick, dead code, PlanTimeline "undefined", job titles, tension sources name who,
+  soak forces template tier); **G6** generic openers stripped, **G7** no self-gossip via sightings;
+  QA fixes (reputation rounding, infatuation perception, new residents get their job's workplace).
+- Open from wave 3: whispered thoughts get no outcome (`godPowers.ts:123`); a WS down at first
+  load shows the LoadingScreen without the banner; grey translucent circles seen once mid-skip
+  (unexplained, `PlaybackOverlay.tsx`); getPair refetches every agents flush while open.
 
 Worktree note for agents: vitest excludes `.claude/**`, so inside `.claude/worktrees/*` tests need a
 temporary config without that exclude, plus a `data/` dir. `preview_start` always runs the MAIN repo.
