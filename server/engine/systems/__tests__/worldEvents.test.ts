@@ -6,6 +6,7 @@ import { CONFIG } from '../../../lib/constants';
 import { gameMinutes } from '../../../lib/gameClock';
 import { eventsTick, startWorldEvent } from '../events';
 import { advanceClock, computeDayPhase, detectTransitions } from '../../tick';
+import { clearRulesCache } from '../../../lib/worldRules';
 import {
   aggregateEventEffects,
   EVENT_EFFECT_KEYS,
@@ -217,6 +218,36 @@ describe('eventsTick random-event roll', () => {
       expect(rollsOver(speed, 0, 6)).toBe(6);
     });
   }
+});
+
+describe('eventsTick under the Drama Intensity rule', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    db.update(worldState).set({ rule_overrides: null }).run();
+    clearRulesCache();
+  });
+
+  /** Events started over one game hour with every roll at `roll`. */
+  function eventsStartedAt(drama: string, roll: number): number {
+    let time = resetClock(15, 1);
+    db.update(worldState).set({ rule_overrides: { dramaIntensity: drama } }).run();
+    clearRulesCache();
+    vi.spyOn(Math, 'random').mockReturnValue(roll);
+    for (let i = 0; i < 60; i++) time = tickEvents(time, 1);
+    return db.select().from(worldEvents).all().length;
+  }
+
+  it("starts an hour's event at a roll only chaos passes", () => {
+    // 0.3 is over the 0.20 base (medium) and under 0.20 x 2.5 (chaos).
+    expect(eventsStartedAt('medium', 0.3)).toBe(0);
+    expect(eventsStartedAt('chaos', 0.3)).toBe(1);
+  });
+
+  it("skips an hour's event at a roll low drama no longer passes", () => {
+    // 0.15 is under the base 0.20 and over 0.20 x 0.5 (low).
+    expect(eventsStartedAt('medium', 0.15)).toBe(1);
+    expect(eventsStartedAt('low', 0.15)).toBe(0);
+  });
 });
 
 describe('storm weather', () => {

@@ -9,6 +9,7 @@ import { agents, agentStates, goals, worldState } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import type { PersonalityProfile } from '../personality';
 import { gameMinutes } from '../gameClock';
+import { snapThresholdScale } from '../worldRules';
 import type { SnapshotStore } from '../../engine/snapshotCodec';
 
 // ─── Singleton instances ────────────────────────────────────────────────────
@@ -139,6 +140,8 @@ export function cascadeTick(): void {
   const elapsedMinutes = world?.tick_speed ?? 1;
   // Still the tick for the snap's cascade metadata (chain ids, `currentTick`).
   const currentTick = world?.time?.totalTicks ?? 0;
+  // "Drama Intensity": tempers run shorter (or longer) for the whole town.
+  const snapScale = snapThresholdScale();
 
   // 1. Reset per-tick counter
   rippleEngine.resetTickCounter();
@@ -181,7 +184,7 @@ export function cascadeTick(): void {
 
     // 4. Check snap threshold
     const personality = agent.personality as PersonalityProfile | null;
-    if (personality && snapResolver && tensionTracker.shouldSnap(agent.id, personality, nowMinutes)) {
+    if (personality && snapResolver && tensionTracker.shouldSnap(agent.id, personality, nowMinutes, snapScale)) {
       // Snapshot the grievances before recording the snap — recordSnap clears them.
       const tensionSources = tensionTracker.getSources(agent.id);
 

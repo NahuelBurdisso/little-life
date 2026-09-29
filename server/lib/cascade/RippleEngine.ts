@@ -10,6 +10,8 @@ import { createFact, getAgentName, jealousRumorContext, type FactContext } from 
 import { describeWitnessedAct } from './WitnessAmplifier';
 import { logActivity } from '../activityLogger';
 import { gameMinutesNow } from '../worldClock';
+import { getRules, type LiveRules } from '../worldRules';
+import { rippleProbabilityScale } from './ruleTone';
 import crypto from 'crypto';
 
 interface QueueItem {
@@ -83,6 +85,18 @@ export class RippleEngine {
     }
 
     return Math.max(0, Math.min(1, prob));
+  }
+
+  /**
+   * The rule's probability roll, with the world's rules applied on top of the
+   * personality-gated odds: "Drama Intensity" scales the dark rules, "Contagion
+   * Rate" the sickness one (ruleTone.ts). Applied after the gates so a hothead
+   * stays likelier to lash out than a saint at every drama level; clamped
+   * again because 'chaos' can push a gated 0.6 past 1.
+   */
+  rollsToFire(rule: RippleRule, personality: PersonalityProfile, rules: LiveRules = getRules()): boolean {
+    const prob = Math.min(1, this.calculateProbability(rule, personality) * rippleProbabilityScale(rule, rules));
+    return Math.random() < prob;
   }
 
   // ─── Cooldowns ───────────────────────────────────────────────────────────────
@@ -439,8 +453,7 @@ export class RippleEngine {
     if (!this.checkRequirements(rule, agentId, payload, ctx)) return;
 
     // Probability roll
-    const prob = this.calculateProbability(rule, personality);
-    if (Math.random() >= prob) return;
+    if (!this.rollsToFire(rule, personality)) return;
 
     // Record cooldown
     this.recordCooldown(rule.id, this.cooldownAgent(rule, agentId, payload), nowMinutes);
