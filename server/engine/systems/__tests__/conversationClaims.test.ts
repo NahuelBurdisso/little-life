@@ -301,6 +301,34 @@ describe('conversationsTick — one conversation per agent', () => {
     expect(startedConversations().map((x) => x.participants)).toEqual([[c, d]]);
   });
 
+  it('keeps a same-pair template waiting behind a higher-priority LLM entry when slots are full', async () => {
+    const sched = db.select().from(conversationSchedulerState).get()!;
+    db.update(conversationSchedulerState).set({ max_concurrent_llm: 0 })
+      .where(eq(conversationSchedulerState.id, sched.id)).run();
+    enqueue([a, b], 'llm_deep', { priority: 90 });
+    enqueue([b, a], 'template', { priority: 10 });
+
+    await conversationsTick();
+
+    expect(startedConversations()).toHaveLength(0);
+    expect(db.select().from(conversationQueue).all()).toHaveLength(2);
+  });
+
+  it('does not let a timed-out pair that walked apart claim an agent', async () => {
+    // Omar left the square and walked off.
+    db.update(agents).set({ position: { x: 400, y: 400 }, current_location: null }).where(eq(agents.id, b)).run();
+    try {
+      enqueue([a, b], 'template', { priority: 90, queuedAt: Date.now() - 60_000 });
+      enqueue([a, c], 'template', { priority: 10 });
+
+      await conversationsTick();
+
+      expect(startedConversations().map((x) => x.participants)).toEqual([[a, c]]);
+    } finally {
+      db.update(agents).set({ position: { x: 100, y: 100 }, current_location: locId }).where(eq(agents.id, b)).run();
+    }
+  });
+
   it('keeps an entry queued while a participant is in a live conversation', async () => {
     startLive([a, d]);
     enqueue([a, b], 'template');

@@ -308,6 +308,8 @@ export async function conversationsTick(): Promise<void> {
     // claims its participants first; an agent can be claimed once per pass, and
     // never while a live conversation (`busyAgents`, from Step A) still holds them.
     const claimedAgents = new Set<number>();
+    /** Pairs a higher-priority LLM entry is waiting on this pass (slots full). */
+    const reservedPairs = new Set<string>();
     /**
      * 'duplicate': this exact pair already has a live conversation or one started
      *   this pass — the entry is redundant and should be dropped. Not for a
@@ -325,6 +327,7 @@ export async function conversationsTick(): Promise<void> {
       if (livePairs.has(key)) {
         return isProtectedEntry(entry) && livePairs.get(key) !== entry.topic ? 'busy' : 'duplicate';
       }
+      if (reservedPairs.has(key)) return 'busy';
       if (p.some((id) => busyAgents.has(id) || claimedAgents.has(id))) return 'busy';
       if (peek) return 'ok';
       for (const id of p) {
@@ -377,13 +380,18 @@ export async function conversationsTick(): Promise<void> {
         // Step C: timed out — delete; async template processing happens outside.
         // A timed-out entry has nowhere left to wait, so if its participants are
         // taken it is simply dropped rather than becoming a parallel template chat
-        // — unless it's a protected entry held up by a live conversation.
-        const claim = claimParticipants(entry);
-        if (claim === 'busy' && extendProtectedWait(entry)) continue;
+        // — unless it's a protected entry held up by a live conversation (checked
+        // first: a nudged pair is often still walking toward each other).
+        const peek = claimParticipants(entry, { peek: true });
+        if (peek === 'busy' && extendProtectedWait(entry)) continue;
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
         queueTimeouts++;
         changed = true;
-        if (claim !== 'ok') continue;
+        if (peek !== 'ok') continue;
+        // Liveness/proximity before claiming: a pair that walked apart (or died)
+        // can't have the template chat, and must not claim agents on the way out.
+        if (!loadTemplatePair(entry.participants as number[])) continue;
+        claimParticipants(entry);
         timedOutQueue.push({ entry, world });
         templateTotal++;
         continue;
@@ -392,7 +400,12 @@ export async function conversationsTick(): Promise<void> {
       if (entry.tier === 'template') {
         // Step D: template tier — processed immediately, no LLM.
         // Busy participants keep the entry queued; it runs once they're free or
-        // ages out through Step C.
+        // ages out through Step C. A pair that can't talk is dropped unclaimed.
+        if (!loadTemplatePair(entry.participants as number[])) {
+          db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+          changed = true;
+          continue;
+        }
         const claim = claimParticipants(entry);
         if (claim === 'busy') continue;
         // Process as template — no LLM needed for trivial conversations
@@ -408,8 +421,15 @@ export async function conversationsTick(): Promise<void> {
       }
 
       // Step E: fill open LLM slots. `continue`, not `break`, once they're full:
-      // lower-priority template entries further down still get their turn.
-      if (currentActive >= schedulerState.max_concurrent_llm) continue;
+      // lower-priority template entries further down still get their turn — but
+      // not for this pair: a same-pair template must not jump the queue just
+      // because the slot this entry is waiting for isn't free yet.
+      if (currentActive >= schedulerState.max_concurrent_llm) {
+        if (claimParticipants(entry, { peek: true }) === 'ok') {
+          reservedPairs.add(conversationPairKey(entry.participants as number[]));
+        }
+        continue;
+      }
 
       // Peek only: the pair claim is taken once the conversation actually opens
       // below. A staging entry reserves just the agents (see there).
@@ -1561,36 +1581,38 @@ function categoryToTopic(category: string): string | null {
   return map[category] ?? null;
 }
 
+/**
+ * The two agents of a template conversation, or null when they can't have one:
+ * missing or deactivated (a dead agent's row stays, and used to still produce a
+ * template chat with real relationship and needs effects), too far apart (a
+ * queue entry may have waited out `max_wait` while the pair walked off), or with
+ * no location to hold it in. Same liveness/proximity contract as the LLM path.
+ * Checked in the tick before claiming agents, and again when processing.
+ */
+function loadTemplatePair(participants: number[]): [AgentRow, AgentRow] | null {
+  if (participants.length < 2) return null;
+  const first = db.select().from(agents).where(eq(agents.id, participants[0])).get();
+  const second = db.select().from(agents).where(eq(agents.id, participants[1])).get();
+  if (!first?.is_active || !second?.is_active) return null;
+  const sameLocation = first.current_location != null && first.current_location === second.current_location;
+  if (!sameLocation) {
+    const dx = first.position.x - second.position.x;
+    const dy = first.position.y - second.position.y;
+    if (dx * dx + dy * dy > 64 * 64) return null;
+  }
+  if (!first.current_location) return null;
+  return [first, second];
+}
+
 async function processTimedOutEntry(
   entry: QueueRow,
   world: WorldRow,
 ): Promise<void> {
   const now = Date.now();
 
-  if (entry.participants.length < 2) return;
-
-  const agentList: AgentRow[] = [];
-  for (const pid of entry.participants) {
-    const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
-    // Deactivated agents keep their row, so without this guard a dead agent still
-    // produced a template conversation with real relationship and needs effects.
-    if (agent?.is_active) agentList.push(agent);
-  }
-  if (agentList.length < 2) return;
-
-  // Same liveness/proximity contract as the LLM path: a queue entry only reaches
-  // here after waiting out `max_wait`, by which time the pair may have walked apart.
-  const sameLocation =
-    agentList[0].current_location != null &&
-    agentList[0].current_location === agentList[1].current_location;
-  if (!sameLocation) {
-    const dx = agentList[0].position.x - agentList[1].position.x;
-    const dy = agentList[0].position.y - agentList[1].position.y;
-    if (dx * dx + dy * dy > 64 * 64) return;
-  }
-
-  const locationId = agentList[0].current_location;
-  if (!locationId) return;
+  const agentList = loadTemplatePair(entry.participants as number[]);
+  if (!agentList) return;
+  const locationId = agentList[0].current_location!;
 
   // Get relationship for template conditions
   const [orderedA, orderedB] =
