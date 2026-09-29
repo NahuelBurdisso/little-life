@@ -34,6 +34,7 @@ import {
 import { taskRunner } from '../../../ai/taskRunner';
 import { evaluateConversation } from '../../../lib/conversationEvaluator';
 import { conversationsTick } from '../conversations';
+import { isActionComplete } from '../decisions';
 import { nudgeRouter } from '../../../routers/nudge';
 import { CONFIG } from '../../../lib/constants';
 import { gameMinutes } from '../../../lib/gameClock';
@@ -433,6 +434,48 @@ describe('conversationsTick — one conversation per agent', () => {
           + 4 * GAME_MINUTES_PER_TURN + WRAP_UP_GRACE_GAME_MINUTES + PROTECTED_WAIT_MARGIN_GAME_MINUTES,
       );
       expect(startedConversations().map((x) => x.participants)).toEqual([[a, d]]);
+    });
+
+    it('keeps a nudge queued while the pair walks over from across town', async () => {
+      // force_confront / suggest_talk walk both to a midpoint; on the first
+      // pass they are still far apart. The entry used to be deleted right here.
+      db.update(agents).set({ position: { x: 900, y: 900 }, current_location: null }).where(eq(agents.id, b)).run();
+      try {
+        const id = enqueue([a, b], 'llm_deep', { priority: NUDGE, topic: 'confrontation' });
+
+        await conversationsTick();
+
+        expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeDefined();
+        expect(startedConversations()).toHaveLength(0);
+      } finally {
+        db.update(agents).set({ position: { x: 100, y: 100 }, current_location: locId }).where(eq(agents.id, b)).run();
+      }
+    });
+
+    it('still drops an ordinary entry whose pair is far apart', async () => {
+      db.update(agents).set({ position: { x: 900, y: 900 }, current_location: null }).where(eq(agents.id, b)).run();
+      try {
+        const id = enqueue([a, b], 'llm_standard', { priority: 50 });
+
+        await conversationsTick();
+
+        expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeUndefined();
+      } finally {
+        db.update(agents).set({ position: { x: 100, y: 100 }, current_location: locId }).where(eq(agents.id, b)).run();
+      }
+    });
+
+    it("ends a nudge's talking placeholder once its queue entry is gone", () => {
+      // The nudge queues { type: 'talking', target } after the walk; with no
+      // conversation behind it, it used to hold the agent frozen indefinitely.
+      const sofia = db.select().from(agents).where(eq(agents.id, a)).get()!;
+      const placeholder = { ...sofia, current_action: { type: 'talking', target: b } };
+      const id = enqueue([a, b], 'llm_deep', { priority: NUDGE });
+      expect(isActionComplete(placeholder, 0)).toBe(false);
+      db.delete(conversationQueue).where(eq(conversationQueue.id, id)).run();
+      expect(isActionComplete(placeholder, 0)).toBe(true);
+      // A real conversation still ends only through the conversation system.
+      expect(isActionComplete({ ...sofia, current_action: { type: 'talking', conversationId: 1 } }, 0)).toBe(false);
     });
 
     it('treats a comfort visit as protected too', async () => {

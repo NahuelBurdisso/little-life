@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import type { DramaAlert } from "../../hooks/useDramaAlerts";
 import { TIER_STYLE } from "../../lib/alertTierStyle";
 import { renderMessage } from "../../lib/activityMessage";
@@ -6,25 +5,15 @@ import { renderMessage } from "../../lib/activityMessage";
 interface DramaAlertsProps {
   alerts: readonly DramaAlert[];
   dismiss: (id: number) => void;
-  /** When true, each new alert also re-centers the camera on its subject. */
-  autoFollow: boolean;
   onFocusAgent: (agentId: string) => void;
 }
 
-export function DramaAlerts({ alerts, dismiss, autoFollow, onFocusAgent }: DramaAlertsProps) {
-  // Only ever cut to an alert once. Without this the camera would snap back to
-  // the same agent on every unrelated re-render for as long as the toast lives.
-  const lastCutIdRef = useRef(0);
-
-  useEffect(() => {
-    if (!autoFollow || alerts.length === 0) return;
-    const newest = alerts[alerts.length - 1];
-    if (newest.id <= lastCutIdRef.current) return;
-    lastCutIdRef.current = newest.id;
-    const subjectId = newest.agent_ids?.[0];
-    if (subjectId != null) onFocusAgent(String(subjectId));
-  }, [alerts, autoFollow, onFocusAgent]);
-
+/**
+ * Alert toasts. Cutting the camera to a new alert is no longer done here: the
+ * Director (hooks/useDirector.ts) weighs alerts against every other scene
+ * instead of jumping to whichever arrived last.
+ */
+export function DramaAlerts({ alerts, dismiss, onFocusAgent }: DramaAlertsProps) {
   if (alerts.length === 0) return null;
 
   return (

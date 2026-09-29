@@ -8,6 +8,11 @@ describe('helpContent', () => {
     expect(keys).toEqual(expect.arrayContaining(['Space', '1', '2', '3', '4', 'Esc', '?']));
   });
 
+  it('lists the Director\'s caption key and explains the Director', () => {
+    expect(HOTKEYS.some((h) => h.keys.includes('C'))).toBe(true);
+    expect(VERBS.some((v) => /director/i.test(v.how))).toBe(true);
+  });
+
   it('teaches right-click to meddle', () => {
     expect(VERBS.some((v) => /right-click/i.test(v.how))).toBe(true);
   });

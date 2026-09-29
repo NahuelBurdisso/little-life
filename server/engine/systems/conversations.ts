@@ -32,8 +32,10 @@ import { gameMinutes } from '../../lib/gameClock';
 import { clearConversationCache, fallbackDetector } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
-import { selectTemplate, interpolateTemplate, greetingCategory } from '../../ai/templates';
-import { TEMPLATE_REPLY_FALLBACKS, ROLE_PLACEHOLDERS, WRAP_UP_FAREWELLS } from '../../data/templates';
+import { interpolateTemplate, recordScriptUsage, scriptLastUsed } from '../../ai/templates';
+import { WRAP_UP_FAREWELLS } from '../../data/templates';
+import { composeTemplateChat } from '../../lib/templateChat';
+import { buildTemplateChatContext } from '../../helpers/templateChatContext';
 import {
   conversationBudgetGameMinutes,
   latencyProbeDue,
@@ -46,7 +48,6 @@ import {
   queueDeadlineGameMin,
   type NeedsWrapUpReason,
 } from '../../lib/conversationPacing';
-import { OUTDOOR_TYPES } from '../../lib/worldgen/buildingTemplates';
 import { simEvents } from '../../lib/simEvents';
 import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
@@ -790,6 +791,12 @@ export async function conversationsTick(): Promise<void> {
         const dx = firstParticipant.position.x - secondParticipant.position.x;
         const dy = firstParticipant.position.y - secondParticipant.position.y;
         if (dx * dx + dy * dy > 64 * 64) {
+          // A player's nudge walks both agents to a meeting point, so on its
+          // first pass the pair is almost always still apart. Deleting it here
+          // lost every confrontation/"make them talk" between people in
+          // different places without a word; it waits for them instead, and
+          // if they never meet it ages out through Step C (reported as 'apart').
+          if (isProtected) continue;
           // Too far apart — remove from queue, they'll re-queue when close
           db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
           continue;
@@ -1890,36 +1897,8 @@ async function finishCompletedConversation(
 // Process a timed-out queue entry with template fallback
 // ---------------------------------------------------------------------------
 
-/** A generic answer matching the opener's tone; see TEMPLATE_REPLY_FALLBACKS. */
-function fallbackReply(openerSentiment: number, openerName: string): { text: string; sentiment: number } {
-  const tone = openerSentiment <= -0.2 ? 'cold' : openerSentiment >= 0.3 ? 'warm' : 'neutral';
-  const pool = TEMPLATE_REPLY_FALLBACKS[tone];
-  const picked = pool[Math.floor(Math.random() * pool.length)];
-  return { text: interpolateTemplate(picked.text, { 'other.name': openerName }), sentiment: picked.sentiment };
-}
-
-function categoryToTopic(category: string): string | null {
-  const map: Record<string, string> = {
-    greeting_friendly: 'friendly greeting',
-    greeting_neutral: 'casual greeting',
-    greeting_cold: 'cold exchange',
-    tense_encounter: 'tense encounter',
-    passive_aggressive: 'passive-aggressive exchange',
-    snide_remark: 'snide remark',
-    tavern_social: 'tavern socializing',
-    complaint_mood: 'venting frustration',
-    hungry: 'food',
-    tired: 'being tired',
-    excited_event: 'exciting news',
-    purchase: 'shopping',
-    work_handoff: 'work handoff',
-    small_talk_weather: 'weather',
-    small_talk_work: 'work',
-    farewell: 'farewell',
-  };
-  return map[category] ?? null;
-}
-
+/**
+ * The two agents of a template conversation, or null when they can't have one:
 /**
  * The two agents of a template conversation, or null when they can't have one:
  * missing or deactivated (a dead agent's row stays, and used to still produce a
@@ -1957,192 +1936,42 @@ async function processTimedOutEntry(
   }
   const locationId = agentList[0].current_location!;
 
-  // Get relationship for template conditions
   const [orderedA, orderedB] =
     entry.participants[0] < entry.participants[1]
       ? [entry.participants[0], entry.participants[1]]
       : [entry.participants[1], entry.participants[0]];
 
-  const relationship = db
-    .select()
-    .from(relationships)
-    .where(
-      and(
-        eq(relationships.agent_a, orderedA),
-        eq(relationships.agent_b, orderedB),
-      ),
-    )
-    .get();
-
-  // Each speaker's lines are chosen from THEIR OWN state: their feelings toward
-  // the other (friendship is directional) and their own needs. Both used to use
-  // the pair's average friendship and the opener's mood, so a miserable listener
-  // replied with the opener's cheer, and one-sided feelings averaged away.
-  const speakerState = agentList.map((agent) => {
-    const isA = agent.id === orderedA;
-    const n = db.select().from(needs).where(eq(needs.agent_id, agent.id)).get();
-    return {
-      friendship: relationship ? (isA ? relationship.friendship_ab : relationship.friendship_ba) : 0,
-      mood: n?.mood ?? 50,
-      hunger: n?.hunger ?? 50,
-      energy: n?.energy ?? 50,
-    };
+  // One topic, played as a mini-exchange: opener, a reply written for it, an
+  // optional follow-up and a farewell that stays on the topic (G5). The topic
+  // is grounded in this moment — weather, place, a live event, someone both
+  // know, how the listener looks, the relationship — and each speaker's lines
+  // come from THEIR OWN feelings and mood. The old picker drew each line from
+  // a different category, so "Glad to be in out of the rain" was answered with
+  // "I've got so much to do today" (playtest #2).
+  const nowGameMin = gameMinutes(world.time);
+  const chatContext = buildTemplateChatContext(agentList, locationId, world);
+  const chat = composeTemplateChat(chatContext, {
+    lastUsed: scriptLastUsed(orderedA, orderedB),
+    nowGameMin,
   });
-  const { friendship, mood } = speakerState[0];
-  const dayPhase = world.day_phase;
+  // The per-pair cooldown is per topic: this pair won't rehash the same one
+  // for the script's cooldown hours (template_usage, game time).
+  if (chat) recordScriptUsage(orderedA, orderedB, chat.scriptId, nowGameMin);
 
-  // Build a prioritized list of categories to try (for the opener, speaker 0)
-  const categoriesToTry: string[] = [];
-
-  // Negative/conflict categories (highest priority — drama first).
-  // Require an actually negative relationship: neutral strangers (friendship ~0)
-  // should get neutral small talk, not hostility — otherwise every new pair
-  // meeting at low mood reads as "passive-aggressive exchange" in the feed.
-  if (friendship < -10) categoriesToTry.push('tense_encounter');
-  if (friendship < -10 && mood < 40) categoriesToTry.push('passive_aggressive');
-  if (friendship < -20 && mood < 50) categoriesToTry.push('snide_remark');
-
-  // Contextual categories (interesting situations)
-  if (mood < 30) categoriesToTry.push('complaint_mood');
-  if (speakerState[0].hunger < 35) categoriesToTry.push('hungry');
-  if (speakerState[0].energy < 35) categoriesToTry.push('tired');
-  if (mood > 70 && friendship > 30) categoriesToTry.push('excited_event');
-
-  // Location-specific
-  const loc0 = db.select({ type: locations.type }).from(locations).where(eq(locations.id, locationId)).get();
-  if (loc0?.type === 'tavern') categoriesToTry.push('tavern_social');
-  if (loc0?.type === 'shop') categoriesToTry.push('purchase');
-  if (['farm', 'shop', 'clinic', 'bakery', 'workshop'].includes(loc0?.type ?? '')) categoriesToTry.push('work_handoff');
-
-  // Weather small talk
-  categoriesToTry.push('small_talk_weather');
-  categoriesToTry.push('small_talk_work');
-
-  // Greeting as fallback
-  categoriesToTry.push(greetingCategory(friendship));
-
-  // Get location name for template interpolation
-  const templateLocation = db.select({ name: locations.name }).from(locations).where(eq(locations.id, locationId)).get();
-  // Lines like "Perfect weather for being outdoors" or "I can barely see the
-  // hills through this fog" were said inside a house; templates now declare the
-  // setting they need.
-  const setting: 'indoor' | 'outdoor' | null =
-    loc0?.type != null ? (OUTDOOR_TYPES.has(loc0.type) ? 'outdoor' : 'indoor') : null;
-
-  // Real townsfolk for `{baker.name}`-style placeholders (see ROLE_PLACEHOLDERS):
-  // only active agents in that job who aren't part of this conversation. A role
-  // nobody fills leaves its placeholder unset, which makes selectTemplate skip
-  // the variants that use it.
-  const roleVars: Record<string, string> = {};
-  for (const [placeholder, job] of Object.entries(ROLE_PLACEHOLDERS)) {
-    const holders = db
-      .select({ name: agents.name, id: agents.id })
-      .from(economy)
-      .innerJoin(agents, eq(agents.id, economy.agent_id))
-      .where(and(eq(economy.job, job), eq(agents.is_active, true)))
-      .all()
-      .filter((h) => !entry.participants.includes(h.id));
-    if (holders.length > 0) roleVars[placeholder] = holders[Math.floor(Math.random() * holders.length)].name;
-  }
-  const tavern = db.select({ name: locations.name }).from(locations).where(eq(locations.type, 'tavern')).get();
-  if (tavern) roleVars['tavern.name'] = tavern.name;
-
-  /**
-   * Picks the first category that yields a template and renders it for the
-   * given speaker. `selectTemplate` records usage, and its cooldown is keyed on
-   * (pair, category), so a category consumed by an earlier turn is unavailable
-   * to the later ones — the turns can't echo each other.
-   */
-  const buildLine = (
-    categories: string[],
-    speakerIdx: 0 | 1,
-    ignoreLocation = false,
-  ): { text: string; sentiment: number; category: string } | null => {
-    const speaker = agentList[speakerIdx];
-    const other = agentList[speakerIdx === 0 ? 1 : 0];
-    const vars: Record<string, string> = {
-      ...roleVars,
-      'speaker.name': speaker.name,
-      'other.name': other.name,
-      'listener.name': other.name,
-      'location.name': templateLocation?.name ?? 'town',
-      'weather': (world.weather as string) ?? 'weather',
-    };
-    for (const category of categories) {
-      const picked = selectTemplate(
-        category,
-        entry.participants[0],
-        entry.participants[1],
-        {
-          friendship: speakerState[speakerIdx].friendship,
-          mood: speakerState[speakerIdx].mood,
-          timeOfDay: dayPhase,
-          locationType: ignoreLocation ? null : (loc0?.type ?? null),
-          weather: world.weather as string,
-          setting,
-          // `{location.name}` is the conversation's location; "you have to come
-          // to Home 4" is only sayable to a listener who isn't already there.
-          listenerElsewhere: other.current_location !== locationId,
-        },
-        vars,
-        gameMinutes(world.time),
-      );
-      if (!picked) continue;
-      return {
-        category,
-        sentiment: picked.sentiment,
-        text: interpolateTemplate(picked.text, vars),
-      };
-    }
-    return null;
-  };
-
-  const opener =
-    buildLine(categoriesToTry, 0) ?? buildLine([greetingCategory(friendship)], 0, true);
-
-  const matchedCategory = opener?.category ?? '';
-
-  // A single line reads as talking AT someone. Give the partner a reply and,
-  // when one lands, let the opener sign off — still zero LLM cost.
   // No speaker name in the text: the UI already labels every message with its
-  // speaker, so "Priya nodded at Omar." rendered as "Priya: Priya nodded at Omar."
-  const turns: Array<{ text: string; sentiment: number }> = [
-    opener ?? { text: `*nods at ${agentList[1].name}*`, sentiment: 0 },
-  ];
-
-  // The reply comes from the replier's own state too: a sour opener OR a
-  // replier who dislikes the opener (friendship < -20, the cold greeting band)
-  // answers coldly — a warm "hello!" to someone who can't stand you doesn't get
-  // small talk back. Otherwise the replier's own mood and needs come first.
-  const replier = speakerState[1];
-  const replyCategories =
-    turns[0].sentiment <= -0.2 || replier.friendship < -20
-      ? ['snide_remark', 'passive_aggressive', 'tense_encounter', 'greeting_cold']
-      : [
-          ...(replier.mood < 30 ? ['complaint_mood'] : []),
-          ...(replier.hunger < 35 ? ['hungry'] : []),
-          ...(replier.energy < 35 ? ['tired'] : []),
-          'small_talk_weather',
-          'small_talk_work',
-          'excited_event',
-          greetingCategory(replier.friendship),
-        ];
-  // When every reply category is on its per-pair cooldown (pairs that keep
-  // bumping into each other exhaust them fast) the exchange used to stop at the
-  // opener. Fall back to a stock acknowledgement so both people always speak.
-  const reply = buildLine(replyCategories, 1) ?? fallbackReply(turns[0].sentiment, agentList[0].name);
-  turns.push(reply);
-
-  const signOff = buildLine(['farewell'], 0);
-  if (signOff) turns.push(signOff);
+  // speaker. `composeTemplateChat` only returns null if no script at all can
+  // be voiced here ("the day" always can), so the nod is a last resort.
+  const turns: Array<{ text: string; sentiment: number; speaker: 0 | 1 }> = chat
+    ? chat.turns.map((t) => ({ text: t.text, sentiment: t.sentiment, speaker: t.speaker }))
+    : [{ text: `*nods at ${chatContext.people[1].first}*`, sentiment: 0, speaker: 0 }];
 
   const messageSentiment = turns.reduce((sum, t) => sum + t.sentiment, 0) / turns.length;
 
   // Create a completed conversation with the template messages
   const conversationDoc = {
     participants: entry.participants,
-    messages: turns.map((turn, i) => ({
-      speakerId: entry.participants[i % 2],
+    messages: turns.map((turn) => ({
+      speakerId: agentList[turn.speaker].id,
       text: turn.text,
       sentiment: turn.sentiment,
       topics: extractTopics([{ text: turn.text }]),
@@ -2150,7 +1979,7 @@ async function processTimedOutEntry(
     })),
     location: locationId,
     trigger_reason: entry.trigger_reason + ' (template)',
-    topic: categoryToTopic(matchedCategory) ?? entry.topic,
+    topic: chat?.topic ?? entry.topic,
     status: 'ended' as const,
     started_at: now,
     ended_at: now,
