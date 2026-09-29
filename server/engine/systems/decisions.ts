@@ -47,6 +47,10 @@ import { foodCount, isFood } from '../../lib/economyEngine';
 import { shopliftFrom } from '../../lib/economyTransfers';
 import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { parseWeddingTrigger } from '../../lib/marriage';
+import {
+  PROPOSAL_SEEK_SCORE, canSeekPartner, inNoProposalState, pendingProposalPartner, queuePendingProposalNow,
+  type SeekParty,
+} from '../../lib/milestonesEngine';
 
 // --- Types ---
 
@@ -478,6 +482,39 @@ function socialCrisisTarget(
     l.type === 'town_square' || (l.type === 'tavern' && (hour === undefined || isOpenAt(l.operating_hours, hour))));
   const social = nearestLocation(agent.position, venues, ['tavern', 'town_square']);
   return social ? { action: 'socializing', score: 9999, targetLocationId: social.id } : null;
+}
+
+/**
+ * The walk to the partner a pending proposal calls for, or null while it should
+ * wait (someone asleep, on shift, or in a state that rules it out — see
+ * canSeekPartner). Same shape as a comfort visit: to wherever the partner is,
+ * or the square when they are out in the open.
+ */
+export function proposalSeekDecision(
+  proposer: AgentRow,
+  partner: AgentRow,
+  allLocations: LocationRow[],
+  hour: number,
+  proposerStates: readonly string[],
+  partnerStates: readonly string[],
+): ScoredAction | null {
+  const party = (a: AgentRow, states: readonly string[]): SeekParty => {
+    const personality = getEffectivePersonality(a.id) ?? a.personality as PersonalityProfile | null;
+    return {
+      action: (a.current_action as { type?: string } | null)?.type ?? 'idle',
+      inSleepWindow: inSleepWindow(effectiveSleepWindow(a.schedule, personality, a.workplace != null), hour),
+      onShift: !!a.workplace && hour >= a.schedule.workStart && hour < a.schedule.workEnd,
+      notNow: inNoProposalState(states),
+    };
+  };
+  if (!canSeekPartner(party(proposer, proposerStates), party(partner, partnerStates))) return null;
+  return {
+    action: 'socializing',
+    score: PROPOSAL_SEEK_SCORE,
+    targetLocationId: partner.current_location ?? nearestLocation(partner.position, allLocations, 'town_square')?.id,
+    targetAgentId: partner.id,
+    source: 'proposal_seek',
+  };
 }
 
 /**
@@ -1575,6 +1612,24 @@ export function tick(world: WorldRow): void {
       }
     }
 
+    // Phase 1a'': a pending proposal (score 6400 — above the day plan, below their
+    // own wedding). The proposer used to wait for the partner to wander into range;
+    // now they go and find them when both are free to be found (proposalSeekDecision
+    // holds the sleep/shift rules). Once together the question is seated on the
+    // spot, and the social-queue block below leaves this decision alone so an
+    // ordinary chat doesn't take the place of the proposal.
+    if (!decision) {
+      const partnerId = pendingProposalPartner(agent.id);
+      const partner = partnerId != null ? activeAgents.find((a) => a.id === partnerId) : undefined;
+      if (partner) {
+        decision = proposalSeekDecision(agent, partner, allLocations, world.time.hour, getAgentStates(agent.id), getAgentStates(partner.id));
+        if (decision && queuePendingProposalNow(agent.id)) {
+          // Together already: stay put with them while the conversation starts.
+          decision = { ...decision, targetLocationId: agent.current_location ?? decision.targetLocationId };
+        }
+      }
+    }
+
     // Phase 1b: Plan layer (score 6000 — above free-time, below emergency).
     // Not while the commute is due: plan blocks are whole hours and an LLM plan
     // (like the fallback one) puts "work" at `workStart`, so the block before it
@@ -1971,7 +2026,8 @@ export function tick(world: WorldRow): void {
 
     // Social decisions -> conversation queue (only if agents are at same location)
     // Skip if queue is already full
-    if (decision.action === 'socializing' && decision.targetAgentId && allQueuedConvos.length < CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE * 3) {
+    if (decision.action === 'socializing' && decision.targetAgentId && decision.source !== 'proposal_seek'
+      && allQueuedConvos.length < CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE * 3) {
       const agentId = agent.id;
       const targetId = decision.targetAgentId;
 

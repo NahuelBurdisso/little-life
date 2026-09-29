@@ -475,6 +475,87 @@ function queueProposal(proposer: AgentRow, other: AgentRow, state: PairMilestone
   }
 }
 
+// ─── Going to find them ──────────────────────────────────────────────────────
+//
+// `milestonesTick` only seats a proposal when the two happen to be together at
+// one of its 10-minute passes, so a couple who keep different hours (one at the
+// forge all day, one at the bakery) could sit on a pending proposal until it
+// timed out and got re-decided a day later — a wedding that never came because
+// nobody walked across town. Now the proposer goes looking: decisions.ts turns
+// `pendingProposalPartner` into a walk to the partner (same shape as a comfort
+// visit) whenever both are free to be found, and `queuePendingProposalNow`
+// seats the question the moment they meet instead of at the next pass.
+
+/**
+ * Decision score of the walk to the partner: above the day plan (6000) so the
+ * question is not postponed by "browse the market", below their own wedding
+ * (6500), a comfort visit's promise (7000) and every emergency.
+ */
+export const PROPOSAL_SEEK_SCORE = 6400;
+
+/** Who a proposer is waiting to ask, or null when none of their proposals is pending. */
+export function pendingProposalPartner(proposerId: number): number | null {
+  for (const [key, state] of pairs) {
+    if (state.proposerId !== proposerId || state.pendingSince == null) continue;
+    const [x, y] = key.split('-').map(Number);
+    return x === proposerId ? y : x;
+  }
+  return null;
+}
+
+/** What `canSeekPartner` needs to know about one of the two, gathered by the caller. */
+export interface SeekParty {
+  /** `current_action.type` ('idle' when unset). */
+  action: string;
+  /** Inside their sleeping hours (they are in bed or about to be). */
+  inSleepWindow: boolean;
+  /** Inside their shift (they have a workplace and it is between workStart and workEnd). */
+  onShift: boolean;
+  /** One of NOT_NOW_STATES (heartbroken, sick, arrested...). */
+  notNow: boolean;
+}
+
+/** Whether any of these agent states rules out a proposal for now (the `ready` gate's list). */
+export function inNoProposalState(states: readonly string[]): boolean {
+  return states.some((s) => NOT_NOW_STATES.has(s));
+}
+
+/**
+ * Should the proposer set off to find their partner right now? Only when the
+ * question can plausibly be asked on arrival: neither of them asleep, in bed
+ * hours or in a state that rules it out, and neither on shift — a proposer
+ * abandoning the counter, or barging in on someone at work, is worse than
+ * waiting an hour for the evening. Pure, for the tests.
+ */
+export function canSeekPartner(me: SeekParty, partner: SeekParty): boolean {
+  const unavailable = (p: SeekParty) => p.action === 'sleeping' || p.action === 'dead' || p.action === 'talking';
+  if (unavailable(me) || unavailable(partner)) return false;
+  if (me.inSleepWindow || partner.inSleepWindow) return false;
+  if (me.onShift || partner.onShift || partner.action === 'working') return false;
+  return !me.notNow && !partner.notNow;
+}
+
+/**
+ * The proposer has reached the partner: seat the question now rather than at the
+ * next 10-minute pass (by which time one of them may have wandered off). True
+ * when the two are together with the proposal queued (now or already).
+ */
+export function queuePendingProposalNow(proposerId: number): boolean {
+  const partnerId = pendingProposalPartner(proposerId);
+  if (partnerId === null) return false;
+  const state = pairs.get(pairKey(proposerId, partnerId));
+  const proposer = db.select().from(agents).where(eq(agents.id, proposerId)).get();
+  const other = db.select().from(agents).where(eq(agents.id, partnerId)).get();
+  if (!state || !proposer || !other || !proposer.is_active || !other.is_active) return false;
+  if (relBetween(proposerId, partnerId)?.status !== 'partners') return false;
+  if (!canProposeNow(proposer, other)) return false;
+  if (!proposalQueued(proposerId, partnerId)) {
+    queueProposal(proposer, other, state);
+    emitter.markDirty('agents.all');
+  }
+  return true;
+}
+
 // ─── Outcome ─────────────────────────────────────────────────────────────────
 
 interface ConversationEndedPayload {

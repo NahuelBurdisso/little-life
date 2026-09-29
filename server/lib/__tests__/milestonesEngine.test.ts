@@ -7,9 +7,11 @@ import {
 } from '../../db/schema';
 import {
   PROPOSAL_MAX_DAYS, PROPOSAL_MIN_DAYS, PROPOSAL_QUEUE_PRIORITY, WEDDING_DELAY_MINUTES,
-  canProposeNow, clearMilestones, deterministicAnswer, getPairMilestone, isWeddingHour, milestonesSnapshotStore,
-  milestonesTick, pickProposer, proposalDelayDays, proposalOutcome,
+  PROPOSAL_SEEK_SCORE, canProposeNow, canSeekPartner, clearMilestones, deterministicAnswer, getPairMilestone,
+  inNoProposalState, isWeddingHour, milestonesSnapshotStore, milestonesTick, pendingProposalPartner, pickProposer,
+  proposalDelayDays, proposalOutcome, queuePendingProposalNow, type SeekParty,
 } from '../milestonesEngine';
+import { proposalSeekDecision } from '../../engine/systems/decisions';
 import { simEvents } from '../simEvents';
 import { gameMinutes } from '../gameClock';
 import { PROPOSAL_TOPIC } from '../../ai/prompts';
@@ -98,6 +100,38 @@ describe('canProposeNow', () => {
     expect(canProposeNow(at(0, null), at(400, null))).toBe(false);  // apart
     expect(canProposeNow(at(0, 5, 'sleeping'), at(0, 5))).toBe(false);
     expect(canProposeNow(at(0, 5), at(0, 5, 'talking'))).toBe(false);
+  });
+});
+
+describe('canSeekPartner', () => {
+  const free: SeekParty = { action: 'idle', inSleepWindow: false, onShift: false, notNow: false };
+
+  it('goes when both are awake, off shift and free', () => {
+    expect(canSeekPartner(free, free)).toBe(true);
+    expect(canSeekPartner({ ...free, action: 'walking' }, { ...free, action: 'eating' })).toBe(true);
+  });
+
+  it('never wakes anyone or drags them from a conversation', () => {
+    for (const action of ['sleeping', 'dead', 'talking']) {
+      expect(canSeekPartner({ ...free, action }, free)).toBe(false);
+      expect(canSeekPartner(free, { ...free, action })).toBe(false);
+    }
+    expect(canSeekPartner({ ...free, inSleepWindow: true }, free)).toBe(false);
+    expect(canSeekPartner(free, { ...free, inSleepWindow: true })).toBe(false);
+  });
+
+  it('respects the workday on both sides', () => {
+    expect(canSeekPartner({ ...free, onShift: true }, free)).toBe(false);
+    expect(canSeekPartner(free, { ...free, onShift: true })).toBe(false);
+    // A partner seen mid-task at the workplace outside their nominal shift is still working.
+    expect(canSeekPartner(free, { ...free, action: 'working' })).toBe(false);
+  });
+
+  it('waits out a state that rules a proposal out', () => {
+    expect(inNoProposalState(['tired', 'heartbroken'])).toBe(true);
+    expect(inNoProposalState(['happy'])).toBe(false);
+    expect(canSeekPartner({ ...free, notNow: true }, free)).toBe(false);
+    expect(canSeekPartner(free, { ...free, notNow: true })).toBe(false);
   });
 });
 
@@ -266,6 +300,85 @@ describe('milestones against the DB', () => {
       expect(getPairMilestone(a, b)?.proposerId).toBe(a);
       tick(12, NOW + 19 * 60);
       expect(getPairMilestone(a, b)).toEqual({ retryAfter: NOW + 19 * 60 + DAY });
+    });
+  });
+
+  describe('the proposer goes to find the partner', () => {
+    const load = (id: number) => db.select().from(agents).where(eq(agents.id, id)).get()!;
+
+    /** A pending proposal from `a`, the two apart: a in the cottage, b in the square. */
+    function pendingApart() {
+      const { a, b } = couple({}, { current_location: homeId });
+      db.update(agents).set({ current_location: squareId, position: { x: 900, y: 0 } }).where(eq(agents.id, b)).run();
+      tick(12);
+      expect(getPairMilestone(a, b)?.proposerId).toBe(a);
+      expect(queued(a, b)).toHaveLength(0);
+      return { a, b };
+    }
+
+    it('exposes who a proposer is waiting on, only for the proposer', () => {
+      const { a, b } = pendingApart();
+      expect(pendingProposalPartner(a)).toBe(b);
+      expect(pendingProposalPartner(b)).toBeNull();
+      expect(pendingProposalPartner(123_456)).toBeNull();
+    });
+
+    it('walks to wherever the partner is, above the day plan and below the wedding', () => {
+      const { a, b } = pendingApart();
+      const all = db.select().from(locations).all();
+      const d = proposalSeekDecision(load(a), load(b), all, 12, [], []);
+      expect(d).toMatchObject({
+        action: 'socializing', score: PROPOSAL_SEEK_SCORE, targetLocationId: squareId,
+        targetAgentId: b, source: 'proposal_seek',
+      });
+      expect(PROPOSAL_SEEK_SCORE).toBeGreaterThan(6000);
+      expect(PROPOSAL_SEEK_SCORE).toBeLessThan(6500);
+    });
+
+    it('heads for the square when the partner is out in the open', () => {
+      const { a, b } = pendingApart();
+      db.update(agents).set({ current_location: null, position: { x: 0, y: 0 } }).where(eq(agents.id, b)).run();
+      const all = db.select().from(locations).all();
+      expect(proposalSeekDecision(load(a), load(b), all, 12, [], [])?.targetLocationId).toBe(squareId);
+    });
+
+    it('holds off during the workday, in bed hours, and while asleep or unwell', () => {
+      const { a, b } = couple({}, { current_location: homeId });
+      db.update(agents).set({ workplace: squareId }).where(eq(agents.id, a)).run();
+      const all = db.select().from(locations).all();
+      // Fixture schedule: works 9-17, sleeps 22-6.
+      expect(proposalSeekDecision(load(a), load(b), all, 11, [], [])).toBeNull();      // proposer on shift
+      expect(proposalSeekDecision(load(a), load(b), all, 18, [], [])).not.toBeNull();  // shift over
+      expect(proposalSeekDecision(load(a), load(b), all, 23, [], [])).toBeNull();      // bed hours
+      expect(proposalSeekDecision(load(a), load(b), all, 18, ['sick'], [])).toBeNull();
+      db.update(agents).set({ current_action: { type: 'sleeping' } }).where(eq(agents.id, b)).run();
+      expect(proposalSeekDecision(load(a), load(b), all, 18, [], [])).toBeNull();      // partner asleep
+    });
+
+    it('seats the proposal the moment they are together, once', () => {
+      const { a, b } = pendingApart();
+      expect(queuePendingProposalNow(a)).toBe(false); // still apart
+      expect(queued(a, b)).toHaveLength(0);
+
+      db.update(agents).set({ current_location: squareId, position: { x: 900, y: 0 } }).where(eq(agents.id, a)).run();
+      expect(queuePendingProposalNow(a)).toBe(true);
+      expect(queued(a, b)).toHaveLength(1);
+      expect(feed('proposal', a)).toHaveLength(1);
+
+      // Idempotent, and the next 10-minute pass doesn't double it either.
+      expect(queuePendingProposalNow(a)).toBe(true);
+      tick(12);
+      expect(queued(a, b)).toHaveLength(1);
+      expect(feed('proposal', a)).toHaveLength(1);
+    });
+
+    it('does nothing for someone with no pending proposal, or whose partner is no longer a partner', () => {
+      expect(queuePendingProposalNow(424_242)).toBe(false);
+      const { a, b, relId } = couple({}, { current_location: homeId });
+      tick(12);
+      expect(pendingProposalPartner(a)).toBe(b);
+      db.update(relationships).set({ status: 'friends' }).where(eq(relationships.id, relId)).run();
+      expect(queuePendingProposalNow(a)).toBe(false);
     });
   });
 
