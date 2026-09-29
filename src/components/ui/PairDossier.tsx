@@ -430,7 +430,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * "View relationship".
  *
  * Fresh because `useAgents` invalidates `relationships.getPair` on the agents
- * channel, next to the graph query; the modal itself needs no subscription.
+ * channel (throttled to one refetch per ~3 s), next to the graph query; the
+ * modal itself needs no subscription.
  */
 export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
   const nudge = useNudge();
