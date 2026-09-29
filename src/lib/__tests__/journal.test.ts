@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  JOURNAL_TABS, badgeText, isJournalTab, journalUnread, stepTab, tabBadges, tabForDigit,
+  JOURNAL_TABS, badgeText, journalUnread, stepTab, tabBadges, tabForDigit,
 } from '../journal';
 
 describe('journal tabs', () => {
@@ -23,12 +23,6 @@ describe('journal tabs', () => {
     expect(tabForDigit('0')).toBeNull();
     expect(tabForDigit('a')).toBeNull();
     expect(tabForDigit('12')).toBeNull();
-  });
-
-  it('validates deep-link targets', () => {
-    expect(isJournalTab('inbox')).toBe(true);
-    expect(isJournalTab('gazette')).toBe(false);
-    expect(isJournalTab(null)).toBe(false);
   });
 });
 

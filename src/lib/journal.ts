@@ -27,10 +27,6 @@ export const JOURNAL_TABS: readonly JournalTabDef[] = [
   { key: 'talks', icon: '💬', label: 'Talks', hint: 'Every finished conversation, searchable' },
 ];
 
-export function isJournalTab(v: unknown): v is JournalTab {
-  return typeof v === 'string' && JOURNAL_TABS.some((t) => t.key === v);
-}
-
 /** The tab `step` places along the strip, wrapping at both ends (← / →). */
 export function stepTab(current: JournalTab, step: 1 | -1): JournalTab {
   const i = JOURNAL_TABS.findIndex((t) => t.key === current);
