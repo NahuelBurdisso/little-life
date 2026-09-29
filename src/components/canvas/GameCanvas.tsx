@@ -924,7 +924,7 @@ export const GameCanvas = React.memo(function GameCanvas({
           className={`absolute top-2 left-2 z-20 px-2 py-1 text-[11px] rounded border shadow transition-colors ${
             following
               ? "bg-[#c8a84b] text-[#1a1814] border-[#c8a84b]"
-              : "bg-gray-800/80 text-gray-300 border-gray-600 hover:bg-gray-700"
+              : "bg-ui-panel/85 text-ui-text border-ui-line hover:bg-ui-hover"
           }`}
           title={following ? "Camera is locked on this agent — drag the map to release" : "Lock the camera on this agent"}
         >
