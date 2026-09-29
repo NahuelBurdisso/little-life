@@ -37,7 +37,7 @@ export interface ActivityRow {
   initiator_id?: number | null;
   target_id?: number | null;
   agent_ids?: number[] | null;
-  template_data?: { description?: string; status?: string } | null;
+  template_data?: { description?: string; status?: string; [k: string]: unknown } | null;
   real_timestamp?: number;
 }
 
