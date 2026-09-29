@@ -109,3 +109,12 @@ describe('parseAmbitionGeneration', () => {
     expect(parseAmbitionGeneration(JSON.stringify({ description: 'Only desc' }))).toBeNull();
   });
 });
+
+describe('parseGoalReview — tolerant reading', () => {
+  it('accepts a sentence around the object and "ID:12"-style goal ids', () => {
+    const raw = 'Here is my review: {"ambition":"keep","reviews":[{"goal_id":"ID:12","action":"continue","reason":"going well"}],"new_goals":[]} Hope that helps.';
+    const r = parseGoalReview(raw);
+    expect(r?.ambition).toBe('keep');
+    expect(r?.reviews).toEqual([{ goal_id: 12, action: 'continue', reason: 'going well', new_strategy: undefined }]);
+  });
+});

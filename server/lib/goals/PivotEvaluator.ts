@@ -106,6 +106,7 @@ export class PivotEvaluator {
         purpose: 'goal.pivot',
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
+        format: prompt.format,
         options: { temperature: 0.7, num_predict: 200 },
       });
 

@@ -238,6 +238,8 @@ export class GoalReviewer {
         money: econ?.money ?? 0,
         job: econ?.job ?? null,
         dayNumber: currentDay,
+        openSlots: Math.max(0, MAX_LLM_GOALS - llmGoals.length),
+        otherAgents: allAgents.filter((a) => a.id !== agentId).map((a) => a.name),
       });
 
       // Single LLM call
@@ -247,11 +249,9 @@ export class GoalReviewer {
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
-        options: {
-          temperature: CONFIG.AI.CHAT_TEMPERATURE,
-          top_p: CONFIG.AI.CHAT_TOP_P,
-          num_predict: 600,
-        },
+        format: prompt.format,
+        // Decisions, not dialogue: 0.8 made the structure itself wobble.
+        options: { temperature: 0.6, top_p: CONFIG.AI.CHAT_TOP_P, num_predict: 700 },
       });
 
       const reviewResult = parseGoalReview(response.text);
@@ -467,11 +467,8 @@ export class GoalReviewer {
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
-        options: {
-          temperature: CONFIG.AI.CHAT_TEMPERATURE,
-          top_p: CONFIG.AI.CHAT_TOP_P,
-          num_predict: 200,
-        },
+        format: prompt.format,
+        options: { temperature: CONFIG.AI.CHAT_TEMPERATURE, top_p: CONFIG.AI.CHAT_TOP_P, num_predict: 250 },
       });
 
       const parsed = parseAmbitionGeneration(response.text);

@@ -11,6 +11,14 @@ function extractJSON(raw: string): string {
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
   if (fenceMatch) cleaned = fenceMatch[1].trim();
+  // A sentence before or after the object ("Here is my review: {...}") used
+  // to fail the whole parse. Structured output makes this rare; backends that
+  // ignore `format` still do it.
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start > 0 || (end >= 0 && end < cleaned.length - 1)) {
+    if (start >= 0 && end > start) cleaned = cleaned.slice(start, end + 1);
+  }
   return cleaned;
 }
 
@@ -48,6 +56,12 @@ export function parseGoalReview(raw: string): GoalReviewResult | null {
     .filter((r: unknown) => {
       if (!r || typeof r !== 'object') return false;
       const obj = r as Record<string, unknown>;
+      // "ID:12" / "12": the prompt used to label goals "[ID:12]" and models
+      // echoed the label, which dropped the review silently.
+      if (typeof obj.goal_id === 'string') {
+        const n = Number(obj.goal_id.replace(/^\s*(?:id|goal)\s*:?\s*/i, ''));
+        if (Number.isInteger(n)) obj.goal_id = n;
+      }
       return typeof obj.goal_id === 'number' && VALID_ACTIONS.has(obj.action as string) && typeof obj.reason === 'string';
     })
     .map((r: unknown) => {
