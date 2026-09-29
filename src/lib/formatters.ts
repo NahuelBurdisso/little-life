@@ -56,6 +56,31 @@ export function timeAgo(
   return `${Math.round(hoursAgo / 24)}d ago`;
 }
 
+/**
+ * Age of something stamped in absolute GAME minutes (`gameMinutes(world.time)`),
+ * e.g. a story beat's `relationship_events.game_minute`.
+ *
+ * Unlike `timeAgo`, both ends are on the game clock, so the label stands still
+ * while the game is paused and an overnight break doesn't make yesterday's
+ * fight read as "12d ago" at 1x. Same compact shape as `timeAgo` so the two
+ * sit side by side in the feed.
+ */
+export function gameTimeAgo(minuteThen: number, minuteNow: number): string {
+  const minutesAgo = Math.max(0, minuteNow - minuteThen);
+  if (minutesAgo < 1) return "now";
+  if (minutesAgo < 60) return `${Math.floor(minutesAgo)}m ago`;
+  if (minutesAgo < 1440) return `${Math.floor(minutesAgo / 60)}h ago`;
+  return `${Math.floor(minutesAgo / 1440)}d ago`;
+}
+
+/** "Day 12, 14:05" for an absolute game minute — the long form of `gameTimeAgo`. */
+export function formatGameMinute(minute: number): string {
+  const day = Math.floor(minute / 1440);
+  const hour = Math.floor((minute % 1440) / 60);
+  const min = Math.floor(minute % 60);
+  return `Day ${day}, ${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 export function weatherEmoji(weather: string): string {
   const map: Record<string, string> = {
     sunny: "\u2600\uFE0F",

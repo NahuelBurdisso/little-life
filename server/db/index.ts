@@ -7,6 +7,10 @@ import {
   clampFutureGameMinuteStamps,
   rebaseTickStampsToGameMinutes,
 } from './clockMigration';
+import {
+  backfillRelationshipEventGameMinutes,
+  installRelationshipEventMinuteTrigger,
+} from './relationshipEventClock';
 import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { CONFIG } from '../lib/constants';
@@ -42,9 +46,12 @@ const PERF_INDEXES = [
   // range-scanned on `timestamp` — by the heartbroken check in states.ts, once
   // per agent per tick, on a table that is only ever appended to. The window is
   // narrow (60 ticks), so the range index alone reduces a growing full scan to a
-  // handful of rows; chronicle and the autoplay collectors ride it too.
+  // handful of rows; the autoplay collectors ride it too.
   'CREATE INDEX IF NOT EXISTS idx_relationship_events_timestamp ON relationship_events (timestamp)',
   'CREATE INDEX IF NOT EXISTS idx_conversations_started_at ON conversations (started_at)',
+  // Game-day retention (relationships.ts pruneRelationshipEvents) range-scans
+  // this; the chronicle orders every pair's beats by it.
+  'CREATE INDEX IF NOT EXISTS idx_relationship_events_game_minute ON relationship_events (game_minute)',
 ];
 
 function createPerfIndexes() {
@@ -52,7 +59,8 @@ function createPerfIndexes() {
     try {
       sqlite.exec(stmt);
     } catch {
-      // Table doesn't exist yet — retried on the next initSchema() call
+      // Table (or, on an old file, column) doesn't exist yet — retried at the
+      // end of initSchema() and on the next initSchema() call
     }
   }
 }
@@ -116,6 +124,10 @@ function migrateSchema() {
 
   // Relationship decay clock (game minutes; see schema.ts)
   addColumnIfMissing('relationships', 'last_interaction_minute', 'INTEGER');
+
+  // Story-arc / retention clock (game minutes; see schema.ts). Filled by a TEMP
+  // trigger on insert, old rows by backfillRelationshipEventGameMinutes.
+  addColumnIfMissing('relationship_events', 'game_minute', 'INTEGER');
 
   // Activity log extensions
   addColumnIfMissing('activity_log', 'metadata', 'TEXT');
@@ -267,7 +279,16 @@ export function initSchema(): void {
     () => clampFutureGameMinuteStamps(sqlite),
     // After migrateSchema, which adds the column; a no-op once filled.
     () => backfillRelationshipInteractionMinutes(sqlite),
+    // Same shape for relationship_events.game_minute: the trigger stamps new
+    // rows (and must exist before the tick writes any), the backfill old ones.
+    // After migrateSchema, which adds the column the trigger writes.
+    () => installRelationshipEventMinuteTrigger(sqlite),
+    () => backfillRelationshipEventGameMinutes(sqlite),
   ]);
+  // Again, for indexes on columns migrateSchema only just added: on an old file
+  // the first pass above failed on idx_relationship_events_game_minute (and
+  // swallowed it) because `game_minute` didn't exist yet. Idempotent.
+  createPerfIndexes();
 }
 
 initSchema();

@@ -1,10 +1,11 @@
 import { db } from '../../db';
 import { agents, relationships, relationshipEvents } from '../../db/schema';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { clamp } from '../../lib/utils';
 import { CONFIG } from '../../lib/constants';
-import { gameMinutes, hourChanged, type ClockTime } from '../../lib/gameClock';
+import { gameMinutes, hourChanged, MINUTES_PER_DAY, type ClockTime } from '../../lib/gameClock';
+import { PIVOTAL_EVENT_SQL } from '../../lib/storyBeats';
 import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
 import { simEvents } from '../../lib/simEvents';
@@ -121,37 +122,84 @@ function normalizePair(
 // --- Retention ---
 
 /**
- * How long a processed relationship event is kept, in wall-clock ms.
+ * How long an ordinary (non-pivotal) processed event is kept, in GAME minutes.
  *
- * CLOCK: WALL-CLOCK MS, because `relationshipEvents.timestamp` is a `Date.now()`
- * stamp. Every reader is already windowed well inside this: the heartbroken check
- * in states.ts looks back 60 ticks, the autoplay collectors look back one analysis
- * window, and chronicle takes the newest 600 rows with a 15-minute heat half-life,
- * so a row this old contributes 2^-24 of a beat.
+ * CLOCK: GAME MINUTES (`relationshipEvents.game_minute`). The old rule was six
+ * REAL hours on `timestamp`, which is what made story history vanish: the
+ * chronicle builds every arc from these rows, so after a long session or an
+ * overnight pause each rivalry, romance and reconciliation lost its beats and
+ * dropped off the Stories tab. Pausing the game also kept the real-time
+ * retention running.
+ *
+ * Every windowed reader still sits well inside this: the heartbroken check in
+ * states.ts looks back 60 ticks, the autoplay collectors one analysis window,
+ * and the chronicle's heat halves every game day, so an ordinary beat three
+ * days old is worth an eighth of a fresh one.
  */
-const EVENT_RETENTION_MS = 6 * 60 * 60 * 1000;
+export const EVENT_RETENTION_GAME_MINUTES = 3 * MINUTES_PER_DAY;
 
 /**
- * Drop processed relationship events past their retention.
+ * Pivotal events (lib/storyBeats.ts: clashes, confessions, reconciliations,
+ * anything felt at |sentiment| ≥ 0.5) are kept regardless of age, but only the
+ * newest this many per pair per event type. Unbounded they would still grow for
+ * the life of the world — a married couple trades gifts every few days — while
+ * the chronicle only ever needs a pair's latest turns of each kind: the newest
+ * clash and the newest mend decide whether it is a rivalry or a reconciliation,
+ * and a handful of each is plenty to tell the story. The cap makes the table's
+ * pivotal part O(pairs × types) instead of O(game days).
+ */
+export const PIVOTAL_EVENTS_KEPT_PER_PAIR_TYPE = 8;
+
+/**
+ * Prune processed relationship events: ordinary ones past their game-day
+ * retention, pivotal ones beyond the per-pair-per-type cap. Runs once per game
+ * day from the tick loop.
  *
- * The table is append-only — `tick` marks rows `processed` and nothing has ever
- * deleted them — so it grew for the life of the world at roughly one row per
- * interaction, dragging the `processed = false` scan and every windowed read
- * along with it.
+ * The table is append-only — `tick` marks rows `processed` and nothing else
+ * deletes them — so without this it grew for the life of the world at roughly
+ * one row per interaction, dragging the `processed = false` scan and every
+ * windowed read along with it.
  *
  * Unprocessed rows are never touched regardless of age: an old one means the
  * engine was down when it was written, and its deltas are still owed.
+ *
+ * Rows the insert trigger couldn't stamp (written before the world row existed)
+ * are dated now first, so they get a full retention period instead of being
+ * either immortal (NULL never compares older) or instantly stale.
  */
-export function pruneRelationshipEvents(): number {
-  return db
+export function pruneRelationshipEvents(nowMinutes: number): number {
+  db.update(relationshipEvents)
+    .set({ game_minute: nowMinutes })
+    .where(isNull(relationshipEvents.game_minute))
+    .run();
+
+  const ordinary = db
     .delete(relationshipEvents)
     .where(
       and(
         eq(relationshipEvents.processed, true),
-        lt(relationshipEvents.timestamp, Date.now() - EVENT_RETENTION_MS),
+        sql.raw(`NOT ${PIVOTAL_EVENT_SQL}`),
+        lt(relationshipEvents.game_minute, nowMinutes - EVENT_RETENTION_GAME_MINUTES),
       ),
     )
     .run().changes;
+
+  // Pair key is order-independent: most writers normalise a < b, but not all
+  // (gifts and confrontations are recorded giver → receiver).
+  const overflow = db.run(sql`
+    DELETE FROM relationship_events WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY MIN(agent_a, agent_b), MAX(agent_a, agent_b), event_type
+          ORDER BY game_minute DESC, id DESC
+        ) AS rank
+        FROM relationship_events
+        WHERE processed = 1 AND ${sql.raw(PIVOTAL_EVENT_SQL)}
+      ) WHERE rank > ${PIVOTAL_EVENTS_KEPT_PER_PAIR_TYPE}
+    )
+  `).changes;
+
+  return ordinary + overflow;
 }
 
 // --- Main Tick ---

@@ -14,8 +14,16 @@
  */
 
 import { db } from '../db';
-import { agents, relationships, relationshipEvents, shared_knowledge } from '../db/schema';
-import { desc, eq } from 'drizzle-orm';
+import { agents, relationships, relationshipEvents, shared_knowledge, worldState } from '../db/schema';
+import { eq, sql } from 'drizzle-orm';
+import { gameMinutes, MINUTES_PER_DAY } from './gameClock';
+import {
+  HOSTILE_EVENTS,
+  MEND_EVENT,
+  PIVOTAL_EVENT_SQL,
+  ROMANTIC_EVENTS,
+  isPivotalEvent,
+} from './storyBeats';
 
 export type ArcKind =
   | 'romance'
@@ -26,8 +34,12 @@ export type ArcKind =
   | 'scandal';
 
 export interface ArcBeat {
-  /** Real (wall-clock) ms, which is what `relationship_events.timestamp` holds. */
-  timestamp: number;
+  /**
+   * Game minute of the beat (`relationship_events.game_minute`), so the UI can
+   * say "2d ago" in game days. Null for undated beats — a scandal's synthesised
+   * beat, whose secret may have been planted as backstory.
+   */
+  gameMinute: number | null;
   eventType: string;
   description: string;
   /** 0..1, drives both beat ordering ties and the arc's heat. */
@@ -43,31 +55,42 @@ export interface StoryArc {
   participants: number[];
   participantNames: string[];
   beats: ArcBeat[];
-  /** 0..1 — recency-weighted sum of beat weights. Sorts the list. */
+  /** 0..1 — recency-weighted (game time) sum of beat weights. Sorts the list. */
   heat: number;
-  /** Real ms of the newest beat. */
+  /** Game minute of the newest dated beat; 0 when none is dated. */
   lastActivity: number;
 }
 
 /** Recomputing on every feed invalidation would re-scan five tables per poll. */
 const CACHE_TTL_MS = 3000;
-/** Newest N relationship events scanned. Older ones can't be "current" stories. */
-const EVENT_WINDOW = 600;
+/**
+ * Rows loaded per pair: its newest events of any kind (what is happening now)
+ * plus its newest pivotal ones (what the story is about).
+ *
+ * This replaced "the newest 600 events across the whole town", which let a busy
+ * afternoon of small talk elsewhere push a pair's fight — the beat its whole
+ * rivalry rests on — out of the window, so the arc vanished while both of them
+ * were still enemies. Per-pair selection bounds the scan by the number of pairs
+ * instead of by town-wide activity, so an old arc can never be crowded out.
+ */
+const RECENT_EVENTS_PER_PAIR = 12;
+const PIVOTAL_EVENTS_PER_PAIR = 24;
 const MAX_ARCS = 12;
 const MAX_BEATS = 8;
-/** A beat contributes half as much heat every time this elapses. */
-const HEAT_HALF_LIFE_MS = 15 * 60 * 1000;
+/** The newest beats always shown, however slight, so an arc says where it stands now. */
+const LATEST_BEATS_SHOWN = 2;
+/**
+ * A beat contributes half as much heat every time this much GAME time elapses.
+ *
+ * Game time, not wall-clock: on the old 15-real-minute half-life a paused game
+ * cooled every story, and one left paused overnight came back with all its arcs
+ * at zero. A game day lets yesterday's fight still rank as live drama and last
+ * week's fade behind it without disappearing.
+ */
+const HEAT_HALF_LIFE_GAME_MINUTES = MINUTES_PER_DAY;
 
 const ROMANTIC_STATUSES = new Set(['partners', 'romantic_interest', 'complicated']);
 const HOSTILE_STATUSES = new Set(['enemies', 'rivals', 'estranged']);
-const HOSTILE_EVENTS = new Set([
-  'fight',
-  'confrontation',
-  'confrontation_escalated',
-  'theft_caught',
-  'arrested',
-]);
-const ROMANTIC_EVENTS = new Set(['confession', 'seduction', 'gift']);
 
 /** Order-independent key for a pair of agent ids. */
 function pairKey(a: number, b: number): string {
@@ -77,19 +100,17 @@ function pairKey(a: number, b: number): string {
 function beatWeight(sentiment: number, eventType: string): number {
   // Strong feeling in either direction is what makes a beat memorable, so the
   // sign is dropped. Named turning points get a floor: a reconciliation logged
-  // at sentiment 0.1 is still the moment the arc pivots.
-  const pivotal =
-    HOSTILE_EVENTS.has(eventType) ||
-    ROMANTIC_EVENTS.has(eventType) ||
-    eventType === 'reconciliation';
-  return Math.min(1, Math.max(pivotal ? 0.5 : 0.1, Math.abs(sentiment)));
+  // at sentiment 0.1 is still the moment the arc pivots. The floor equals
+  // PIVOTAL_SENTIMENT, so "pivotal" (what retention keeps forever) is exactly
+  // "weight >= 0.5".
+  return Math.min(1, Math.max(isPivotalEvent(eventType, 0) ? 0.5 : 0.1, Math.abs(sentiment)));
 }
 
-function heatOf(beats: ArcBeat[], now: number): number {
+function heatOf(beats: ArcBeat[], nowMinute: number): number {
   let heat = 0;
   for (const beat of beats) {
-    const age = Math.max(0, now - beat.timestamp);
-    heat += beat.weight * 0.5 ** (age / HEAT_HALF_LIFE_MS);
+    const age = Math.max(0, nowMinute - (beat.gameMinute ?? nowMinute));
+    heat += beat.weight * 0.5 ** (age / HEAT_HALF_LIFE_GAME_MINUTES);
   }
   return Math.min(1, heat);
 }
@@ -97,20 +118,44 @@ function heatOf(beats: ArcBeat[], now: number): number {
 type EventRow = typeof relationshipEvents.$inferSelect;
 
 /**
- * Newest-first rows in, chronological beats out, capped at `MAX_BEATS`. The cap
- * is applied before the flip so a long-running feud shows its latest turns
- * rather than its opening shots.
+ * Newest-first rows in, chronological beats out, capped at `MAX_BEATS`.
+ *
+ * Which rows make the cut: the newest `LATEST_BEATS_SHOWN` (where the arc
+ * stands now), then the heaviest of the rest, newer first on ties. Taking the
+ * newest N outright let a couple's twenty small chats bury the confession their
+ * romance began with; weighting keeps the turning points in view however much
+ * small talk followed them.
+ *
+ * `nowMinute` dates the rare row the insert trigger left unstamped: it can only
+ * be one written moments ago (the prune pass stamps stragglers daily).
  */
-function toBeats(rows: EventRow[]): ArcBeat[] {
-  return rows
-    .slice(0, MAX_BEATS)
-    .map((row) => ({
-      timestamp: row.timestamp,
+function toBeats(rows: EventRow[], nowMinute: number): ArcBeat[] {
+  const beats = rows.map((row, index) => ({
+    index,
+    beat: {
+      gameMinute: row.game_minute ?? nowMinute,
       eventType: row.event_type,
       description: row.description,
       weight: beatWeight(row.sentiment, row.event_type),
-    }))
-    .reverse();
+    },
+  }));
+  const latest = beats.slice(0, LATEST_BEATS_SHOWN);
+  const rest = beats
+    .slice(LATEST_BEATS_SHOWN)
+    .sort((x, y) => y.beat.weight - x.beat.weight || x.index - y.index)
+    .slice(0, Math.max(0, MAX_BEATS - latest.length));
+  // Input is newest-first, so descending index is chronological.
+  return [...latest, ...rest]
+    .sort((x, y) => y.index - x.index)
+    .map((b) => b.beat);
+}
+
+/** Newest first by game minute (unstamped rows are the newest), then by id. */
+function newestFirst(x: EventRow, y: EventRow): number {
+  const mx = x.game_minute ?? Number.POSITIVE_INFINITY;
+  const my = y.game_minute ?? Number.POSITIVE_INFINITY;
+  if (mx !== my) return mx < my ? 1 : -1;
+  return y.id - x.id;
 }
 
 interface CacheEntry {
@@ -129,6 +174,26 @@ export function detectStoryArcs(): StoryArc[] {
   const now = Date.now();
   if (cache && now - cache.at < CACHE_TTL_MS) return cache.arcs;
 
+  const world = db.select({ time: worldState.time }).from(worldState).get();
+  if (!world) return [];
+
+  // Per pair (order-independent: gifts and confrontations are stored giver ->
+  // receiver, most other writers a < b): its newest events, plus its newest
+  // pivotal ones however old. See RECENT_EVENTS_PER_PAIR.
+  const pair = sql.raw('MIN(agent_a, agent_b), MAX(agent_a, agent_b)');
+  const pivotal = sql.raw(PIVOTAL_EVENT_SQL);
+  const order = sql.raw('game_minute DESC NULLS FIRST, id DESC');
+  const selected = sql`${relationshipEvents.id} IN (
+    SELECT id FROM (
+      SELECT id, ${pivotal} AS pivotal,
+        ROW_NUMBER() OVER (PARTITION BY ${pair} ORDER BY ${order}) AS recent_rank,
+        ROW_NUMBER() OVER (PARTITION BY ${pair}, ${pivotal} ORDER BY ${order}) AS pivotal_rank
+      FROM relationship_events
+    )
+    WHERE recent_rank <= ${RECENT_EVENTS_PER_PAIR}
+       OR (pivotal AND pivotal_rank <= ${PIVOTAL_EVENTS_PER_PAIR})
+  )`;
+
   const arcs = buildArcs(
     {
       agents: db
@@ -137,19 +202,14 @@ export function detectStoryArcs(): StoryArc[] {
         .where(eq(agents.is_active, true))
         .all(),
       relationships: db.select().from(relationships).all(),
-      events: db
-        .select()
-        .from(relationshipEvents)
-        .orderBy(desc(relationshipEvents.timestamp), desc(relationshipEvents.id))
-        .limit(EVENT_WINDOW)
-        .all(),
+      events: db.select().from(relationshipEvents).where(selected).all(),
       secrets: db
         .select()
         .from(shared_knowledge)
         .where(eq(shared_knowledge.is_active, true))
         .all(),
     },
-    now,
+    gameMinutes(world.time),
   );
   cache = { at: now, arcs };
   return arcs;
@@ -159,14 +219,16 @@ export interface ChronicleInput {
   /** Living agents only — arcs about the departed aren't current stories. */
   agents: { id: number; name: string }[];
   relationships: typeof relationships.$inferSelect[];
-  /** Newest first. */
+  /** Any order; sorted newest-first (by game minute) in `buildArcs`. */
   events: EventRow[];
   secrets: typeof shared_knowledge.$inferSelect[];
 }
 
 /**
  * The detector proper, split from the queries so it can be exercised on
- * fixtures instead of against the live sqlite file.
+ * fixtures instead of against the live sqlite file. `now` is the current GAME
+ * minute: heat and beat ages never read the wall clock, so a paused game's
+ * stories hold still.
  */
 export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   const agentRows = input.agents;
@@ -174,7 +236,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
 
   const nameOf = new Map<number, string>(agentRows.map((a) => [a.id, a.name]));
   const relationshipRows = input.relationships;
-  const eventRows = input.events;
+  const eventRows = [...input.events].sort(newestFirst);
 
   // Newest-first within each pair, inherited from the caller's ordering.
   const eventsByPair = new Map<string, EventRow[]>();
@@ -204,6 +266,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
     heatOverride?: number,
   ): StoryArc | null => {
     if (beats.length === 0) return null;
+    const dated = beats.filter((b) => b.gameMinute != null);
     return {
       id: `${kind}:${[...participants].sort((a, b) => a - b).join('-')}`,
       kind,
@@ -213,7 +276,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
       participantNames: participants.map((id) => nameOf.get(id) ?? `#${id}`),
       beats,
       heat: heatOverride ?? heatOf(beats, now),
-      lastActivity: beats[beats.length - 1].timestamp,
+      lastActivity: dated.length > 0 ? dated[dated.length - 1].gameMinute! : 0,
     };
   };
 
@@ -236,7 +299,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
     // Events are newest-first, so a mend that outranks the last hostile beat is
     // one with a *lower* index than it.
     const lastHostile = pairEvents.findIndex((e) => HOSTILE_EVENTS.has(e.event_type));
-    const mendIndex = pairEvents.findIndex((e) => e.event_type === 'reconciliation');
+    const mendIndex = pairEvents.findIndex((e) => e.event_type === MEND_EVENT);
     const mended = mendIndex !== -1 && lastHostile !== -1 && mendIndex < lastHostile;
 
     // Precedence runs most-specific first: a pair that fought and then made up
@@ -249,7 +312,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
         [a, b],
         `${nameA} and ${nameB} mend fences`,
         `After ${hostileCount} falling-out${hostileCount === 1 ? '' : 's'}, they patched things up.`,
-        toBeats(pairEvents),
+        toBeats(pairEvents, now),
       );
     } else if (ROMANTIC_STATUSES.has(rel.status) || romanticCount >= 2) {
       const shape =
@@ -258,14 +321,14 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
           : rel.status === 'complicated'
             ? 'It is complicated.'
             : 'Something is starting.';
-      arc = makeArc('romance', [a, b], `${nameA} & ${nameB}`, shape, toBeats(pairEvents));
+      arc = makeArc('romance', [a, b], `${nameA} & ${nameB}`, shape, toBeats(pairEvents, now));
     } else if (HOSTILE_STATUSES.has(rel.status) || hostileCount >= 2) {
       arc = makeArc(
         'rivalry',
         [a, b],
         `${nameA} vs ${nameB}`,
         `${hostileCount} clash${hostileCount === 1 ? '' : 'es'} and counting.`,
-        toBeats(pairEvents.filter((e) => e.sentiment < 0 || HOSTILE_EVENTS.has(e.event_type))),
+        toBeats(pairEvents.filter((e) => e.sentiment < 0 || HOSTILE_EVENTS.has(e.event_type)), now),
       );
     }
     if (arc) push(arc);
@@ -307,14 +370,14 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
       const merged = [
         ...(eventsByPair.get(pairKey(rel.agent_a, rel.agent_b)) ?? []),
         ...(eventsByPair.get(pairKey(anchor, third.other)) ?? []),
-      ].sort((x, y) => y.timestamp - x.timestamp);
+      ].sort(newestFirst);
 
       const arc = makeArc(
         'love_triangle',
         [anchor, partner, third.other],
         `${nameOf.get(third.other)}, ${nameOf.get(anchor)} and ${nameOf.get(partner)}`,
         `${nameOf.get(third.other)} still wants ${nameOf.get(anchor)}, who is with ${nameOf.get(partner)}.`,
-        toBeats(merged),
+        toBeats(merged, now),
       );
       if (arc) push(arc);
     }
@@ -341,7 +404,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
       [victim, ...aggressors].filter((id, i, all) => all.indexOf(id) === i),
       `The fall of ${nameOf.get(victim)}`,
       `${aggressors.size} people have turned on ${nameOf.get(victim)}.`,
-      toBeats(rows),
+      toBeats(rows, now),
     );
     if (arc) push(arc);
   }
@@ -351,7 +414,9 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   // stream for that, so the single beat is synthesised from the row itself, and
   // heat comes from how damaging and how widespread it is rather than from
   // recency: `created_at` is 0 for every secret the setup wizard plants, which
-  // under the usual decay would bury the town's backstory permanently.
+  // under the usual decay would bury the town's backstory permanently. The beat
+  // is undated for the same reason, and because `created_at` isn't on the game
+  // clock everywhere it is written, so it can't be shown as an age.
   for (const secret of input.secrets) {
     if (secret.sensitivity < 3) continue;
     const holders = secret.known_by?.length ?? 0;
@@ -369,7 +434,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
       `${holders} people know. It will not stay quiet.`,
       [
         {
-          timestamp: secret.created_at,
+          gameMinute: null,
           eventType: secret.type,
           description: secret.content,
           weight: Math.min(1, secret.sensitivity / 5),

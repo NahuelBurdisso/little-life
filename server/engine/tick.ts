@@ -365,8 +365,9 @@ export async function gameTick(): Promise<void> {
     runGuarded('aging', () => agingTick(newTime.day));
     // Enforce the activity log's declared retention tiers
     runGuarded('pruneActivityLog', () => pruneActivityLog(newTime.totalTicks, world.tick_speed));
-    // Drop processed relationship events older than every reader's window
-    runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents());
+    // Drop ordinary relationship events past their game-day retention (story
+    // turning points are kept, capped per pair)
+    runGuarded('pruneRelationshipEvents', () => pruneRelationshipEvents(gameMinutes(newTime)));
     // Cap the conversation archive (each row holds its full transcript)
     runGuarded('pruneEndedConversations', () => pruneEndedConversations());
   }
