@@ -76,6 +76,33 @@ export function clearWorkSkipCounts(): void {
   workSkipCount.clear();
 }
 
+/**
+ * Game minutes before the same couple's date is announced again: one evening.
+ * The date is announced when a romantic evening chat is queued, and a queued
+ * chat can be dropped (the pair drifted apart, the wait ran out) and queued
+ * again on the next tick; without the window the feed repeated "X and Y are
+ * on a date" every tick until one finally started (G9).
+ */
+export const DATE_ANNOUNCE_REPEAT_MINUTES = 360;
+
+/** pairKey → game minute the pair's date was last announced. */
+const lastDateAnnounced = new Map<string, number>();
+
+/** Whether to announce this couple's date now (and remember it if so). */
+export function shouldAnnounceDate(a: number, b: number, nowMinutes: number): boolean {
+  const key = pairKey(a, b);
+  const last = lastDateAnnounced.get(key);
+  // A negative gap is a replaced world whose clock restarted: announce.
+  if (last != null && nowMinutes - last >= 0 && nowMinutes - last < DATE_ANNOUNCE_REPEAT_MINUTES) return false;
+  lastDateAnnounced.set(key, nowMinutes);
+  return true;
+}
+
+/** Drop date announcement stamps for a world replace (ids and the clock restart). */
+export function clearDateAnnouncements(): void {
+  lastDateAnnounced.clear();
+}
+
 // --- Helpers ---
 
 /** Order-independent key for an agent pair. */
@@ -1948,17 +1975,9 @@ export function tick(world: WorldRow): void {
       const friendship = rel?.friendship ?? 0;
       const romance = rel?.romance ?? 0;
 
-      // Date detection: romantic socializing in evening = date
+      // Date detection: romantic socializing in evening = date. Announced
+      // below, once the chat is actually queued.
       const isDate = romance > 30 && isEvening(world.time.hour);
-      if (isDate) {
-        const targetName = targetAgent?.name ?? 'someone';
-        logActivity({
-          type: 'drama',
-          initiator: agentId,
-          target: targetId,
-          templateData: { description: `${agent.name} and ${targetName} are on a date` },
-        });
-      }
 
       // Topic selection: use plan-provided topic if available, else personality-driven
       const agentPersonality = agent.personality as PersonalityProfile | null;
@@ -2104,6 +2123,14 @@ export function tick(world: WorldRow): void {
         .returning()
         .get());
       if (isComfortVisit) completeComfortVisit(agentId);
+      if (isDate && shouldAnnounceDate(agentId, targetId, nowMinutes)) {
+        logActivity({
+          type: 'drama',
+          initiator: agentId,
+          target: targetId,
+          templateData: { description: `${agent.name} and ${targetAgent.name} are on a date` },
+        });
+      }
     }
   }
 

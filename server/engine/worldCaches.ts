@@ -25,7 +25,7 @@
 import { clearStatesTrackers } from './systems/states';
 import { clearCriticalNeedFired, clearConsecutiveWorkMinutes } from './systems/needs';
 import { clearMilestoneTracking, clearPurchaseTracking, resetMoneySupplyState } from './systems/economy';
-import { clearWorkSkipCounts } from './systems/decisions';
+import { clearWorkSkipCounts, clearDateAnnouncements } from './systems/decisions';
 import { clearLonelinessTracking } from '../lib/lonelinessEngine';
 import { clearGiftTracking } from '../lib/giftEngine';
 import { clearTavernTracking } from '../lib/tavernEngine';
@@ -89,6 +89,8 @@ export function clearPerWorldCaches(): void {
   clearHungerTracking();
   clearMilestoneTracking();
   clearWorkSkipCounts();
+  // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
+  clearDateAnnouncements();
   // The balancer's multipliers were measured on the old world's money: a
   // replaced rich town would start the new one with its savings pulled hard.
   resetMoneySupplyState();
