@@ -90,12 +90,9 @@ write tick stamps into minute columns — don't switch back to pre-2026-09-29 br
 Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanup.
 
 ### Economy balance (found by `npm run soak`)
-- **E6 [M]** Walking still ~4.5–5.8 h/agent/day after the P1 fix — these are now real trips on a
-  56×43 map at 16 px/game-min (0.5 tiles/s at 1x; commute ~67 game min). Decided: raise
-  `CONFIG.MOVEMENT.PIXELS_PER_GAME_MINUTE` 16 → 48 (trial soak: ~2 h walking, ~6.1 h of 8.4 at work),
-  update the commute formula in `walking.test.ts`, then lower farm rates (3.0/2.4) if food surplus.
-  The client sprite lerp is exponential → dash-and-stop per server step at 48 px; a constant-speed
-  `AgentSprite.setTarget/lerp` patch exists but needs a visual check.
+- **E11 [L]** Hunger averages sit at ~65–75 (target was 50–65) with no one at 0: driven by the meal
+  schedule, not supply (farm output cut 3.0/2.4 → 2.0/1.6 barely moved it). Winter food_raw (27–38/day)
+  is as high as spring — fishing/foraging carry it; check the season modifier isn't bypassed.
 - **E8 [L]** Gifts roughly doubled at 1x after the starting ties (friendlier chats → more post-chat
   gifts, `giftEngine.ts:~186`); poor agents give 3–6 gifts/day.
 - **E9 [L]** Old saves: the first nights of the treasury loop pull savings hard (up to 60% of cash
@@ -246,6 +243,10 @@ before merging.
   removed; arrival on the same tick; work spots routed directly; commute lead before the shift;
   one sleep window for decisions and conversations (`server/lib/sleepSchedule.ts`); social-crisis
   walks skip sleeping friends. Straight-line fallbacks ~100/day → 0–1. Soak: `--trace "Name"`.
+- **E6 walking time:** 48 px/game-min (1.5 tiles/s at 1x; screen speed can't be decoupled from game
+  time), client sprites walk at constant speed between server steps (`AgentSprite.setTarget/lerp`,
+  measured 44–52 px/s at 1x, ~180 px/s at 4x). Soak 1x/4x/winter: walking 1.5–2.4 h/day (was ~5.5),
+  at work 5.3–6.8 h of 8.7, farm rates 3.0/2.4 → 2.0/1.6, no one at hunger 0, no deaths.
 
 - **Client:** C2 restart invalidation, C3 missing-agent panel, C4 weather ambient, C6 lanterns,
   C7 single rain/snow renderer, single lightning owner, frame-rate independent fades.
@@ -272,6 +273,6 @@ before merging.
 
 1. Playtest #3 with the real LLM at 1x and 4x — validates G1/G2 live and the LLM rework (Gemma 4
    26B, structured output) — and compare with playtest #2.
-2. E6 walking speed 16 → 48 px/game-min + client constant-speed lerp (visual check), then farm rates.
+2. E11 hunger level / winter food check.
 3. E10 template-chat social payoff, E8 gift frequency.
 4. G5–G7 dialogue/template/gossip quality.
