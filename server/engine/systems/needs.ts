@@ -323,7 +323,7 @@ export function needsTick(): void {
             // Agent is mentoring — boost social and fun
             updatedNeeds.social += 1.5 * gameHoursElapsed;
             updatedNeeds.fun += 1.0 * gameHoursElapsed;
-            applyMentorship(agent.id, other.id, mentorHobby, world.time!.totalTicks);
+            applyMentorship(agent.id, other.id, mentorHobby, currentTime);
             break; // Only mentor one agent at a time
           }
         }

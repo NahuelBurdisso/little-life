@@ -3,6 +3,7 @@ import { agents, needs, economy, worldState } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { addToInventory } from '../../lib/economyEngine';
 import { practiceHobby, getSkillOutputMultiplier, getSkillNeedBonus } from '../../lib/hobbyEngine';
+import { gameMinutes } from '../../lib/gameClock';
 
 interface ZoneActionEffect {
   // Need values in this codebase are SATISFACTION (0 = starving/exhausted), so a
@@ -45,8 +46,7 @@ export function executeZoneAction(actionType: string, agentId: number): boolean 
 
   // Practice hobby and get skill bonuses
   const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  const currentTick = (world?.time as any)?.totalTicks ?? 0;
-  practiceHobby(agentId, actionType, currentTick);
+  practiceHobby(agentId, actionType, world?.time ? gameMinutes(world.time) : 0);
   const skillNeedBonus = getSkillNeedBonus(agentId, actionType);
   const skillOutputMult = getSkillOutputMultiplier(agentId, actionType);
 

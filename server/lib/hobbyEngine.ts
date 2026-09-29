@@ -14,7 +14,7 @@ export type HobbyId = 'fishing' | 'cooking' | 'gardening' | 'performing' | 'fora
 interface HobbySkill {
   level: number;        // 0-100
   experience: number;   // raw XP
-  lastPracticed: number; // tick
+  lastPracticed: number; // GAME MINUTE (-Infinity = never)
 }
 
 // Maps zone activity to hobby
@@ -53,22 +53,23 @@ function getSkills(agentId: number): Map<HobbyId, HobbySkill> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /** Record that an agent performed a zone activity. Returns new skill level. */
-export function practiceHobby(agentId: number, zoneActivity: string, currentTick: number): number {
+export function practiceHobby(agentId: number, zoneActivity: string, nowMinutes: number): number {
   const hobbyId = ACTIVITY_TO_HOBBY[zoneActivity];
   if (!hobbyId) return 0;
 
   const skills = getSkills(agentId);
   let skill = skills.get(hobbyId);
   if (!skill) {
-    skill = { level: 0, experience: 0, lastPracticed: 0 };
+    skill = { level: 0, experience: 0, lastPracticed: Number.NEGATIVE_INFINITY };
     skills.set(hobbyId, skill);
   }
 
-  // Grant XP (1 base + bonus for consistent practice)
-  const ticksSinceLast = currentTick - skill.lastPracticed;
-  const consistencyBonus = ticksSinceLast < 1440 ? 0.5 : 0; // bonus if practiced within 1 game day
+  // Grant XP (1 base + bonus for consistent practice). CLOCK: GAME MINUTES —
+  // the "within 1 game day" window was 1440 TICKS, i.e. four game days at 4x.
+  const minutesSinceLast = nowMinutes - skill.lastPracticed;
+  const consistencyBonus = minutesSinceLast < 1440 ? 0.5 : 0; // bonus if practiced within 1 game day
   skill.experience += 1 + consistencyBonus;
-  skill.lastPracticed = currentTick;
+  skill.lastPracticed = nowMinutes;
 
   // Level up check
   const needed = xpForLevel(skill.level);
@@ -142,16 +143,16 @@ export function getMentorshipOpportunity(mentorId: number, menteeId: number): Ho
 }
 
 /** Apply mentorship bonus: mentee gets 2x XP, mentor gets social satisfaction. */
-export function applyMentorship(_mentorId: number, menteeId: number, hobby: HobbyId, currentTick: number): void {
+export function applyMentorship(_mentorId: number, menteeId: number, hobby: HobbyId, nowMinutes: number): void {
   const menteeSkills = getSkills(menteeId);
   let skill = menteeSkills.get(hobby);
   if (!skill) {
-    skill = { level: 0, experience: 0, lastPracticed: 0 };
+    skill = { level: 0, experience: 0, lastPracticed: Number.NEGATIVE_INFINITY };
     menteeSkills.set(hobby, skill);
   }
   // Mentee gets bonus XP
   skill.experience += 2;
-  skill.lastPracticed = currentTick;
+  skill.lastPracticed = nowMinutes;
 
   const needed = xpForLevel(skill.level);
   if (skill.experience >= needed && skill.level < 100) {
