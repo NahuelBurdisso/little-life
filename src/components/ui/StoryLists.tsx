@@ -21,15 +21,22 @@ const ARC_KINDS: Record<ArcKind, { icon: string; color: string }> = {
   scandal:        { icon: '◉', color: '#c8a84b' },
 };
 
-/** Presentation for the Brewing tab: what kind of trouble a row is. */
-const BREWING_KINDS: Record<BrewingKind, { icon: string; label: string }> = {
+/**
+ * Presentation for the Brewing tab: what kind of trouble a row is. Partial and
+ * read through `brewingKind`: a kind the server adds before the client knows
+ * it shows as a generic row instead of crashing the tab.
+ */
+const BREWING_KINDS: Partial<Record<BrewingKind, { icon: string; label: string }>> = {
   snap:          { icon: '🔥', label: 'About to snap' },
   secret:        { icon: '🤫', label: 'Secret spreading' },
   confrontation: { icon: '⚔', label: 'Confrontation queued' },
   nudge:         { icon: '✦', label: 'Your nudge is waiting' },
   goal:          { icon: '▶', label: 'Goal within reach' },
   relationship:  { icon: '♥', label: 'About to change' },
+  leaving:       { icon: '🧳', label: 'Thinking of leaving' },
 };
+const BREWING_FALLBACK = { icon: '•', label: 'Brewing' };
+const brewingKind = (kind: string) => BREWING_KINDS[kind as BrewingKind] ?? BREWING_FALLBACK;
 
 /**
  * Heat -> colour, on the feed's own warm ramp (ui-gold -> the goal orange -> the
@@ -54,7 +61,7 @@ export function BrewingList({
   return (
     <div className="space-y-0.5 px-3 py-2">
       {items.map(item => {
-        const { icon, label } = BREWING_KINDS[item.kind];
+        const { icon, label } = brewingKind(item.kind);
         const color = heatColor(item.heat);
         const pct = Math.round(item.heat * 100);
         const focusId = item.agentIds[0];

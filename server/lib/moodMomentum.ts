@@ -123,6 +123,16 @@ export function getMoodMomentum(agentId: number): number {
   return getTracker(agentId).momentum;
 }
 
+/**
+ * Consecutive good (positive) or bad (negative) days, as judged at the last day
+ * change; 0 after a neutral day. lib/populationFlow.ts reads a long bad streak
+ * as "miserable here for days" — the one record of how someone has felt over
+ * more than today.
+ */
+export function getMoodStreak(agentId: number): number {
+  return moodTrackers.get(agentId)?.streak ?? 0;
+}
+
 /** Process all agents at day change. */
 export function processAllMoodMomentum(): void {
   const allAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();

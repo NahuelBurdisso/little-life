@@ -54,6 +54,12 @@ export interface NewResidentInput {
    * among them (a town with no tavern shouldn't send anyone there).
    */
   availableLocationTypes?: readonly string[];
+  /**
+   * Known gender. The dialog does not ask, so a player's newcomer is guessed
+   * from the first name; a town-generated arrival (lib/populationFlow.ts) picks
+   * the name from a gendered list and says which one it was.
+   */
+  gender?: 'female' | 'male';
 }
 
 export interface NewResidentProfile {
@@ -227,7 +233,10 @@ export function generateNewResident(input: NewResidentInput): NewResidentProfile
   const job = input.job.trim().toLowerCase() || 'unemployed';
   const rng = makeRng(stringToSeed(`resident|${input.worldSeed}|${input.name.trim().toLowerCase()}`));
 
-  const gender = guessGender(input.name, rng);
+  // Guessed even when given, so the rest of the draw (age, personality) comes
+  // out the same for a name with and without the override.
+  const guessed = guessGender(input.name, rng);
+  const gender = input.gender ?? guessed;
   const age = ageFor(job, rng);
   const traits = input.traits.map((t) => t.trim()).filter(Boolean);
   const personality = residentPersonality(traits, rng);

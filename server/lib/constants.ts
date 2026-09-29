@@ -1,4 +1,5 @@
 import { WAGE_FLOOR } from '../data/jobs';
+import { MAX_AGENTS as POPULATION_CAP } from './worldgen/config';
 
 /**
  * AutoPlay knobs, hoisted out of CONFIG because they are the only settings
@@ -34,7 +35,10 @@ export const CONFIG = {
   TICK_INTERVAL_MS: 1000,
   DEFAULT_TICK_SPEED: 1,
   MAX_TICK_SPEED: 4,
-  MAX_AGENTS: 20,
+  // One population cap for the whole game: the wizard's (worldgen/config.ts),
+  // which worldgen sizes the map for. It used to be 20 here and 32 there, so a
+  // wizard town of 24 could never take a single New Resident.
+  MAX_AGENTS: POPULATION_CAP,
   STARTING_AGENTS: 12,
 
   // Needs

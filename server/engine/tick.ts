@@ -29,6 +29,7 @@ import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { milestonesTick } from '../lib/milestonesEngine';
+import { populationFlowDaily, populationFlowTick } from '../lib/populationFlow';
 import { saveWorldCaches } from './worldCaches';
 import { tickHealth } from './tickHealth';
 import { refreshHealth } from '../lib/health';
@@ -321,6 +322,8 @@ export async function gameTick(): Promise<void> {
     // Proposals and weddings (lib/milestonesEngine.ts). One transaction: a
     // wedding writes the event, the tags, the feed and the facts together.
     runGuarded('milestones', () => db.transaction(() => milestonesTick(newTime, nowMinutes)));
+    // Newcomers walking in, leavers setting off and reaching the edge (lib/populationFlow.ts).
+    runGuarded('populationFlowTick', () => db.transaction(() => populationFlowTick(newTime, nowMinutes)));
   }
   // Loneliness and confrontation once per game hour.
   if (hourChanged(transitions)) {
@@ -420,6 +423,9 @@ export async function gameTick(): Promise<void> {
     runGuarded('reputation', () => refreshAllReputations());
     // Process mood momentum: yesterday's mood affects today's emotional baseline
     runGuarded('moodMomentum', () => processAllMoodMomentum());
+    // Who thinks of leaving, who goes, whether a stranger comes (after mood
+    // momentum, so yesterday counts toward a bad streak).
+    runGuarded('populationFlow', () => db.transaction(() => populationFlowDaily(newTime, nowMinutes)));
     // Check for birthdays and handle aging
     runGuarded('aging', () => agingTick(newTime.day));
     // Enforce the activity log's declared retention tiers

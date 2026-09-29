@@ -66,6 +66,7 @@ import { personalityBaselineSnapshotStore } from '../lib/personalityDrift';
 import { hungerSnapshotStore } from '../lib/lifeEventsEngine';
 import { tensionSnapshotStore } from '../lib/cascade';
 import { clearMilestones, milestonesSnapshotStore } from '../lib/milestonesEngine';
+import { clearPopulationFlow, populationFlowSnapshotStore } from '../lib/populationFlow';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
 import type { SnapshotStore } from './snapshotCodec';
 
@@ -78,7 +79,10 @@ import type { SnapshotStore } from './snapshotCodec';
  * re-anchors on every restart), the states-phase trackers (multi-day addiction
  * and debt histories), the starvation counters, and the life-milestone timers
  * (an engaged couple's wedding day, a refused suitor's wait, a pending
- * proposal — the `engaged`/`married` tags themselves are in the DB).
+ * proposal — the `engaged`/`married` tags themselves are in the DB), and the
+ * population flow's timers (who is thinking of leaving, who sets off in the
+ * morning, when the last stranger arrived — without them a restart could send
+ * two newcomers on consecutive days or forget a leaver halfway down the road).
  *
  * Out, deliberately:
  *   - LLM backoffs (`planLLMGate`, goal reviewer/pivot stamps): they describe
@@ -103,6 +107,7 @@ const PERSISTED_STORES: readonly SnapshotStore[] = [
   statesTrackersSnapshotStore,
   hungerSnapshotStore,
   milestonesSnapshotStore,
+  populationFlowSnapshotStore,
 ];
 
 /** Checkpoint every persisted store for the current world. Never throws. */
@@ -180,6 +185,8 @@ export function clearPerWorldCaches(): void {
   clearMilestoneTracking();
   // Proposal/engagement timers keyed on agent-id pairs (lib/milestonesEngine.ts).
   clearMilestones();
+  // Leavers, thinkers and arrival timers: agent ids and game minutes of the old town.
+  clearPopulationFlow();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();

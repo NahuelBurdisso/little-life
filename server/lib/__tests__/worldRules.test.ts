@@ -53,7 +53,9 @@ describe('getRules', () => {
   it('reads the wizard rules and ignores unknown values and setup-only keys', () => {
     writeRow({ dramaIntensity: 'chaos', sicknessRate: 'nope', contagionRate: 3, deathEnabled: false, tickSpeed: 4 }, null);
     clearRulesCache();
-    expect(getRules()).toEqual({ deathEnabled: false, dramaIntensity: 'chaos', sicknessRate: 'low', contagionRate: 'low' });
+    expect(getRules()).toEqual({
+      ...DEFAULT_LIVE_RULES, deathEnabled: false, dramaIntensity: 'chaos', sicknessRate: 'low', contagionRate: 'low',
+    });
   });
 
   it('layers live overrides over the wizard rules', () => {

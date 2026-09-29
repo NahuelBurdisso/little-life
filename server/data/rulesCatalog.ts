@@ -10,6 +10,8 @@
  * or saved before these rules did anything — plays exactly as it did.
  */
 
+import { MAX_AGENTS } from '../lib/worldgen/config';
+
 export const SICKNESS_LEVELS = ['off', 'low', 'medium', 'high'] as const;
 export type SicknessLevel = (typeof SICKNESS_LEVELS)[number];
 
@@ -31,13 +33,29 @@ export interface LiveRules {
   contagionRate: SicknessLevel;
   /** Scales random world events, the dark cascade rules and how soon tension snaps. */
   dramaIntensity: DramaLevel;
+  /**
+   * The town's population changes on its own (lib/populationFlow.ts): unhappy
+   * residents move away, newcomers take empty houses.
+   */
+  populationFlow: boolean;
+  /**
+   * How many residents newcomers fill the town back up to. Null = the size
+   * the town started at.
+   */
+  populationTarget: number | null;
 }
+
+/** Bounds of `populationTarget`: a town of fewer than four is not a town; the top is the world cap. */
+export const POPULATION_TARGET_MIN = 4;
+export const POPULATION_TARGET_MAX = MAX_AGENTS;
 
 export const DEFAULT_LIVE_RULES: Readonly<LiveRules> = {
   deathEnabled: true,
   sicknessRate: 'low',
   contagionRate: 'low',
   dramaIntensity: 'medium',
+  populationFlow: true,
+  populationTarget: null,
 };
 
 /**
