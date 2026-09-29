@@ -28,6 +28,8 @@ import {
 import { taskRunner } from '../../../ai/taskRunner';
 import { evaluateConversation } from '../../../lib/conversationEvaluator';
 import { conversationsTick } from '../conversations';
+import { nudgeRouter } from '../../../routers/nudge';
+import { CONFIG } from '../../../lib/constants';
 
 /**
  * Playtest regression: one agent in two conversations at once. The queue held
@@ -104,14 +106,19 @@ function insertAgent(name: string, locationId: number): number {
 function enqueue(
   participants: number[],
   tier: string,
-  { priority = 50, queuedAt = Date.now() }: { priority?: number; queuedAt?: number } = {},
+  {
+    priority = 50,
+    queuedAt = Date.now(),
+    topic = null,
+    trigger = TAG,
+  }: { priority?: number; queuedAt?: number; topic?: string | null; trigger?: string } = {},
 ): number {
   return db.insert(conversationQueue).values({
     participants,
     tier,
     priority,
-    trigger_reason: TAG,
-    topic: null,
+    trigger_reason: trigger,
+    topic,
     queued_at: queuedAt,
     max_wait: 10000,
   }).returning({ id: conversationQueue.id }).get().id;
@@ -353,5 +360,64 @@ describe('conversationsTick — one conversation per agent', () => {
     for (const agent of db.select().from(agents).where(inArray(agents.id, [a, b])).all()) {
       expect(agent.current_action).toEqual({ type: 'idle' });
     }
+  });
+
+  describe('player nudges and comfort visits', () => {
+    const NUDGE = CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY;
+
+    it('waits for the blocking conversation instead of dropping a timed-out nudge', async () => {
+      const startedAt = Date.now();
+      startLive([a, d], { startedAt });
+      const queuedAt = Date.now() - 60_000;
+      const id = enqueue([a, b], 'llm_deep', { priority: NUDGE, queuedAt, topic: 'confrontation' });
+
+      await conversationsTick();
+
+      const entry = db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get();
+      expect(entry).toBeDefined();
+      // Bounded: until the blocker must be over (6 turns × 15 s) plus the margin.
+      expect(entry!.queued_at + entry!.max_wait).toBe(startedAt + 6 * 15_000 + 30_000);
+      expect(startedConversations().map((x) => x.participants)).toEqual([[a, d]]);
+    });
+
+    it('treats a comfort visit as protected too', async () => {
+      startLive([a, d]);
+      const id = enqueue([a, b], 'llm_standard', { queuedAt: Date.now() - 60_000, trigger: 'comfort_visit' });
+
+      await conversationsTick();
+
+      expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeDefined();
+    });
+
+    it('keeps a nudge with a new topic for a pair that is already talking', async () => {
+      startLive([a, b]);
+      const id = enqueue([a, b], 'llm_deep', { priority: NUDGE, topic: 'revealing: the affair' });
+
+      await conversationsTick();
+
+      expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeDefined();
+    });
+
+    it('still drops a true duplicate of the live conversation', async () => {
+      startLive([a, b]);
+      const id = enqueue([a, b], 'llm_deep', { priority: NUDGE, topic: null });
+
+      await conversationsTick();
+
+      expect(db.select().from(conversationQueue).where(eq(conversationQueue.id, id)).get()).toBeUndefined();
+    });
+
+    it('nudge router reports "busy talking — queued" and leaves the talker in their conversation', async () => {
+      const liveId = startLive([a, d]);
+      const caller = nudgeRouter.createCaller({} as any);
+
+      const res = await caller.execute({ action: { type: 'force_confront', agentA: a, agentB: b } });
+
+      expect(res).toMatchObject({ success: true, queued: true, message: 'Sofia is busy talking — queued' });
+      const sofia = db.select().from(agents).where(eq(agents.id, a)).get()!;
+      expect(sofia.current_action).toEqual({ type: 'talking', conversationId: liveId });
+      expect(db.select().from(conversationQueue).all().map((q) => q.participants)).toEqual([[a, b]]);
+      db.update(agents).set({ action_queue: [], current_destination: null }).where(inArray(agents.id, ids)).run();
+    });
   });
 });

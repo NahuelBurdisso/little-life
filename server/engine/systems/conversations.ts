@@ -92,6 +92,19 @@ const TALK_STAGE_OFFSET_PX = 24;
 /** Destination drift tolerated before the walk order is re-issued. */
 const TALK_STAGE_REISSUE_PX = 12;
 
+/** Extra time a protected queue entry may wait past its blocker's latest end. */
+const PROTECTED_WAIT_MARGIN_MS = 30_000;
+
+/**
+ * Entries the player (or the autoplay stand-in, just below the player) asked
+ * for, and comfort visits someone walked across town for. These must not be
+ * silently lost just because a participant happened to be mid-conversation.
+ */
+function isProtectedEntry(entry: QueueRow): boolean {
+  return entry.priority >= CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY - 10
+    || entry.trigger_reason === 'comfort_visit';
+}
+
 /** Order-independent key, so [A,B] and [B,A] are recognised as the same pair. */
 function conversationPairKey(participants: number[]): string {
   return [...participants].sort((a, b) => a - b).join('-');
@@ -193,10 +206,16 @@ export async function conversationsTick(): Promise<void> {
     // Entries Step A completes this tick still count (they're processed after the
     // transaction, and their participants are still `talking` until then).
     const busyAgents = new Set<number>();
-    const livePairs = new Set<string>();
-    const registerLive = (participants: number[]): void => {
-      for (const id of participants) busyAgents.add(id);
-      livePairs.add(conversationPairKey(participants));
+    /** Pair key → topic of the live conversation between them. */
+    const livePairs = new Map<string, string | null>();
+    /** Agent → wall-clock ms by which the conversation holding them must be over. */
+    const agentFreeAt = new Map<number, number>();
+    const registerLive = (participants: number[], topic: string | null, freeAt: number): void => {
+      for (const id of participants) {
+        busyAgents.add(id);
+        agentFreeAt.set(id, Math.max(agentFreeAt.get(id) ?? 0, freeAt));
+      }
+      livePairs.set(conversationPairKey(participants), topic);
     };
 
     for (const entry of activeLLM) {
@@ -227,14 +246,19 @@ export async function conversationsTick(): Promise<void> {
         continue;
       }
 
-      registerLive(conversation.participants as number[]);
-
       const messages = conversation.messages as ConversationMessage[];
       // WALL-CLOCK MS on both sides — `entry.startedAt` is a `Date.now()` stamp,
       // so no tick_speed conversion applies here.
       const timedOut = now - entry.startedAt > llmConversationTimeoutMs;
+      const completing = timedOut || messages.length >= conversation.max_turns;
 
-      if (timedOut || messages.length >= conversation.max_turns) {
+      registerLive(
+        conversation.participants as number[],
+        conversation.topic,
+        completing ? now : entry.startedAt + llmConversationTimeoutMs,
+      );
+
+      if (completing) {
         // Force-ends go through the SAME completion pipeline as natural ends.
         // The previous inline hand-rolled ending skipped quality scoring,
         // relationship events, memories and cache eviction, and emitted
@@ -286,20 +310,50 @@ export async function conversationsTick(): Promise<void> {
     const claimedAgents = new Set<number>();
     /**
      * 'duplicate': this exact pair already has a live conversation or one started
-     *   this pass — the entry is redundant and should be dropped.
+     *   this pass — the entry is redundant and should be dropped. Not for a
+     *   protected entry with a different topic: a player's "tell her the secret"
+     *   while the two are already chatting is a new conversation, to be had once
+     *   the current one ends.
      * 'busy': someone is tied up with a different partner — the entry can wait.
      */
     const claimParticipants = (
       entry: QueueRow,
-      { peek = false }: { peek?: boolean } = {},
+      { peek = false, freeAt = now }: { peek?: boolean; freeAt?: number } = {},
     ): 'ok' | 'duplicate' | 'busy' => {
       const p = entry.participants as number[];
-      if (livePairs.has(conversationPairKey(p))) return 'duplicate';
+      const key = conversationPairKey(p);
+      if (livePairs.has(key)) {
+        return isProtectedEntry(entry) && livePairs.get(key) !== entry.topic ? 'busy' : 'duplicate';
+      }
       if (p.some((id) => busyAgents.has(id) || claimedAgents.has(id))) return 'busy';
       if (peek) return 'ok';
-      for (const id of p) claimedAgents.add(id);
-      livePairs.add(conversationPairKey(p));
+      for (const id of p) {
+        claimedAgents.add(id);
+        agentFreeAt.set(id, Math.max(agentFreeAt.get(id) ?? 0, freeAt));
+      }
+      livePairs.set(key, entry.topic);
       return 'ok';
+    };
+    /**
+     * A protected entry (player nudge, comfort visit) that timed out only because
+     * a participant is mid-conversation waits for that conversation instead of
+     * being dropped. Bounded: the new deadline is when the blocking conversation
+     * must be over at the latest, plus a margin — never open-ended. Returns true
+     * when the wait was extended and the entry stays queued.
+     */
+    const extendProtectedWait = (entry: QueueRow): boolean => {
+      if (!isProtectedEntry(entry)) return false;
+      const blockers = (entry.participants as number[])
+        .map((id) => agentFreeAt.get(id))
+        .filter((t): t is number => t != null);
+      if (blockers.length === 0) return false; // not held by a conversation
+      const deadline = Math.max(...blockers) + PROTECTED_WAIT_MARGIN_MS;
+      if (deadline <= now) return false;
+      db.update(conversationQueue)
+        .set({ max_wait: deadline - entry.queued_at })
+        .where(eq(conversationQueue.id, entry.id))
+        .run();
+      return true;
     };
 
     // --- Steps C–E: work the queue, highest priority first ---
@@ -322,11 +376,14 @@ export async function conversationsTick(): Promise<void> {
       if (now > entry.queued_at + entry.max_wait) {
         // Step C: timed out — delete; async template processing happens outside.
         // A timed-out entry has nowhere left to wait, so if its participants are
-        // taken it is simply dropped rather than becoming a parallel template chat.
+        // taken it is simply dropped rather than becoming a parallel template chat
+        // — unless it's a protected entry held up by a live conversation.
+        const claim = claimParticipants(entry);
+        if (claim === 'busy' && extendProtectedWait(entry)) continue;
         db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
         queueTimeouts++;
         changed = true;
-        if (claimParticipants(entry) !== 'ok') continue;
+        if (claim !== 'ok') continue;
         timedOutQueue.push({ entry, world });
         templateTotal++;
         continue;
@@ -464,7 +521,7 @@ export async function conversationsTick(): Promise<void> {
           ? schedulerState.max_turns_deep
           : schedulerState.max_turns_standard;
 
-      claimParticipants(entry);
+      claimParticipants(entry, { freeAt: now + llmConversationTimeoutMs });
 
       // Create conversation record
       const result = db

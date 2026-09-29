@@ -29,6 +29,44 @@ function getActionType(currentAction: Record<string, any> | null): string | null
   return typeof currentAction === 'string' ? currentAction : null;
 }
 
+type AgentRow = typeof agents.$inferSelect;
+
+function isTalking(agent: AgentRow): boolean {
+  return getActionType(agent.current_action as Record<string, any> | null) === 'talking';
+}
+
+/**
+ * A nudge whose participant is mid-conversation is queued behind it: the
+ * scheduler holds player entries until that conversation ends. Say so, rather
+ * than reporting a plain success for something that visibly doesn't happen yet.
+ */
+function queuedResult(...involved: AgentRow[]): { success: true; queued?: true; message?: string } {
+  const busy = involved.filter(isTalking).map((a) => a.name);
+  if (busy.length === 0) return { success: true };
+  return {
+    success: true,
+    queued: true,
+    message: `${busy.join(' and ')} ${busy.length > 1 ? 'are' : 'is'} busy talking — queued`,
+  };
+}
+
+/**
+ * The walk-to-midpoint order for a nudge, or nothing for an agent who is
+ * talking: overwriting `current_action` mid-conversation walked them out of it
+ * while the conversation carried on without them. They pick up the queued
+ * `talking` action once they're free.
+ */
+function walkOrder(agent: AgentRow, to: { x: number; y: number }, now: number) {
+  if (isTalking(agent)) return {};
+  return {
+    current_action: { type: 'walking', to },
+    current_destination: to,
+    current_path: null,
+    action_started: now,
+    action_duration: null,
+  };
+}
+
 const nudgeInput = z.object({
   action: z.discriminatedUnion('type', [
     z.object({ type: z.literal('suggest_talk'), agentA: z.number(), agentB: z.number(), topic: z.string().optional() }),
@@ -129,11 +167,7 @@ export const nudgeRouter = router({
           const existingQueueA = (agentA.action_queue as Record<string, any>[]) ?? [];
           db.update(agents)
             .set({
-              current_action: { type: 'walking', to: { x: midX, y: midY } },
-              current_destination: { x: midX, y: midY },
-              current_path: null,
-              action_started: now,
-              action_duration: null,
+              ...walkOrder(agentA, { x: midX, y: midY }, now),
               action_queue: [
                 { type: 'talking', target: agentBId },
                 ...existingQueueA,
@@ -145,11 +179,7 @@ export const nudgeRouter = router({
           const existingQueueB = (agentB.action_queue as Record<string, any>[]) ?? [];
           db.update(agents)
             .set({
-              current_action: { type: 'walking', to: { x: midX, y: midY } },
-              current_destination: { x: midX, y: midY },
-              current_path: null,
-              action_started: now,
-              action_duration: null,
+              ...walkOrder(agentB, { x: midX, y: midY }, now),
               action_queue: [
                 { type: 'talking', target: agentAId },
                 ...existingQueueB,
@@ -166,7 +196,7 @@ export const nudgeRouter = router({
 
           emitter.markDirty('agents.all');
           emitter.flush();
-          return { success: true };
+          return queuedResult(agentA, agentB);
         }
 
         // ─── suggest_go_to ─────────────────────────────────────────────────
@@ -618,7 +648,7 @@ export const nudgeRouter = router({
 
           emitter.markDirty('agents.all');
           emitter.flush();
-          return { success: true };
+          return queuedResult(agent, target);
         }
 
         // ─── force_confront ─────────────────────────────────────────────────
@@ -659,20 +689,12 @@ export const nudgeRouter = router({
           const queueB = (agentB.action_queue as Record<string, any>[]) ?? [];
 
           db.update(agents).set({
-            current_action: { type: 'walking', to: { x: midX, y: midY } },
-            current_destination: { x: midX, y: midY },
-            current_path: null,
-            action_started: now,
-            action_duration: null,
+            ...walkOrder(agentA, { x: midX, y: midY }, now),
             action_queue: [{ type: 'talking', target: bId }, ...queueA],
           }).where(eq(agents.id, aId)).run();
 
           db.update(agents).set({
-            current_action: { type: 'walking', to: { x: midX, y: midY } },
-            current_destination: { x: midX, y: midY },
-            current_path: null,
-            action_started: now,
-            action_duration: null,
+            ...walkOrder(agentB, { x: midX, y: midY }, now),
             action_queue: [{ type: 'talking', target: aId }, ...queueB],
           }).where(eq(agents.id, bId)).run();
 
@@ -684,7 +706,7 @@ export const nudgeRouter = router({
 
           emitter.markDirty('agents.all');
           emitter.flush();
-          return { success: true };
+          return queuedResult(agentA, agentB);
         }
 
         // ─── Unknown ───────────────────────────────────────────────────────
