@@ -9,6 +9,7 @@ import { buildDailyPlanPrompt, buildReplanPrompt, type PlanPrompt } from './plan
 import { parsePlanBlocks } from './planParser';
 import type { DailyPlan, PlanBlock, PlanExecutionState, ReplanEvent } from './types';
 import { logActivity } from '../activityLogger';
+import { simEvents } from '../simEvents';
 import { getAgentHobbies } from '../hobbyEngine';
 import { getReputation, getReputationLabel } from '../reputationEngine';
 import { getMoodMomentum } from '../moodMomentum';
@@ -702,6 +703,14 @@ export class PlanGenerator {
     );
 
     console.log(`[PlanGenerator] Agent ${agentRow.name} replanned: ${event.description}`);
+
+    // Lets the player be told when a whispered thought (whose text is the
+    // reason) actually reworked someone's day — see playerOutcomes.ts.
+    simEvents.emit('plan:replanned', {
+      agentId,
+      description: event.description,
+      blocks: newBlocks.map((b) => b.broad_action),
+    });
 
     // Feed-sized: the reason can be a whole conversation topic and the block
     // list is as long as the rest of the day. Both stay whole in the memory above.

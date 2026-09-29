@@ -4,7 +4,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { simEvents } from './simEvents';
 import { logActivity } from './activityLogger';
 import { computeConversationImpact } from './conversationImpact';
-import { shortenForFeed, thatSentence } from './factText';
+import { joinForFeed, shortenForFeed, thatSentence } from './factText';
 
 /**
  * Tells the player what their meddling came to.
@@ -31,7 +31,11 @@ import { shortenForFeed, thatSentence } from './factText';
  *   - `player_nudge_expired` when a player's queue entry is dropped
  *     (`conversation:queue_dropped` from the conversation scheduler);
  *   - the moment a rumor the player planted reaches its own subject
- *     (`rumor:reached_subject` from gossip.ts) — the planted rumor's payoff.
+ *     (`rumor:reached_subject` from gossip.ts) — the planted rumor's payoff;
+ *   - the first time a whispered thought shows: the agent voices it in a
+ *     conversation (`conversation:ended`, keywords in their own lines) or it
+ *     makes them rework their day (`plan:replanned`, whose reason is the
+ *     whisper itself). Whichever comes first, once per whisper.
  *
  * Side-effect module: registers its listeners on import (server/index.ts), like
  * giftEngine. State is per world and cleared by `clearPlayerOutcomes`.
@@ -146,6 +150,8 @@ const pendingByConversation = new Map<number, PendingOutcome>();
 const pendingByEvent = new Map<number, number>();
 /** Planted rumors already reported as having reached their subject. */
 const seenRumors = new Set<number>();
+/** Whispered thoughts not yet reported, per agent (see `registerWhisper`). */
+const openWhispers = new Map<number, Whisper[]>();
 
 /**
  * Bounds. The waits are short (events are applied on the next relationships
@@ -167,6 +173,7 @@ export function clearPlayerOutcomes(): void {
   pendingByConversation.clear();
   pendingByEvent.clear();
   seenRumors.clear();
+  openWhispers.clear();
 }
 
 function nameOf(id: number): string {
@@ -322,6 +329,132 @@ export function onRumorReachedSubject(payload: { factId: number; subjectId: numb
   });
 }
 
+// ─── Whispered thoughts ───────────────────────────────────────────────────────
+
+/**
+ * A whisper is a memory plus a replan nudge, and after that the player heard
+ * nothing: the thought could resurface at supper or die unread. There is no
+ * cheap "this memory was used" flag (retrieval touches `last_accessed` for
+ * plans, reflections and prompts alike, and a retrieved memory the agent never
+ * mentions changed nothing you could see), so the report keys off two things the
+ * player can actually watch happen:
+ *   - the agent SAYS it: their own lines in a finished conversation share
+ *     distinctive words with the whisper (`whisperAired`);
+ *   - it MOVES their day: the replan the whisper triggered rewrote the plan
+ *     (`plan:replanned`, matched on the whisper text carried in the reason).
+ * Each whisper is reported once and then forgotten; a few per agent are kept
+ * (the oldest quietly drops) so a spammed agent doesn't grow the map.
+ */
+export interface Whisper {
+  text: string;
+  /** Distinctive-word stems (see `whisperStems`). */
+  stems: string[];
+}
+
+const MAX_WHISPERS_PER_AGENT = 3;
+
+/** Words that carry no meaning of their own; matching on them would fire on any chatter. */
+const FILLER = new Set([
+  'that', 'this', 'with', 'have', 'from', 'they', 'them', 'then', 'than', 'will', 'would', 'could',
+  'should', 'about', 'what', 'when', 'where', 'which', 'while', 'there', 'their', 'been', 'were',
+  'your', 'just', 'some', 'something', 'someone', 'maybe', 'really', 'very', 'much', 'more', 'into',
+  'over', 'like', 'know', 'feel', 'think', 'thought', 'cant', 'dont', 'want', 'need', 'time',
+]);
+
+const NOT_A_WORD = /[^A-Za-z\u00c0-\u00ff']+/;
+
+/** Comparable stem: lower case, letters only, first five characters ("hiding" ~ "hides"). */
+function stemOf(word: string): string {
+  return word.toLowerCase().replace(/[^a-z\u00df-\u00ff]/g, '').slice(0, 5);
+}
+
+/** Distinctive stems of a whispered text: words of 4+ letters that aren't filler. */
+export function whisperStems(text: string): string[] {
+  const out = new Set<string>();
+  for (const w of text.split(NOT_A_WORD)) {
+    const bare = w.replace(/'/g, '').toLowerCase();
+    if (bare.length < 4 || FILLER.has(bare)) continue;
+    out.add(stemOf(bare));
+  }
+  return [...out];
+}
+
+/**
+ * Do these spoken lines carry the whisper? Two shared stems, or the only one
+ * when the whisper has fewer than two: one common word alone ("bakery") is a
+ * coincidence in a town full of them, two is the thought coming out.
+ */
+export function whisperAired(lines: string[], stems: string[]): boolean {
+  if (stems.length === 0) return false;
+  const spoken = new Set<string>();
+  for (const line of lines) {
+    for (const w of line.split(NOT_A_WORD)) {
+      const st = stemOf(w);
+      if (st.length >= 4) spoken.add(st);
+    }
+  }
+  const hits = stems.filter((st) => spoken.has(st)).length;
+  return hits >= Math.min(2, stems.length);
+}
+
+/** Called by whisperThought with the sanitized text. */
+export function registerWhisper(agentId: number, text: string): void {
+  const list = openWhispers.get(agentId) ?? [];
+  list.push({ text, stems: whisperStems(text) });
+  while (list.length > MAX_WHISPERS_PER_AGENT) list.shift();
+  openWhispers.set(agentId, list);
+}
+
+function reportWhisper(agentId: number, w: Whisper, description: string): void {
+  const rest = (openWhispers.get(agentId) ?? []).filter((x) => x !== w);
+  if (rest.length > 0) openWhispers.set(agentId, rest);
+  else openWhispers.delete(agentId);
+  logActivity({
+    type: 'player_outcome',
+    agents: [agentId],
+    templateData: { description, trigger: 'player_whisper', thought: w.text },
+  });
+}
+
+export function onWhisperConversation(payload: {
+  messages?: Array<{ speakerId: number; text: string; fallback?: boolean }>;
+}): void {
+  if (openWhispers.size === 0 || !payload.messages) return;
+  const speakers = new Set(payload.messages.map((m) => m.speakerId));
+  for (const agentId of speakers) {
+    const open = openWhispers.get(agentId);
+    if (!open) continue;
+    // Canned fallback lines are not the agent's voice; only real speech counts.
+    const own = payload.messages.filter((m) => m.speakerId === agentId && !m.fallback);
+    for (const w of [...open]) {
+      if (!whisperAired(own.map((m) => m.text), w.stems)) continue;
+      // The line that carries the most of it, for the quote.
+      const line = own.find((m) => whisperAired([m.text], w.stems)) ?? own[0];
+      const who = nameOf(agentId).split(' ')[0];
+      reportWhisper(
+        agentId,
+        w,
+        `Your whispered thought is out: ${who} said it aloud — "${shortenForFeed(line.text, 90)}"`,
+      );
+    }
+  }
+}
+
+export function onPlanReplanned(payload: { agentId: number; description: string; blocks: string[] }): void {
+  const open = openWhispers.get(payload.agentId);
+  if (!open) return;
+  // The reason a whisper hands the replanner quotes the sanitized text verbatim.
+  const w = open.find((x) => payload.description.includes(`"${x.text}"`));
+  if (!w) return;
+  const who = nameOf(payload.agentId).split(' ')[0];
+  const plan = joinForFeed(payload.blocks, 90);
+  reportWhisper(
+    payload.agentId,
+    w,
+    `Your whispered thought changed ${who}'s day${plan ? `: now ${plan}` : ''}.`,
+  );
+}
+
 // ─── Registration ─────────────────────────────────────────────────────────────
 
 let initialized = false;
@@ -333,6 +466,8 @@ function initPlayerOutcomes(): void {
   simEvents.on('relationship:event_applied', onRelationshipEventApplied);
   simEvents.on('conversation:queue_dropped', onQueueDropped);
   simEvents.on('rumor:reached_subject', onRumorReachedSubject);
+  simEvents.on('conversation:ended', onWhisperConversation);
+  simEvents.on('plan:replanned', onPlanReplanned);
 }
 
 // Auto-initialize on import

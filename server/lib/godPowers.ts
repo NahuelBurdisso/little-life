@@ -7,6 +7,7 @@ import { createFact } from './gossip';
 import { memoryService } from './memory/instance';
 import { gameMinutesNow } from './worldClock';
 import { emitter } from '../engine/emitter';
+import { registerWhisper } from './playerOutcomes';
 import type { PersonalityProfile } from './personality';
 
 /**
@@ -134,6 +135,9 @@ export function whisperThought(agentId: number, rawText: string): GodPowerResult
     0,
     WHISPER_IMPORTANCE,
   );
+
+  // The player hears back when the thought first shows (playerOutcomes.ts).
+  registerWhisper(agentId, text);
 
   simEvents.emit('plan:evaluate-replan', {
     agentId,
