@@ -19,15 +19,17 @@
  *    age out of the queue into templates in whatever order it drained, the pair
  *    on screen included. Now:
  *      - a WATCHED pair (lib/spotlight.ts: either participant on screen) jumps
- *        the queue, is never a template, and anything with real content in it
- *        (drama or a notable signal) gets the long form;
+ *        the queue, waits longer for a slot, is never a template, and a
+ *        dramatic one gets the long form;
  *      - OFF-SCREEN small talk (nothing special to say) becomes a template
  *        exchange whenever the model is under pressure — requests backed up
  *        behind the slots, a town past POPULATION_THRESHOLD, or measured turns
  *        slower than SLOW_TURN_MS — and off-screen "warm" chats (friends, a
  *        lonely or low initiator) join it once the backlog is heavy;
  *      - off-screen drama and notable chats keep their tier: they make the
- *        stories the player later reads about in the feed and the Journal.
+ *        stories the player later reads about in the feed and the Journal —
+ *        and under pressure off-screen drama waits longer for a slot too, or
+ *        the watched pairs' head start would starve it.
  *    Player nudges and milestone proposals are never downgraded (they are
  *    requests, not budget decisions), and a comfort visit never drops below a
  *    standard chat — the walk across town was the whole point.
@@ -86,6 +88,17 @@ export const TIER_BUDGET = {
    * one without reaching the protected band (see `watchedPriority`).
    */
   WATCHED_PRIORITY_BOOST: 60,
+  /**
+   * Queue wait (× QUEUE_MAX_WAIT_GAME_MINUTES) for a watched entry. Priority
+   * alone barely helps once the slots are full: at 4x a standard chat holds its
+   * slot ~45 game minutes, a slot frees every ~12, and an entry that may only
+   * wait 10 usually ages out into a template before one does. Measured with
+   * scripts/spotlight-sim.ts (32 residents, 4x): on-screen LLM share 45% with
+   * the boost alone, 65% with the longer wait.
+   */
+  WATCHED_WAIT_FACTOR: 3,
+  /** Same for an off-screen DRAMATIC entry while the model is under pressure. */
+  DRAMA_WAIT_FACTOR: 2,
 } as const;
 
 export interface TierContext {
@@ -138,6 +151,8 @@ export interface TierChoice {
   signal: TierSignal;
   /** The budget layer changed the signal tier. */
   budget: 'none' | 'watched' | 'offscreen_downgrade';
+  /** How long the entry may wait for its pair / a slot (GAME MINUTES; `queueMaxWait` it). */
+  maxWaitGameMin: number;
 }
 
 /** The signal layer alone: the tier decisions.ts used to compute inline. */
@@ -198,33 +213,39 @@ export function watchedPriority(basePriority: number): number {
 
 export function chooseTier(ctx: TierContext): TierChoice {
   const { tier, signal } = signalTier(ctx);
+  const baseWait = CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES;
 
   if (ctx.request) {
-    return { tier: ctx.requestedTier ?? tier, priority: ctx.basePriority, signal, budget: 'none' };
+    return { tier: ctx.requestedTier ?? tier, priority: ctx.basePriority, signal, budget: 'none', maxWaitGameMin: baseWait };
   }
 
   if (ctx.watched) {
-    // On screen: never a canned line, and anything with content in it gets the
-    // long form — the player is reading this one.
+    // On screen: never a canned line, and drama gets the long form — the
+    // player is reading this one. Notable chats keep the standard length: in
+    // the simulation giving them the deep tier only held slots longer, and
+    // cost off-screen drama its share without adding on-screen chats.
     const watchedTier: ConversationTier =
-      signal === 'dramatic' || signal === 'notable' ? 'llm_deep' : tier === 'template' ? 'llm_standard' : tier;
+      signal === 'dramatic' ? 'llm_deep' : tier === 'template' ? 'llm_standard' : tier;
     return {
       tier: watchedTier,
       priority: watchedPriority(ctx.basePriority),
       signal,
       budget: 'watched',
+      maxWaitGameMin: baseWait * TIER_BUDGET.WATCHED_WAIT_FACTOR,
     };
   }
 
+  const pressure = underPressure(ctx);
   if (tier !== 'template' && !ctx.comfortVisit) {
     const downgrade =
-      (signal === 'small_talk' && underPressure(ctx))
+      (signal === 'small_talk' && pressure)
       || (signal === 'warm' && ctx.backlog >= TIER_BUDGET.HEAVY_BACKLOG);
     if (downgrade) {
-      return { tier: 'template', priority: ctx.basePriority, signal, budget: 'offscreen_downgrade' };
+      return { tier: 'template', priority: ctx.basePriority, signal, budget: 'offscreen_downgrade', maxWaitGameMin: baseWait };
     }
   }
-  return { tier, priority: ctx.basePriority, signal, budget: 'none' };
+  const maxWaitGameMin = signal === 'dramatic' && pressure ? baseWait * TIER_BUDGET.DRAMA_WAIT_FACTOR : baseWait;
+  return { tier, priority: ctx.basePriority, signal, budget: 'none', maxWaitGameMin };
 }
 
 /**

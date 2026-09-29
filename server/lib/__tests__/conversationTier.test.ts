@@ -101,6 +101,8 @@ describe('chooseTier — unchanged when nothing is watched and the model is idle
           }));
           expect(got.tier, JSON.stringify(p)).toBe(legacySocial(p));
           expect(got.priority).toBe(77);
+          // decisions.ts' old literal max_wait of 10000 = 10 game minutes.
+          expect(got.maxWaitGameMin).toBe(10);
           checked++;
         }
       expect(checked).toBeGreaterThan(1000);
@@ -112,6 +114,7 @@ describe('chooseTier — unchanged when nothing is watched and the model is idle
           const got = chooseTier(encounter({ friendship, romance, mood, dramaticState, smallTalkTier: smallTalk }));
           expect(got.tier).toBe(legacyEncounter({ friendship, romance, mood, dramaticState, smallTalk }));
           expect(got.priority).toBe(50);
+          expect(got.maxWaitGameMin).toBe(10);
         }
     });
   }
@@ -147,10 +150,12 @@ describe('chooseTier — budget table', () => {
     ['watched small talk, heavy backlog', social({ watched: true, backlog: 20, population: 32 }), 'llm_standard', 'watched'],
     ['watched small talk, SMALL_TALK_TIER=template', social({ watched: true, smallTalkTier: 'template' }), 'llm_standard', 'watched'],
     ['watched friends', social({ watched: true, friendship: 60 }), 'llm_standard', 'watched'],
-    ['watched gossip', social({ watched: true, hasGossip: true }), 'llm_deep', 'watched'],
-    ['watched high romance', social({ watched: true, romance: 40 }), 'llm_deep', 'watched'],
+    ['watched gossip keeps the standard length', social({ watched: true, hasGossip: true }), 'llm_standard', 'watched'],
+    ['watched high romance keeps the standard length', social({ watched: true, romance: 40 }), 'llm_standard', 'watched'],
     ['watched drama', social({ watched: true, dramaticState: true, backlog: 20 }), 'llm_deep', 'watched'],
-    ['watched encounter, notable', encounter({ watched: true, mood: 90 }), 'llm_deep', 'watched'],
+    ['watched first meeting', social({ watched: true, firstMeeting: true }), 'llm_deep', 'watched'],
+    ['watched hostile encounter', encounter({ watched: true, friendship: -40 }), 'llm_deep', 'watched'],
+    ['watched encounter, notable', encounter({ watched: true, mood: 90 }), 'llm_standard', 'watched'],
     // Requests are never touched.
     ['player nudge small talk, heavy backlog', social({ request: 'nudge', requestedTier: 'llm_standard', backlog: 20, population: 32 }), 'llm_standard', 'none'],
     ['milestone proposal, heavy backlog', social({ request: 'milestone', requestedTier: 'llm_deep', backlog: 20, population: 32 }), 'llm_deep', 'none'],
@@ -176,6 +181,26 @@ describe('chooseTier — budget table', () => {
     expect(watchedPriority(40)).toBeGreaterThan(40);
     // A request keeps its own priority.
     expect(chooseTier(social({ watched: true, request: 'nudge', requestedTier: 'llm_standard', basePriority: 200 })).priority).toBe(200);
+  });
+});
+
+describe('chooseTier — queue wait', () => {
+  const base = CONFIG.CONVERSATIONS.QUEUE_MAX_WAIT_GAME_MINUTES;
+
+  it('a watched entry waits longer for a slot', () => {
+    expect(chooseTier(social({ watched: true })).maxWaitGameMin).toBe(base * TIER_BUDGET.WATCHED_WAIT_FACTOR);
+    expect(chooseTier(encounter({ watched: true, backlog: 9 })).maxWaitGameMin).toBe(base * TIER_BUDGET.WATCHED_WAIT_FACTOR);
+  });
+
+  it('off-screen drama waits longer only while the model is under pressure', () => {
+    expect(chooseTier(social({ dramaticState: true })).maxWaitGameMin).toBe(base);
+    expect(chooseTier(social({ dramaticState: true, backlog: 1 })).maxWaitGameMin).toBe(base * TIER_BUDGET.DRAMA_WAIT_FACTOR);
+    expect(chooseTier(encounter({ friendship: -40, population: 32 })).maxWaitGameMin).toBe(base * TIER_BUDGET.DRAMA_WAIT_FACTOR);
+    expect(chooseTier(social({ friendship: 60, backlog: 1 })).maxWaitGameMin).toBe(base);
+  });
+
+  it('requests keep the ordinary wait (their producers set their own)', () => {
+    expect(chooseTier(social({ request: 'nudge', requestedTier: 'llm_standard', watched: true })).maxWaitGameMin).toBe(base);
   });
 });
 

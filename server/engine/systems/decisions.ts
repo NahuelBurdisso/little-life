@@ -50,7 +50,7 @@ import { parseWeddingTrigger } from '../../lib/marriage';
 import { chooseTier, conversationBacklog, hasDramaticState } from '../../lib/conversationTier';
 import { isAnyWatched } from '../../lib/spotlight';
 import { getLLMBacklog } from '../../ai/llmSemaphore';
-import { turnLatencyEstimateMs } from '../../lib/conversationPacing';
+import { queueMaxWait, turnLatencyEstimateMs } from '../../lib/conversationPacing';
 import {
   PROPOSAL_SEEK_SCORE, canSeekPartner, inNoProposalState, pendingProposalPartner, queuePendingProposalNow,
   type SeekParty,
@@ -2212,7 +2212,7 @@ export function tick(world: WorldRow): void {
       // A comfort visit is the whole point of the walk over — chooseTier never
       // lets it collapse into a one-line template exchange.
       const isComfortVisit = decision.source === 'comfort_visit';
-      const { tier, priority } = chooseTier({
+      const { tier, priority, maxWaitGameMin } = chooseTier({
         ...tierBudget,
         source: 'social',
         friendship,
@@ -2243,7 +2243,7 @@ export function tick(world: WorldRow): void {
           trigger_reason: isComfortVisit ? 'comfort_visit' : 'needs_social',
           topic,
           queued_at: Date.now(),
-          max_wait: 10000,
+          max_wait: queueMaxWait(maxWaitGameMin),
         })
         .returning()
         .get());
@@ -2317,7 +2317,7 @@ export function tick(world: WorldRow): void {
     const aNeeds = needsMap.get(a.id);
     const aMood = aNeeds?.mood ?? 50;
 
-    const { tier, priority: encounterPriority } = chooseTier({
+    const { tier, priority: encounterPriority, maxWaitGameMin: encounterWait } = chooseTier({
       ...tierBudget,
       source: 'encounter',
       friendship,
@@ -2342,7 +2342,7 @@ export function tick(world: WorldRow): void {
       trigger_reason: `location_encounter:${loc.type}`,
       topic,
       queued_at: Date.now(),
-      max_wait: 10000,
+      max_wait: queueMaxWait(encounterWait),
     }).run();
   }
 
