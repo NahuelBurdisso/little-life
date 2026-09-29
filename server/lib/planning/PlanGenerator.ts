@@ -5,7 +5,7 @@ import { callOllamaChat } from '../../ai/ollama';
 import { LLMEmptyReplyError } from '../../ai/llmErrors';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
-import { buildDailyPlanPrompt, buildReplanPrompt } from './planPrompts';
+import { buildDailyPlanPrompt, buildReplanPrompt, type PlanPrompt } from './planPrompts';
 import { parsePlanBlocks } from './planParser';
 import type { DailyPlan, PlanBlock, PlanExecutionState, ReplanEvent } from './types';
 import { logActivity } from '../activityLogger';
@@ -197,7 +197,7 @@ export class PlanGenerator {
 
     // Three stages, three kinds of failure, each told to the gate differently
     // (see PlanLLMGate): only the LLM call itself can signal an outage.
-    let prompt: { system: string; user: string };
+    let prompt: PlanPrompt;
     try {
       prompt = await this.buildPlanPrompt(agentId, currentDay, ctx);
     } catch (err) {
@@ -218,7 +218,10 @@ export class PlanGenerator {
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'normal',
-        options: { temperature: 0.7, num_predict: 512 },
+        format: prompt.format,
+        // Ceiling, not target: 8 short JSON blocks are ~250 tokens. Cut JSON
+        // is unreadable, so this sits well above a normal answer.
+        options: { temperature: 0.7, num_predict: 700 },
       });
       text = response.text;
     } catch (err) {
@@ -406,7 +409,7 @@ export class PlanGenerator {
     agentId: number,
     currentDay: number,
     ctx: PlanningContext,
-  ): Promise<{ system: string; user: string }> {
+  ): Promise<PlanPrompt> {
     const { agentRow, currentNeeds, schedule, validLocations, workplaceName, homeName } = ctx;
 
     const agentEcon = db.select().from(economy).where(eq(economy.agent_id, agentId)).get();
@@ -579,7 +582,7 @@ export class PlanGenerator {
     //    and keep the plan. No backoff — replans are already rate-limited by
     //    ReplanEvaluator's cooldown, and backing off would also hold up this
     //    agent's plan and decomposition requests for a replan-only problem.
-    let prompt: { system: string; user: string };
+    let prompt: PlanPrompt;
     try {
       prompt = buildReplanPrompt({
         name: agentRow.name,
@@ -623,7 +626,8 @@ export class PlanGenerator {
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'normal',
-        options: { temperature: 0.7, num_predict: 512 },
+        format: prompt.format,
+        options: { temperature: 0.7, num_predict: 600 },
       });
       text = response.text;
     } catch (err) {

@@ -13,6 +13,27 @@ function stripBulletPrefix(line: string): string {
   return line.replace(/^\s*(?:\d+[.)]\s*|[-*•]\s*)/, '').trim();
 }
 
+/**
+ * The JSON object in a structured-output reply (see planPrompts' schemas), or
+ * null when the reply is the older line format. Tolerates a code fence or a
+ * stray sentence around the object, which only happens on backends that
+ * ignore `format`.
+ */
+export function extractJSONObject(raw: string): Record<string, unknown> | null {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(start, end + 1));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const asText = (v: unknown): string => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+const asInt = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
+
 function parseHour(token: string): number | null {
   // Accepts "HH:00", "H:00", or bare hour "H" or "HH"
   const withColon = token.match(/^(\d{1,2}):\d{2}$/);
@@ -72,6 +93,28 @@ function fuzzyMatchLocation(hint: string, validLocations: string[]): string {
  */
 export function parsePlanBlocks(raw: string, validLocations: string[], minBlocks = 3): PlanBlock[] {
   if (!raw || !raw.trim()) return [];
+
+  const json = extractJSONObject(raw);
+  if (json && Array.isArray(json.blocks)) {
+    const blocks: PlanBlock[] = [];
+    for (const b of json.blocks as Array<Record<string, unknown>>) {
+      const start = asInt(b?.start);
+      const end = asInt(b?.end);
+      const action = asText(b?.action);
+      const location = asText(b?.location);
+      if (start == null || end == null || !action || !location) continue;
+      if (start < 0 || start > 23 || end < 1 || end > 24 || end <= start) continue;
+      blocks.push({
+        id: `block_${blocks.length}`,
+        start_hour: start,
+        end_hour: end,
+        broad_action: action,
+        location_hint: fuzzyMatchLocation(location, validLocations),
+        status: 'pending',
+      });
+    }
+    return blocks.length < minBlocks ? [] : blocks;
+  }
 
   const lines = raw.split('\n');
   const blocks: PlanBlock[] = [];
@@ -178,6 +221,27 @@ export function parseDecomposedActions(
   };
 
   if (!raw || !raw.trim()) return [idleFallback];
+
+  const json = extractJSONObject(raw);
+  if (json && Array.isArray(json.actions)) {
+    const actions: DecomposedAction[] = [];
+    for (const a of json.actions as Array<Record<string, unknown>>) {
+      const description = asText(a?.action);
+      const location = asText(a?.location);
+      const minutes = asInt(a?.minutes);
+      if (!description || !location) continue;
+      const actionType = inferActionType(description);
+      actions.push({
+        description,
+        action_type: actionType,
+        target_location: fuzzyMatchLocation(location, validLocations),
+        target_agent: findAgentMatch(description, validAgents),
+        topic: actionType === 'socializing' ? extractTopic(description) : undefined,
+        duration_minutes: minutes == null ? 30 : Math.min(120, Math.max(5, minutes)),
+      });
+    }
+    return actions.length === 0 ? [idleFallback] : actions;
+  }
 
   const lines = raw.split('\n');
   const actions: DecomposedAction[] = [];

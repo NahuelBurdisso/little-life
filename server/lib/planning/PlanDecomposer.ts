@@ -5,7 +5,7 @@ import { callOllamaChat } from '../../ai/ollama';
 import { LLMEmptyReplyError } from '../../ai/llmErrors';
 import { CONFIG } from '../constants';
 import type { PersonalityProfile } from '../personality';
-import { buildDecompositionPrompt } from './planPrompts';
+import { buildDecompositionPrompt, type PlanPrompt } from './planPrompts';
 import { parseDecomposedActions, isUnparsedDecomposition } from './planParser';
 import type { DailyPlan, PlanBlock } from './types';
 import { reportPlanningBug, type PlanLLMGate } from './PlanLLMGate';
@@ -28,7 +28,7 @@ interface IPlanLLMQueue {
 /** Everything `decompose` needs from the DB, plus the built prompt. */
 interface DecompositionContext {
   agentName: string;
-  prompt: { system: string; user: string };
+  prompt: PlanPrompt;
   validLocations: string[];
   validAgentNames: string[];
   locationIdMap: Map<string, number>;
@@ -134,7 +134,8 @@ export class PlanDecomposer {
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'normal',
-        options: { temperature: 0.7, num_predict: 256 },
+        format: prompt.format,
+        options: { temperature: 0.7, num_predict: 360 },
       });
       text = response.text;
     } catch (err) {

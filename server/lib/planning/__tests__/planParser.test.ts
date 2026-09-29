@@ -315,3 +315,54 @@ describe('isUnparsedDecomposition', () => {
     expect(isUnparsedDecomposition(parseDecomposedActions('Stand on bedrock | Park | 30 minutes', LOCATIONS, AGENTS))).toBe(false);
   });
 });
+
+describe('structured (JSON) replies', () => {
+  const locs = ['Town Square', "Rosa's General Store", 'Home 3'];
+
+  it('reads plan blocks from the schema object, dropping impossible hours', () => {
+    const raw = JSON.stringify({ blocks: [
+      { start: 6, end: 8, action: 'Coffee and  the paper', location: 'Home 3' },
+      { start: 8, end: 18, action: 'Run the store', location: "Rosa's General Store" },
+      { start: 18, end: 17, action: 'Backwards', location: 'Town Square' },
+      { start: 18, end: 22, action: 'Evening stroll', location: 'town square' },
+    ] });
+    const blocks = parsePlanBlocks(raw, locs);
+    expect(blocks.map((b) => [b.start_hour, b.end_hour, b.broad_action, b.location_hint])).toEqual([
+      [6, 8, 'Coffee and the paper', 'Home 3'],
+      [8, 18, 'Run the store', "Rosa's General Store"],
+      [18, 22, 'Evening stroll', 'Town Square'],
+    ]);
+    expect(blocks.map((b) => b.id)).toEqual(['block_0', 'block_1', 'block_2']);
+  });
+
+  it('applies minBlocks to JSON replies too', () => {
+    const raw = JSON.stringify({ blocks: [{ start: 20, end: 22, action: 'Read at home', location: 'Home 3' }] });
+    expect(parsePlanBlocks(raw, locs)).toEqual([]);
+    expect(parsePlanBlocks(raw, locs, 1)).toHaveLength(1);
+  });
+
+  it('tolerates a code fence around the object', () => {
+    const raw = '```json\n' + JSON.stringify({ blocks: [
+      { start: 6, end: 7, action: 'Wake up', location: 'Home 3' },
+      { start: 7, end: 8, action: 'Breakfast', location: 'Home 3' },
+      { start: 8, end: 9, action: 'Walk to work', location: 'Town Square' },
+    ] }) + '\n```';
+    expect(parsePlanBlocks(raw, locs)).toHaveLength(3);
+  });
+
+  it('reads decomposed actions, matching people and clamping minutes', () => {
+    const raw = JSON.stringify({ actions: [
+      { action: 'Chat with Marco Rivera about the harvest', location: 'Town Square', minutes: 30 },
+      { action: 'Restock shelves', location: "Rosa's General Store", minutes: 500 },
+    ] });
+    const actions = parseDecomposedActions(raw, locs, ['Marco Rivera']);
+    expect(actions).toHaveLength(2);
+    expect(actions[0]).toMatchObject({ target_agent: 'Marco Rivera', action_type: 'socializing', topic: 'the harvest', duration_minutes: 30 });
+    expect(actions[1]).toMatchObject({ target_location: "Rosa's General Store", duration_minutes: 120 });
+    expect(isUnparsedDecomposition(actions)).toBe(false);
+  });
+
+  it('treats an empty actions list as unparsed', () => {
+    expect(isUnparsedDecomposition(parseDecomposedActions('{"actions":[]}', locs, []))).toBe(true);
+  });
+});
