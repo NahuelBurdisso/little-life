@@ -105,17 +105,13 @@ describe('BeatSystem', () => {
     expect(fx.x).toBeCloseTo(200);
   });
 
-  it('a player intervention pings the agent and shows an exclaim', async () => {
+  it('leaves player interventions to systems/playerFx', async () => {
     const { sys, overAgents, showEmote } = setup();
     await flush();
     emitCanvasEvent({ type: 'intervention', kind: 'nudge', agentIds: [3] });
-    expect(showEmote).toHaveBeenCalledWith('3', 'exclaim', { x: 60, y: 100 });
-    expect(overAgents.children).toHaveLength(1);
-    sys.destroy();
+    expect(showEmote).not.toHaveBeenCalled();
     expect(overAgents.children).toHaveLength(0);
-    showEmote.mockClear();
-    emitCanvasEvent({ type: 'intervention', kind: 'nudge', agentIds: [3] });
-    expect(showEmote).not.toHaveBeenCalled();        // unsubscribed
+    sys.destroy();
   });
 
   it('a death needs the row and the sprite removal, then a ghost rises from the last spot', async () => {

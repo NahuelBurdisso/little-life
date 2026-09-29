@@ -1,7 +1,6 @@
 import * as PIXI from "pixi.js";
 import type { CanvasLayers, CanvasServices, CanvasSystem, DataContext, FrameContext } from "../types";
 import { inView } from "../view";
-import { onCanvasEvent } from "../../../../lib/canvasBus";
 import { loadStrip } from "../../stripAtlas";
 import { createDetectorState, detectBeats, type BeatKind, type BeatSnapshot } from "./beatDetect";
 import {
@@ -37,12 +36,12 @@ interface Slot {
 
 interface Point { x: number; y: number }
 
-/** A detected beat, or the player's own intervention (which the detector never sees). */
-interface Spawn { kind: BeatKind | "intervention"; agentIds: number[]; at?: Point }
+/** A detected beat. (The player's own interventions are answered by systems/playerFx.) */
+interface Spawn { kind: BeatKind; agentIds: number[]; at?: Point }
 
 /**
  * Story beats on the map: fights, gifts, kisses, arrests, secrets, level-ups, birthdays,
- * deaths and the player's own interventions become one-second pixel effects between (or over)
+ * deaths become one-second pixel effects between (or over)
  * the agents involved, plus the matching emote on each participant. Purely client-side — the
  * detection (beatDetect.ts) reads the activity feed and diffs the agent list; this class only
  * renders.
@@ -58,7 +57,6 @@ class BeatSystem implements CanvasSystem {
   private serial = 0;
   private live = 0;
   private destroyed = false;
-  private readonly unsubscribe: () => void;
 
   constructor(layers: CanvasLayers, services: CanvasServices) {
     this.layers = layers;
@@ -68,10 +66,6 @@ class BeatSystem implements CanvasSystem {
     }).catch(err => {
       // Emotes still play without the atlas; only the map effects are lost.
       console.warn("[beats] FX atlas failed to load:", err);
-    });
-    this.unsubscribe = onCanvasEvent(e => {
-      if (e.type !== "intervention") return;
-      for (const id of e.agentIds) this.spawn({ kind: "intervention", agentIds: [id] });
     });
   }
 
@@ -224,7 +218,6 @@ class BeatSystem implements CanvasSystem {
 
   destroy(): void {
     this.destroyed = true;
-    this.unsubscribe();
     for (const s of this.slots) {
       s.sprite.parent?.removeChild(s.sprite);
       s.sprite.destroy();

@@ -72,7 +72,7 @@ export interface BeatStyle {
  * Emote names are the ones planned for the pixel-emote atlas (workstream A); until that
  * lands BubbleSystem draws an unknown name as a "?" emoji.
  */
-export const BEAT_STYLE: Record<BeatKind | 'intervention', BeatStyle> = {
+export const BEAT_STYLE: Record<BeatKind, BeatStyle> = {
   fight:      { fx: 'brawl',   lift: 10, emotes: ['anger', 'anger'] },
   gift:       { fx: 'giftPop', lift: 12, emotes: [null, 'gift'] },
   romance:    { fx: 'heart',   lift: 22, emotes: ['heart', 'heart'] },
@@ -82,11 +82,10 @@ export const BEAT_STYLE: Record<BeatKind | 'intervention', BeatStyle> = {
   levelup:    { fx: 'levelup', lift: 16, emotes: ['levelup', null] },
   birthday:   { fx: 'cake',    lift: 11, dx: 15, emotes: ['cake', null] },
   death:      { fx: 'ghost',   lift: 14, emotes: [null, null] },
-  intervention: { fx: 'ping',  lift: 4, scale: 1, squashY: 0.6, emotes: ['exclaim', 'exclaim'] },
 };
 
 /** Whole life of one beat's effect, in seconds. */
-export function beatDuration(kind: BeatKind | 'intervention'): number {
+export function beatDuration(kind: BeatKind): number {
   const fx = BEAT_STYLE[kind].fx;
   if (fx === 'giftPop') return GIFT_TRAVEL_S + fxDuration('giftPop');
   return fxDuration(fx);
