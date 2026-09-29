@@ -9,6 +9,14 @@
  *   npm run soak -- --season winter       # start in another season (fresh world or --db copy)
  *   npm run soak -- --preset soap         # drama preset for a fresh world (default: the wizard's)
  *   npm run soak -- --trace "Elena Voss"  # print one agent's every action change
+ *   npm run soak -- --agents 32 --days 30 --tick-speed 4 --json out.json   # scale / long-run story health
+ *
+ * `--agents N` (2..32) sizes the cast of a fresh world: the wizard's default residents,
+ * trimmed or grown with plausible extras (scripts/soakCast.ts). After the economy tables the
+ * soak prints a story-health table (beats, relationship changes, secrets, goals, weddings,
+ * deaths, invisible residents, arcs, friendship saturation, mood, tick p50/p95 per phase) and
+ * warnings for stagnation, collapse and saturation (scripts/soakHealth.ts); `--json FILE`
+ * writes the same numbers for comparing two runs.
  *
  * A fresh world is built exactly as the setup wizard's Start button builds it
  * with nothing edited: the wizard's default cast and relationships, its default
@@ -34,6 +42,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { buildSoakCast } from './soakCast';
+import {
+  createHealthTracker, evaluateHealthWarnings, formatHealthTable,
+  type DayHealth,
+} from './soakHealth';
 
 // ─── Args ─────────────────────────────────────────────────────────────────────
 
@@ -49,6 +62,12 @@ const TICK_SPEED = arg('tick-speed') ? Number(arg('tick-speed')) : undefined;
 const SOURCE_DB = arg('db');
 const SEASON = arg('season');
 const PRESET = arg('preset');
+const AGENT_COUNT = arg('agents') ? Number(arg('agents')) : undefined;
+const JSON_OUT = arg('json');
+if (AGENT_COUNT !== undefined && SOURCE_DB) {
+  console.error('--agents sizes the cast of a fresh world; it cannot be combined with --db (the copy has its own cast)');
+  process.exit(1);
+}
 if (SEASON && !['spring', 'summer', 'autumn', 'winter'].includes(SEASON)) {
   console.error(`--season must be spring, summer, autumn or winter (got "${SEASON}")`);
   process.exit(1);
@@ -122,7 +141,8 @@ async function main(): Promise<void> {
   const { db, sqlite } = await import('../server/db');
   const schema = await import('../server/db/schema');
   const { eq, gt, ne, and, inArray, sql } = await import('drizzle-orm');
-  const { gameTick, stopTickLoopAndWait } = await import('../server/engine/tick');
+  const { gameTick, stopTickLoopAndWait, setTickTimingObserver } = await import('../server/engine/tick');
+  const { detectStoryArcs, resetChronicleCache } = await import('../server/lib/chronicle');
   const { CONFIG } = await import('../server/lib/constants');
   const { TRADE_RULES } = await import('../server/data/economyData');
   const { getCheapestFoodPrice } = await import('../server/lib/economyEngine');
@@ -169,11 +189,13 @@ async function main(): Promise<void> {
     const { getDefaultAgents, getDefaultRelationships } = await import('../src/components/setup/defaults');
     const { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET, PRESETS } = await import('../src/components/setup/types');
     const { setupRouter } = await import('../server/routers/setup');
+    // The wizard's own defaults when --agents is absent (or 13), grown or trimmed otherwise.
+    const cast = AGENT_COUNT !== undefined ? buildSoakCast(AGENT_COUNT, SEED) : null;
     const preset = PRESET ? PRESETS.find((p) => p.id === PRESET) : DEFAULT_PRESET;
     if (!preset) throw new Error(`--preset must be one of ${PRESETS.map((p) => p.id).join(', ')} (got "${PRESET}")`);
     await setupRouter.createCaller({} as any).initialize({
-      agents: getDefaultAgents(),
-      relationships: getDefaultRelationships(),
+      agents: cast ? cast.agents : getDefaultAgents(),
+      relationships: cast ? cast.relationships : getDefaultRelationships(),
       world: { ...DEFAULT_WORLD, ...(SEASON ? { season: SEASON } : {}) },
       rules: DEFAULT_RULES,
       scenario: { ...preset.values, seed: SEED },
@@ -295,6 +317,12 @@ async function main(): Promise<void> {
   const cashByDay: { day: number; cash: Map<number, number> }[] = [];
 
   const anomalies: string[] = [];
+  // Story health (scripts/soakHealth.ts): snapshots start here, after the world exists.
+  const health = createHealthTracker({ sqlite, detectStoryArcs, resetChronicleCache });
+  setTickTimingObserver((t) => health.recordTick(t));
+  const healthDays: DayHealth[] = [];
+  // Per-day economy and needs numbers kept for --json and the money-drift warning.
+  const econDays: Array<Record<string, number>> = [];
   const t0 = performance.now();
   let ticks = 0;
 
@@ -398,6 +426,7 @@ async function main(): Promise<void> {
         if (!n) continue;
         needSum.hunger += n.hunger; needSum.energy += n.energy; needSum.social += n.social; needSum.fun += n.fun;
         needSamples++;
+        health.sampleMood(n.mood);
         minHunger = Math.min(minHunger, n.hunger);
         if (n.hunger < 15) starving.add(r.id);
         const run = n.hunger <= 0 ? (hungerZeroRun.get(r.id) ?? 0) + tickSpeed : 0;
@@ -605,7 +634,17 @@ async function main(): Promise<void> {
       }
       for (const [msg, n] of kinds) note(`error ×${n}: ${msg}`);
     }
+
+    healthDays.push(health.endDay(dayStart.day));
+    econDays.push({
+      day: dayStart.day, residents: active.length, perCapita, minMoney, ratio, taxPool: world.tax_pool,
+      broke, convos, salary: sum(salary), buys: buys.length,
+      hunger: needSum.hunger / Math.max(1, needSamples), energy: needSum.energy / Math.max(1, needSamples),
+      social: needSum.social / Math.max(1, needSamples), fun: needSum.fun / Math.max(1, needSamples),
+      starving: starving.size,
+    });
   }
+  setTickTimingObserver(null);
 
   const ms = performance.now() - t0;
   out('');
@@ -651,6 +690,46 @@ async function main(): Promise<void> {
   }
   out(`${ticks} ticks in ${(ms / 1000).toFixed(1)} s (${(ms / ticks).toFixed(1)} ms/tick)`);
   out('');
+
+  // ── Story health (scripts/soakHealth.ts) ──────────────────────────────────
+  out('Story health per day. beats new/kinds/all = beat types seen for the first time today / distinct today /');
+  out('distinct so far; story types = distinct activity types logged at importance >= 0.6; rel chg = net relationship');
+  out('status changes; facts/secr/public = new shared facts / of them sensitivity >= 2 / turned common knowledge;');
+  out('invisible = residents with no importance >= 0.6 row today (in brackets: ignoring interaction_resolved);');
+  out('arcs = detectStoryArcs, capped at 12 by the chronicle (hot = heat >= 0.25); friends% = pairs friends both ways.');
+  for (const r of formatHealthTable(healthDays)) out(r);
+  out('');
+  const tickSummary = health.runTickSummary();
+  const phaseSummary = health.runPhaseSummary();
+  out(`Tick time over ${tickSummary.ticks} ticks at ${health.startPopulation()} residents: p50 ${tickSummary.p50.toFixed(1)} ms, p95 ${tickSummary.p95.toFixed(1)} ms, max ${tickSummary.max.toFixed(0)} ms `
+    + `(loop interval ${CONFIG.TICK_INTERVAL_MS} ms; "other" = perception, tavern, milestones, day-change work)`);
+  out('phase          |   p50 ms |   p95 ms |  mean ms | share of tick');
+  for (const p of phaseSummary) {
+    out(`${p.phase.padEnd(14)} | ${p.p50.toFixed(2).padStart(8)} | ${p.p95.toFixed(2).padStart(8)} | ${p.mean.toFixed(2).padStart(8)} | ${(100 * p.share).toFixed(0).padStart(6)}%`);
+  }
+  out('');
+  const healthWarnings = evaluateHealthWarnings(
+    healthDays,
+    { tickIntervalMs: CONFIG.TICK_INTERVAL_MS, tickSpeed },
+    econDays.map((e) => ({ day: e.day, ratio: e.ratio })),
+  );
+  out(healthWarnings.length ? `STORY HEALTH WARNINGS (${healthWarnings.length}):` : 'No story-health warnings.');
+  for (const w of healthWarnings) out(`  - ${w}`);
+  out('');
+  if (JSON_OUT) {
+    fs.writeFileSync(JSON_OUT, JSON.stringify({
+      config: { days: DAYS, agents: health.startPopulation(), seed: SEED, tickSpeed, preset: PRESET ?? 'default', season: SEASON ?? null, sourceDb: SOURCE_DB ?? null, tickIntervalMs: CONFIG.TICK_INTERVAL_MS },
+      wallSeconds: ms / 1000,
+      economy: econDays,
+      health: healthDays,
+      ticks: tickSummary,
+      phases: phaseSummary,
+      warnings: healthWarnings,
+      anomalies,
+    }, null, 1));
+    out(`wrote ${JSON_OUT}`);
+    out('');
+  }
   out(anomalies.length ? `ANOMALIES (${anomalies.length}):` : 'No anomalies flagged.');
   for (const a of anomalies) out(`  - ${a}`);
   const noisy = [...logTally.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
