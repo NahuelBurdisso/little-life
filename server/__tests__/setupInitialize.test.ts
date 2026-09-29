@@ -159,6 +159,205 @@ describe('initialize DB determinism', () => {
 });
 
 /**
+ * `initialize` feeds the relationship graph into worldgen, so the seeded homes
+ * are the socially placed ones — the same world `previewWorld` shows.
+ */
+describe('social home placement through initialize', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
+  const RIVALS = [{
+    agentAName: 'Test Agent 1', agentBName: 'Test Agent 5',
+    friendshipAB: -40, friendshipBA: -30, romanceAB: 0, romanceBA: 0,
+    trustAB: -30, trustBA: -20, familiarity: 50, status: 'rivals', tags: ['grudge'],
+  }];
+  const homesOf = (locs: Array<{ name: string; type: string; position: unknown }>) =>
+    locs.filter((l) => l.type === 'home').map((l) => ({ name: l.name, position: l.position }));
+
+  const cfg = (seed: string) => ({ sizeTier: 'auto' as const, overrides: {}, seed });
+
+  /**
+   * A seed where placement actually relabels, so the assertions could not pass
+   * with the social input dropped on the floor (or, for restart, applied).
+   */
+  async function relabellingSeed() {
+    const { buildSocialEdges } = await import('../lib/worldgen/social');
+    const edges = buildSocialEdges(RIVALS, null, MINIMAL_AGENTS);
+    expect(edges).toEqual([{ a: 'Test Agent 1', b: 'Test Agent 5', kind: 'rival' }]);
+    for (let i = 0; i < 20; i++) {
+      const s = `social-db-${i}`;
+      const base = generateWorld(cfg(s), MINIMAL_AGENTS.length, { agents: MINIMAL_AGENTS });
+      const soc = generateWorld(cfg(s), MINIMAL_AGENTS.length, {
+        agents: MINIMAL_AGENTS, social: { edges },
+      });
+      if (JSON.stringify(homesOf(base.locations)) !== JSON.stringify(homesOf(soc.locations))) {
+        return { seed: s, base, placed: soc };
+      }
+    }
+    throw new Error('no seed in social-db-0..19 relabels the homes');
+  }
+
+  const dbHomes = () => homesOf(
+    db.select({ name: locations.name, type: locations.type, position: locations.position })
+      .from(locations).all());
+
+  /**
+   * A world saved before social placement existed has no `socialPlacement` key.
+   * Restarting it must rebuild the layout the player knows, not relabel it
+   * because the schema defaults the flag on — while a config saved since, which
+   * carries the key, restarts with placement.
+   */
+  it('restart keeps a legacy config (no socialPlacement key) on its old layout', async () => {
+    const { seed, base, placed } = await relabellingSeed();
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: cfg(seed),
+    } as any);
+
+    // New configs persist the flag explicitly, so they are never mistaken for
+    // legacy ones.
+    const saved = db.select({ setup_config: worldState.setup_config }).from(worldState).get()!
+      .setup_config as any;
+    expect(saved.worldgen.socialPlacement).toBe(true);
+    expect(dbHomes()).toEqual(homesOf(placed.locations));
+
+    await caller.restart();
+    expect(dbHomes()).toEqual(homesOf(placed.locations));
+
+    const { socialPlacement: _dropped, ...legacyWorldgen } = saved.worldgen;
+    db.update(worldState).set({ setup_config: { ...saved, worldgen: legacyWorldgen } }).run();
+    await caller.restart();
+    expect(dbHomes()).toEqual(homesOf(base.locations));
+  });
+
+  /**
+   * The preview runs on every wizard edit, so a field placement doesn't read
+   * (an over-long bio) must not fail it, and one it does need (a blank name)
+   * degrades to a homes-only preview instead of a Zod error on World Layout.
+   */
+  it('previewWorld tolerates invalid agent fields', async () => {
+    const { seed, base, placed } = await relabellingSeed();
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const input = (agents: unknown[]) => ({
+      ...cfg(seed),
+      agentCount: MINIMAL_AGENTS.length,
+      agents: agents as any,
+      relationships: [...RIVALS, { agentAName: '', junk: true }],
+    });
+
+    const longBio = MINIMAL_AGENTS.map((a, i) => (i === 2 ? { ...a, bio: 'x'.repeat(600) } : a));
+    const soc = await caller.previewWorld(input(longBio));
+    expect(homesOf(soc.locations)).toEqual(homesOf(placed.locations));
+
+    const blankName = MINIMAL_AGENTS.map((a, i) => (i === 2 ? { ...a, name: '' } : a));
+    const fallback = await caller.previewWorld(input(blankName));
+    expect(homesOf(fallback.locations)).toEqual(homesOf(base.locations));
+  });
+
+  /**
+   * A scenario seed whose romance threads / rival pairs change the placement
+   * relative to the relationship rows alone, so the two tests below can tell
+   * "scenario applied" from "scenario dropped".
+   */
+  async function scenarioThatMatters(seed: string) {
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    const preview = (scenario?: object, agents: unknown[] = MINIMAL_AGENTS) => caller.previewWorld({
+      ...cfg(seed),
+      agentCount: MINIMAL_AGENTS.length,
+      agents: agents as any,
+      relationships: RIVALS,
+      ...(scenario ? { scenario: scenario as any } : {}),
+    });
+    const rowsOnly = homesOf((await preview()).locations);
+    for (let i = 0; i < 20; i++) {
+      // trust 0 → rival pairs; romance 100 → as many threads as the cast allows.
+      const scenario = { drama: 50, romance: 100, crime: 50, trust: 0, seed: `scn-${i}` };
+      const withScenario = homesOf((await preview(scenario)).locations);
+      if (JSON.stringify(withScenario) !== JSON.stringify(rowsOnly)) {
+        return { caller, preview, scenario, rowsOnly, withScenario };
+      }
+    }
+    throw new Error('no scenario seed in scn-0..19 changes the placement');
+  }
+
+  it('preview with a scenario matches what Start seeds', async () => {
+    const { seed } = await relabellingSeed();
+    const { caller, scenario, withScenario } = await scenarioThatMatters(seed);
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: cfg(seed),
+      scenario,
+    } as any);
+    expect(dbHomes()).toEqual(withScenario);
+  });
+
+  it('previewWorld places by the rows alone when the scenario fields fail', async () => {
+    const { seed } = await relabellingSeed();
+    const { preview, scenario, rowsOnly } = await scenarioThatMatters(seed);
+    // Placement fields are fine; `personality` is not what buildScenario needs.
+    const noPersonality = MINIMAL_AGENTS.map((a, i) =>
+      (i === 1 ? { ...a, personality: { warmth: 'high' } } : a));
+    expect(homesOf((await preview(scenario, noPersonality)).locations)).toEqual(rowsOnly);
+  });
+
+  it('seeds the rivals into the placed homes', async () => {
+    const { seed, placed } = await relabellingSeed();
+
+    const { setupRouter } = await import('../routers/setup');
+    const caller = setupRouter.createCaller({} as any);
+    await caller.initialize({
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+      world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+      rules: { startingMoney: 50, tickSpeed: 1 },
+      worldgen: cfg(seed),
+    } as any);
+
+    const rows = db.select({ name: locations.name, type: locations.type, position: locations.position })
+      .from(locations).all();
+    expect(homesOf(rows)).toEqual(homesOf(placed.locations));
+
+    // The wizard preview, given the same cast and relationships, shows the
+    // same placement (both routes share `buildWorldgenSocial`).
+    const preview = await caller.previewWorld({
+      ...cfg(seed),
+      agentCount: MINIMAL_AGENTS.length,
+      agents: MINIMAL_AGENTS,
+      relationships: RIVALS,
+    });
+    expect(homesOf(preview.locations)).toEqual(homesOf(placed.locations));
+
+    // And the rivals really are neighbours: at or below the median pair distance.
+    const door = (name: string) => {
+      const p = rows.find((r) => r.name === name)!.position as { x: number; y: number };
+      return { x: p.x / 32 + 1, y: p.y / 32 + 3 };
+    };
+    const dist = (a: string, b: string) => {
+      const p = door(a), q = door(b);
+      return Math.abs(p.x - q.x) + Math.abs(p.y - q.y);
+    };
+    const names = MINIMAL_AGENTS.map((a) => a.homeName);
+    const all: number[] = [];
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) all.push(dist(names[i], names[j]));
+    }
+    all.sort((a, b) => a - b);
+    expect(dist('Home 1', 'Home 5')).toBeLessThanOrEqual(all[Math.floor(all.length / 2)]);
+  });
+});
+
+/**
  * The drama sliders used to be decorative — the wizard previewed a scenario it
  * fabricated client-side and `initialize` seeded none of it. This covers the DB
  * half of the fix; the generator's determinism is pinned in

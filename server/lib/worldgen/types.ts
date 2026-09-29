@@ -1,5 +1,6 @@
 import type { AgentConfig } from '../../../src/components/setup/types';
 import type { RNG } from './rng';
+import type { SocialEdge } from './social';
 
 export interface LocationSeed {
   name: string;
@@ -66,9 +67,17 @@ export interface WorldContext {
 /** Data passed to stages beyond ctx/rng/cfg/agentCount. The framework owns
  *  what goes in here; stages opt in via Stage.needsAgents etc. */
 export interface StageExtras {
-  /** Agent configs from the wizard. The homes stage (§7.4 of spec) only
-   *  reads .homeName, so a narrowed Array<{ homeName: string }> is acceptable. */
+  /** Agent configs from the wizard. The homes stage reads `.homeName` for the
+   *  home count and, for social placement, `.name` (to map `social.edges` to
+   *  homes) and `.workplaceName` (workplace pull). A narrowed
+   *  Array<{ homeName: string }> is acceptable; social placement is then a
+   *  no-op because no edge endpoint resolves to a home. */
   agents?: Array<{ homeName: string } & Partial<AgentConfig>>;
+  /** Relationship edges for social home placement. Injected alongside `agents`
+   *  (only for `needsAgents` stages): the homes stage maps edge endpoints to
+   *  homes through `agents[].name` → `homeName`, so one is useless without the
+   *  other. */
+  social?: { edges: SocialEdge[] };
   /** Framework-internal auto-expand pin. Injected by runStages ONLY when
    *  forwarding to the `dimensions` stage. Overrides all priority rules. */
   expandPin?: { width: number; height: number };
@@ -114,4 +123,7 @@ export interface GenResult {
 
 export interface GenerateOptions {
   agents?: StageExtras['agents'];
+  /** Who should live near whom — see `social.ts`. Absent or empty edges leave
+   *  home labels in selection order, byte-identical to a world without it. */
+  social?: StageExtras['social'];
 }

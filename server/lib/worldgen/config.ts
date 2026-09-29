@@ -85,6 +85,11 @@ export const WorldGenConfigObjectSchema = z.object({
       y: z.number().int(),
     })).optional(),
   }).default({}),
+  /** Assign `Home N` labels to the chosen plots from the relationship graph
+   *  (rivals near, secret lovers apart — see `social.ts`). Plot selection is the
+   *  same either way; `false` keeps labels in selection order. Only has an
+   *  effect when the caller passes `GenerateOptions.social`. */
+  socialPlacement: z.boolean().default(true),
 });
 
 export const WorldGenConfigSchema = WorldGenConfigObjectSchema.refine(
@@ -92,4 +97,12 @@ export const WorldGenConfigSchema = WorldGenConfigObjectSchema.refine(
   { message: "sizeTier='custom' requires customDimensions" }
 );
 
-export type WorldGenConfig = z.infer<typeof WorldGenConfigSchema>;
+/**
+ * `socialPlacement` is optional on the type even though the schema defaults it:
+ * every parsed config carries it, but worldgen is also driven directly with
+ * hand-built literals (db/seed.ts, seed-world.ts, the whole test suite), and a
+ * required field would break all of them for a flag whose absence already has a
+ * meaning. Readers treat anything but an explicit `false` as on.
+ */
+export type WorldGenConfig =
+  Omit<z.infer<typeof WorldGenConfigSchema>, 'socialPlacement'> & { socialPlacement?: boolean };

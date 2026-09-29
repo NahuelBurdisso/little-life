@@ -44,6 +44,7 @@ import { perceptionSystem } from '../lib/perception/instance';
 import { emitter } from '../engine/emitter';
 import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
+import { buildSocialEdges } from '../lib/worldgen/social';
 import { zoneOccupancy, reconstructZoneOccupancy } from '../lib/interiorGrid';
 import { resetCascade } from '../lib/cascade';
 import { invalidateCostMap, clearMovementState } from '../engine/systems/movement';
@@ -149,7 +150,59 @@ const SetupConfigSchema = z.object({
   worldgen: WorldGenConfigObjectSchema.default({
     sizeTier: 'auto',
     overrides: {},
+    socialPlacement: true,
   }),
+});
+
+/**
+ * What social home placement reads from an agent — the first of the lenient
+ * agent shapes `previewWorld` validates against, instead of the full
+ * `AgentConfigSchema`. The preview runs on every wizard edit, and validating the
+ * whole config there turned an unrelated field — a blank or 501-character bio —
+ * into a raw Zod error on the World Layout step, which the wizard then held on
+ * to as a Start blocker. The preview only needs what it reads; `initialize`
+ * still validates everything.
+ */
+const PlacementAgentSchema = z.object({
+  // Same bounds as AgentConfigSchema.name: an agent the preview places is one
+  // Start can seed.
+  name: z.string().min(1).max(50),
+  homeName: z.string(),
+  workplaceName: z.string().nullable().optional(),
+});
+/** Plus what `buildScenario` reads, typed like `AgentConfigSchema` on these
+ *  fields (so a well-typed cast builds the same scenario `initialize` would);
+ *  their bounds are left to `initialize`. */
+const ScenarioAgentSchema = PlacementAgentSchema.extend({
+  age: z.number(),
+  salary: z.number(),
+  job: z.string(),
+  personality: PersonalityConfigSchema,
+});
+/**
+ * The wire shape: `homeName` (the homes-only fallback needs it) plus every field
+ * the two schemas above read, unvalidated — each is checked by `safeParse` in
+ * the handler. Everything else the wizard sends is stripped.
+ */
+const PreviewAgentInputSchema = z.object({
+  homeName: z.string(),
+  name: z.unknown(),
+  workplaceName: z.unknown(),
+  age: z.unknown(),
+  salary: z.unknown(),
+  job: z.unknown(),
+  personality: z.unknown(),
+});
+/** What `buildSocialEdges` reads from a relationship row. */
+const PlacementRelationshipSchema = RelationshipConfigSchema.pick({
+  agentAName: true,
+  agentBName: true,
+  friendshipAB: true,
+  friendshipBA: true,
+  romanceAB: true,
+  romanceBA: true,
+  status: true,
+  tags: true,
 });
 
 // ─── Table reset order (reverse-dependency) ───────────────────────────────────
@@ -249,7 +302,7 @@ export function clearAllTables() {
  */
 function buildScenario(
   scenario: z.infer<typeof ScenarioSlidersSchema>,
-  agents: Array<z.infer<typeof AgentConfigSchema>>,
+  agents: ReadonlyArray<z.infer<typeof ScenarioAgentSchema>>,
 ) {
   return generateFromSliders(
     {
@@ -269,6 +322,26 @@ function buildScenario(
   );
 }
 
+/**
+ * The worldgen `social` option for a wizard config: the relationship graph —
+ * config rows plus the scenario's romance threads and rival pairs — as named
+ * edges for the homes stage. Shared by `replaceWorld` and `previewWorld` so the
+ * World Layout preview places households exactly as Start will.
+ */
+function buildWorldgenSocial(
+  agents: ReadonlyArray<{ name: string; homeName: string }>,
+  relationships: ReadonlyArray<z.infer<typeof PlacementRelationshipSchema>>,
+  scenario: ReturnType<typeof buildScenario> | null,
+) {
+  return { edges: buildSocialEdges(relationships, scenario, agents) };
+}
+
+/** Whether a raw, unparsed `setup_config` states `worldgen.socialPlacement`. */
+function hasSocialPlacementKey(raw: unknown): boolean {
+  const worldgen = (raw as { worldgen?: unknown } | null)?.worldgen;
+  return typeof worldgen === 'object' && worldgen !== null && 'socialPlacement' in worldgen;
+}
+
 // ─── Helper: seed world from config ──────────────────────────────────────────
 
 /**
@@ -283,17 +356,22 @@ function buildScenario(
 function seedWorld(
   config: z.infer<typeof SetupConfigSchema>,
   genResult: ReturnType<typeof generateWorld>,
-): { agentCount: number; locationCount: number } {
-  const now = Date.now();
-
   /**
    * The scenario the sliders describe: secrets, romance threads, rivalries,
-   * starting money and starting mood. Seeded, so the wizard's Preview step, the
-   * Start that follows it and any later `restart` of the saved config all
-   * produce the same town. Indices below are positions in `config.agents`,
-   * which is exactly the array handed to the generator.
+   * starting money and starting mood — `buildScenario(config.scenario,
+   * config.agents)`, or null when no sliders were posted. Seeded, so the
+   * wizard's Preview step, the Start that follows it and any later `restart` of
+   * the saved config all produce the same town. Indices below are positions in
+   * `config.agents`, which is exactly the array handed to the generator.
+   *
+   * A parameter because `replaceWorld` needs it *before* generating the world
+   * (its romance threads and rivalries decide who lives next to whom), and
+   * building it twice would be two chances for the placement and the seeded
+   * relationships to disagree.
    */
-  const scenario = config.scenario ? buildScenario(config.scenario, config.agents) : null;
+  scenario: ReturnType<typeof buildScenario> | null,
+): { agentCount: number; locationCount: number } {
+  const now = Date.now();
 
   const dynamicLocations = genResult.locations;
   const dynamicCollisionGrid = genResult.collisionGrid;
@@ -882,8 +960,14 @@ async function replaceWorld(
     // skipped the `finally` entirely and left the simulation permanently frozen
     // against the old world with no client signal. Since `initialize` routes
     // through here, that bricked the app on a first-run worldgen failure.
+    //
+    // The scenario is built first because worldgen needs it: its romance
+    // threads and rival pairs are part of the relationship graph the homes
+    // stage places households by. The same object is then seeded below.
+    const scenario = config.scenario ? buildScenario(config.scenario, config.agents) : null;
     const genResult = generateWorld(config.worldgen, config.agents.length, {
       agents: config.agents,
+      social: buildWorldgenSocial(config.agents, config.relationships, scenario),
     });
     // Writeback the resolved seed so worldState.setup_config is deterministic for restart.
     config.worldgen = { ...config.worldgen, seed: genResult.seed };
@@ -902,7 +986,7 @@ async function replaceWorld(
     return sqlite.transaction(() => {
       sqlite.exec('PRAGMA defer_foreign_keys = ON;');
       deleteAllRows();
-      return seedWorld(config, genResult);
+      return seedWorld(config, genResult, scenario);
     })();
   } finally {
     // Everything before `startTickLoop()` is wrapped so that nothing in here can
@@ -984,6 +1068,16 @@ export const setupRouter = router({
       throw new Error('No saved setup config — use Reset to Wizard instead');
     }
     const config = SetupConfigSchema.parse(world.setup_config);
+    // A config saved before social home placement existed has no
+    // `socialPlacement` key, and the schema's `.default(true)` would switch it
+    // on here — relabelling the homes of a world the player already knows, from
+    // the same seed. So the missing key is read off the raw JSON, before the
+    // parse filled it in, and means "off". Configs posted by the wizard since
+    // carry the key explicitly (the schema default writes it into the persisted
+    // config), so this only ever matches legacy saves.
+    if (!hasSocialPlacementKey(world.setup_config)) {
+      config.worldgen = { ...config.worldgen, socialPlacement: false };
+    }
 
     await replaceWorld(config);
 
@@ -1013,14 +1107,53 @@ export const setupRouter = router({
         previewAgentHomes: z
           .array(z.object({ homeName: z.string() }))
           .optional(),
+        /**
+         * The wizard's full cast, relationships and scenario sliders, so the
+         * preview places households by the same relationship graph Start will.
+         * `agents` supersedes `previewAgentHomes` when present (it carries the
+         * names and workplaces the social placement needs, and the fields
+         * `buildScenario` reads); the scenario only applies with `agents`,
+         * since its romance threads and rivalries are indices into that list.
+         *
+         * Deliberately loose here and narrowed in the handler — see
+         * `PlacementAgentSchema` for why a full-config validation was wrong.
+         */
+        agents: z.array(PreviewAgentInputSchema).max(MAX_AGENTS).optional(),
+        relationships: z.array(z.unknown()).max(MAX_AGENTS * MAX_AGENTS).optional(),
+        scenario: ScenarioSlidersSchema.optional(),
       }).refine(
         (cfg) => cfg.sizeTier !== 'custom' || !!cfg.customDimensions,
         { message: "sizeTier='custom' requires customDimensions" },
       ),
     )
     .mutation(({ input }) => {
-      const { agentCount, previewAgentHomes, ...cfg } = input;
-      return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
+      const { agentCount, previewAgentHomes, agents, relationships, scenario, ...cfg } = input;
+      if (!agents) return generateWorld(cfg, agentCount, { agents: previewAgentHomes });
+
+      // An agent without a usable name can't be placed socially: preview the
+      // homes alone rather than fail. Start validates the full config, and the
+      // wizard shows its error in the footer next to the Start button.
+      const placement = z.array(PlacementAgentSchema).safeParse(agents);
+      if (!placement.success) {
+        return generateWorld(cfg, agentCount, {
+          agents: agents.map((a) => ({ homeName: a.homeName })),
+        });
+      }
+      // Likewise the scenario: without the fields it is built from, place by
+      // the relationship rows alone.
+      const scenarioAgents = z.array(ScenarioAgentSchema).safeParse(agents);
+      const built = scenario && scenarioAgents.success && agents.length > 0
+        ? buildScenario(scenario, scenarioAgents.data)
+        : null;
+      // A malformed row drops out rather than failing the whole preview.
+      const rels = (relationships ?? []).flatMap((r) => {
+        const parsed = PlacementRelationshipSchema.safeParse(r);
+        return parsed.success ? [parsed.data] : [];
+      });
+      return generateWorld(cfg, agentCount, {
+        agents: placement.data,
+        social: buildWorldgenSocial(placement.data, rels, built),
+      });
     }),
 
   resetToWizard: publicProcedure.mutation(async () => {
