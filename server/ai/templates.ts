@@ -1,184 +1,70 @@
 /**
- * Template Selection and Interpolation
+ * Template-chat bookkeeping and interpolation.
  *
- * Selects conversation templates by category and conditions, respects
- * cooldowns per agent pair, and interpolates variables.
- *
- * Templates are read from the static catalog (`server/data/templates.ts`), not
- * the `templates` table. The table is only ever a verbatim copy written at seed
- * / world setup, so reading it meant a fix to the catalog (a mis-tagged weather
- * line, the old "{speaker.name}: " prefix) never reached an existing world.
+ * Template conversations are played from topic scripts
+ * (server/data/smallTalkScripts.ts, composed by server/lib/templateChat.ts).
+ * This module owns their per-pair cooldowns in `template_usage`: one row per
+ * chat, `template_category` = `script:<id>`, stamped in GAME minutes. The old
+ * per-category picker (selectTemplate) chose each line from an unrelated
+ * category and is gone; its catalog (server/data/templates.ts) is only still
+ * copied into the write-only `templates` table at seed/setup.
  */
 
-import { eq, and, desc } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import { db } from "../db";
 import { templateUsage } from "../db/schema";
-import { CONVERSATION_TEMPLATES, type TemplateDef } from "../data/templates";
-import { gameMinutesNow } from "../lib/worldClock";
-import { MINUTES_PER_HOUR } from "../lib/gameClock";
+import { scriptUsageCategory } from "../lib/templateChat";
 
-export interface TemplateState {
-  friendship: number;
-  mood: number;
-  timeOfDay: string;
-  locationType: string | null;
-  weather: string;
-  /** Whether the conversation happens indoors or on open ground; null = unknown. */
-  setting?: "indoor" | "outdoor" | null;
-  /** True when the listener is not at the conversation's location. */
-  listenerElsewhere?: boolean;
+const SCRIPT_PREFIX = scriptUsageCategory('');
+
+function orderedPair(agentA: number, agentB: number): [number, number] {
+  return agentA < agentB ? [agentA, agentB] : [agentB, agentA];
 }
 
 /**
- * Which greeting category fits a speaker's friendship toward the listener. The
- * bands must line up with the greeting templates' friendship conditions: the
- * old inline thresholds (friendly > 30, cold < -20, else neutral) sent
- * friendship 31–39 to a category whose templates start at 40, and strangers
- * (0–9) to a neutral category whose templates started at 10 — no greeting at all.
+ * Game minute each topic script was last used by this pair. A row stamped
+ * before `used_game_min` existed has no game-time stamp and is ignored
+ * (counts as expired), as the old category cooldown did.
  */
-export function greetingCategory(friendship: number): 'greeting_friendly' | 'greeting_neutral' | 'greeting_cold' {
-  if (friendship >= 40) return 'greeting_friendly';
-  if (friendship < -20) return 'greeting_cold';
-  return 'greeting_neutral';
-}
-
-function matchesField(conditionValue: any, stateValue: string | null): boolean {
-  if (conditionValue == null) return true; // no condition = pass
-  if (stateValue == null) return true; // no state = don't filter
-  if (Array.isArray(conditionValue)) return conditionValue.includes(stateValue);
-  return conditionValue === stateValue;
-}
-
-function conditionsMatch(
-  conditions: TemplateDef["conditions"],
-  state: TemplateState
-): boolean {
-  if (!conditions || Object.keys(conditions).length === 0) return true;
-
-  if (conditions.minFriendship != null && state.friendship < conditions.minFriendship) {
-    return false;
-  }
-  if (conditions.maxFriendship != null && state.friendship > conditions.maxFriendship) {
-    return false;
-  }
-  if (conditions.minMood != null && state.mood < conditions.minMood) {
-    return false;
-  }
-  if (conditions.maxMood != null && state.mood > conditions.maxMood) {
-    return false;
-  }
-  if (!matchesField(conditions.timeOfDay, state.timeOfDay)) {
-    return false;
-  }
-  if (!matchesField(conditions.location, state.locationType)) {
-    return false;
-  }
-  if (conditions.notLocation && state.locationType != null && conditions.notLocation.includes(state.locationType)) {
-    return false;
-  }
-  if (!matchesField(conditions.weather, state.weather)) {
-    return false;
-  }
-  if (!matchesField(conditions.setting, state.setting ?? null)) {
-    return false;
-  }
-  // Strict, unlike the fields above: "come to {location.name}" said to someone
-  // already standing there is exactly the bug, so unknown means no.
-  if (conditions.listenerElsewhere === true && state.listenerElsewhere !== true) {
-    return false;
-  }
-
-  return true;
-}
-
-/** True when every `{placeholder}` in `text` has a value in `vars`. */
-function placeholdersResolvable(text: string, vars: Record<string, string>): boolean {
-  for (const m of text.matchAll(/\{([^}]+)\}/g)) {
-    if (!(m[1].trim() in vars)) return false;
-  }
-  return true;
-}
-
-/**
- * `vars`, when given, are the values the caller will interpolate with. Variants
- * that reference a placeholder missing from it (e.g. `{baker.name}` in a town
- * with no baker) are not eligible, and a template left with no eligible variant
- * doesn't match — so the line is dropped, never rendered with a raw `{...}`.
- */
-export function selectTemplate(
-  category: string,
-  agentA: number,
-  agentB: number,
-  currentState: TemplateState,
-  vars?: Record<string, string>,
-  nowGameMin: number = gameMinutesNow()
-): { text: string; sentiment: number } | null {
-  // 1. Templates for this category, with only the variants we can render
-  const categoryTemplates = CONVERSATION_TEMPLATES
-    .filter((t) => t.category === category)
-    .map((t) => vars
-      ? { ...t, variants: t.variants.filter((v) => placeholdersResolvable(v.text, vars)) }
-      : t)
-    .filter((t) => t.variants.length > 0);
-
-  if (categoryTemplates.length === 0) return null;
-
-  // 2. Filter by conditions
-  const matching = categoryTemplates.filter((t) =>
-    conditionsMatch(t.conditions, currentState)
-  );
-
-  if (matching.length === 0) return null;
-
-  // 3. Check cooldown — ensure consistent pair ordering (smaller ID first)
-  const [orderedA, orderedB] =
-    agentA < agentB ? [agentA, agentB] : [agentB, agentA];
-
-  const recentUsageRows = db
-    .select()
+export function scriptLastUsed(agentA: number, agentB: number): Map<string, number> {
+  const [a, b] = orderedPair(agentA, agentB);
+  const rows = db.select({ category: templateUsage.template_category, at: templateUsage.used_game_min })
     .from(templateUsage)
-    .where(
-      and(
-        eq(templateUsage.agent_a, orderedA),
-        eq(templateUsage.agent_b, orderedB),
-        eq(templateUsage.template_category, category)
-      )
-    )
-    .orderBy(desc(templateUsage.used_at))
-    .limit(1)
+    .where(and(
+      eq(templateUsage.agent_a, a),
+      eq(templateUsage.agent_b, b),
+      like(templateUsage.template_category, `${SCRIPT_PREFIX}%`),
+    ))
     .all();
-  const recentUsage = recentUsageRows[0] ?? null;
+  const last = new Map<string, number>();
+  for (const r of rows) {
+    if (r.at == null) continue;
+    const id = r.category.slice(SCRIPT_PREFIX.length);
+    last.set(id, Math.max(last.get(id) ?? -Infinity, r.at));
+  }
+  return last;
+}
 
-  // Filter out templates whose cooldown hasn't expired. GAME time: the
-  // cooldown was `cooldownPerPair` real minutes against Date.now(), i.e. game
-  // hours at 1x but four times as many at 4x, so a pair ran out of fresh small
-  // talk in a quarter of the game time. A row stamped before `used_game_min`
-  // existed has no game-time stamp and counts as expired.
-  const available = matching.filter((t) => {
-    if (recentUsage?.used_game_min == null) return true;
-    return nowGameMin - recentUsage.used_game_min >= t.cooldownPerPair * MINUTES_PER_HOUR;
-  });
-
-  if (available.length === 0) return null;
-
-  // 4. Pick a random template, then a random variant
-  const template = available[Math.floor(Math.random() * available.length)];
-  const variants = template.variants;
-
-  if (!variants || variants.length === 0) return null;
-
-  const variant = variants[Math.floor(Math.random() * variants.length)];
-
-  // 5. Record usage
+/**
+ * Only the latest use matters for a cooldown, so the pair's older row for the
+ * same script is replaced: the table stays at most pairs × scripts rows
+ * instead of one more row per chat forever (nothing else prunes it).
+ */
+export function recordScriptUsage(agentA: number, agentB: number, scriptId: string, nowGameMin: number): void {
+  const [a, b] = orderedPair(agentA, agentB);
+  const category = scriptUsageCategory(scriptId);
+  db.delete(templateUsage).where(and(
+    eq(templateUsage.agent_a, a),
+    eq(templateUsage.agent_b, b),
+    eq(templateUsage.template_category, category),
+  )).run();
   db.insert(templateUsage).values({
     template_category: category,
-    agent_a: orderedA,
-    agent_b: orderedB,
+    agent_a: a,
+    agent_b: b,
     used_at: Date.now(),
     used_game_min: nowGameMin,
   }).run();
-
-  return { text: variant.text, sentiment: variant.sentiment };
 }
 
 export function interpolateTemplate(

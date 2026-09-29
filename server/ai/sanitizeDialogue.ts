@@ -375,9 +375,10 @@ const GREETING_WORD = String.raw`(?:hey(?:\s+there)?|hi(?:\s+there)?|hello(?:\s+
 const SMALL_TALK_PHRASE = String.raw`(?:how\s+(?:are|have)\s+you(?:\s+(?:been|doing|feeling|keeping))?(?:\s+(?:today|lately|these\s+days|this\s+(?:fine\s+)?(?:morning|afternoon|evening)))?(?:\s+(?:then|anyway))?|how(?:'s|\s+is)\s+(?:it\s+going|everything|life|things|your\s+(?:day|morning|afternoon|evening))(?:\s+(?:going|been|treating\s+you))?(?:\s+(?:today|so\s+far))?|how\s+do\s+you\s+do|what's\s+new(?:\s+with\s+you)?|what's\s+been\s+happening|(?:it's\s+)?(?:so\s+)?(?:good|nice|lovely|great)\s+to\s+see\s+you(?:\s+(?:again|today))?|fancy\s+(?:meeting|seeing)\s+you\s+here)`;
 
 /**
- * Drop leading sentences that are pure pleasantry ("Hey Yuki!", "How are you
- * doing today?", "Good to see you.") from an OPENING line when something
- * concrete follows. Returns '' when the whole line is pleasantry, so the
+ * Drop the stock how-are-you ("How are you doing today?", "Hey Yuki, how's
+ * your day going?", "Good to see you.") from the start of an OPENING line when
+ * something concrete follows; a bare "Morning, Yuki." greeting stays. Returns
+ * '' when the whole line is pleasantry, so the
  * caller can decide whether that is worth a regeneration. A sentence that
  * carries anything else ("Morning, Yuki — did you hear about the mill?") is
  * kept whole: only sentences made entirely of greeting, the listener's name
@@ -393,18 +394,30 @@ export function stripGenericOpener(text: string, listenerName: string): string {
     .map(escapeRegExp);
   const vocative = String.raw`(?:${[...names, 'friend', 'neighbou?r', 'my\\s+friend', 'dear'].join('|')})`;
   const generic = new RegExp(
-    String.raw`^\s*(?:${GREETING_WORD}[,!.…]*\s*)?(?:${vocative}[,!.…]*\s*)?(?:${SMALL_TALK_PHRASE})?(?:,?\s*${vocative})?\s*[.!?…]+["']?\s*`,
+    String.raw`^\s*(?:${GREETING_WORD}[,!.…]*\s*)?(?:${vocative}[,!.…]*\s*)?(?:${SMALL_TALK_PHRASE})?(?:,?\s*${vocative})?\s*[.!?…]+["']?\s*$`,
     'i',
   );
-  const pleasantry = new RegExp(String.raw`\b(?:${GREETING_WORD}|${SMALL_TALK_PHRASE})\b`, 'i');
+  const smallTalk = new RegExp(String.raw`\b${SMALL_TALK_PHRASE}\b`, 'i');
 
-  let out = text.trim();
-  while (out) {
-    const m = generic.exec(out);
-    // A name-only match is not a pleasantry ("Yuki. I need a word.").
-    if (!m || !pleasantry.test(m[0])) break;
-    out = out.slice(m[0].length).trim();
+  // The run of leading sentences that are nothing but pleasantry.
+  let rest = text.trim();
+  const lead: string[] = [];
+  // Sentence by sentence, so "Good morning! How's your day going?" is two:
+  // the greeting can stay while the how-are-you goes.
+  while (rest) {
+    const sentence = /^[^.!?…]*[.!?…]+["']?\s*/.exec(rest)?.[0];
+    // A name-only sentence ("Yuki!") joins the run but is kept like a
+    // greeting: "Yuki. I need a word." has no how-are-you to trim.
+    if (!sentence || !generic.test(sentence)) break;
+    lead.push(sentence.trim());
+    rest = rest.slice(sentence.length).trim();
   }
+  // A plain "Morning, Yuki." before the real line is how people talk; only
+  // the stock how-are-you is the problem. No how-are-you, nothing to trim.
+  if (!lead.some((s) => smallTalk.test(s))) return text;
+  if (!rest) return '';
+  const kept = lead.filter((s) => !smallTalk.test(s));
+  let out = [...kept, rest].join(' ');
   if (/^\p{Ll}/u.test(out)) out = out.charAt(0).toUpperCase() + out.slice(1);
   return out;
 }

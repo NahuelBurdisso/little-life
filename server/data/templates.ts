@@ -1,5 +1,11 @@
 /**
- * Template-tier conversation lines.
+ * The OLD template-tier catalog, per category.
+ *
+ * Template conversations no longer pick from it: they are played from topic
+ * scripts (server/data/smallTalkScripts.ts), because a line per unrelated
+ * category read as a non-sequitur (G5). The catalog is still copied into the
+ * write-only `templates` table at seed/setup (STATUS B19); WRAP_UP_FAREWELLS
+ * below is live.
  *
  * Variant text is the spoken line ONLY — no "{speaker.name}: " prefix. The UI
  * (ConversationViewer / ConversationDetail / speech bubbles) already labels each
@@ -38,49 +44,12 @@ export interface TemplateDef {
 }
 
 /**
- * Placeholders that name a real townsperson by job (from `economy.job`). The
- * catalog was written for a fixed cast ("Priya's bread", "Marco makes the best
- * drinks"); procedural towns have different people, or none in that job. A
- * variant using one of these is only eligible when an active agent holds the
- * job and is neither of the two people talking; otherwise the variant is
- * skipped. `{tavern.name}` works the same way for the town's tavern.
- */
-export const ROLE_PLACEHOLDERS: Record<string, string> = {
-  'baker.name': 'baker',
-  'bartender.name': 'bartender',
-};
-
-/**
- * A generic answer for the second speaker when no template reply is available
- * (every candidate category is on its per-pair cooldown, or none matches). A
- * template conversation must never be one person talking at another. Keyed by
- * the opener's tone.
- */
-export const TEMPLATE_REPLY_FALLBACKS: Record<'warm' | 'neutral' | 'cold', Array<{ text: string; sentiment: number }>> = {
-  warm: [
-    { text: "Ha! Good to see you too, {other.name}.", sentiment: 0.4 },
-    { text: "You always know how to cheer me up.", sentiment: 0.4 },
-    { text: "Couldn't agree more.", sentiment: 0.3 },
-  ],
-  neutral: [
-    { text: "Mm. I suppose so.", sentiment: 0.0 },
-    { text: "Can't argue with that, {other.name}.", sentiment: 0.1 },
-    { text: "*nods* Fair enough.", sentiment: 0.0 },
-  ],
-  cold: [
-    { text: "...Right.", sentiment: -0.2 },
-    { text: "*shrugs and looks away*", sentiment: -0.2 },
-    { text: "If you say so, {other.name}.", sentiment: -0.1 },
-  ],
-};
-
-/**
  * Closing lines for an LLM conversation the sim has to end before it ran its
  * course (see `conversationPacing.ts`), keyed by why. Said by the participant
  * who is leaving. The need-driven lines give the reason out loud, so the
  * transcript explains why they walked off; `budget` is the clock running out.
- * Deliberately not the `farewell` template category: that one is on a per-pair
- * cooldown, and a forced ending must always have a line.
+ * Not a small-talk script's close: those are on a per-pair cooldown and stay
+ * on their topic, and a forced ending must always have a line.
  */
 export const WRAP_UP_FAREWELLS: Record<'budget' | 'sleep' | 'energy' | 'hunger', Array<{ text: string; sentiment: number }>> = {
   budget: [
@@ -954,8 +923,6 @@ export const CONVERSATION_TEMPLATES: TemplateDef[] = [
     },
     variants: [
       { text: "I could eat a whole harvest feast right now. Join me for food?", sentiment: 0.3 },
-      // Dropped automatically when the town has no baker (or the baker is one
-      // of the two people talking) — see ROLE_PLACEHOLDERS.
       { text: "{baker.name}'s bread was incredible today. Have you tried it, {other.name}?", sentiment: 0.5 },
     ],
     cooldownPerPair: 4,

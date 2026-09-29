@@ -6,64 +6,78 @@ import {
   conversations,
   conversationQueue,
   conversationSchedulerState,
+  economy,
   locations,
   needs,
   relationships,
   relationshipEvents,
   templateUsage,
+  worldEvents,
   worldState,
 } from '../../db/schema';
-import { CONVERSATION_TEMPLATES } from '../../data/templates';
-import { greetingCategory, selectTemplate, type TemplateState } from '../templates';
+import { recordScriptUsage, scriptLastUsed } from '../templates';
 import { conversationsTick } from '../../engine/systems/conversations';
+import { buildTemplateChatContext } from '../../helpers/templateChatContext';
+import { SMALL_TALK_SCRIPTS } from '../../data/smallTalkScripts';
 import { gameMinutesNow } from '../../lib/worldClock';
 
 /**
- * Playtest regressions in template-tier conversations:
- *  - every line was stored as "{speaker.name}: ...", and the UI labels the
- *    speaker too, so it read "Priya Sharma: Priya Sharma: I can barely see...";
- *  - the fog line fired in cloudy weather, "Perfect weather for being
- *    outdoors" indoors, "You have to come to Home 4" at Home 4;
- *  - some template conversations were a single line.
+ * Template-tier conversations end to end: the queue entry becomes one topic
+ * script played from the real town (see server/lib/templateChat.ts, whose
+ * own tests generate thousands of chats). Older regressions still pinned here:
+ * no "{speaker.name}: " prefix, never a single line, each speaker speaks from
+ * their own state.
  */
 
 const TAG = 'tmpltest';
-const DRAWS = 200;
-
-function state(overrides: Partial<TemplateState> = {}): TemplateState {
-  return {
-    friendship: 50,
-    mood: 80,
-    timeOfDay: 'afternoon',
-    locationType: null,
-    weather: 'sunny',
-    setting: null,
-    listenerElsewhere: false,
-    ...overrides,
-  };
-}
 
 let locId = 0;
 let a = 0;
 let b = 0;
+let c = 0;
+const extraRows: { events: number[]; economy: number[] } = { events: [], economy: [] };
 
 function clearUsage(): void {
-  db.delete(templateUsage).where(inArray(templateUsage.agent_a, [a, b])).run();
+  db.delete(templateUsage).where(inArray(templateUsage.agent_a, [a, b, c])).run();
 }
 
-/** Every text the selector can produce for these inputs, cooldowns cleared each draw. */
-function draw(category: string, s: TemplateState): Set<string> {
-  return drawWith(category, s, undefined);
+function insertAgent(name: string): number {
+  return db.insert(agents).values({
+    name,
+    bio: 'test',
+    traits: [],
+    personality: null,
+    age: 30,
+    gender: 'female',
+    sprite_sheet: 'x',
+    portrait_sprite: 'x',
+    position: { x: 10, y: 10 },
+    current_location: locId,
+    current_action: { type: 'idle' },
+    action_started: 0,
+    action_queue: [],
+    schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: [] },
+    home: locId,
+    created_at: 0,
+    is_active: true,
+  }).returning({ id: agents.id }).get().id;
 }
 
-function drawWith(category: string, s: TemplateState, vars: Record<string, string> | undefined): Set<string> {
-  const seen = new Set<string>();
-  for (let i = 0; i < DRAWS; i++) {
-    clearUsage();
-    const picked = selectTemplate(category, a, b, s, vars);
-    if (picked) seen.add(picked.text);
-  }
-  return seen;
+function setFeelings(x: number, y: number, xTowardY: number, yTowardX: number, status = 'acquaintances'): void {
+  const [lo, hi] = x < y ? [x, y] : [y, x];
+  db.delete(relationships).where(sql`${relationships.agent_a} = ${lo} AND ${relationships.agent_b} = ${hi}`).run();
+  db.insert(relationships).values({
+    agent_a: lo, agent_b: hi,
+    friendship_ab: x === lo ? xTowardY : yTowardX, friendship_ba: x === lo ? yTowardX : xTowardY,
+    romance_ab: 0, romance_ba: 0, trust_ab: 50, trust_ba: 50,
+    familiarity: 40, interaction_count: 5, last_interaction: 0,
+    average_interaction_sentiment: 0, tags: [], status,
+    created_at: 0, last_updated: 0,
+  }).run();
+}
+
+function setMood(agentId: number, mood: number): void {
+  db.update(needs).set({ mood }).where(eq(needs.agent_id, agentId)).run();
 }
 
 beforeAll(() => {
@@ -95,28 +109,11 @@ beforeAll(() => {
     services: [],
     description: 'test',
   }).returning({ id: locations.id }).get().id;
-  const mk = (name: string) => db.insert(agents).values({
-    name,
-    bio: 'test',
-    traits: [],
-    personality: null,
-    age: 30,
-    gender: 'female',
-    sprite_sheet: 'x',
-    portrait_sprite: 'x',
-    position: { x: 10, y: 10 },
-    current_location: locId,
-    current_action: { type: 'idle' },
-    action_started: 0,
-    action_queue: [],
-    schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: [] },
-    home: locId,
-    created_at: 0,
-    is_active: true,
-  }).returning({ id: agents.id }).get().id;
-  a = mk('Priya Sharma');
-  b = mk('Omar Haddad');
-  for (const agent_id of [a, b]) {
+  a = insertAgent('Priya Sharma');
+  b = insertAgent('Omar Haddad');
+  c = insertAgent('Tmpl Ines');
+  db.update(agents).set({ current_location: null }).where(eq(agents.id, c)).run();
+  for (const agent_id of [a, b, c]) {
     db.insert(needs).values({
       agent_id,
       hunger: 60, energy: 60, social: 40, comfort: 50, fun: 40, mood: 55, stress: 20,
@@ -129,152 +126,72 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  const ids = [a, b];
+  const ids = [a, b, c];
   const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
   db.run(sql`DELETE FROM activity_log
              WHERE initiator_id IN (${idList}) OR target_id IN (${idList})
                 OR EXISTS (SELECT 1 FROM json_each(activity_log.agent_ids) WHERE value IN (${idList}))`);
   clearUsage();
+  if (extraRows.events.length) db.delete(worldEvents).where(inArray(worldEvents.id, extraRows.events)).run();
+  if (extraRows.economy.length) db.delete(economy).where(inArray(economy.id, extraRows.economy)).run();
   db.delete(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).run();
   db.delete(relationshipEvents).where(inArray(relationshipEvents.agent_a, ids)).run();
+  db.delete(relationships).where(inArray(relationships.agent_a, ids)).run();
   db.delete(needs).where(inArray(needs.agent_id, ids)).run();
   db.delete(agents).where(inArray(agents.id, ids)).run();
   db.delete(locations).where(eq(locations.id, locId)).run();
 });
 
-describe('template catalog', () => {
-  it('stores only the spoken line, never a speaker-name prefix', () => {
-    for (const t of CONVERSATION_TEMPLATES) {
-      for (const v of t.variants) {
-        expect(v.text).not.toMatch(/^\{speaker\.name\}/);
-        expect(v.text).not.toContain('{speaker.name}:');
-      }
-    }
-  });
-
-  it('never frames a location as the whole world ("my favorite person in Home 4")', () => {
-    for (const t of CONVERSATION_TEMPLATES) {
-      for (const v of t.variants) expect(v.text).not.toMatch(/\bin \{location\.name\}/);
-    }
-  });
-
-  it('keeps fog talk to foggy weather', () => {
-    for (const t of CONVERSATION_TEMPLATES) {
-      if (!t.variants.some((v) => /fog/i.test(v.text))) continue;
-      expect(t.conditions.weather).toEqual(['foggy']);
-    }
-  });
-});
-
-describe('selectTemplate — context', () => {
+describe('script cooldowns', () => {
   beforeEach(clearUsage);
 
-  it('never talks about fog in cloudy weather', () => {
-    const lines = draw('small_talk_weather', state({ weather: 'cloudy' }));
-    expect(lines.size).toBeGreaterThan(0);
-    for (const line of lines) expect(line).not.toMatch(/fog/i);
+  it('records per pair and topic, in game minutes, whichever order the pair is given', () => {
+    recordScriptUsage(b, a, 'weather_wet', 1234);
+    recordScriptUsage(a, b, 'weather_wet', 1300);
+    recordScriptUsage(a, b, 'the_day', 1250);
+    expect(scriptLastUsed(a, b)).toEqual(new Map([['weather_wet', 1300], ['the_day', 1250]]));
+    expect(scriptLastUsed(a, c).size).toBe(0);
   });
 
-  it('never says an outdoors-only line indoors', () => {
-    const lines = draw('small_talk_weather', state({ weather: 'sunny', setting: 'indoor' }));
-    expect(lines.size).toBeGreaterThan(0);
-    expect(lines).not.toContain("Perfect weather for being outdoors, don't you think, {other.name}?");
-    // ...but outdoors it's still in the pool.
-    expect(draw('small_talk_weather', state({ weather: 'sunny', setting: 'outdoor' })))
-      .toContain("Perfect weather for being outdoors, don't you think, {other.name}?");
-  });
-
-  it('only invites someone to {location.name} when they are elsewhere', () => {
-    const here = draw('excited_event', state({ listenerElsewhere: false }));
-    for (const line of here) expect(line).not.toContain('come to {location.name}');
-    const away = draw('excited_event', state({ listenerElsewhere: true }));
-    expect([...away].some((l) => l.includes('come to {location.name}'))).toBe(true);
-  });
-});
-
-describe('per-pair cooldown runs on game time', () => {
-  // The friendly farewell is the only one matching friendship 50: cooldown 2 game hours.
-  const COOLDOWN_MIN = 2 * 60;
-
-  function usedAt(usedGameMin: number | null): void {
-    clearUsage();
+  it('ignores the old per-category rows', () => {
     db.insert(templateUsage).values({
-      template_category: 'farewell',
-      agent_a: Math.min(a, b),
-      agent_b: Math.max(a, b),
-      // Just now on the wall clock — irrelevant: only game minutes count.
-      used_at: Date.now(),
-      used_game_min: usedGameMin,
+      template_category: 'farewell', agent_a: Math.min(a, b), agent_b: Math.max(a, b), used_at: 0, used_game_min: 5,
     }).run();
-  }
-
-  it('holds a category for cooldownPerPair game hours, then frees it', () => {
-    usedAt(10_000);
-    expect(selectTemplate('farewell', a, b, state(), undefined, 10_000 + COOLDOWN_MIN - 1)).toBeNull();
-    usedAt(10_000);
-    expect(selectTemplate('farewell', a, b, state(), undefined, 10_000 + COOLDOWN_MIN)).not.toBeNull();
-  });
-
-  it('stamps usage in game minutes', () => {
-    clearUsage();
-    selectTemplate('farewell', a, b, state(), undefined, 4321);
-    const row = db.select().from(templateUsage).where(eq(templateUsage.agent_a, Math.min(a, b))).get()!;
-    expect(row.used_game_min).toBe(4321);
-  });
-
-  it('treats a usage row from before game-time stamps as expired', () => {
-    usedAt(null);
-    expect(selectTemplate('farewell', a, b, state(), undefined, 0)).not.toBeNull();
+    expect(scriptLastUsed(a, b).size).toBe(0);
   });
 });
 
-describe('greetings', () => {
-  it('have a template for every relationship band, mood and time of day', () => {
-    const phases = ['dawn', 'morning', 'afternoon', 'evening', 'night'];
-    const gaps: string[] = [];
-    for (let friendship = -100; friendship <= 100; friendship += 5) {
-      for (let mood = 0; mood <= 100; mood += 10) {
-        for (const timeOfDay of phases) {
-          clearUsage();
-          const category = greetingCategory(friendship);
-          const picked = selectTemplate(category, a, b, state({ friendship, mood, timeOfDay, weather: 'cloudy' }));
-          if (!picked) gaps.push(`${category} f=${friendship} mood=${mood} ${timeOfDay}`);
-        }
-      }
-    }
-    expect(gaps).toEqual([]);
+describe('the chat context comes from the real town', () => {
+  afterEach(() => {
+    db.delete(relationships).where(inArray(relationships.agent_a, [a, b, c])).run();
+    db.delete(relationships).where(inArray(relationships.agent_b, [a, b, c])).run();
   });
 
-  it('greets a stranger (friendship 0) neutrally', () => {
-    expect(greetingCategory(0)).toBe('greeting_neutral');
-    expect(draw('greeting_neutral', state({ friendship: 0, mood: 50 })).size).toBeGreaterThan(0);
-  });
-});
+  it('reads each side, a mutual acquaintance, a live event and the town baker', () => {
+    setFeelings(a, b, 60, -30);
+    setFeelings(a, c, 50, 0);
+    setFeelings(b, c, -40, 0);
+    setMood(b, 20);
+    extraRows.events.push(db.insert(worldEvents).values({
+      type: 'festival', name: 'Town Festival', description: 'x', started_at: 0, duration: 6,
+      effects: {}, location_id: null, triggered_by: 'test', is_active: true,
+    }).returning({ id: worldEvents.id }).get().id);
+    extraRows.economy.push(db.insert(economy).values({
+      agent_id: c, job: 'baker', job_title: 'Baker', salary: 20, work_performance: 50, money: 0,
+      daily_expenses: 0, inventory: {}, last_payday: 0, production_remainder: 0,
+    } as typeof economy.$inferInsert).returning({ id: economy.id }).get().id);
 
-describe('templates grounded in the real town', () => {
-  beforeEach(clearUsage);
+    const world = db.select().from(worldState).get()!;
+    const [pa, pb] = [a, b].map((id) => db.select().from(agents).where(eq(agents.id, id)).get()!);
+    const ctx = buildTemplateChatContext([pa, pb], locId, world, () => 0);
 
-  it('names no member of the old fixed cast', () => {
-    for (const t of CONVERSATION_TEMPLATES) {
-      for (const v of t.variants) expect(v.text).not.toMatch(/\b(Priya|Marco|Little Life)\b/);
-    }
-  });
-
-  const base = { 'other.name': 'Omar', 'location.name': 'Home 4', 'speaker.name': 'Priya' };
-  const hungry = state({ friendship: 50, timeOfDay: 'afternoon', locationType: 'home' });
-
-  it("drops a role line when nobody holds that job", () => {
-    for (const line of drawWith('hungry', hungry, base)) expect(line).not.toContain('{baker.name}');
-    expect(drawWith('hungry', hungry, { ...base, 'baker.name': 'Ines' })).toContain(
-      "{baker.name}'s bread was incredible today. Have you tried it, {other.name}?",
-    );
-  });
-
-  it('never invites someone to the tavern while already in it', () => {
-    const vars = { ...base, 'tavern.name': 'The Rusty Mug' };
-    const atTavern = drawWith('hungry', { ...hungry, locationType: 'tavern' }, vars);
-    for (const line of atTavern) expect(line).not.toContain('{tavern.name}');
-    expect([...drawWith('hungry', hungry, vars)].some((l) => l.includes('{tavern.name}'))).toBe(true);
+    expect(ctx.people[0]).toMatchObject({ first: 'Priya', friendship: 60, tone: 'warm', livesHere: true });
+    expect(ctx.people[1]).toMatchObject({ first: 'Omar', friendship: -30, mood: 20, tone: 'cool' });
+    expect(ctx.place).toMatchObject({ name: 'Home 4', type: 'home', setting: 'indoor', speakable: false });
+    expect(ctx.mutual).toEqual({ first: 'Tmpl', openerLikes: true, listenerLikes: false });
+    expect(ctx.event).toMatchObject({ key: 'festival', phrase: 'the festival' });
+    expect(ctx.roles.baker).toBe('Tmpl');
+    setMood(b, 55);
   });
 });
 
@@ -300,6 +217,12 @@ describe('template conversations', () => {
     }
   });
 
+  afterEach(() => {
+    db.delete(relationships).where(inArray(relationships.agent_a, [a, b, c])).run();
+    setMood(a, 55);
+    setMood(b, 55);
+  });
+
   async function runTemplateConversation() {
     db.insert(conversationQueue).values({
       participants: [a, b],
@@ -316,81 +239,55 @@ describe('template conversations', () => {
     return rows[0];
   }
 
-  it('gives both people a line and no line repeats the speaker name', async () => {
+  it('is one topic in alternating turns, first names only, and books its cooldown', async () => {
     const convo = await runTemplateConversation();
     const messages = convo.messages as Array<{ speakerId: number; text: string }>;
-    expect(messages.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(messages.map((m) => m.speakerId))).toEqual(new Set([a, b]));
+    expect(messages.length).toBeGreaterThanOrEqual(3);
+    expect(messages[0].speakerId).toBe(a);
+    for (let k = 1; k < messages.length; k++) expect(messages[k].speakerId).not.toBe(messages[k - 1].speakerId);
     for (const m of messages) {
       expect(m.text).not.toMatch(/^(Priya Sharma|Omar Haddad):/);
+      expect(m.text).not.toMatch(/Sharma|Haddad/);
       expect(m.text).not.toContain('{');
     }
+    const used = [...scriptLastUsed(a, b).keys()];
+    expect(used).toHaveLength(1);
+    const script = SMALL_TALK_SCRIPTS.find((s) => s.id === used[0])!;
+    expect(convo.topic).toBeTruthy();
+    expect(script).toBeDefined();
   });
 
-  it('still gives the partner a reply when every template category is on cooldown', async () => {
-    const now = Date.now();
-    const nowMin = gameMinutesNow();
-    for (const category of new Set(CONVERSATION_TEMPLATES.map((t) => t.category))) {
-      db.insert(templateUsage).values({
-        template_category: category, agent_a: Math.min(a, b), agent_b: Math.max(a, b), used_at: now, used_game_min: nowMin,
-      }).run();
-    }
+  it('still has a conversation when every topic is on cooldown', async () => {
+    const now = gameMinutesNow();
+    for (const s of SMALL_TALK_SCRIPTS) recordScriptUsage(a, b, s.id, now);
     const convo = await runTemplateConversation();
     const messages = convo.messages as Array<{ speakerId: number; text: string }>;
-    expect(messages.length).toBeGreaterThanOrEqual(2);
+    expect(messages.length).toBeGreaterThanOrEqual(3);
     expect(messages[0].speakerId).toBe(a);
     expect(messages[1].speakerId).toBe(b);
   });
 
   describe('each speaker speaks from their own state', () => {
-    // a < b (inserted first), so friendship_ab is a's feeling toward b.
-    function setFeelings(aTowardB: number, bTowardA: number): void {
-      db.delete(relationships).where(eq(relationships.agent_a, a)).run();
-      db.insert(relationships).values({
-        agent_a: a, agent_b: b,
-        friendship_ab: aTowardB, friendship_ba: bTowardA,
-        romance_ab: 0, romance_ba: 0, trust_ab: 50, trust_ba: 50,
-        familiarity: 40, interaction_count: 5, last_interaction: 0,
-        average_interaction_sentiment: 0, tags: [], status: 'acquaintance',
-        created_at: 0, last_updated: 0,
-      }).run();
-    }
-    function setMood(agentId: number, mood: number): void {
-      db.update(needs).set({ mood }).where(eq(needs.agent_id, agentId)).run();
-    }
-    const lines = (category: string) =>
-      CONVERSATION_TEMPLATES.filter((t) => t.category === category).flatMap((t) => t.variants.map((v) => v.text));
-    const render = (text: string, otherName: string) =>
-      text.replace('{other.name}', otherName).replace('{location.name}', 'Home 4');
-
-    afterEach(() => {
-      db.delete(relationships).where(eq(relationships.agent_a, a)).run();
-      setMood(a, 55);
-      setMood(b, 55);
-    });
-
-    it("uses the replier's own friendship: a warm opener gets a cold reply from someone who dislikes them", async () => {
-      setFeelings(60, -50);
-      setMood(a, 55);
-      setMood(b, 55);
-
-      const messages = (await runTemplateConversation()).messages as Array<{ text: string }>;
-
-      // Omar (friendship -50, mood 55) answers from the cold list; at that
-      // friendship and mood only tense_encounter matches.
-      expect(lines('tense_encounter').map((t) => render(t, 'Priya Sharma'))).toContain(messages[1].text);
+    it("uses the replier's own friendship: a warm opener gets a cool reply from someone who dislikes them", async () => {
+      setFeelings(a, b, 60, -50);
+      for (let n = 0; n < 5; n++) {
+        clearUsage();
+        db.delete(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).run();
+        const messages = (await runTemplateConversation()).messages as Array<{ sentiment: number }>;
+        expect(messages[1].sentiment).toBeLessThanOrEqual(0.1);
+      }
     });
 
     it("uses the replier's own mood: a cheerful opener doesn't make a miserable partner cheerful", async () => {
-      setFeelings(60, 60);
+      setFeelings(a, b, 60, 60);
       setMood(a, 85);
       setMood(b, 10);
-
-      const messages = (await runTemplateConversation()).messages as Array<{ text: string }>;
-
-      // Priya (mood 85) opens excited; Omar (mood 10) answers from his own mood.
-      expect(lines('excited_event').map((t) => render(t, 'Omar Haddad'))).toContain(messages[0].text);
-      expect(lines('complaint_mood').map((t) => render(t, 'Priya Sharma'))).toContain(messages[1].text);
+      for (let n = 0; n < 5; n++) {
+        clearUsage();
+        db.delete(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).run();
+        const messages = (await runTemplateConversation()).messages as Array<{ sentiment: number }>;
+        expect(messages[1].sentiment).toBeLessThanOrEqual(0.1);
+      }
     });
   });
 });
