@@ -74,7 +74,10 @@ const matchmaker: Check = (c, snap) => {
     progress = {
       value: round(clamp(p.romanceMin / PARTNERS_ROMANCE, 0, 1) * 50),
       target: 100,
-      label: `romance ${round(p.romanceMin)} / ${PARTNERS_ROMANCE}`,
+      // Both sides must pass the bar, and the warmer one is usually far ahead
+      // (the offer picked them for it): show both, or "romance 4" reads as
+      // though they were never sweet on each other.
+      label: `romance ${round(p.romanceMax)} and ${round(p.romanceMin)} (both need ${PARTNERS_ROMANCE})`,
     };
   }
   if (gone != null) return { status: 'failed', progress, outcome: goneText(agentOf(snap, gone), snap, gone) };
@@ -392,6 +395,9 @@ export function runChallengeChecks(): Challenge[] {
     ended.push(done);
     changed = true;
   }
+  // Yesterday's offers are rebuilt when the tab next asks (service.ts); tell an
+  // open tab to ask, or it shows them until something else moves.
+  if (store.offersDay != null && store.offersDay !== snap.day) emitter.markDirty('challenges');
   if (!changed) return [];
 
   store.active = stillActive;

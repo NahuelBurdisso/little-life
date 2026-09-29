@@ -61,7 +61,7 @@ describe('matchmaker', () => {
   it('starts with a deadline and romance progress', () => {
     expect(c.status).toBe('active');
     expect(c.deadline).toBe(START + 14 * DAY);
-    expect(c.progress?.label).toMatch(/romance 25/);
+    expect(c.progress?.label).toBe('romance 35 and 25 (both need 70)');
   });
 
   it('completes on the married tag', () => {
