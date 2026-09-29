@@ -25,7 +25,7 @@ interface NeedData {
   mood: number;
 }
 
-interface StateData {
+export interface StateData {
   agent_id: number;
   type: string;
   target_agent_id: number | null;
@@ -93,6 +93,18 @@ function matchesRule(
   }
 
   return true;
+}
+
+/**
+ * `target_is_state_target`: the observer's own infatuation points at this target
+ * (rule `infatuated_sees_target` — the smitten one spots their crush and goes to
+ * flirt). This used to look at the TARGET's states for any state aimed at the
+ * observer, so the rule ran backwards: stirring Elena's infatuation with James
+ * sent James to court Elena while she stayed cool, and any targeted state
+ * (a jealous rival, a grudge) made its object walk over and flirt too.
+ */
+export function isInfatuatedWith(observerStates: readonly StateData[], targetId: number): boolean {
+  return observerStates.some(s => s.type === 'infatuated' && s.target_agent_id === targetId);
 }
 
 // ─── PerceptionSystem ─────────────────────────────────────────────────────────
@@ -248,10 +260,10 @@ export class PerceptionSystem {
         return dist < 80;
       });
 
+      const observerStateRecords = stateRecordsByAgent.get(observer.id) ?? [];
       for (const target of visibleTargets) {
         const targetMood = needsByAgent.get(target.id) ?? 50;
         const targetStates = statesByAgent.get(target.id) ?? [];
-        const targetStateRecords = stateRecordsByAgent.get(target.id) ?? [];
 
         // Retrieve relationship from observer's perspective
         const relKey1 = `${observer.id}-${target.id}`;
@@ -289,8 +301,7 @@ export class PerceptionSystem {
 
           // Handle target_is_state_target separately (needs state records)
           if (rule.observes.target_is_state_target) {
-            const matchingState = targetStateRecords.find(s => s.target_agent_id === observer.id);
-            if (!matchingState) continue;
+            if (!isInfatuatedWith(observerStateRecords, target.id)) continue;
           }
 
           if (!matchesRule(rule, target, observerRelation, targetStates, targetMood)) continue;
