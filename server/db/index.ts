@@ -124,6 +124,10 @@ function migrateSchema() {
 
   // Relationship decay clock (game minutes; see schema.ts)
   addColumnIfMissing('relationships', 'last_interaction_minute', 'INTEGER');
+  // When the pair reached its current status (game minutes; see schema.ts).
+  // Old rows stay NULL: lib/milestonesEngine.ts starts their clock when it
+  // first meets them rather than guessing how long a couple has been together.
+  addColumnIfMissing('relationships', 'status_since_minute', 'INTEGER');
 
   // Story-arc / retention clock (game minutes; see schema.ts). Filled by a TEMP
   // trigger on insert, old rows by backfillRelationshipEventGameMinutes.

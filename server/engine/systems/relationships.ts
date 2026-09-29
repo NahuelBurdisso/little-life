@@ -9,6 +9,7 @@ import { PIVOTAL_EVENT_SQL } from '../../lib/storyBeats';
 import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
 import { simEvents } from '../../lib/simEvents';
+import { isMarriedTags, withoutMilestoneTags } from '../../lib/marriage';
 
 // --- Types ---
 
@@ -29,7 +30,7 @@ function applyDiminishing(currentValue: number, delta: number): number {
   return delta;
 }
 
-function deriveStatus(
+export function deriveStatus(
   fAB: number,
   fBA: number,
   rAB: number,
@@ -37,6 +38,7 @@ function deriveStatus(
   _trust: number,
   familiarity: number,
   estranged = false,
+  married = false,
 ): RelationshipStatus {
   const avgFriendship = (fAB + fBA) / 2;
   const maxRomance = Math.max(rAB, rBA);
@@ -44,6 +46,12 @@ function deriveStatus(
 
   // Estrangement outranks everything — it is the one status that never lifts.
   if (estranged) return 'estranged';
+
+  // A marriage is sticky: a couple who have a bad week, or simply drift for a
+  // few game days of decay, are still married. Only a real breakup (the
+  // affair-discovery paths in conversations.ts, or estrangement above) strips
+  // the `married` tag and lets the thresholds speak again.
+  if (married) return 'partners';
 
   if (minRomance > 70 && avgFriendship > 30) return 'partners';
   if (maxRomance > 30 && avgFriendship < -10) return 'complicated';
@@ -286,6 +294,7 @@ export function tick(
             interaction_count: 0,
             last_interaction: now,
             last_interaction_minute: nowMinutes,
+            status_since_minute: nowMinutes,
             average_interaction_sentiment: 0,
             tags: [] as string[],
             status: 'strangers',
@@ -331,6 +340,7 @@ export function tick(
         interaction_count: 0,
         last_interaction: now,
         last_interaction_minute: nowMinutes,
+        status_since_minute: nowMinutes,
         average_interaction_sentiment: 0,
         tags: [] as string[],
         status: 'strangers',
@@ -418,7 +428,9 @@ export function tick(
     const isEstranged =
       wasEstranged || (avgFriendship <= -80 && newFamiliarity >= 30);
     if (isEstranged && !wasEstranged) {
-      newTags = [...newTags, 'estranged'];
+      // Estrangement is the one breakup the thresholds can cause on their own:
+      // no engagement or marriage survives it.
+      newTags = [...withoutMilestoneTags(newTags), 'estranged'];
     }
 
     const oldStatus = rel.status;
@@ -430,7 +442,10 @@ export function tick(
       avgTrust,
       newFamiliarity,
       isEstranged,
+      isMarriedTags(newTags),
     );
+    // The milestone clock: how long the pair has held this status.
+    const statusSince = newStatus !== oldStatus ? nowMinutes : rel.status_since_minute;
 
     db.update(relationships)
       .set({
@@ -447,6 +462,7 @@ export function tick(
         average_interaction_sentiment: newSentiment,
         tags: newTags,
         status: newStatus,
+        status_since_minute: statusSince,
         last_updated: now,
       })
       .where(eq(relationships.id, rel.id))
@@ -466,6 +482,7 @@ export function tick(
     rel.average_interaction_sentiment = newSentiment;
     rel.tags = newTags;
     rel.status = newStatus;
+    rel.status_since_minute = statusSince;
     rel.last_updated = now;
 
     // Log relationship status changes
@@ -616,6 +633,8 @@ export function tick(
         newRBA,
         (rel.trust_ab + rel.trust_ba) / 2,
         rel.familiarity,
+        false,
+        isMarriedTags(rel.tags),
       );
 
       db.update(relationships)
@@ -625,6 +644,7 @@ export function tick(
           romance_ab: newRAB,
           romance_ba: newRBA,
           status: newStatus,
+          ...(newStatus !== rel.status ? { status_since_minute: nowMinutes } : {}),
           last_updated: now,
         })
         .where(eq(relationships.id, rel.id))

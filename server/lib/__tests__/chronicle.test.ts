@@ -32,6 +32,7 @@ function rel(
     interaction_count: 5,
     last_interaction: NOW,
     last_interaction_minute: 0,
+    status_since_minute: 0,
     average_interaction_sentiment: 0,
     tags: [],
     status: 'friends',

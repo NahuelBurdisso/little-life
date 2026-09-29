@@ -56,6 +56,7 @@ import { llmSocialGain, templateSocialGain } from '../../lib/socialGain';
 import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
 import { extractConfidedQuote } from '../../lib/factText';
+import { withoutMilestoneTags } from '../../lib/marriage';
 import { evaluateConversation } from '../../lib/conversationEvaluator';
 
 // ---------------------------------------------------------------------------
@@ -1717,10 +1718,13 @@ async function finishCompletedConversation(
     // Partner reaction based on personality
     if (pidPersonality.aggression > 60) {
       // Aggressive breakup: partnership → rivals, grudge
+      // A real breakup: the engagement or marriage goes with it (the
+      // relationship phase keeps a `married` pair at `partners` otherwise).
       db.update(relationships).set({
         status: 'rivals',
+        status_since_minute: gameMinutes(time),
         romance_ab: 0, romance_ba: 0,
-        tags: [...(partnerRel.tags as string[]).filter(t => t !== 'partner'), 'grudge'],
+        tags: [...withoutMilestoneTags(partnerRel.tags as string[]).filter(t => t !== 'partner'), 'grudge'],
       }).where(eq(relationships.id, partnerRel.id)).run();
 
       // Heartbroken + angry
@@ -1754,8 +1758,12 @@ async function finishCompletedConversation(
       }).where(eq(relationships.id, partnerRel.id)).run();
     } else {
       // Default: quiet breakup
-      db.update(relationships).set({ status: 'acquaintances', romance_ab: 0, romance_ba: 0 })
-        .where(eq(relationships.id, partnerRel.id)).run();
+      db.update(relationships).set({
+        status: 'acquaintances',
+        status_since_minute: gameMinutes(time),
+        romance_ab: 0, romance_ba: 0,
+        tags: withoutMilestoneTags(partnerRel.tags as string[]),
+      }).where(eq(relationships.id, partnerRel.id)).run();
     }
   }
 
