@@ -42,6 +42,23 @@ const STEPS: ReadonlyArray<{ version: number; columns: ReadonlyArray<readonly [t
 
 export const GAME_MINUTE_STAMPS_VERSION = STEPS[STEPS.length - 1].version;
 
+/**
+ * The speed the rebase multiplies tick ages by: the current `tick_speed`, but
+ * never more than `nowMinutes / nowTicks`.
+ *
+ * The current speed is only a guess at the speed history. `nowMinutes /
+ * nowTicks` is an upper bound on the true average — the clock started at
+ * minute >= 0, so the ticks played cover at most `nowMinutes` of game time.
+ * A world that ran at 1x for a week and was switched to 4x just before the
+ * upgrade would, with the raw speed, push its oldest stamps four times further
+ * back than the world has existed: negative minutes, i.e. every such state and
+ * goal instantly "ancient". Capped, a tick-0 stamp maps to minute >= 0.
+ */
+export function rebaseSpeed(tickSpeed: number, nowMinutes: number, nowTicks: number): number {
+  const speed = tickSpeed > 0 ? tickSpeed : 1;
+  return nowTicks > 0 ? Math.min(speed, nowMinutes / nowTicks) : speed;
+}
+
 function userVersion(sqlite: Database.Database): number {
   return sqlite.pragma('user_version', { simple: true }) as number;
 }
@@ -77,7 +94,7 @@ export function rebaseTickStampsToGameMinutes(sqlite: Database.Database): void {
       const time = JSON.parse(world.time) as { day: number; hour: number; minute: number; totalTicks: number };
       const nowMinutes = gameMinutes(time);
       const nowTicks = time.totalTicks;
-      const speed = world.tick_speed > 0 ? world.tick_speed : 1;
+      const speed = rebaseSpeed(world.tick_speed, nowMinutes, nowTicks);
       const changed: string[] = [];
       for (const step of pending) {
         for (const [table, column] of step.columns) {
@@ -91,10 +108,17 @@ export function rebaseTickStampsToGameMinutes(sqlite: Database.Database): void {
             changed.push(`${table}.${column}: absent`);
             continue;
           }
-          // CAST keeps the result INTEGER at fractional speeds (0.5x).
+          // CAST keeps the result INTEGER at fractional speeds (0.5x). The
+          // clamp to [0, now] is the backstop for inputs the formula can't
+          // vouch for — a stamp already in minutes (say user_version was lost
+          // with a restored file) would otherwise land far in the future, and
+          // nothing legitimate is stamped after "now" or before day 0.
           const { changes } = sqlite
-            .prepare(`UPDATE ${table} SET ${column} = CAST(? - (? - ${column}) * ? AS INTEGER) WHERE ${column} IS NOT NULL`)
-            .run(nowMinutes, nowTicks, speed);
+            .prepare(
+              `UPDATE ${table} SET ${column} = MAX(0, MIN(?, CAST(? - (? - ${column}) * ? AS INTEGER))) ` +
+              `WHERE ${column} IS NOT NULL`,
+            )
+            .run(nowMinutes, nowMinutes, nowTicks, speed);
           changed.push(`${table}.${column}: ${changes}`);
         }
       }
@@ -105,4 +129,61 @@ export function rebaseTickStampsToGameMinutes(sqlite: Database.Database): void {
     }
     sqlite.pragma(`user_version = ${GAME_MINUTE_STAMPS_VERSION}`);
   }).immediate();
+}
+
+/**
+ * Game-minute "started at" stamps that are checked against now on every start.
+ * A value after now makes `now - started` negative, so an action never ends, a
+ * state or event never expires and a goal never ages.
+ */
+const FUTURE_CHECKED_STAMPS: ReadonlyArray<readonly [table: string, column: string]> = [
+  ['agents', 'action_started'],
+  ['agent_states', 'started_at'],
+  ['world_events', 'started_at'],
+  ['goals', 'created_at'],
+];
+
+/**
+ * Startup self-heal: pull any of those stamps that lies after the world's
+ * current game minute back to now.
+ *
+ * Independent of `user_version` on purpose. The one-shot rebase trusts that
+ * version to say which clock the columns are on; if the trust is ever
+ * misplaced (a file restored without its header, an old branch run against a
+ * migrated file, a rebase applied to values that were already minutes), stamps
+ * end up in the future and stay there — the rebase never runs again. Nothing
+ * legitimate writes a future stamp, so clamping is always safe, and on a
+ * healthy database it is four small UPDATEs that change nothing.
+ *
+ * Logs once, with per-column counts, only when it changed something.
+ */
+export function clampFutureGameMinuteStamps(sqlite: Database.Database): void {
+  let world: { time: string } | undefined;
+  try {
+    world = sqlite.prepare('SELECT time FROM world_state LIMIT 1').get() as typeof world;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/no such table/i.test(message)) throw err;
+  }
+  if (!world) return;
+  const nowMinutes = gameMinutes(JSON.parse(world.time) as { day: number; hour: number; minute: number });
+
+  const changed: string[] = [];
+  sqlite.transaction(() => {
+    for (const [table, column] of FUTURE_CHECKED_STAMPS) {
+      const hasColumn = (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+        .some((c) => c.name === column);
+      if (!hasColumn) continue;
+      const { changes } = sqlite
+        .prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} > ?`)
+        .run(nowMinutes, nowMinutes);
+      if (changes > 0) changed.push(`${table}.${column}: ${changes}`);
+    }
+  }).immediate();
+
+  if (changed.length > 0) {
+    console.log(
+      `[db] Clamped future game-minute stamps to now (game minute ${nowMinutes}). Rows: ${changed.join(', ')}`,
+    );
+  }
 }

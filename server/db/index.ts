@@ -2,7 +2,8 @@ import 'dotenv/config';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
-import { rebaseTickStampsToGameMinutes } from './clockMigration';
+import { clampFutureGameMinuteStamps, rebaseTickStampsToGameMinutes } from './clockMigration';
+import { runStartupSteps } from './startupSteps';
 import path from 'path';
 import fs from 'fs';
 
@@ -210,18 +211,16 @@ export function getAgentStatesWriteVersion(): number {
 export function initSchema(): void {
   createPerfIndexes();
   installAgentStatesWriteHook();
-  try {
-    migrateSchema();
-    // After the column migrations, which add goals.completed_at. One-shot (see
-    // PRAGMA user_version); logs to the console when it rewrites a world.
-    rebaseTickStampsToGameMinutes(sqlite);
-  } catch (err) {
-    // A missing table on a fresh DB is expected; anything else (a locked DB
-    // skipping the aspirations/goals backfill, say) used to vanish here and
-    // leave `description IS NULL` rows the app assumes are populated.
-    const message = err instanceof Error ? err.message : String(err);
-    if (!/no such table/i.test(message)) throw err;
-  }
+  // Independent steps (see runStartupSteps): the clock rebase must not depend
+  // on migrateSchema succeeding. It still runs after it, since the column
+  // migrations add goals.completed_at, and it skips columns a file lacks.
+  runStartupSteps([
+    migrateSchema,
+    // One-shot (PRAGMA user_version); logs to the console when it rewrites a world.
+    () => rebaseTickStampsToGameMinutes(sqlite),
+    // Every start, whatever user_version says: no started-at stamp in the future.
+    () => clampFutureGameMinuteStamps(sqlite),
+  ]);
 }
 
 initSchema();
