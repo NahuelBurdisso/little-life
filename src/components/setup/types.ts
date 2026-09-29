@@ -71,20 +71,21 @@ export const DEFAULT_WORLD: WorldConfig = {
 import { getDefaultRules } from './configRegistry';
 export const DEFAULT_RULES: RulesConfig = getDefaultRules();
 
+// Daily wages; same scale as server/data/agents.ts (floor $20 = three meals + rent).
 export const JOB_OPTIONS = [
-  { job: 'farmer', title: 'Farmer', salary: 25, workplace: 'Green Acres Farm' },
-  { job: 'farmhand', title: 'Farmhand', salary: 18, workplace: 'Green Acres Farm' },
+  { job: 'farmer', title: 'Farmer', salary: 24, workplace: 'Green Acres Farm' },
+  { job: 'farmhand', title: 'Farmhand', salary: 20, workplace: 'Green Acres Farm' },
   { job: 'baker', title: 'Baker', salary: 22, workplace: "Priya's Bakery" },
   { job: 'bartender', title: 'Bartender', salary: 22, workplace: 'The Rusty Lantern' },
   { job: 'shopkeeper', title: 'Shopkeeper', salary: 24, workplace: "Rosa's General Store" },
-  { job: 'shop_assistant', title: 'Shop Assistant', salary: 16, workplace: "Rosa's General Store" },
-  { job: 'doctor', title: 'Doctor', salary: 30, workplace: "Dr. Petrov's Clinic" },
-  { job: 'medical_assistant', title: 'Medical Assistant', salary: 20, workplace: "Dr. Petrov's Clinic" },
-  { job: 'mayor', title: 'Mayor', salary: 28, workplace: 'Town Hall' },
-  { job: 'handyperson', title: 'Handyperson', salary: 18, workplace: "Carlos' Workshop" },
-  { job: 'musician', title: 'Musician', salary: 14, workplace: 'The Rusty Lantern' },
-  { job: 'constable', title: 'Constable', salary: 26, workplace: 'Town Jail' },
-  { job: 'retired', title: 'Retired', salary: 15, workplace: null },
+  { job: 'shop_assistant', title: 'Shop Assistant', salary: 20, workplace: "Rosa's General Store" },
+  { job: 'doctor', title: 'Doctor', salary: 28, workplace: "Dr. Petrov's Clinic" },
+  { job: 'medical_assistant', title: 'Medical Assistant', salary: 21, workplace: "Dr. Petrov's Clinic" },
+  { job: 'mayor', title: 'Mayor', salary: 26, workplace: 'Town Hall' },
+  { job: 'handyperson', title: 'Handyperson', salary: 20, workplace: "Carlos' Workshop" },
+  { job: 'musician', title: 'Musician', salary: 20, workplace: 'The Rusty Lantern' },
+  { job: 'constable', title: 'Constable', salary: 24, workplace: 'Town Jail' },
+  { job: 'retired', title: 'Retired', salary: 20, workplace: null },
 ];
 
 // Homes auto-scale with agent count — this generates the options list
