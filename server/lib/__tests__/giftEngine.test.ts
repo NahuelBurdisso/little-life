@@ -430,6 +430,15 @@ describe('conversation gift wealth budget', () => {
     expect(pickGiftItem(inv('bread', 1), 'comfortable')).toBe('bread');
   });
 
+  it('gift items are real registry ids (prepared food and drinks can be given)', () => {
+    expect(pickGiftItem(inv('food_prepared', 1), 'comfortable')).toBe('food_prepared');
+    expect(pickGiftItem(inv('drink', 1), 'comfortable')).toBe('drink');
+    // Drinks aren't food, so the pantry reserve doesn't apply to them.
+    expect(pickGiftItem(inv('drink', 1), 'poor')).toBe('drink');
+    // The old ids never existed as items.
+    expect(pickGiftItem([...inv('food_cooked', 5), ...inv('ale', 5), ...inv('flowers', 5)], 'comfortable')).toBeNull();
+  });
+
   it('through the event: a poor giver with a little bread gives no bread', () => {
     // $38 is tight; with 2 loaves (under the reserve) the item path is skipped
     // and the cash fallback ($0.5 above the floor) is under the $3 minimum.

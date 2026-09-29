@@ -203,8 +203,12 @@ export function giveImpulsiveGift(params: {
   return amount;
 }
 
-// Items suitable for gifting, ordered by value
-const GIFT_ITEMS = ['food_cooked', 'food_raw', 'bread', 'ale', 'flowers'];
+// Items suitable for gifting, ordered by value. Ids must exist in ITEM_REGISTRY:
+// the list used to say food_cooked / ale / flowers, which nothing ever stocks
+// (real ids are food_prepared and drink), so only raw food and bread were ever
+// given. There is no flower item; a bouquet would need a source in the
+// economy first, so it is left out rather than faked.
+const GIFT_ITEMS = ['food_prepared', 'food_raw', 'bread', 'drink'];
 
 let initialized = false;
 
