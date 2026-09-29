@@ -4,6 +4,7 @@
 
 import { endSentence, shortenForFeed } from './factText';
 import { goalClause } from './goalText';
+import { itemPhrase } from '../data/economyData';
 
 export interface ActivityEntry {
   id?: number;
@@ -96,7 +97,7 @@ export function renderMessage(entry: ActivityEntry): string {
   // Economy
   // `item` is an ITEM_REGISTRY key like `food_raw`, so it needs the same
   // treatment as the other raw tokens.
-  if (d.agent && d.amount != null && d.item) return `${d.agent} bought ${humanize(d.item)} for $${d.amount}.`;
+  if (d.agent && d.amount != null && d.item) return `${d.agent} bought ${itemPhrase(String(d.item))} for $${d.amount}.`;
   if (d.agent && d.amount != null) return `${d.agent} earned $${d.amount}.`;
 
   // Interactions

@@ -90,7 +90,8 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => `I spent $${ctx.price} on ${ctx.item}.`,
   ],
   economy_production: [
-    (ctx) => `I produced ${ctx.quantity} ${ctx.item} at work today.`,
+    // `made` is a counted phrase ("2 loaves of bread", itemCountPhrase).
+    (ctx) => `I produced ${ctx.made} at work today.`,
   ],
   economy_blackmail: [
     (ctx) => `I had to pay $${ctx.amount} in blackmail money again.`,

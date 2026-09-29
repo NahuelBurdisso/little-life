@@ -33,6 +33,7 @@ import { zoneOccupancy } from '../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../lib/giftEngine';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
 import { foodCount } from '../../lib/economyEngine';
+import { itemPhrase } from '../../data/economyData';
 import { gameMinutesToMs } from '../../lib/worldClock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1890,7 +1891,7 @@ function processStateEffects(
           simEvents.emit('economy:theft_caught', { agentId: agent.id, item: targetItem.itemId, locationName: loc.name });
           const witnessIds = witnesses.map((w) => w.id);
           createFact('theft', agent.id, loc.owner, 2, [agent.id, loc.owner, ...witnessIds], 'witnessed', {
-            item: targetItem.itemId, location: loc.name,
+            item: itemPhrase(targetItem.itemId), location: loc.name,
           });
 
           // Check theft escalation: 3+ theft shared_knowledge = reputation + banned
@@ -1916,7 +1917,7 @@ function processStateEffects(
           db.insert(relationshipEvents).values({
             agent_a: ordA, agent_b: ordB,
             event_type: 'theft_caught',
-            description: `${agent.name} was caught stealing ${targetItem.itemId} from ${loc.name}`,
+            description: `${agent.name} was caught stealing ${itemPhrase(targetItem.itemId)} from ${loc.name}`,
             friendship_delta_ab: agent.id === ordA ? -15 : 0,
             friendship_delta_ba: agent.id === ordA ? 0 : -15,
             romance_delta_ab: 0, romance_delta_ba: 0,
@@ -1946,7 +1947,7 @@ function processStateEffects(
           simEvents.emit('interaction:completed', {
             agentId: agent.id,
             otherName: loc.name,
-            action: `stole ${targetItem.itemId} from ${loc.name}${caught ? ' and got caught' : ''}`,
+            action: `stole ${itemPhrase(targetItem.itemId)} from ${loc.name}${caught ? ' and got caught' : ''}`,
           });
         } else {
           const updatedMeta = { ...meta, theftCount: ((meta.theftCount as number) ?? 0) + 1 };

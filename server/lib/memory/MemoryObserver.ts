@@ -11,6 +11,7 @@ import { summarizeConversation, MIN_SUMMARY_LINES, type SummaryLine } from './co
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { getImportance } from './ImportanceScorer';
 import { goalClause } from '../goalText';
+import { itemPhrase, itemCountPhrase } from '../../data/economyData';
 import { endSentence } from '../factText';
 
 /** One summary call per conversation, shared by its participants' handlers. */
@@ -283,8 +284,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', describeEvent('economy_purchase', { item, price: String(Math.round(price)), location: locationName }), { subtype: 'economy' });
   });
 
+  // Economy events carry inventory ids ("food_raw"); memories get the item's
+  // prose (itemPhrase), not the id (G9). Prose already sent ("$12", "a drink")
+  // passes through unchanged.
   simEvents.on('economy:production', ({ agentId, item, quantity }: { agentId: number; item: string; quantity: number }) => {
-    memoryService.record(agentId, 'observation', describeEvent('economy_production', { item, quantity: String(quantity) }), { subtype: 'economy' });
+    memoryService.record(agentId, 'observation', describeEvent('economy_production', { made: itemCountPhrase(item, quantity) }), { subtype: 'economy' });
   });
 
   simEvents.on('economy:blackmail_paid', ({ agentId, amount }: { agentId: number; amount: number }) => {
@@ -292,11 +296,11 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   simEvents.on('economy:theft_success', ({ agentId, item, locationName }: { agentId: number; item: string; locationName: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('economy_theft_success', { item, location: locationName }), { subtype: 'economy' }, -0.3, 7);
+    memoryService.record(agentId, 'observation', describeEvent('economy_theft_success', { item: itemPhrase(item), location: locationName }), { subtype: 'economy' }, -0.3, 7);
   });
 
   simEvents.on('economy:theft_caught', ({ agentId, item, locationName }: { agentId: number; item: string; locationName: string }) => {
-    memoryService.record(agentId, 'observation', describeEvent('economy_theft_caught', { item, location: locationName }), { subtype: 'economy' }, -0.7, 8);
+    memoryService.record(agentId, 'observation', describeEvent('economy_theft_caught', { item: itemPhrase(item), location: locationName }), { subtype: 'economy' }, -0.7, 8);
   });
 
   simEvents.on('economy:milestone', ({ agentId, amount, direction }: { agentId: number; amount: number; direction: 'up' | 'down' }) => {
@@ -412,7 +416,7 @@ export interface GiftGivenPayload {
  * drunk evening's handout would feed reflection the wrong self-image.
  */
 export function describeGiftForGiver(receiverName: string, p: GiftGivenPayload): string {
-  const what = p.amount != null ? `$${p.amount}` : (p.item ?? 'a gift');
+  const what = p.amount != null ? `$${p.amount}` : p.item ? itemPhrase(p.item) : 'a gift';
   switch (p.reason) {
     case 'drunk_gift':
       return `I'd had a few too many and pressed ${what} on ${receiverName}. I hope I don't regret that tomorrow.`;

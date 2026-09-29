@@ -1898,16 +1898,23 @@ export function tick(world: WorldRow): void {
             db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
             if (caught) {
               createFact('theft', thief.id, decision.targetAgentId, 2, [thief.id, decision.targetAgentId], 'witnessed');
+              // `item`/`locationName` are what the thief's memory says
+              // (MemoryObserver); without them it read "I got caught stealing
+              // undefined from undefined".
               simEvents.emit('economy:theft_caught', {
                 agentId: thief.id, perpetratorId: thief.id, victimId: decision.targetAgentId,
                 locationId: thief.current_location,
+                item: `$${stolenAmount}`, locationName: victimAgent.name,
               });
               logActivity({ type: 'drama', initiator: thief.id, target: decision.targetAgentId,
                 templateData: { description: `${thief.name} was caught pickpocketing $${stolenAmount} from ${victimAgent.name}!` } });
             } else {
               logActivity({ type: 'drama', initiator: thief.id,
                 templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` } });
-              simEvents.emit('economy:theft_success', { agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount });
+              simEvents.emit('economy:theft_success', {
+                agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount,
+                item: `$${stolenAmount}`, locationName: victimAgent.name,
+              });
             }
           }
         } else if (decision.source === 'shoplifting') {
@@ -1915,7 +1922,8 @@ export function tick(world: WorldRow): void {
           // at what it holds. It used to be minted — money from outside the
           // treasury loop (economy.ts, townTreasury.ts). An empty till, or a
           // shop without an owner, has nothing to lose.
-          const shopOwner = allLocations.find((l) => l.id === decision.targetLocationId)?.owner ?? null;
+          const shop = allLocations.find((l) => l.id === decision.targetLocationId);
+          const shopOwner = shop?.owner ?? null;
           const taken = shopliftFrom(thief.id, shopOwner, stolenAmount);
           if (taken <= 0) {
             // nothing taken, nothing to report
@@ -1924,6 +1932,7 @@ export function tick(world: WorldRow): void {
             simEvents.emit('economy:theft_caught', {
               agentId: thief.id, perpetratorId: thief.id,
               locationId: thief.current_location,
+              item: `$${taken} worth of goods`, locationName: shop?.name ?? 'the shop',
             });
             logActivity({ type: 'drama', initiator: thief.id,
               templateData: { description: `${thief.name} was caught shoplifting $${taken} worth of goods!` } });

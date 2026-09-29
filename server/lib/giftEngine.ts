@@ -7,7 +7,7 @@ import { getEffectivePersonality } from './states';
 import { gameMinutes } from './gameClock';
 import { gameMinutesNow } from './worldClock';
 import { addToInventory, removeFromInventory, getInventoryCount } from './economyEngine';
-import { ITEM_REGISTRY } from '../data/economyData';
+import { ITEM_REGISTRY, itemPhrase } from '../data/economyData';
 
 // ─── Gift Engine ──────────────────────────────────────────────────────────────
 // After positive conversations, warm/romantic agents may spontaneously gift items.
@@ -274,7 +274,9 @@ function initGiftSystem(): void {
       initiator: payload.agentId,
       target: otherId,
       templateData: {
-        description: `${giverName} gave ${giftItem} to ${receiverName} as a gift`,
+        // The id is kept in `item` for anything keyed on it; the sentence
+        // gets prose ("gave food_raw to Rosa" was the old line, G9).
+        description: `${giverName} gave ${receiverName} ${itemPhrase(giftItem)} as a gift`,
         agent: giverName,
         target: receiverName,
         item: giftItem,

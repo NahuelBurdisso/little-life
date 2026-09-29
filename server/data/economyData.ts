@@ -14,15 +14,44 @@ export interface ItemDef {
   basePrice: number;
   perishable: boolean;
   satisfies?: { need: string; amount: number };
+  /**
+   * Prose for feed lines and memories, which used to print the id ("gave
+   * food_raw to Rosa"; G9): `phrase` stands alone ("gave Rosa a loaf of
+   * bread"), `unit` follows a count ("2 loaves of bread"). See itemPhrase.
+   */
+  phrase: string;
+  unit: [singular: string, plural: string];
 }
 
 export const ITEM_REGISTRY: Record<string, ItemDef> = {
-  food_raw:      { id: 'food_raw', name: 'Raw Food', category: 'food', basePrice: 3, perishable: true, satisfies: { need: 'hunger', amount: 8 } },
-  food_prepared: { id: 'food_prepared', name: 'Prepared Food', category: 'food', basePrice: 6, perishable: true, satisfies: { need: 'hunger', amount: 15 } },
-  bread:         { id: 'bread', name: 'Fresh Bread', category: 'food', basePrice: 5, perishable: true, satisfies: { need: 'hunger', amount: 12 } },
-  drink:         { id: 'drink', name: 'Drink', category: 'drink', basePrice: 4, perishable: false, satisfies: { need: 'fun', amount: 8 } },
-  medicine:      { id: 'medicine', name: 'Medicine', category: 'medical', basePrice: 12, perishable: false },
+  food_raw:      { id: 'food_raw', name: 'Raw Food', category: 'food', basePrice: 3, perishable: true, satisfies: { need: 'hunger', amount: 8 },
+                   phrase: 'some raw food', unit: ['portion of raw food', 'portions of raw food'] },
+  food_prepared: { id: 'food_prepared', name: 'Prepared Food', category: 'food', basePrice: 6, perishable: true, satisfies: { need: 'hunger', amount: 15 },
+                   phrase: 'a hot meal', unit: ['hot meal', 'hot meals'] },
+  bread:         { id: 'bread', name: 'Fresh Bread', category: 'food', basePrice: 5, perishable: true, satisfies: { need: 'hunger', amount: 12 },
+                   phrase: 'a loaf of bread', unit: ['loaf of bread', 'loaves of bread'] },
+  drink:         { id: 'drink', name: 'Drink', category: 'drink', basePrice: 4, perishable: false, satisfies: { need: 'fun', amount: 8 },
+                   phrase: 'a drink', unit: ['drink', 'drinks'] },
+  medicine:      { id: 'medicine', name: 'Medicine', category: 'medical', basePrice: 12, perishable: false,
+                   phrase: 'some medicine', unit: ['dose of medicine', 'doses of medicine'] },
 };
+
+/**
+ * An item as a noun phrase for prose. Unknown ids (gift items the registry
+ * doesn't define) read as their words; text that is already prose ("$12",
+ * "a visit to the tavern") passes through, so emitters that send either can
+ * share one template.
+ */
+export function itemPhrase(item: string): string {
+  return ITEM_REGISTRY[item]?.phrase ?? item.replace(/_/g, ' ');
+}
+
+/** "1 loaf of bread", "2 loaves of bread". */
+export function itemCountPhrase(item: string, count: number): string {
+  const unit = ITEM_REGISTRY[item]?.unit;
+  const words = unit ? unit[count === 1 ? 0 : 1] : item.replace(/_/g, ' ');
+  return `${count} ${words}`;
+}
 
 export interface Recipe {
   job: string;
