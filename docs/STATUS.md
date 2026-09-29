@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 92 files / 977 tests passing.
+**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 95 files / 1008 tests passing.
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -57,9 +57,8 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
 ### Engine
 - **B9 [M]** In-memory sim state lost on restart (hobby skills, favors, tension, momentum, gate
   backoffs); drift cap re-baselines from drifted value (`personalityDrift.ts`).
-- **B12b [L]** Per-tick probabilities still roll per tick (drunk/sick chance in `states.ts`,
-  old-age/accident hazards) → fewer rolls per game hour at speed 4.
-- **B13b [L]** Memory consolidation and activity-log retention use tick stamps with day labels.
+- **B13b [L]** Memory/activity-log retention converts game days to ticks at the *current* speed
+  (approximate if the speed changed); `memories.created_at` stays on ticks.
 - **B16 [M]** Housemates/coworkers start as strangers: wizard `getDefaultRelationships()`
   (`src/components/setup/defaults.ts`) seeds 6 pairs; conversations concentrate there. Overlaps the
   worldgen "social placement" track — coordinate before changing.
@@ -70,6 +69,36 @@ Severity: **H** breaks behaviour/data · **M** visible wrongness · **L** cleanu
   catalog in `server/data/templates.ts`.
 - **P1 [M]** Pathfinding falls back to straight lines through buildings ("unroutable destination",
   ~20/game day in soak, 72 in the first playtest) — worldgen session's area.
+
+### Found by playtest #2 (2026-09-29, real LLM, 15 game h at 1x + 61 game h at 4x)
+Evidence in the session scratchpad; line numbers approximate.
+- **G1 [H]** At 4x LLM conversations eat whole nights: the turn budget is wall-clock
+  (`MS_PER_LLM_TURN` 15 s × 10 turns, `conversations.ts:~83,~200`) → up to 10 game hours; 9/20 LLM
+  convs hit the cap, agents skip sleep. Conversation rate is tied to real time.
+- **G2 [H]** Location services refill needs for free (`needs.ts:~260-276` ignores `itemRequired` and
+  `cost`, applies to anyone standing there): homes +10 hunger/h, shops feed their clerks → needs pinned
+  at 100, nobody eats/buys, money piles up (feeds E1).
+- **G3 [M]** Observation memories flood (867/1055 new memories; the same line ×71):
+  `perception:observed` handler has no dedupe (`MemoryObserver.ts:~221`) → many reflections, LLM load.
+- **G4 [M]** Reflections malformed: markdown asterisks (36/62), second person, answering the prompt
+  (`server/lib/memory/reflection*`). Sanitize like dialogue.
+- **G5 [M]** Template conversations are ~half of all conversations and read as non-sequiturs
+  (36 distinct lines across 91; "*stomach growls*", "NAME. *nods*", full names "Dr. Sofia Petrov").
+- **G6 [M]** Openers still repetitive ("how are you doing today" 16/174 LLM lines; "Well, I should be
+  going." ×10 templates); conversation-end memories mostly quote goodbyes.
+- **G7 [M]** Gossip residue: 2 self-gossip cases via a third party's sighting ("Diego told Marco that
+  Yuki spotted Diego…"); 8 contentless "confided something personal" rumors; goodbyes stored as
+  confessions (`conversations.ts:~1006-1019` picks the last quotable line).
+- **G8 [M]** At 4x daily plans arrive after the day started (plan load per real second ×4); saved plan
+  blocks all show `pending` (status lives in the in-memory cache).
+- **G9 [L]** "X and Y are on a date" logged every tick before the conversation is queued
+  (`decisions.ts:~1613`); world-event observation text pastes name + description
+  (`descriptionTemplates.ts:~108`); goal memories "I've decided to Assess …..", raw ids in feed
+  ("gave food_raw"); `memories.created_at` only advances when a conversation turn runs
+  (`MemoryService.setTick` called from one place) → stale tick stamps.
+- **G10 [L]** Thomas re-issued a walk all night and never slept (likely P1 pathfinding).
+- P1 pathfinding confirmed worse: 278 straight-line fallbacks in 76 game h, mostly "destination tile
+  unroutable" at work spots (store counter, clinic reception).
 
 ### Client
 - **C8 [L]** Per-frame allocations: `BubbleSystem.update`, `ParticleEngine.update`,
@@ -106,6 +135,9 @@ before merging.
 - **B13** public-knowledge spread once per tick; **B15** one stacking rule per event-effect key.
 - **B10 + playtest #1/#2** game-time everywhere: actions, states, events, goals, cooldowns,
   counters, hour/day gates; storm events bring stormy weather; old age reads `agents.age`.
+  Review follow-ups: bounded/clamped rebase + startup self-heal of future stamps
+  (`server/db/startupSteps.ts`), relationship decay on `relationships.last_interaction_minute`,
+  per-tick hazards via `chancePerTick`, tension/hobby clocks in game minutes, EventMenu time left.
 - **Economy:** impulsive gifts capped (one per episode, 4 h cooldown, feed + ledger); one purchase
   per meal/trip; diners only buy hunger items; owners eat own stock; tavern cover per visit;
   wholesale capped; payday/gift cooldowns in game minutes.
@@ -126,7 +158,9 @@ before merging.
 
 ## Next steps (suggested order)
 
-1. Economy balance E1/E2 (use `npm run soak` to measure before/after).
-2. B16 initial relationships — together with the worldgen social-placement track.
-3. Playtest again with the real LLM at 1x and 4x; compare with the 2026-09-29 playtest.
-4. Worldgen stubs `interiors` / `names`; C8 perf.
+1. G1 conversation budget in game time + G2 free needs refill (both break 4x / the economy).
+2. G3/G4 memory flood and reflection sanitising (LLM load + quality).
+3. Economy balance E1/E2 after G2 (use `npm run soak` to measure before/after).
+4. G5–G7 dialogue/template/gossip quality; B16 initial relationships with the worldgen track.
+5. P1 pathfinding (unroutable work spots) — worldgen session's area.
+6. Playtest again with the real LLM at 1x and 4x and compare with playtest #2.

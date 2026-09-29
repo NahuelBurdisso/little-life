@@ -18,3 +18,5 @@ docs/scratch/shots/
 .superpowers/brainstorm/
 # Vite writes these next to the config on reload; never meaningful.
 vite.config.ts.timestamp-*
+
+data/backup-*/
