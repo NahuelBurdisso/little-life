@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildAgentSystemPrompt, buildConversationPrompt, ConversationPromptParams } from '../prompts';
+import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, ConversationPromptParams } from '../prompts';
 import { clearVoiceDirectiveCache } from '../voiceDirective';
 
 const mockAgent = {
@@ -118,10 +118,16 @@ describe('buildConversationPrompt', () => {
     expect(userMsg).toContain('You hold a grudge');
   });
 
-  it('includes topic in first turn instruction', () => {
+  it('turns the topic label into an intent in the first turn instruction', () => {
     const { messages } = buildConversationPrompt(baseParams);
-    const userMsg = messages[0].content;
-    expect(userMsg).toContain('discuss confrontation with Carlos Mendez');
+    const userMsg = messages[messages.length - 1].content;
+    expect(userMsg).toContain('Something Carlos Mendez did has been eating at you');
+    expect(userMsg).not.toContain('discuss confrontation');
+  });
+
+  it('passes unknown topics through as a subject', () => {
+    expect(topicIntent('the missing ledger', 'Rosa')).toContain('talk about the missing ledger');
+    expect(topicIntent('gossip about Marco Rivera', 'Rosa')).toBe("You heard something about Marco Rivera and can't keep it to yourself.");
   });
 
   it('uses "Respond to" for mid-conversation turns', () => {

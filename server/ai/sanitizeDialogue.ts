@@ -210,6 +210,10 @@ function tidy(text: string): string {
     .trim();
   // Leading debris: ", I think…" after a stripped opening direction.
   out = out.replace(/^(?:[,;:\-–—]|\.(?!\.))+\s*/, '');
+  // A hesitation ellipsis before a full sentence ("... Not today, Elena.") —
+  // Gemma 4 26B opens a third of its lines this way. A continuation that
+  // starts lowercase ("...and then he left") keeps it.
+  out = out.replace(/^(?:\.{2,}|…)\s*(?=\p{Lu})/u, '');
   // Wrapping single quotes ('Fine, then.') — only when both ends carry one.
   if (/^['‘][\s\S]*['’]$/.test(out) && out.length > 2) out = out.slice(1, -1).trim();
   // A dangling comma left by quote extraction ("Hmm, interesting," Omar said).

@@ -258,6 +258,57 @@ function buildRelationshipTag(
   return parts.join(' ');
 }
 
+/**
+ * What the speaker wants from this conversation, in words the model can act
+ * on. `topic` is a mode label from the scheduler ("catching up", "celebrating",
+ * "offering comfort"…), and the prompt used to say "You want to discuss
+ * catching up with Yuki" — which the model repeated back literally ("I was
+ * thinking about our talk regarding catching up"). Unknown topics (drama
+ * strings, "gossip about X", a player's nudge) are passed through as a subject.
+ */
+export function topicIntent(topic: string, other: string): string {
+  const t = topic.trim().toLowerCase();
+  const gossip = t.match(/^gossip about (.+)$/);
+  if (gossip) return `You heard something about ${topic.slice(topic.length - gossip[1].length)} and can't keep it to yourself.`;
+  if (t.startsWith('checking on')) return `You want to see how ${other} is really doing — mention something specific you know about them.`;
+  const intents: Record<string, string> = {
+    'flirting': `You're drawn to ${other}. Flirt a little: tease, compliment something specific, or hint at how you feel.`,
+    'romance': `You're drawn to ${other}. Let it show.`,
+    'confrontation': `Something ${other} did has been eating at you. Call it out.`,
+    'tension': `Things are tense between you and ${other}, and it shows.`,
+    'venting worries': `Something is worrying you and you need to get it off your chest.`,
+    'seeking comfort': `You're having a rough time and want some sympathy.`,
+    'celebrating': `You're in great spirits — share the good thing that happened to you.`,
+    'reminiscing': `Bring up a specific moment you and ${other} shared.`,
+    'sharing secrets': `You want to confide something personal to ${other} that you haven't told others.`,
+    'making plans': `Propose a concrete plan with ${other}: what, where and when.`,
+    'deep conversation': `Ask ${other} something that really matters — about their life, fears or hopes.`,
+    'town news': `Share a piece of town news you know.`,
+    'local rumors': `Share a rumor you've heard around town.`,
+    'asking questions': `You're curious about ${other}'s life or work — ask something specific.`,
+    'checking in': `You want to see how ${other} is really doing — mention something specific you know about them.`,
+    'offering help': `You think ${other} could use a hand — offer something concrete.`,
+    'offering comfort': `You sense ${other} is having a hard time and want to comfort them.`,
+    'complimenting': `Compliment ${other} on something specific.`,
+    'bragging': `Brag a little about something you did or have.`,
+    'seeking validation': `You want ${other} to tell you that you did the right thing about something.`,
+    'comparing lives': `Compare your life with ${other}'s — a little competitive.`,
+    'community values': `Something happening in town strikes you as right or wrong — say what you think.`,
+    'right and wrong': `Something happening in town strikes you as right or wrong — say what you think.`,
+    'spontaneous idea': `You just had a spontaneous idea and want ${other} in on it.`,
+    'wild story': `Tell ${other} a wild story, true or a bit exaggerated.`,
+    'dare': `Dare ${other} to do something.`,
+    'catching up': `Ask what's new with ${other} and share a bit of your own news.`,
+    'inside joke': `Bring up a joke only the two of you would get.`,
+    'friendly greeting': `Greet ${other} the way you would, and say one thing on your mind.`,
+    'casual greeting': `Greet ${other} the way you would, and say one thing on your mind.`,
+  };
+  if (intents[t]) return intents[t];
+  const smallTalk = ['weather', 'daily life', 'food', 'work', 'weekend plans', 'memories', 'the farm'];
+  if (smallTalk.includes(t)) return `Make small talk about ${t}, with one specific detail from your day.`;
+  return `You want to talk about ${topic} — bring it up naturally, as if it's been on your mind.`;
+}
+
 function buildTurnInstruction(
   messageCount: number,
   maxTurns: number,
@@ -279,10 +330,14 @@ function buildTurnInstruction(
         : `You're meeting ${otherName} for the first time. Size them up. Your personality decides how open you are.`;
       parts.push(approach);
     } else if (topic) {
-      parts.push(`You want to discuss ${topic} with ${otherName} — bring it up naturally, as if it's been on your mind. Use your [Memory] entries as fuel.`);
+      parts.push(`Start talking to ${otherName}. ${topicIntent(topic, otherName)}`);
     } else {
-      parts.push(`Start talking to ${otherName}. Use your [Memory] entries as conversation fuel. Be authentic to your personality and mood.`);
+      parts.push(`Start talking to ${otherName}. Be authentic to your personality and mood.`);
     }
+    // Playtest openers were mostly vague pleasantries ("we should really
+    // celebrate something soon", "we should catch up properly sometime"):
+    // nothing for the other side to answer and nothing for the chronicle.
+    parts.push('Say something concrete — a person, place or event from your [Memory] entries — not a vague "we should catch up sometime".');
   } else if (messageCount >= maxTurns - 2) {
     // Wrapping up
     parts.push(`Start wrapping up naturally. Say goodbye, make plans to meet again, or leave a lasting impression.`);

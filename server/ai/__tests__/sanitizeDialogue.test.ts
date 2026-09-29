@@ -207,3 +207,12 @@ describe('isFallbackMessage', () => {
     expect(isFallbackMessage({ text: 'Omar Haddad shrugged.' })).toBe(false);
   });
 });
+
+describe('sanitizeDialogue — leading hesitation', () => {
+  const opts = { speakerName: 'Elena Voss', listenerName: 'James O\'Brien', townNames: [] };
+  it('drops an ellipsis before a full sentence but keeps a continuation', () => {
+    expect(sanitizeDialogue('... Not today, James.', opts)).toBe('Not today, James.');
+    expect(sanitizeDialogue('…I will manage.', opts)).toBe('I will manage.');
+    expect(sanitizeDialogue('...and then he left.', opts)).toBe('...and then he left.');
+  });
+});
