@@ -519,7 +519,7 @@ describe('starting relationships and secrets through initialize', () => {
     expect(housemates.tags).toEqual(expect.arrayContaining(['grudge', 'housemate']));
 
     const coworkers = rel('Test Agent 3', 'Test Agent 4')!;
-    expect(coworkers.tags).toContain('coworker');
+    expect(coworkers.tags).toContain('coworkers');
     expect(coworkers.friendship_ab).toBeGreaterThan(10);
     expect(coworkers.friendship_ba).toBeGreaterThan(10);
     expect(coworkers.familiarity).toBeGreaterThanOrEqual(5);

@@ -45,38 +45,48 @@ export interface StartingTie {
 }
 
 /**
- * Baselines per kind. The friendship values sit on either side of thresholds
- * the engine reads:
- *   - above 10 (every kind): decisions.ts counts the pair as a social target
- *     even when they are not in the same building — the whole point;
- *   - housemates at 45 → `deriveStatus` "friends" (> 40), but below the 50 at
- *     which a death triggers grieving and the socialising "+15 friend" bonus,
- *     which stay reserved for authored and earned friendships;
- *   - coworkers and neighbours stay "acquaintances" (friendship ≤ 40,
- *     familiarity > 10), and familiarity ≥ 5 means their first chat is not
- *     escalated to an LLM "first meeting" — they already know each other.
+ * Baselines per kind. The friendship values sit on the right side of
+ * thresholds the engine reads:
+ *   - above 10 (every kind): decisions.ts:674 counts the pair as a social
+ *     target even when they are not in the same building — the whole point;
+ *   - at most 40 (every kind, warmth tilt included): `friendship > 40` is where
+ *     a pair stops being "acquaintances" and starts costing LLM calls and other
+ *     friend-only behaviour — decisions.ts:1966 and :2060 upgrade a template
+ *     chat to an LLM one, decisions.ts:1889 (money gifts), states.ts:1757,
+ *     ai/prompts.ts:193 (friend framing) — and `deriveStatus` calls it
+ *     "friends". A structural tie is not a friendship; those thresholds stay
+ *     reserved for authored and earned ones, so seeding ties adds no LLM load.
+ *     (40 itself reaches ai/templates.ts:40's `>= 40` friendly greeting, which
+ *     is template text only.) The grieving and "+15 friend" bands (> 50) are
+ *     out of reach for the same reason;
+ *   - familiarity ≥ 5 means a first chat is not escalated to an LLM "first
+ *     meeting" — they already know each other, and the housemates' 70 is what
+ *     "know each other well" means here.
  * The strongest kind wins when a pair qualifies twice (housemates who also
- * work together are housemates, tagged with both).
+ * work together are housemates, tagged with both). Tags reuse the authored
+ * vocabulary (`coworkers`, as in server/data/agents.ts).
  */
 export const STARTING_TIE_BASELINES: Record<StartingTieKind, {
   friendship: number; trust: number; familiarity: number; status: string; tag: string;
 }> = {
-  housemate: { friendship: 45, trust: 45, familiarity: 70, status: 'friends', tag: 'housemate' },
-  coworker: { friendship: 22, trust: 20, familiarity: 45, status: 'acquaintances', tag: 'coworker' },
+  housemate: { friendship: 36, trust: 40, familiarity: 70, status: 'acquaintances', tag: 'housemate' },
+  coworker: { friendship: 22, trust: 20, familiarity: 45, status: 'acquaintances', tag: 'coworkers' },
   neighbor: { friendship: 14, trust: 10, familiarity: 25, status: 'acquaintances', tag: 'neighbor' },
 };
+
+/** Ceiling for any structural tie's friendship (see STARTING_TIE_BASELINES). */
+export const STARTING_TIE_MAX_FRIENDSHIP = 40;
 
 const KIND_RANK: Record<StartingTieKind, number> = { housemate: 3, coworker: 2, neighbor: 1 };
 
 /**
  * Warmth 50 is neutral; each 10 points either way moves that agent's feeling by
- * 2, so a warm agent (75) likes their housemate at 50 and a cold one (30) at 41.
- * Kept between the "social target" floor of 11 and 50, so a structural tie never
- * reaches the grieving / "+15 friend" band on its own.
+ * 2, so a warm agent (70) likes their housemate at 40 and a cold one (30) at 32.
+ * Kept between the "social target" floor of 11 and STARTING_TIE_MAX_FRIENDSHIP.
  */
 function tilt(base: number, warmth: number | undefined): number {
   const w = typeof warmth === 'number' ? warmth : 50;
-  return Math.min(50, Math.max(11, Math.round(base + (w - 50) / 5)));
+  return Math.min(STARTING_TIE_MAX_FRIENDSHIP, Math.max(11, Math.round(base + (w - 50) / 5)));
 }
 
 /**

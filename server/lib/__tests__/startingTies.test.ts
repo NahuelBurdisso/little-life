@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildStartingTies, foldStartingTies, STARTING_TIE_BASELINES } from '../startingTies';
+import { buildStartingTies, foldStartingTies, STARTING_TIE_BASELINES, STARTING_TIE_MAX_FRIENDSHIP } from '../startingTies';
 import { getRelationshipSeeds } from '../../data/relationships';
 import { getDefaultAgents, getDefaultRelationships } from '../../../src/components/setup/defaults';
 import { AGENT_SEEDS } from '../../data/agents';
@@ -17,8 +17,8 @@ describe('buildStartingTies', () => {
     ]);
     const find = (a: string, b: string) => ties.find((t) => t.a === a && t.b === b);
 
-    expect(find('Ann', 'Bob')).toMatchObject({ kind: 'housemate', status: 'friends', tags: ['housemate'] });
-    expect(find('Ann', 'Cat')).toMatchObject({ kind: 'coworker', status: 'acquaintances', tags: ['coworker'] });
+    expect(find('Ann', 'Bob')).toMatchObject({ kind: 'housemate', status: 'acquaintances', tags: ['housemate'] });
+    expect(find('Ann', 'Cat')).toMatchObject({ kind: 'coworker', status: 'acquaintances', tags: ['coworkers'] });
     // Unemployed, lives alone, no map → no ties at all.
     expect(ties.some((t) => t.a === 'Dan' || t.b === 'Dan')).toBe(false);
     expect(ties).toHaveLength(2);
@@ -27,13 +27,14 @@ describe('buildStartingTies', () => {
   it('keeps the strongest kind and every tag when a pair qualifies twice', () => {
     const [tie] = buildStartingTies([agent('Ann', 'Home 1', 'Farm'), agent('Bob', 'Home 1', 'Farm')]);
     expect(tie.kind).toBe('housemate');
-    expect(tie.tags).toEqual(['housemate', 'coworker']);
+    expect(tie.tags).toEqual(['housemate', 'coworkers']);
     expect(tie.familiarity).toBe(STARTING_TIE_BASELINES.housemate.familiarity);
   });
 
-  it('every tie clears the social-target floor (friendship > 10) and stays out of the grief band', () => {
+  it('every tie clears the social-target floor (friendship > 10) and stays at or under 40', () => {
     // decisions.ts only scores a non co-located agent as a social target above
-    // friendship 10; grieving and the "+15 friend" bonus start above 50.
+    // friendship 10; above 40 a pair's chats are upgraded to LLM ones
+    // (decisions.ts:1966/:2060) — structural ties must not add LLM load.
     const ties = buildStartingTies(
       [agent('Warm', 'Home 1', 'Farm', 100), agent('Cold', 'Home 1', 'Farm', 0), agent('Mid', 'Home 2', 'Farm', 50)],
       new Map([['Home 1', { x: 0, y: 0 }], ['Home 2', { x: 5, y: 0 }]]),
@@ -41,7 +42,8 @@ describe('buildStartingTies', () => {
     for (const t of ties) {
       for (const f of [t.friendshipAB, t.friendshipBA]) {
         expect(f).toBeGreaterThan(10);
-        expect(f).toBeLessThanOrEqual(50);
+        expect(f).toBeLessThanOrEqual(STARTING_TIE_MAX_FRIENDSHIP);
+        expect(f).toBeLessThanOrEqual(40);
       }
     }
     // Warmth tilts each direction: the warm housemate likes the cold one more than vice versa.
@@ -137,7 +139,7 @@ describe('foldStartingTies (db:seed path)', () => {
       familiarity: 0, tags: [], status: 'strangers',
     }));
     expect(applied).toBe(1);
-    expect(rows).toMatchObject([{ agent_a: 1, agent_b: 2, status: 'friends', tags: ['housemate'] }]);
+    expect(rows).toMatchObject([{ agent_a: 1, agent_b: 2, status: 'acquaintances', tags: ['housemate'] }]);
   });
 });
 
