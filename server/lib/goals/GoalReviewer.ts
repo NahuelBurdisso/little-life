@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { agents, aspirations, economy, goals, memories, relationships } from '../../db/schema';
+import { agents, aspirations, economy, goals, memories, relationships, relationshipEvents, worldState } from '../../db/schema';
 import { callOllamaChat } from '../../ai/ollama';
 import { getEffectivePersonality } from '../states';
 import { logActivity } from '../activityLogger';
@@ -11,7 +11,8 @@ import type { GoalReviewAction } from './types';
 import { MAX_LLM_GOALS } from './types';
 import { CONFIG } from '../constants';
 import { GOAL_REGISTRY } from '../../data/goalRegistry';
-import { and, desc, eq, or } from 'drizzle-orm';
+import { and, desc, eq, gt, or } from 'drizzle-orm';
+import { compareOp, getRelationship, getRelField } from './relationshipConditions';
 
 const TICKS_PER_DAY = 1440;
 
@@ -22,14 +23,25 @@ const TICKS_PER_DAY = 1440;
  */
 const RECREATE_COOLDOWN_TICKS = 3 * TICKS_PER_DAY;
 
-function compareOp(actual: number, op: string, value: number): boolean {
-  switch (op) {
-    case '>':  return actual > value;
-    case '<':  return actual < value;
-    case '>=': return actual >= value;
-    case '<=': return actual <= value;
-    default:   return false;
-  }
+/**
+ * Did something turn the agent against the target since `sinceTick`? A negative
+ * relationship event (their own friendship delta < 0, or a sour exchange).
+ *
+ * CLOCK: relationship events carry WALL-CLOCK ms, goals carry TICKS. The goal's
+ * completion is placed on the wall clock by the tick distance at the current
+ * speed. Pauses make that estimate later than the real completion, which can
+ * only miss a grievance (keep a goal blocked), never invent one.
+ */
+function negativeEventSince(agentId: number, targetId: number, sinceTick: number, currentTick: number): boolean {
+  const world = db.select({ tick_speed: worldState.tick_speed }).from(worldState).get();
+  const msPerTick = 1000 / Math.max(world?.tick_speed || 1, 0.1);
+  const sinceMs = Date.now() - (currentTick - sinceTick) * msPerTick;
+  const [a, b] = agentId < targetId ? [agentId, targetId] : [targetId, agentId];
+  const isA = a === agentId;
+  return db.select().from(relationshipEvents)
+    .where(and(eq(relationshipEvents.agent_a, a), eq(relationshipEvents.agent_b, b), gt(relationshipEvents.timestamp, sinceMs)))
+    .all()
+    .some((e) => (isA ? e.friendship_delta_ab : e.friendship_delta_ba) < 0 || e.sentiment < -0.3);
 }
 
 /**
@@ -42,8 +54,12 @@ function compareOp(actual: number, op: string, value: number): boolean {
  * Skips the goal when:
  *  - an `auto` relationship rule in its registry entry already holds (it would
  *    complete/fail/abandon on the first goals tick), or
- *  - the agent already has, or recently finished, the same type for the same
- *    target (`custom` goals are exempt: their type says nothing about content).
+ *  - the agent already has the same type for the same target active, or
+ *    COMPLETED one within RECREATE_COOLDOWN_TICKS. Abandoned/failed goals don't
+ *    block: giving up isn't having done it. A hostile goal (revenge) is allowed
+ *    again inside the window if the target has wronged them since.
+ *  `custom` goals are exempt from the recency rule: their type says nothing
+ *  about their content.
  */
 export function isRedundantGoal(
   agentId: number,
@@ -55,23 +71,13 @@ export function isRedundantGoal(
 
   const def = GOAL_REGISTRY[type];
   if (def) {
-    const [a, b] = agentId < targetId ? [agentId, targetId] : [targetId, agentId];
-    const rel = db.select().from(relationships)
-      .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
-      .get();
+    const rel = getRelationship(agentId, targetId);
     if (rel) {
       const isA = rel.agent_a === agentId;
       for (const rule of def.abandonment) {
         if (!rule.auto || !rule.condition.startsWith('relationship.')) continue;
         const [lhs, op, raw] = rule.condition.split(' ');
-        const field = lhs.split('.')[1];
-        const actual =
-          field === 'friendship' ? (isA ? rel.friendship_ab : rel.friendship_ba)
-          : field === 'romance' ? (isA ? rel.romance_ab : rel.romance_ba)
-          : field === 'trust' ? (isA ? rel.trust_ab : rel.trust_ba)
-          : field === 'familiarity' ? rel.familiarity
-          : null;
-        if (actual != null && compareOp(actual, op, parseFloat(raw))) return true;
+        if (compareOp(getRelField(rel, lhs.split('.')[1], isA), op, parseFloat(raw))) return true;
       }
     }
   }
@@ -80,10 +86,15 @@ export function isRedundantGoal(
   const sameGoals = db.select().from(goals)
     .where(and(eq(goals.agent_id, agentId), eq(goals.type, type), eq(goals.target_id, targetId)))
     .all();
-  return sameGoals.some((g) =>
-    g.status === 'active' ||
-    (g.completed_at != null && currentTick - g.completed_at < RECREATE_COOLDOWN_TICKS),
+  if (sameGoals.some((g) => g.status === 'active')) return true;
+
+  const lastCompleted = Math.max(
+    -Infinity,
+    ...sameGoals.filter((g) => g.status === 'completed' && g.completed_at != null).map((g) => g.completed_at!),
   );
+  if (currentTick - lastCompleted >= RECREATE_COOLDOWN_TICKS) return false;
+  if (def?.category === 'hostile' && negativeEventSince(agentId, targetId, lastCompleted, currentTick)) return false;
+  return true;
 }
 
 // ─── GoalReviewer ─────────────────────────────────────────────────────────────

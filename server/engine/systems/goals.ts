@@ -17,6 +17,7 @@ import { logActivity } from '../../lib/activityLogger';
 import type { GoalTriggerDef } from '../../lib/interactionConstants';
 import { simEvents } from '../../lib/simEvents';
 import { goalReviewer, pivotEvaluator } from '../../lib/goals/instance';
+import { compareOp, getRelationship, getRelField } from '../../lib/goals/relationshipConditions';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,17 +44,6 @@ function rollDailyChance(chance: number): boolean {
   return Math.random() < 1 - Math.pow(1 - chance, 1 / TICKS_PER_DAY);
 }
 
-function compareOp(actual: number, op: string, value: number): boolean {
-  switch (op) {
-    case '>':  return actual > value;
-    case '<':  return actual < value;
-    case '>=': return actual >= value;
-    case '<=': return actual <= value;
-    case '==': return actual === value;
-    default:   return false;
-  }
-}
-
 function checkPersonalityGate(personality: any, gate: Record<string, string>): boolean {
   for (const [trait, condition] of Object.entries(gate)) {
     const parts = condition.split(' ');
@@ -63,24 +53,6 @@ function checkPersonalityGate(personality: any, gate: Record<string, string>): b
     if (!compareOp(actual, op, value)) return false;
   }
   return true;
-}
-
-function getRelationship(agentA: number, agentB: number) {
-  const a = Math.min(agentA, agentB);
-  const b = Math.max(agentA, agentB);
-  return db.select().from(relationships)
-    .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b)))
-    .get();
-}
-
-function getRelField(rel: any, field: string, isA: boolean): number {
-  switch (field) {
-    case 'friendship': return isA ? rel.friendship_ab : rel.friendship_ba;
-    case 'romance':    return isA ? rel.romance_ab    : rel.romance_ba;
-    case 'trust':      return isA ? rel.trust_ab      : rel.trust_ba;
-    case 'familiarity': return rel.familiarity;
-    default:           return 0;
-  }
 }
 
 // ─── checkTriggerCondition ────────────────────────────────────────────────────

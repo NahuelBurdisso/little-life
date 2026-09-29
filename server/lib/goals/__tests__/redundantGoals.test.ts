@@ -4,7 +4,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 vi.mock('../../../ai/ollama', () => ({ callOllamaChat: vi.fn() }));
 
 import { db } from '../../../db';
-import { agents, aspirations, goals, locations, relationships } from '../../../db/schema';
+import { agents, aspirations, goals, locations, relationshipEvents, relationships } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
 import { setEffectivePersonality } from '../../states';
 import { GoalReviewer, isRedundantGoal } from '../GoalReviewer';
@@ -16,7 +16,7 @@ import { GoalReviewer, isRedundantGoal } from '../GoalReviewer';
  */
 
 const TICK = 5000;
-const NAMES = ['Zephyrine Quillfeather', 'Bartholomew Oakenshaw'];
+const NAMES = ['Zephyrine Quillfeather', 'Bartholomew Oakenshaw', 'Philippa Thistlewood'];
 
 function insertAgent(name: string, home: number): number {
   return db.insert(agents).values({
@@ -87,6 +87,7 @@ function befriendGoals(agentId: number, targetId: number) {
 describe('GoalReviewer — goals that are already settled', () => {
   let me = 0;
   let friend = 0;
+  let other = 0;
   let homeId = 0;
 
   beforeAll(() => {
@@ -102,6 +103,7 @@ describe('GoalReviewer — goals that are already settled', () => {
     }).returning({ id: locations.id }).get().id;
     me = insertAgent(NAMES[0], homeId);
     friend = insertAgent(NAMES[1], homeId);
+    other = insertAgent(NAMES[2], homeId);
     setEffectivePersonality(me, { warmth: 70 } as any);
     // An active ambition, so review() doesn't spend the mocked LLM reply on one.
     db.insert(aspirations).values({
@@ -116,7 +118,8 @@ describe('GoalReviewer — goals that are already settled', () => {
   });
 
   afterAll(() => {
-    const ids = [me, friend];
+    const ids = [me, friend, other];
+    db.delete(relationshipEvents).where(inArray(relationshipEvents.agent_a, ids)).run();
     const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
     db.run(sql`DELETE FROM activity_log WHERE initiator_id IN (${idList})`);
     db.delete(goals).where(inArray(goals.agent_id, ids)).run();
@@ -171,5 +174,59 @@ describe('GoalReviewer — goals that are already settled', () => {
     expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(true);
     setFriendship(me, friend, 0);
     expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(false);
+  });
+
+  describe('recency rule', () => {
+    function pastGoal(type: string, target: number, status: string, completedAt: number): void {
+      db.insert(goals).values({
+        agent_id: me, type, target_id: target, motivation: 'test', priority: 0.5,
+        progress: status === 'completed' ? 1 : 0, status, created_at: completedAt - 10,
+        completed_at: completedAt, source: 'llm',
+      }).run();
+    }
+
+    beforeEach(() => {
+      setFriendship(me, friend, 20);
+      setFriendship(me, other, 20);
+      db.delete(relationshipEvents).where(inArray(relationshipEvents.agent_a, [me, friend, other])).run();
+    });
+
+    it('only blocks the same target', () => {
+      pastGoal('befriend', friend, 'completed', TICK - 100);
+      expect(isRedundantGoal(me, 'befriend', friend, TICK)).toBe(true);
+      expect(isRedundantGoal(me, 'befriend', other, TICK)).toBe(false);
+    });
+
+    it('lets the cooldown expire', () => {
+      pastGoal('befriend', friend, 'completed', TICK - 5 * 1440);
+      expect(isRedundantGoal(me, 'befriend', friend, TICK)).toBe(false);
+    });
+
+    it('is not triggered by an abandoned or failed goal', () => {
+      pastGoal('befriend', friend, 'abandoned', TICK - 100);
+      pastGoal('befriend', friend, 'failed', TICK - 50);
+      expect(isRedundantGoal(me, 'befriend', friend, TICK)).toBe(false);
+    });
+
+    it('never applies to custom goals', () => {
+      pastGoal('custom', friend, 'completed', TICK - 100);
+      expect(isRedundantGoal(me, 'custom', friend, TICK)).toBe(false);
+    });
+
+    it('re-opens a hostile goal after a fresh grievance', () => {
+      setFriendship(me, friend, 0);
+      pastGoal('revenge', friend, 'completed', TICK - 100);
+      expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(true);
+
+      const [lo, hi] = me < friend ? [me, friend] : [friend, me];
+      const meIsA = lo === me;
+      db.insert(relationshipEvents).values({
+        agent_a: lo, agent_b: hi, event_type: 'fight', description: 'test',
+        friendship_delta_ab: meIsA ? -8 : 0, friendship_delta_ba: meIsA ? 0 : -8,
+        romance_delta_ab: 0, romance_delta_ba: 0, trust_delta_ab: 0, trust_delta_ba: 0,
+        sentiment: -0.1, processed: true, timestamp: Date.now(),
+      }).run();
+      expect(isRedundantGoal(me, 'revenge', friend, TICK)).toBe(false);
+    });
   });
 });
