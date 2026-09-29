@@ -123,6 +123,7 @@ export async function generateResponse(
     try {
       const result = await callOllamaChat({
         model: CONFIG.AI.CHAT_MODEL,
+        purpose: 'conversation',
         system,
         messages: promptMessages,
         priority: 'critical',
@@ -202,6 +203,7 @@ export async function generateResponse(
       try {
         const nudge = await callOllamaChat({
           model: CONFIG.AI.CHAT_MODEL,
+          purpose: 'conversation.retry',
           system,
           messages: [
             ...promptMessages,

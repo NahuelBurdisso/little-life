@@ -243,6 +243,7 @@ export class GoalReviewer {
       // Single LLM call
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
+        purpose: 'goal.review',
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
@@ -462,6 +463,7 @@ export class GoalReviewer {
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
+        purpose: 'goal.ambition',
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',

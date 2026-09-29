@@ -103,6 +103,7 @@ export class PivotEvaluator {
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL, system: prompt.system,
+        purpose: 'goal.pivot',
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'low',
         options: { temperature: 0.7, num_predict: 200 },

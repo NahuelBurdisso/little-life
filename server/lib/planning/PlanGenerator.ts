@@ -214,6 +214,7 @@ export class PlanGenerator {
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
+        purpose: 'plan.daily',
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'normal',
@@ -618,6 +619,7 @@ export class PlanGenerator {
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
+        purpose: 'plan.revise',
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'normal',

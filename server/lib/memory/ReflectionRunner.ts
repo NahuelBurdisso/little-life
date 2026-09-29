@@ -119,6 +119,7 @@ export class ReflectionRunner {
     // 4. Call LLM for questions
     const questionResponse = await callOllamaChat({
       model: CONFIG.AI.CHAT_MODEL,
+      purpose: 'reflection.questions',
       system: qSystem,
       messages: [{ role: 'user', content: qUser }],
       priority: 'normal',
@@ -175,6 +176,7 @@ export class ReflectionRunner {
     // 11. Call LLM for synthesis
     const synthesisResponse = await callOllamaChat({
       model: CONFIG.AI.CHAT_MODEL,
+      purpose: 'reflection.insights',
       system: sSystem,
       messages: [{ role: 'user', content: sUser }],
       priority: 'normal',

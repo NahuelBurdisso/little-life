@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { callOllamaChat } from '../ollama';
 import { LLMEmptyReplyError, LLMAbortedError } from '../llmErrors';
 import { getLLMStats } from '../llmSemaphore';
+import { getLLMMetrics, resetLLMMetrics } from '../llmMetrics';
 import { CONFIG } from '../../lib/constants';
 
 // Pins how each backend reports a reply the token cap cut off — dialogue trims
@@ -105,5 +106,60 @@ describe('callOllamaChat — caller cancellation', () => {
     controller.abort();
     await expect(pending).rejects.toBeInstanceOf(LLMAbortedError);
     expect(getLLMStats().active).toBe(0);
+  });
+});
+
+describe('callOllamaChat — request shape and metrics', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    ai.BACKEND = originalBackend;
+    resetLLMMetrics();
+  });
+
+  it('pins num_ctx and keep_alive, and passes format through to Ollama', async () => {
+    ai.BACKEND = 'ollama';
+    const fetchSpy = mockFetch({ message: { content: '{"a":1}' }, done_reason: 'stop' });
+    await callOllamaChat({ ...request, format: 'json', options: { temperature: 0.2 } });
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.options).toEqual({ num_ctx: CONFIG.AI.NUM_CTX, temperature: 0.2 });
+    expect(body.keep_alive).toBe(CONFIG.AI.KEEP_ALIVE);
+    expect(body.format).toBe('json');
+    expect(body.think).toBe(false);
+  });
+
+  it('maps a JSON schema to response_format on the OpenAI path', async () => {
+    ai.BACKEND = 'openai';
+    const fetchSpy = mockFetch({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] });
+    const schema = { type: 'object', properties: { a: { type: 'number' } } };
+    await callOllamaChat({ ...request, format: schema });
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.response_format).toEqual({ type: 'json_schema', json_schema: { name: 'reply', schema } });
+  });
+
+  it('books tokens and durations per purpose, errors included', async () => {
+    ai.BACKEND = 'ollama';
+    mockFetch({
+      message: { content: 'Hi.' }, done_reason: 'stop',
+      prompt_eval_count: 300, eval_count: 20, eval_duration: 400e6, prompt_eval_duration: 50e6, load_duration: 1e6,
+    });
+    await callOllamaChat({ ...request, purpose: 'conversation' });
+    mockFetch({ message: { content: '' } });
+    await expect(callOllamaChat({ ...request, purpose: 'conversation' })).rejects.toBeInstanceOf(LLMEmptyReplyError);
+
+    const [conv] = getLLMMetrics();
+    expect(conv).toMatchObject({ purpose: 'conversation', calls: 2, errors: 1, reloads: 0, tokPerSec: 50 });
+  });
+
+  it('does not book a call its owner cancelled', async () => {
+    ai.BACKEND = 'ollama';
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      (init?.signal as AbortSignal).addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+      controller.abort();
+    }));
+    await expect(callOllamaChat({ ...request, purpose: 'snap', signal: controller.signal })).rejects.toBeInstanceOf(LLMAbortedError);
+    expect(getLLMMetrics()).toEqual([]);
   });
 });

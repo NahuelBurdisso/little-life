@@ -159,6 +159,16 @@ export const CONFIG = {
     REFLECTION_IMPORTANCE: 7,
     RETRY_ATTEMPTS: 2,
     TIMEOUT_MS: 60000,
+    // Context window for every chat call (see ollama.ts). The largest prompt
+    // (reflection questions over 50 memories) is ~2k tokens plus 256 out; 8k
+    // leaves room without sizing each parallel slot's KV cache for 32k. Ollama
+    // truncates an over-long prompt from the FRONT — the system prompt — so
+    // err high rather than low.
+    NUM_CTX: Number(process.env.LLM_NUM_CTX ?? 8192),
+    // How long Ollama keeps the model loaded after the last call. The default
+    // 5 min unloads it whenever the game sits paused a while, and the next
+    // conversation turn then pays a multi-second reload.
+    KEEP_ALIVE: process.env.LLM_KEEP_ALIVE ?? '30m',
   },
 
   // Decision Engine

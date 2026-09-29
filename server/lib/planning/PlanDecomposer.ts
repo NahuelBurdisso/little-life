@@ -130,6 +130,7 @@ export class PlanDecomposer {
     try {
       const response = await callOllamaChat({
         model: CONFIG.AI.LIGHT_MODEL,
+        purpose: 'plan.decompose',
         system: prompt.system,
         messages: [{ role: 'user', content: prompt.user }],
         priority: 'normal',

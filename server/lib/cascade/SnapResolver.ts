@@ -79,6 +79,7 @@ export class SnapResolver {
 
       const response = await callOllamaChat({
         model: CONFIG.AI.CHAT_MODEL,
+        purpose: 'snap',
         system: 'You are roleplaying as a town resident who has reached their emotional breaking point. Respond with exactly one word from the provided list.',
         messages: [{ role: 'user', content: prompt }],
         priority: 'critical',

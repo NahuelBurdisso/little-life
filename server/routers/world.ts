@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { emitter } from '../engine/emitter';
 import { getLLMStats } from '../ai/llmSemaphore';
+import { getLLMMetrics } from '../ai/llmMetrics';
 import { startWorldEvent } from '../engine/systems/events';
 import { PLAYER_EVENT_TYPES } from '../data/worldEventCatalog';
 
@@ -15,6 +16,11 @@ export const worldRouter = router({
 
   getLLMStats: publicProcedure.query(() => {
     return getLLMStats();
+  }),
+
+  /** Per-purpose latency / token numbers since server start (llmMetrics.ts). */
+  getLLMMetrics: publicProcedure.query(() => {
+    return getLLMMetrics();
   }),
 
   getActiveEvents: publicProcedure.query(() => {
