@@ -78,7 +78,8 @@ export interface TensionState {
     tick: number;
     agentInvolved?: string;
   }>;
-  lastSnapTick: number;
+  /** GAME MINUTE of the last snap (the cooldown is in game minutes). */
+  lastSnapMinute: number;
   snapCount: number;
 }
 

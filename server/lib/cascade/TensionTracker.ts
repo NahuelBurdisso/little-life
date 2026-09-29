@@ -3,6 +3,8 @@ import type { PersonalityProfile } from '../personality';
 import type { TensionState } from './cascadeTypes';
 
 const MAX_SOURCES = 5;
+/** Game minutes an agent must wait after snapping before they can snap again. */
+const SNAP_COOLDOWN_MINUTES = 200;
 
 export class TensionTracker {
   private states: Map<number, TensionState> = new Map();
@@ -50,7 +52,12 @@ export class TensionTracker {
 
   // ─── Tick update ─────────────────────────────────────────────────────────────
 
-  tickUpdate(agentId: number, activeStates: string[], _currentTick: number): void {
+  /**
+   * Apply `elapsedMinutes` game minutes of passive drift (the tick's
+   * tick_speed). The rates below are per game minute; applied once per tick
+   * they drained and built tension four times slower per game hour at 4x.
+   */
+  tickUpdate(agentId: number, activeStates: string[], elapsedMinutes: number): void {
     const state = this.getOrCreate(agentId);
 
     let delta = 0;
@@ -67,22 +74,26 @@ export class TensionTracker {
     if (activeStates.includes('euphoric')) delta -= 0.8;
     if (activeStates.includes('confident')) delta -= 0.5;
 
-    state.value = Math.max(0, state.value + delta);
+    state.value = Math.max(0, state.value + delta * elapsedMinutes);
   }
 
   // ─── Snap logic ──────────────────────────────────────────────────────────────
 
-  shouldSnap(agentId: number, personality: PersonalityProfile, currentTick: number): boolean {
+  /**
+   * CLOCK: GAME MINUTES. The cooldown was 200 TICKS, i.e. 800 game minutes
+   * between snaps at 4x; it is now 200 game minutes at every speed.
+   */
+  shouldSnap(agentId: number, personality: PersonalityProfile, nowMinutes: number): boolean {
     const state = this.states.get(agentId);
     if (!state) return false;
     const threshold = this.getSnapThreshold(personality);
-    const cooldownMet = (currentTick - state.lastSnapTick) >= 200;
+    const cooldownMet = (nowMinutes - state.lastSnapMinute) >= SNAP_COOLDOWN_MINUTES;
     return state.value >= threshold && cooldownMet;
   }
 
-  recordSnap(agentId: number, tick: number): void {
+  recordSnap(agentId: number, nowMinutes: number): void {
     const state = this.getOrCreate(agentId);
-    state.lastSnapTick = tick;
+    state.lastSnapMinute = nowMinutes;
     state.snapCount += 1;
     state.value = 20;
     // The grievances were just acted on. Keeping them would feed the same stale
@@ -119,7 +130,7 @@ export class TensionTracker {
       this.states.set(agentId, {
         value: 0,
         sources: [],
-        lastSnapTick: -200, // allows snapping on tick 0
+        lastSnapMinute: Number.NEGATIVE_INFINITY, // never snapped: no cooldown
         snapCount: 0,
       });
     }

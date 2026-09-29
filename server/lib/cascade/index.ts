@@ -8,6 +8,7 @@ import { db } from '../../db';
 import { agents, agentStates, goals, worldState } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import type { PersonalityProfile } from '../personality';
+import { gameMinutes } from '../gameClock';
 
 // ─── Singleton instances ────────────────────────────────────────────────────
 
@@ -99,7 +100,13 @@ export function initCascade(): void {
 export function cascadeTick(): void {
   if (!rippleEngine || !tensionTracker) return;
 
-  const currentTick = getCurrentTick();
+  // Tension drift and the snap cooldown run on game minutes (TensionTracker).
+  const world = db.select({ time: worldState.time, tick_speed: worldState.tick_speed })
+    .from(worldState).limit(1).get();
+  const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
+  const elapsedMinutes = world?.tick_speed ?? 1;
+  // Still the tick for the snap's cascade metadata (chain ids, `currentTick`).
+  const currentTick = world?.time?.totalTicks ?? 0;
 
   // 1. Reset per-tick counter
   rippleEngine.resetTickCounter();
@@ -138,16 +145,16 @@ export function cascadeTick(): void {
     const activeStates = stateRows.map(s => s.type);
 
     // Update tension
-    tensionTracker.tickUpdate(agent.id, activeStates, currentTick);
+    tensionTracker.tickUpdate(agent.id, activeStates, elapsedMinutes);
 
     // 4. Check snap threshold
     const personality = agent.personality as PersonalityProfile | null;
-    if (personality && snapResolver && tensionTracker.shouldSnap(agent.id, personality, currentTick)) {
+    if (personality && snapResolver && tensionTracker.shouldSnap(agent.id, personality, nowMinutes)) {
       // Snapshot the grievances before recording the snap — recordSnap clears them.
       const tensionSources = tensionTracker.getSources(agent.id);
 
       // Record the snap
-      tensionTracker.recordSnap(agent.id, currentTick);
+      tensionTracker.recordSnap(agent.id, nowMinutes);
 
       // Get context for the snap prompt
       const agentRow = db.select({ name: agents.name })

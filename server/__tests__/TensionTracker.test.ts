@@ -129,6 +129,13 @@ describe('TensionTracker', () => {
       tracker.tickUpdate(1, [], 1);
       expect(tracker.getTension(1)).toBe(0);
     });
+
+    it('scales drift by the game minutes a tick covers', () => {
+      // One 4x tick = four 1x ticks' worth of drift.
+      tracker.addTension(1, 10, { event: 'test', description: 'test', tick: 0 });
+      tracker.tickUpdate(1, ['stressed'], 4);
+      expect(tracker.getTension(1)).toBeCloseTo(10.8);
+    });
   });
 
   // ─── Snap detection ──────────────────────────────────────────────────────────
@@ -148,16 +155,23 @@ describe('TensionTracker', () => {
       expect(tracker.shouldSnap(1, personality, 300)).toBe(false);
     });
 
-    it('respects 200-tick cooldown after snap', () => {
+    it('respects a 200-game-minute cooldown after snap', () => {
       const personality = makePersonality({ neuroticism: 100, impulsiveness: 100, morality: 0, warmth: 0 });
       tracker.addTension(1, 60, { event: 'rage', description: 'Snapped once', tick: 0 });
-      tracker.recordSnap(1, 100); // snap at tick 100, tension reset to 20
+      tracker.recordSnap(1, 100); // snap at game minute 100, tension reset to 20
       // Add more tension to exceed threshold again
       tracker.addTension(1, 60, { event: 'rage2', description: 'Rage again', tick: 200 });
-      // At tick 250 — only 150 ticks after last snap → still in cooldown
+      // Minute 250 — only 150 game minutes after the snap → still in cooldown
       expect(tracker.shouldSnap(1, personality, 250)).toBe(false);
-      // At tick 300 — 200 ticks after snap → cooldown lifted
+      // Minute 300 — 200 game minutes after the snap → cooldown lifted. Stamped
+      // in ticks, this took 800 game minutes at 4x.
       expect(tracker.shouldSnap(1, personality, 300)).toBe(true);
+    });
+
+    it('lets an agent that never snapped snap at any game minute', () => {
+      const personality = makePersonality({ neuroticism: 100, impulsiveness: 100, morality: 0, warmth: 0 });
+      tracker.addTension(1, 60, { event: 'rage', description: 'First time', tick: 0 });
+      expect(tracker.shouldSnap(1, personality, 0)).toBe(true);
     });
 
     it('resets tension to 20 after snap', () => {
