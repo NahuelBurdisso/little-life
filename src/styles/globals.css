@@ -18,6 +18,15 @@
   /* Between text-secondary and text-disabled: timestamps, captions and hints that
      must stay legible on bg-panel (text-disabled is only ~2:1 there). */
   --ui-text-muted: #6a6250;
+  /* Health banner (components/ui/HealthBanner.tsx): dark, warm-tinted strips whose
+     border carries the tone, so they read as part of the panel chrome rather than
+     a browser-style alert. bad = connection / LLM down, warn = degraded, note = FYI. */
+  --ui-alert-bad-bg: #2a1612;
+  --ui-alert-bad-border: #b8503a;
+  --ui-alert-warn-bg: #2a2010;
+  --ui-alert-warn-border: #d19a2a;
+  --ui-alert-note-bg: #1d2022;
+  --ui-alert-note-border: #5a8fb0;
 }
 
 /* The warm palette as Tailwind colours (bg-ui-panel, border-ui-line, text-ui-dim,
