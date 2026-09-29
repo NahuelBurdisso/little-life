@@ -27,7 +27,7 @@ export function DramaAlerts({ autoFollow, onFocusAgent }: DramaAlertsProps) {
   if (alerts.length === 0) return null;
 
   return (
-    <div className="fixed top-14 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-1 pointer-events-none">
+    <div className="fixed top-[104px] left-1/2 -translate-x-1/2 z-40 flex flex-col gap-1 pointer-events-none">
       {alerts.map(alert => {
         const message = renderMessage(alert);
         const subjectId = alert.agent_ids?.[0];
