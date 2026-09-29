@@ -93,10 +93,13 @@ const NO_FOOD_HUNGER_MODIFIER = 0.8;
  * rates below. Those rates were tuned for a town where eating was free and the
  * home/shop services topped everyone up all day; at 1x a one-hour home meal
  * came to ~29 hunger against ~106/day of decay, i.e. four meals a day, four
- * units of food per person — more than the farm grows (soak, G2). At 2x a
- * proper meal is ~50: two meals and a snack a day.
+ * units of food per person — more than the farm grows (soak, G2). At 3x a
+ * one-hour meal is ~55-70 (home / shop): with breakfast, lunch and dinner on
+ * the schedule the soaks settle around hunger 55-65; at 2x they sat near 35-50
+ * because the town manages only ~1.5 meals a person a day (sleep, walking and
+ * the evening out take the rest of it).
  */
-const MEAL_HUNGER_SCALE = 2;
+const MEAL_HUNGER_SCALE = 3;
 
 /**
  * Being out somewhere as a patron — hanging about the tavern, sitting down to
@@ -362,8 +365,13 @@ export function needsTick(): void {
         }
       }
 
-      // Only amplify decay (positive values) with stress — never amplify restoration
-      const finalDecay = modifiedDecay > 0 ? modifiedDecay * stressMultiplier : modifiedDecay;
+      // Only amplify decay (positive values) with stress — never amplify restoration.
+      // Hunger is exempt: hunger feeds stress (stress is 100 minus a blend of the
+      // lowest and average need), so letting stress speed hunger up closed a
+      // loop — hungry → stressed → hungrier — that a town paying for its food
+      // could not climb out of between meals.
+      const amplified = modifiedDecay > 0 && key !== 'hunger';
+      const finalDecay = amplified ? modifiedDecay * stressMultiplier : modifiedDecay;
       updatedNeeds[key] = agentNeeds[key] - finalDecay;
     }
 

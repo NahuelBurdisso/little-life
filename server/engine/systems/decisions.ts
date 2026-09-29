@@ -281,6 +281,8 @@ function withMeal(
 
 /** A shopping trip restocks food only while the agent holds fewer than this. */
 const PANTRY_TARGET = 2;
+/** Free-time score of a grocery run before hunger is added (a stroll on the square is 35+). */
+const GROCERY_BASE_SCORE = 40;
 
 /**
  * What a shopping trip to `shop` should buy, from needs: the two cheapest foods
@@ -506,7 +508,13 @@ function checkSchedule(
 
   // Morning routine: personality-driven activities between wake and work
   if (hour >= effectiveWakeTime && agent.workplace && hour < sched.workStart) {
-    // Morning window: agent is awake but work hasn't started yet
+    // Morning window: agent is awake but work hasn't started yet.
+    // Breakfast first when the night left them hungry: a worker's next meal is
+    // lunch, and the jog/coffee/contemplate branches below used to take the
+    // wake hour, so most of the town started its shift on an empty stomach.
+    if (hunger !== undefined && hunger < LUNCH_BELOW_HUNGER) {
+      return { action: 'eating', score: 3500, targetLocationId: agent.home };
+    }
     if (personality) {
       // Athletic / impulsive agents: morning jog
       if (personality.impulsiveness > 55 && hour === effectiveWakeTime) {
@@ -543,6 +551,15 @@ function checkSchedule(
     return { action: 'eating', score: 3000, targetLocationId: agent.home };
   }
 
+  // Dinner: the evening meal the schedule never had. Soaks put the town at 1.3
+  // meals a person a day once meals cost food — breakfast and lunch at best,
+  // then an evening out that a hunger of 40 rarely beat — against ~106 hunger
+  // a day of decay. From the end of the shift (18:00 without one) until bed.
+  const dinnerFrom = agent.workplace ? sched.workEnd : DINNER_HOUR;
+  if (hour >= dinnerFrom && hour >= DINNER_HOUR - 1 && hunger !== undefined && hunger < DINNER_BELOW_HUNGER) {
+    return { action: 'eating', score: 3000, targetLocationId: agent.home };
+  }
+
   // Work time
   if (agent.workplace && hour >= sched.workStart && hour < sched.workEnd) {
     workSkipCount.set(agent.id, 0); // agent actually went to work — reset counter
@@ -551,6 +568,17 @@ function checkSchedule(
 
   return null;
 }
+
+/** Added to the free-time eating score below the agent's "low" hunger threshold. */
+const HUNGRY_EAT_BONUS = 60;
+
+/** Too tired for a meal before bed below this energy: sleep first. */
+const SUPPER_MIN_ENERGY = 5;
+
+/** Dinner starts no earlier than this hour (at the end of a shift for workers). */
+const DINNER_HOUR = 18;
+/** Dinner is skipped by anyone fuller than this. */
+const DINNER_BELOW_HUNGER = 60;
 
 /** Lunch is skipped by anyone fuller than this. */
 const LUNCH_BELOW_HUNGER = 70;
@@ -594,6 +622,12 @@ function scoreFreeTimeActions(
   if (mods) {
     eatScore *= mods.eatImpulsiveness;
   }
+  // Below the "low" line, eat before an evening out rather than after the
+  // emergency: a crowded tavern (gatheringBonus) outscored a hunger of 30, and
+  // once meals cost food the town spent its evenings hungry and its nights
+  // under the critical line.
+  const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
+  if (agentNeeds.hunger < low) eatScore += HUNGRY_EAT_BONUS;
   const foodLoc = nearestLocation(agent.position, allLocations, ['shop', 'tavern', 'bakery']);
   scores.push({
     action: 'eating',
@@ -603,13 +637,15 @@ function scoreFreeTimeActions(
 
   // Grocery run: an empty pantry means the next meal at home is no meal (G2).
   // Scored below eating at the same hunger so a hungry agent eats out first;
-  // a peckish one restocks. The trip's list comes from groceryList.
-  if (agentEcon && foodCount(agentEcon.inventory) === 0) {
+  // a peckish one restocks while the shops are open — food in hand is what
+  // feeds a worker's breakfast and dinner, when the shop and bakery are shut.
+  // The trip's list comes from groceryList.
+  if (agentEcon && foodCount(agentEcon.inventory) < PANTRY_TARGET) {
     const grocer = nearestGrocer(agent, agentEcon.money, allLocations, econMap, world.time.hour);
     if (grocer) {
       scores.push({
         action: 'shopping',
-        score: addNoise(20 + (100 - agentNeeds.hunger) * 0.5),
+        score: addNoise(GROCERY_BASE_SCORE + (100 - agentNeeds.hunger) * 0.5),
         targetLocationId: grocer.id,
       });
     }
@@ -1506,6 +1542,19 @@ export function tick(world: WorldRow): void {
     // Fallback
     if (!decision) {
       decision = { action: 'idle', score: 0, targetLocationId: agent.home };
+    }
+
+    // Don't go to bed hungry. Sleep is 6 game hours (and an energy emergency
+    // outranks a hunger one whenever energy is lower), so a hungry agent who
+    // went to bed woke up under the critical line: in the soaks most of the
+    // town's time below hunger 35 was spent asleep. An hour's meal first, if
+    // there is one to be had; bed on the next pass.
+    if (decision.action === 'sleeping') {
+      const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
+      const supper = agentNeeds.hunger < low && agentNeeds.energy >= SUPPER_MIN_ENERGY
+        ? mealPlan(agent.home ?? undefined)
+        : null;
+      if (supper) decision = { action: 'eating', score: decision.score, targetLocationId: supper.locationId };
     }
 
     // --- Validate action makes sense at target location ---

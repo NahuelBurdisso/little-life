@@ -232,6 +232,18 @@ describe('needsTick: meals and services', () => {
     expect(needsOf(unpaid).fun).toBeLessThan(50 + 1.5 * 3.6 + 1);
   });
 
+  it('stress does not make anyone hungrier (the hungry → stressed → hungrier loop)', () => {
+    const home = loc('home', HOME_SERVICES);
+    const calm = agent(home, { hunger: 60 });
+    const tense = agent(home, { hunger: 60 });
+    db.update(needs).set({ stress: 0 }).where(eq(needs.agent_id, calm)).run();
+    db.update(needs).set({ stress: 100 }).where(eq(needs.agent_id, tense)).run();
+    act(calm, { type: 'idle' }, home);
+    act(tense, { type: 'idle' }, home);
+    needsTick();
+    expect(needsOf(tense).hunger).toBeCloseTo(needsOf(calm).hunger, 6);
+  });
+
   describe('the pantry safety net', () => {
     it('feeds a broke agent with no food at home, once a day, with a mood penalty', () => {
       const home = loc('home', HOME_SERVICES);
