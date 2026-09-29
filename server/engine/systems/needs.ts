@@ -10,6 +10,7 @@ import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
 import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { gameMinutes, hourChanged } from '../../lib/gameClock';
+import { serveMeal, hasPaidVisit, PANTRY_MOOD_PENALTY, PANTRY_MOOD_MINUTES, type Meal } from './economy';
 
 // Track which agents already have an active critical need event to avoid spamming
 const criticalNeedFired = new Map<number, Set<string>>();
@@ -79,6 +80,89 @@ const ZONE_ACTIVITY_MODIFIERS: Record<string, Partial<Record<NeedKey, number>>> 
   browse:      { fun: -1.8, comfort: -0.3 },
   rest:        { energy: -1.5, comfort: -1.2, fun: -0.3 },
 };
+
+/**
+ * Hunger modifier for "eating" with nothing to eat: sitting at an empty table
+ * (idle's rate). Eating used to restore hunger at -4.0 whether or not there was
+ * food, so a meal never needed buying (G2).
+ */
+const NO_FOOD_HUNGER_MODIFIER = 0.8;
+
+/**
+ * How filling a real meal is, as a multiplier on the eating/quality-tier hunger
+ * rates below. Those rates were tuned for a town where eating was free and the
+ * home/shop services topped everyone up all day; at 1x a one-hour home meal
+ * came to ~29 hunger against ~106/day of decay, i.e. four meals a day, four
+ * units of food per person — more than the farm grows (soak, G2). At 2x a
+ * proper meal is ~50: two meals and a snack a day.
+ */
+const MEAL_HUNGER_SCALE = 2;
+
+/**
+ * Being out somewhere as a patron — hanging about the tavern, sitting down to
+ * a meal in company — takes in its social/fun services even though idle and
+ * eating don't restore those needs on their own. Working, walking, shopping and
+ * sleeping never do.
+ */
+const LEISURE_ACTIONS: ReadonlySet<string> = new Set(['idle', 'socializing', 'talking', 'eating', 'comfort']);
+
+type LocationRow = typeof locations.$inferSelect;
+type Service = NonNullable<LocationRow['services']>[number];
+
+/**
+ * Does this location service work on this agent right now? (G2)
+ *
+ * Services used to apply to anyone standing in the location, whatever they were
+ * doing, ignoring `itemRequired` and never charging `cost`: every home fed its
+ * sleepers +10 hunger/h and the shop fed its own clerks +15/h, so needs sat at
+ * 100 and nobody bought food. A service now only amplifies an activity that
+ * already restores that need here — the agent's own action modifiers (after
+ * zone overrides and the no-food rule) must be restorative for the service's
+ * need. That mapping is derived from ACTION_MODIFIERS rather than a second
+ * table: eating → hunger, sleeping/idle → energy, socializing/talking → social,
+ * leisure zone activities → fun, and working/walking-to-work never qualify.
+ * Social and fun services also reach anyone at leisure there (LEISURE_ACTIONS).
+ *
+ * On top of that:
+ * - hunger is only served with a meal had *here*: a priced menu (`cost`) needs
+ *   a meal bought here (or the owner's own stock); a kitchen (`itemRequired`)
+ *   needs a food item consumed here; the pantry safety net gets neither.
+ * - any other paid service needs the owner, or a patron who paid the visit's
+ *   cover (economy.ts, taverns). A priced service nobody sells — the clinic's
+ *   $12 energy, an ownerless bar — is unavailable rather than free.
+ * - any other `itemRequired` needs the item in the agent's inventory.
+ */
+export function serviceApplies(
+  service: Service,
+  ctx: {
+    agentId: number;
+    location: Pick<LocationRow, 'id' | 'owner'>;
+    modifiers: Record<NeedKey, number>;
+    meal: Meal | null;
+    inventory: readonly { itemId: string; quantity: number }[];
+    paidVisit: boolean;
+    actionType?: string;
+  },
+): boolean {
+  const need = service.needSatisfied as NeedKey;
+  if (!NEED_KEYS.includes(need)) return false;
+  const leisure = (need === 'social' || need === 'fun') && ctx.actionType !== undefined && LEISURE_ACTIONS.has(ctx.actionType);
+  if (!(ctx.modifiers[need] < 0) && !leisure) return false;
+
+  if (need === 'hunger') {
+    const meal = ctx.meal;
+    if (!meal || meal.locationId !== ctx.location.id || meal.source === 'pantry') return false;
+    if (service.cost > 0) return meal.source === 'bought' || meal.source === 'own_stock';
+    if (service.itemRequired) return meal.source === 'own_food';
+    return true;
+  }
+
+  if (service.itemRequired && !ctx.inventory.some((i) => i.itemId === service.itemRequired && i.quantity > 0)) {
+    return false;
+  }
+  if (service.cost > 0) return ctx.location.owner === ctx.agentId || ctx.paidVisit;
+  return true;
+}
 
 function applyModifier(baseDecay: number, modifier: number): number {
   if (modifier < 0) {
@@ -153,8 +237,22 @@ export function needsTick(): void {
     const zoneOverrides = zoneActivity ? ZONE_ACTIVITY_MODIFIERS[zoneActivity] : undefined;
     let modifiers = zoneOverrides ? { ...baseModifiers, ...zoneOverrides } : baseModifiers;
 
-    // Food quality tiers: eating location affects hunger restoration
-    if (actionType === 'eating' && agent.current_location) {
+    // A meal needs food (G2): serveMeal buys it from the vendor the agent is
+    // eating at, or consumes an item they hold, or — broke or starving, at home,
+    // once a day — the pantry. No meal: eating restores nothing. Called before
+    // the economy phase so the meal starts feeding on the tick it starts.
+    let meal: Meal | null = null;
+    if (actionType === 'eating') {
+      const here = agent.current_location != null ? locationsById.get(agent.current_location) ?? null : null;
+      meal = serveMeal(world, agent, here, economyByAgent, { hunger: agentNeeds.hunger });
+      if (!meal) modifiers = { ...modifiers, hunger: NO_FOOD_HUNGER_MODIFIER };
+    }
+    const mealBoughtHere = meal != null && (meal.source === 'bought' || meal.source === 'own_stock')
+      && meal.locationId === agent.current_location;
+
+    // Food quality tiers: eating location affects hunger restoration — for a meal
+    // the vendor actually served, not a sandwich brought along.
+    if (mealBoughtHere && agent.current_location) {
       const eatLoc = locationsById.get(agent.current_location);
       if (eatLoc) {
         const locType = eatLoc.type;
@@ -171,14 +269,18 @@ export function needsTick(): void {
         // Home meals: base -4.0 (default), enhanced by cooking skill
       }
     }
-    // Home cooking skill bonus
-    if (actionType === 'eating' && agent.current_location === agent.home) {
+    // Home cooking skill bonus — cooking needs ingredients
+    if (meal?.source === 'own_food' && agent.current_location === agent.home) {
       const cookingSkill = getHobbyLevel(agent.id, 'cook') as number;
       if (cookingSkill > 0) {
         // Skilled cooks make better meals at home
         const skillBonus = Math.min(2.0, cookingSkill * 0.04); // up to -2.0 extra at level 50
         modifiers = { ...modifiers, hunger: (modifiers.hunger ?? -4.0) - skillBonus };
       }
+    }
+
+    if (meal && modifiers.hunger < 0) {
+      modifiers = { ...modifiers, hunger: modifiers.hunger * MEAL_HUNGER_SCALE };
     }
 
     // Steps 3-6: Calculate decay per need with action modifier and stress amplifier
@@ -261,16 +363,18 @@ export function needsTick(): void {
     if (agent.current_location) {
       const location = locationsById.get(agent.current_location);
       if (location && location.services) {
-        const money = economyByAgent.get(agent.id)?.money ?? 0;
-
+        const ctx = {
+          agentId: agent.id,
+          location,
+          modifiers,
+          meal,
+          inventory: (economyByAgent.get(agent.id)?.inventory ?? []) as { itemId: string; quantity: number }[],
+          paidVisit: hasPaidVisit(agent.id, location.id),
+          actionType,
+        };
         for (const service of location.services) {
-          const needKey = service.needSatisfied as NeedKey;
-          if (NEED_KEYS.includes(needKey)) {
-            // Affordability, not just solvency: a $1 agent shouldn't get the
-            // benefit of a $50 service.
-            if (service.cost <= 0 || money >= service.cost) {
-              updatedNeeds[needKey] += service.amount * gameHoursElapsed;
-            }
+          if (serviceApplies(service, ctx)) {
+            updatedNeeds[service.needSatisfied as NeedKey] += service.amount * gameHoursElapsed;
           }
         }
       }
@@ -362,6 +466,12 @@ export function needsTick(): void {
     const activeMoodModifiers = agentNeeds.mood_modifiers.filter(
       (m) => m.expiresAt > currentTime
     );
+    // Scraping a meal together from the cupboards is a bad day, not a free
+    // lunch. One pantry meal a day and the penalty outlasts the meal, so this
+    // lands once per pantry meal.
+    if (meal?.source === 'pantry' && !activeMoodModifiers.some((m) => m.source === 'meager_meal')) {
+      activeMoodModifiers.push({ source: 'meager_meal', value: PANTRY_MOOD_PENALTY, expiresAt: currentTime + PANTRY_MOOD_MINUTES });
+    }
 
     // Step 11: Recalculate mood
     const moodModifierSum = activeMoodModifiers.reduce(

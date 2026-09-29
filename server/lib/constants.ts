@@ -176,7 +176,11 @@ export const CONFIG = {
     ACTION_MIN_DURATIONS: {
       sleeping: 360,
       working: 60,
-      eating: 20,
+      // A meal is one eating action (economy.ts serveMeal: one purchase or one
+      // item). At 20 minutes a meal restored ~10-12 hunger against ~106/day of
+      // decay, so a town that has to pay for food needed ~10 meals a day and
+      // spent its day at the table. An hour makes a meal ~30-37 (3 a day).
+      eating: 60,
       talking: 5,
       shopping: 10,
       walking: 0,
