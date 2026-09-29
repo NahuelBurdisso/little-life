@@ -165,4 +165,20 @@ describe('queue waits', () => {
   it('count from when the scheduler first sees the entry, never from wall-clock age', () => {
     expect(queueDeadlineGameMin({ max_wait: 10_000 }, 500)).toBe(510);
   });
+
+  it('get a real-time floor above 1x, so an entry can outlast one conversation', () => {
+    const wait = (speed: number, maxWait = queueMaxWait(C.QUEUE_MAX_WAIT_GAME_MINUTES)) =>
+      queueDeadlineGameMin({ max_wait: maxWait }, 0, speed);
+    // 1x: pure game time, as before (the floor is below the default wait).
+    expect(wait(1)).toBe(10);
+    // 4x: 10 game minutes would be 2.5 real seconds; the floor makes it 8 s.
+    expect(wait(4)).toBe(Math.round((C.QUEUE_WAIT_REAL_FLOOR_MS / 1000) * 4));
+    expect(wait(4) / 4).toBeGreaterThanOrEqual(C.QUEUE_WAIT_REAL_FLOOR_MS / 1000);
+    // A longer game-time wait (a player's nudge) still wins over the floor.
+    expect(wait(2, queueMaxWait(C.PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES))).toBe(30);
+    // Night skip (30x) does not store hours of wait: capped at the 4x floor.
+    expect(wait(30)).toBe(wait(4));
+    // Paused counts as 1x.
+    expect(wait(0)).toBe(10);
+  });
 });
