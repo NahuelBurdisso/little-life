@@ -20,6 +20,7 @@ import {
   agentStates,
   aspirations,
   gazetteIssues,
+  simSnapshots,
 } from '../db/schema';
 import { AGENT_SEEDS } from '../data/agents';
 import { generateWorld } from '../lib/worldgen';
@@ -37,6 +38,7 @@ import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 
 const ALL_TABLES = [
+  simSnapshots,
   gazetteIssues,
   activityLog,
   templateUsage,
