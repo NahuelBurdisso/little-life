@@ -21,7 +21,13 @@ export const NIGHT_SKIP = {
   SPEED: 30,
   /** Speed while the LLM queue is backed up: inside the range the sim is tuned for. */
   THROTTLE_SPEED: 4,
-  /** Waiting LLM requests above which the skip slows to THROTTLE_SPEED. */
+  /**
+   * Waiting critical/normal LLM requests (conversation turns, plans, reflections)
+   * above which the skip slows to THROTTLE_SPEED. Low-priority ones do not count:
+   * the midnight day change alone queues a self-description per townsperson plus
+   * the gazette, all low, and a live test throttled the whole night to 4x on them
+   * while nothing was waiting that a sleeping town could be hurt by.
+   */
   LLM_BACKLOG_LIMIT: 4,
   /** The skip ends at this hour. */
   MORNING_HOUR: 6,
@@ -139,7 +145,7 @@ export interface SkipObservation {
   liveIds: readonly number[];
   /** Things that end a skip and began after it did: severe drama rows plus DISRUPTIVE_EVENT_TYPES events. */
   importantEvents: number;
-  /** Chat-pool requests waiting for a slot. */
+  /** Chat-pool requests waiting for a slot at critical or normal priority. */
   llmBacklog: number;
 }
 

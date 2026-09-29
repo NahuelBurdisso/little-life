@@ -214,7 +214,8 @@ const dbPorts: NightSkipPorts = {
   },
 
   llmBacklog() {
-    return getLLMStats().waiting;
+    const w = getLLMStats().waitingByPriority;
+    return w.critical + w.normal;
   },
 
   writeSpeed(speed) {
