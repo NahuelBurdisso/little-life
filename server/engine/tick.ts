@@ -180,6 +180,20 @@ export async function runSystemPhase(
 let isAnalyzing = false;
 
 /**
+ * Profiling probe (scripts/tick-profile.ts): told which slice of the tick is
+ * about to run — a phase name, 'overhead' (the per-phase bookkeeping between
+ * phases, which includes building the agent-states cache) or 'post' (perception,
+ * reflection, day-change jobs, finalize). The script attributes wall time and
+ * SQL statements to whatever slice was announced last. One probe at a time;
+ * null when nobody profiles, so the server pays a single null check per phase.
+ */
+let phaseProbe: ((slice: string) => void) | null = null;
+
+export function setPhaseProbe(fn: ((slice: string) => void) | null): void {
+  phaseProbe = fn;
+}
+
+/**
  * One full tick: advance the clock, run every phase, finalize. Exported so
  * `scripts/soak.ts` can drive ticks back-to-back without the setTimeout loop;
  * the server only ever calls it through `startTickLoop`.
@@ -249,8 +263,10 @@ export async function gameTick(): Promise<void> {
     const phaseNumber = i + 1;
     const phaseStart = performance.now();
 
+    phaseProbe?.(phase.name);
     await runSystemPhase(phase, worldWithNewTime, phaseNumber);
     phaseMs.push([phase.name, performance.now() - phaseStart]);
+    phaseProbe?.('overhead');
 
     // Only the autoplay analyzer drains these samples, and it only runs when
     // AUTOPLAY is enabled — recording unconditionally accumulated ~950k phase
@@ -272,6 +288,8 @@ export async function gameTick(): Promise<void> {
       .where(eq(worldState.id, world.id))
       .run();
   }
+
+  phaseProbe?.('post');
 
   // Perception scan every 10 game minutes: agents observe and react to nearby
   // agents. Each step is guarded: unguarded, one throw here skipped the cache
