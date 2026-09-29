@@ -25,6 +25,24 @@ describe('pickConversationGist', () => {
     });
   });
 
+  it('does not quote mundane lines that only brush a keyword', () => {
+    for (const text of [
+      'I feel like it might rain later today.',
+      'I think I will lie down for a bit.',
+      "Let's get together at the market sometime.",
+      'That bakery job is my dream, honestly.',
+      'I was alone at the shop all afternoon.',
+    ]) {
+      expect(pickConversationGist([{ speakerId: ROSA, text, sentiment: 0.1 }])).toBeNull();
+    }
+  });
+
+  it('still quotes a loaded disclosure with little sentiment', () => {
+    expect(pickConversationGist([
+      { speakerId: YUKI, text: "I think you lied to me about the money.", sentiment: -0.1 },
+    ])?.quote).toBe('I think you lied to me about the money.');
+  });
+
   it('returns null when nothing is worth quoting', () => {
     expect(pickConversationGist([
       { speakerId: ROSA, text: 'Good morning! How are you?', sentiment: 0.4 },

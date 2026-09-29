@@ -30,11 +30,24 @@ export interface ConversationGist {
 }
 
 const MAX_QUOTE_CHARS = 110;
-const MIN_SCORE = 0.6;
+// High enough that one keyword alone ("I feel like it might rain") doesn't
+// make a line memorable; it also needs emotional charge or a disclosure.
+const MIN_SCORE = 1.2;
+const CHARGED_SENTIMENT = 0.3;
 
 // Words that mark a line as something a person would still think about later.
-const LOADED =
-  /\b(?:love[sd]?|feel(?:s|ing|ings)?|miss(?:ed)?|sorry|forgive|promise[sd]?|secret|afraid|scared|hate[sd]?|marry|kiss(?:ed)?|trust|li(?:e|ed|ar)|truth|confess(?:ed)?|heart|lonely|alone|pregnant|debt|owe|fired|quit|died|dead|funeral|cheat(?:ed|ing)?|affair|jealous|angry|furious|proud|dream|together|divorce|betray(?:ed)?)\b/i;
+// Ambiguous everyday words are pinned to their loaded sense: "lie" only as
+// "lie(d) to"/"liar" (not "lie down"), "feel" only with an emotion or "about
+// you" (not "feel like it might rain"). together/dream/alone were dropped:
+// "let's get together", "dream job", "alone at the shop" are small talk.
+const LOADED = new RegExp(
+  [
+    String.raw`\b(?:love[sd]?|feelings|miss(?:ed)?|sorry|forgive|promise[sd]?|secret|afraid|scared|hate[sd]?|marry|kiss(?:ed)?|trust|truth|confess(?:ed)?|heart|lonely|pregnant|debt|owe|fired|quit|died|dead|funeral|cheat(?:ed|ing)?|affair|jealous|angry|furious|proud|divorce|betray(?:ed)?)\b`,
+    String.raw`\b(?:lied?|lying) to\b|\bliar\b`,
+    String.raw`\bfeel(?:s|ing)?\b[^.!?]{0,20}?\b(?:about you|the same|sad|happy|lonely|scared|afraid|guilty|terrible|awful|hurt|angry|betrayed|lost|safe|jealous|ashamed|sorry|alone|used|empty)\b`,
+  ].join('|'),
+  'i',
+);
 
 // First-person disclosure: "I'm scared", "I've never told anyone", "I need…".
 const DISCLOSURE = /\bI(?:'m|'ve|'d| am| was| feel| think| want| need| have| can't| never| wish| love| hate)\b/;
@@ -42,10 +55,16 @@ const DISCLOSURE = /\bI(?:'m|'ve|'d| am| was| feel| think| want| need| have| can
 const SMALL_TALK =
   /\bhow are you|how's it going|how have you been|how(?:'re| are) you (?:doing|holding up)|nice (?:weather|day)|good (?:morning|afternoon|evening)|see you (?:around|later|soon)|take care|goodbye|have a good\b/i;
 
-function score(text: string, sentiment: number): number {
+/** Null when the line doesn't qualify at all, else its salience score. */
+function score(text: string, sentiment: number): number | null {
+  const charged = Math.abs(sentiment) >= CHARGED_SENTIMENT;
+  const loaded = LOADED.test(text);
+  const disclosure = DISCLOSURE.test(text);
+  // Either real emotional charge, or two content signals together.
+  if (!charged && !(loaded && disclosure)) return null;
   let s = Math.abs(sentiment);
-  if (LOADED.test(text)) s += 1;
-  if (DISCLOSURE.test(text)) s += 0.4;
+  if (loaded) s += 1;
+  if (disclosure) s += 0.4;
   if (SMALL_TALK.test(text)) s -= 1;
   // A bare question ("You okay?") is rarely what stays with someone.
   if (/\?$/.test(text) && !/[.!…]\s/.test(text)) s -= 0.3;
@@ -82,7 +101,7 @@ export function pickConversationGist(
     const text = sanitizeDialogue(line.text, { speakerName: nameOf(line.speakerId) ?? '', listenerName: '' });
     if (text.split(/\s+/).length < 4) continue;
     const s = score(text, line.sentiment ?? 0);
-    if (!best || s > best.score) best = { line, text, score: s };
+    if (s !== null && (!best || s > best.score)) best = { line, text, score: s };
   }
   if (!best || best.score < MIN_SCORE) return null;
   return { speakerId: best.line.speakerId, quote: shorten(best.text) };
