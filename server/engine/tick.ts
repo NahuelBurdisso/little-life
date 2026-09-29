@@ -28,6 +28,7 @@ import { tavernTick } from '../lib/tavernEngine';
 import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
+import { milestonesTick } from '../lib/milestonesEngine';
 import { saveWorldCaches } from './worldCaches';
 import crypto from 'crypto';
 import { autoPlayer } from '../autoplay';
@@ -269,6 +270,9 @@ export async function gameTick(): Promise<void> {
   if (crossedBoundary(gameMinutes(oldTime), nowMinutes, 10)) {
     runGuarded('perception', () => perceptionSystem.scan(worldWithNewTime));
     runGuarded('tavern', () => tavernTick(nowMinutes));
+    // Proposals and weddings (lib/milestonesEngine.ts). One transaction: a
+    // wedding writes the event, the tags, the feed and the facts together.
+    runGuarded('milestones', () => db.transaction(() => milestonesTick(newTime, nowMinutes)));
   }
   // Loneliness and confrontation once per game hour.
   if (hourChanged(transitions)) {

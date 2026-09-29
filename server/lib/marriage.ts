@@ -92,3 +92,19 @@ export function affairInvolvesMarriage(subjectId: number, targetId: number | nul
   }
   return false;
 }
+
+/**
+ * `world_events.triggered_by` of a couple's wedding. Same shape as the
+ * funeral's `death:<id>`: the client parses it to find the newlyweds
+ * (townEvents/eventDecor.ts `weddingCouple`, beats/beatDetect.ts) and the
+ * decisions phase to send them to their own ceremony.
+ */
+export function weddingTriggeredBy(a: number, b: number): string {
+  return `wedding:${Math.min(a, b)}-${Math.max(a, b)}`;
+}
+
+/** The couple of a wedding event, or null for anything else (e.g. an old random wedding). */
+export function parseWeddingTrigger(triggeredBy: string | null | undefined): [number, number] | null {
+  const m = /^wedding:(\d+)-(\d+)$/.exec(triggeredBy ?? '');
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}

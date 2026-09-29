@@ -19,6 +19,7 @@ import { reconstructZoneOccupancy } from './lib/interiorGrid';
 import { CONFIG } from './lib/constants';
 import './lib/giftEngine'; // Initialize gift-giving event listeners
 import './lib/secretSharing'; // Initialize secret-sharing event listeners
+import './lib/milestonesEngine'; // Proposals, engagements and weddings of real couples
 import { initBirthdays } from './lib/agingEngine';
 import { initPersonalityDrift } from './lib/personalityDrift';
 import { initFavorTracking } from './lib/favorEngine';

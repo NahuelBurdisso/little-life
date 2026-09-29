@@ -164,7 +164,12 @@ export const WORLD_EVENTS = {
     description: 'Love is in the air! A couple is getting married and the whole town is invited.',
     durationHours: 6,
     effects: { social_boost: 25, fun_boost: 20, romance_boost: 10 },
-    random: { weight: 3, condition: (phase) => phase === 'afternoon' || phase === 'evening' },
+    // Weight 0: a wedding is no longer a random roll with nobody at the altar.
+    // lib/milestonesEngine.ts starts one for a real engaged couple, with
+    // `triggered_by: 'wedding:<a>-<b>'` so the canvas can find the newlyweds
+    // (STATUS C13). Kept as a `random` entry (not deleted) so the phase and
+    // condition stay documented next to the other celebrations.
+    random: { weight: 0, condition: (phase) => phase === 'afternoon' || phase === 'evening' },
   },
   fire_outbreak: {
     name: 'Building Fire',

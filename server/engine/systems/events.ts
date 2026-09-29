@@ -225,7 +225,10 @@ export function eventsTick(): void {
   const activeTypes = new Set(currentActiveEvents.map((e) => e.type));
   const eligible = (Object.keys(WORLD_EVENTS) as WorldEventType[]).flatMap((type) => {
     const random = (WORLD_EVENTS[type] as WorldEventDef).random;
-    return random && !activeTypes.has(type) && random.condition(currentPhase, world.weather, world.time!.season)
+    // Weight 0 means "never on its own" (weddings belong to a real couple now):
+    // left in, a lone eligible zero-weight entry made weightedRandom throw.
+    return random && random.weight > 0 && !activeTypes.has(type)
+      && random.condition(currentPhase, world.weather, world.time!.season)
       ? [{ value: type, weight: random.weight }]
       : [];
   });
