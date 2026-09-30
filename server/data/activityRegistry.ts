@@ -98,4 +98,10 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   engagement_ended: { category: 'drama', base_importance: 0.7, retention: 'long', template: '{description}' },
   // Newlyweds sharing a house (lib/residents.ts rehomeCouple, at the wedding).
   moved_in:   { category: 'relationship', base_importance: 0.6, retention: 'long', template: '{description}' },
+  // Family life (lib/family.ts). The birth itself is a `drama` row tagged
+  // `beat: 'birth'` (the canvas and the sound key on the beat); these are the
+  // quieter lines around it — the news that a baby is on the way, and the
+  // christening on the square a day after the birth.
+  expecting:   { category: 'relationship', base_importance: 0.7, retention: 'long', template: '{description}' },
+  christening: { category: 'relationship', base_importance: 0.6, retention: 'long', template: '{description}' },
 };

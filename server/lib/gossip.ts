@@ -124,6 +124,14 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} asked ${t ?? 'someone'} to marry them and was turned down`,
   wedding: (s, t) =>
     `${s} and ${t ?? 'someone'} got married`,
+  // Family (lib/family.ts): subject is the mother, target the (believed) father.
+  pregnancy: (s, t) =>
+    t ? `${s} and ${t} are expecting a baby` : `${s} is expecting a baby`,
+  birth: (s, t, ctx) =>
+    `${s}${t ? ` and ${t}` : ''} had a baby${ctx?.detail ? ` — ${ctx.detail}` : ''}`,
+  // Target is the lover; `detail` the husband's name.
+  paternity: (s, t, ctx) =>
+    `${s}'s baby may be ${t ?? 'another man'}'s${ctx?.detail ? `, not ${ctx.detail}'s` : ''}`,
 };
 
 /**
@@ -136,6 +144,9 @@ const PARTICIPANT_TARGET_TYPES = new Set([
   'affair', 'conspiracy', 'confrontation', 'fight',
   // A turned-down proposal is the target's story as much as the subject's.
   'proposal_rejected',
+  // A baby on the way is the father's news to break as much as the mother's,
+  // and the lover named in a paternity secret doesn't spread it either.
+  'pregnancy', 'paternity',
 ]);
 
 /**

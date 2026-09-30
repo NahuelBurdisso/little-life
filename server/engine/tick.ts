@@ -29,6 +29,7 @@ import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { milestonesTick } from '../lib/milestonesEngine';
+import { familyDaily, familyTick } from '../lib/family';
 import { populationFlowDaily, populationFlowTick } from '../lib/populationFlow';
 import { runChallengeChecks } from '../lib/challenges/evaluate';
 import { careerMovesTick, vacanciesDaily } from '../lib/vacancies';
@@ -349,6 +350,8 @@ export async function gameTick(): Promise<void> {
     // Proposals and weddings (lib/milestonesEngine.ts). One transaction: a
     // wedding writes the event, the tags, the feed and the facts together.
     runGuarded('milestones', () => db.transaction(() => milestonesTick(newTime, nowMinutes)));
+    // Married life: pregnancies, births, christenings, paternity (lib/family.ts).
+    runGuarded('family', () => db.transaction(() => familyTick(newTime, nowMinutes)));
     // Newcomers walking in, leavers setting off and reaching the edge (lib/populationFlow.ts).
     runGuarded('populationFlowTick', () => db.transaction(() => populationFlowTick(newTime, nowMinutes)));
     // Residents taking up the trade their new ambition named (lib/vacancies.ts).
@@ -460,6 +463,8 @@ export async function gameTick(): Promise<void> {
     // flow, which reads the posted ones to pick a newcomer (lib/vacancies.ts).
     runGuarded('vacancies', () => db.transaction(() => vacanciesDaily()));
     runGuarded('populationFlow', () => db.transaction(() => populationFlowDaily(newTime, nowMinutes)));
+    // New parents' sleepless nights, and each married couple's roll for a baby.
+    runGuarded('familyDaily', () => db.transaction(() => familyDaily(nowMinutes)));
     // Check for birthdays and handle aging
     runGuarded('aging', () => agingTick(newTime.day));
     // Enforce the activity log's declared retention tiers
