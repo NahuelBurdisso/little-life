@@ -374,6 +374,14 @@ describe('kisses (server/lib/intimacy/kiss.ts)', () => {
     expect(classifyActivity(row({ type: 'kiss' }))).toEqual({ kind: 'kiss', agentIds: [1, 2] });
     expect(classifyActivity(row({ type: 'kiss_rebuffed' }))).toEqual({ kind: 'heartbreak', agentIds: [1, 2] });
   });
+
+  it('reads a drama row tagged metadata.beat kiss as a kiss, whatever its wording says', () => {
+    expect(classifyActivity(row({ description: 'Ana and Bo shared a kiss under the lamp', metadata: { beat: 'kiss' } })))
+      .toEqual({ kind: 'kiss', agentIds: [1, 2] });
+    // Wording that reads as a fight must not win over the tag.
+    expect(classifyActivity(row({ description: 'Ana started a fight with Bo', metadata: { beat: 'kiss' } }))?.kind).toBe('kiss');
+    expect(classifyActivity(row({ metadata: { beat: 'kiss_rebuffed' } }))?.kind).toBe('heartbreak');
+  });
 });
 
 describe('life milestones (server/lib/milestonesEngine.ts)', () => {

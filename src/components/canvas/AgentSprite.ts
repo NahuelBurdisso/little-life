@@ -442,6 +442,16 @@ export class AgentSprite {
     }
   }
 
+  /** The activity pose last requested (not necessarily easing in yet) — lets a caller borrow it and give it back. */
+  get activityPoseKind(): ActivityPoseKind {
+    return this.activityKind;
+  }
+
+  /** The tint last handed to `setActivityPose`. */
+  get activityPoseTint(): number {
+    return this.activityTint;
+  }
+
   /** Horizontal facing: 1 = right, -1 = left. The rig is mirrored accordingly. */
   get facingDir(): 1 | -1 {
     return this.facing;

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-  BEATS_FRAME_COUNT, BEAT_STYLE, FX_ANIMS, beatDuration, fxDuration, fxFrame,
+  BEATS_FRAME_COUNT, BEAT_STYLE, FX_ANIMS, beatDuration, fxDuration, fxFrame, kissFacing, KISS_LEAN_S,
   type FxName,
 } from '../beatFrames';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BeatKind } from '../beatDetect';
 
 const names = Object.keys(FX_ANIMS) as FxName[];
@@ -63,5 +65,41 @@ describe('BEAT_STYLE', () => {
   });
   it('the gift flight is part of the gift beat', () => {
     expect(beatDuration('gift')).toBeGreaterThan(fxDuration('giftPop'));
+  });
+});
+
+describe('kiss dressing', () => {
+  it('is its own effect with the kiss and blush emotes, not the romance hearts', () => {
+    expect(BEAT_STYLE.kiss.fx).toBe('kiss');
+    expect(BEAT_STYLE.kiss.emotes).toEqual(['kiss', 'blush']);
+    expect(BEAT_STYLE.kiss.lift).toBe(20);
+    expect(FX_ANIMS.kiss.count).toBe(5);
+  });
+
+  it('the lean is over before the hearts are', () => {
+    expect(KISS_LEAN_S).toBeLessThanOrEqual(beatDuration('kiss') + 0.3);
+    expect(KISS_LEAN_S).toBeGreaterThan(0.5);
+  });
+
+  it('lists the kiss cells in the Lua header and ships a strip exactly BEATS_FRAME_COUNT wide', () => {
+    const root = join(__dirname, '..', '..', '..', '..', '..', '..');
+    const lua = readFileSync(join(root, 'scripts/aseprite/beat-fx.lua'), 'utf8');
+    const { start, count } = FX_ANIMS.kiss;
+    expect(lua).toMatch(/--\s+48-52 kiss/);
+    expect([start, start + count - 1]).toEqual([48, 52]);
+    const png = readFileSync(join(root, 'public/sprites/fx/beats.png'));
+    expect(png.readUInt32BE(16)).toBe(BEATS_FRAME_COUNT * 32);
+    expect(png.readUInt32BE(20)).toBe(32);
+  });
+});
+
+describe('kissFacing', () => {
+  it('turns each of the pair toward the other', () => {
+    expect(kissFacing(10, 30)).toEqual([1, -1]);
+    expect(kissFacing(30, 10)).toEqual([-1, 1]);
+  });
+  it('leaves facing alone when they share a column', () => {
+    expect(kissFacing(20, 20)).toBeNull();
+    expect(kissFacing(20, 20.5)).toBeNull();
   });
 });

@@ -4,9 +4,10 @@ import { inView } from "../view";
 import { loadStrip } from "../../stripAtlas";
 import { createDetectorState, detectBeats, type BeatKind, type BeatSnapshot } from "./beatDetect";
 import {
-  BEATS_FRAME_COUNT, BEATS_URL, BEAT_STYLE, FX_ANIMS, GHOST_RISE_PX, GIFT_TRAVEL_S,
-  beatDuration, fxFrame, type BeatStyle, type FxName,
+  BEATS_FRAME_COUNT, BEATS_URL, BEAT_STYLE, FX_ANIMS, GHOST_RISE_PX, GIFT_TRAVEL_S, KISS_LEAN_S,
+  beatDuration, fxFrame, kissFacing, type BeatStyle, type FxName,
 } from "./beatFrames";
+import type { ActivityPoseKind } from "../../statePose";
 
 /** At most this many effects on screen at once; a new one evicts the oldest. */
 const MAX_LIVE = 8;
@@ -36,6 +37,20 @@ interface Slot {
 
 interface Point { x: number; y: number }
 
+/**
+ * A kiss leans its two agents together for `KISS_LEAN_S`. BeatSystem borrows the sprite's activity
+ * pose for that long and gives back whatever it had (a kiss can begin mid-activity), but only if
+ * the 'lean' is still the pose in place — ActivityFxSystem may have moved the agent on since.
+ */
+interface Lean {
+  id: string;
+  sprite: LeanSprite;
+  until: number;
+  prevKind: ActivityPoseKind;
+  prevTint: number;
+}
+type LeanSprite = NonNullable<ReturnType<CanvasServices["sprites"]["getSprite"]>>;
+
 /** A detected beat. (The player's own interventions are answered by systems/playerFx.) */
 interface Spawn { kind: BeatKind; agentIds: number[]; at?: Point }
 
@@ -56,6 +71,9 @@ class BeatSystem implements CanvasSystem {
   private readonly slots: Slot[] = [];
   private serial = 0;
   private live = 0;
+  /** Kisses in progress. Small and rarely touched; the per-frame path only reads `until`. */
+  private readonly leans: Lean[] = [];
+  private leanClock = 0;
   private destroyed = false;
 
   constructor(layers: CanvasLayers, services: CanvasServices) {
@@ -100,12 +118,15 @@ class BeatSystem implements CanvasSystem {
     if (!style) return;
 
     const pts: Array<Point | null> = beat.agentIds.map(id => this.where(id));
+    const a0 = pts[0], b0 = pts[1];
     // Emotes first: they work even while the atlas is still loading.
     for (let i = 0; i < 2; i++) {
       const name = style.emotes[i];
       const p = pts[i];
       if (name && p) this.services.bubbles.showEmote(String(beat.agentIds[i]), name, p);
     }
+
+    if (kind === "kiss" && a0 && b0) this.leanTogether(String(beat.agentIds[0]), String(beat.agentIds[1]), a0, b0);
 
     // Anchor of the effect: the death spot, the first agent, or the midpoint of the pair.
     let ax: number, ay: number;
@@ -144,6 +165,40 @@ class BeatSystem implements CanvasSystem {
     this.live++;
   }
 
+  /** Turn the pair toward each other and start their lean; a repeat kiss just extends it. */
+  private leanTogether(idA: string, idB: string, a: Point, b: Point): void {
+    const sprites = this.services.sprites;
+    const spriteA = sprites.getSprite(idA), spriteB = sprites.getSprite(idB);
+    if (!spriteA || !spriteB) return;
+    const face = kissFacing(a.x, b.x);
+    if (face) { spriteA.setFacing(face[0]); spriteB.setFacing(face[1]); }
+    this.lean(idA, spriteA);
+    this.lean(idB, spriteB);
+  }
+
+  private lean(id: string, sprite: LeanSprite): void {
+    const until = this.leanClock + KISS_LEAN_S;
+    for (const l of this.leans) {
+      if (l.id === id && l.sprite === sprite) { l.until = until; return; }
+    }
+    const prevKind = sprite.activityPoseKind, prevTint = sprite.activityPoseTint;
+    sprite.setActivityPose("lean", prevTint);
+    this.leans.push({ id, sprite, until, prevKind, prevTint });
+  }
+
+  /** Give the pose back once a kiss is over; drop entries whose sprite was replaced or removed. */
+  private tickLeans(dt: number): void {
+    this.leanClock += dt;
+    for (let i = this.leans.length - 1; i >= 0; i--) {
+      const l = this.leans[i];
+      const gone = this.services.sprites.getSprite(l.id) !== l.sprite;
+      if (!gone && this.leanClock < l.until) continue;
+      if (!gone && l.sprite.activityPoseKind === "lean") l.sprite.setActivityPose(l.prevKind, l.prevTint);
+      this.leans[i] = this.leans[this.leans.length - 1];
+      this.leans.pop();
+    }
+  }
+
   /** A free slot, or the oldest live one when all `MAX_LIVE` are busy. */
   private acquire(): Slot {
     for (const s of this.slots) if (!s.active) return s;
@@ -168,6 +223,7 @@ class BeatSystem implements CanvasSystem {
   }
 
   update(frame: FrameContext): void {
+    if (this.leans.length > 0) this.tickLeans(frame.seconds);
     if (this.live === 0 || !this.textures) return;
     const tex = this.textures;
     const dt = frame.seconds;
@@ -218,6 +274,9 @@ class BeatSystem implements CanvasSystem {
 
   destroy(): void {
     this.destroyed = true;
+    // Give every borrowed pose back: the sprites outlive this system on a canvas rebuild.
+    this.leanClock = Infinity;
+    this.tickLeans(0);
     for (const s of this.slots) {
       s.sprite.parent?.removeChild(s.sprite);
       s.sprite.destroy();

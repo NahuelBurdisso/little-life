@@ -3,9 +3,10 @@ import * as PIXI from 'pixi.js';
 import { BEATS_FRAME_COUNT } from '../beatFrames';
 
 // The atlas loader needs a browser; hand the system blank textures instead.
-vi.mock('../../../stripAtlas', () => ({
-  loadStrip: () => Promise.resolve(Array.from({ length: 48 }, () => PIXI.Texture.EMPTY)),
-}));
+vi.mock('../../../stripAtlas', async () => {
+  const { BEATS_FRAME_COUNT: n } = await import('../beatFrames');
+  return { loadStrip: () => Promise.resolve(Array.from({ length: n }, () => PIXI.Texture.EMPTY)) };
+});
 
 import { createBeatSystem } from '../BeatSystem';
 import { emitCanvasEvent } from '../../../../../lib/canvasBus';
@@ -16,11 +17,23 @@ function frame(seconds: number, v = view): FrameContext {
   return { dt: seconds * 60, seconds, now: 0, view: v, data: {} as DataContext };
 }
 
+/** The slice of AgentSprite the kiss lean touches, with its calls recorded. */
+function fakeSprite(x: number, y: number) {
+  const s = {
+    x, y, facing: 0, kind: 'none', tint: 0xffffff,
+    setFacing: vi.fn((d: 1 | -1) => { s.facing = d; }),
+    setActivityPose: vi.fn((k: string, t = 0xffffff) => { s.kind = k; s.tint = t; }),
+    get activityPoseKind() { return s.kind; },
+    get activityPoseTint() { return s.tint; },
+  };
+  return s;
+}
+
 function setup() {
   const overAgents = new PIXI.Container();
   const ground = new PIXI.Container();
-  const positions = new Map<string, { x: number; y: number }>();
-  for (let i = 1; i <= 12; i++) positions.set(String(i), { x: i * 20, y: 100 });
+  const positions = new Map<string, ReturnType<typeof fakeSprite>>();
+  for (let i = 1; i <= 12; i++) positions.set(String(i), fakeSprite(i * 20, 100));
   const removed: Array<{ id: string; name: string; x: number; y: number }> = [];
   const showEmote = vi.fn();
   const sys = createBeatSystem(
@@ -32,7 +45,7 @@ function setup() {
   );
   const data = (activity: any[], agents: any[] = [...positions.keys()].map(id => ({ id: Number(id), position: positions.get(id) }))) =>
     ({ agents, world: null, events: [], locations: [], conversations: [], relationships: [], activity }) as DataContext;
-  return { sys, overAgents, showEmote, data, removed };
+  return { sys, overAgents, showEmote, data, removed, positions };
 }
 
 const row = (id: number, description: string, a = 1, b = 2) => ({
@@ -131,6 +144,78 @@ describe('BeatSystem', () => {
   });
 
   it('atlas frame count matches the strip it slices', () => {
-    expect(BEATS_FRAME_COUNT).toBe(48);
+    expect(BEATS_FRAME_COUNT).toBe(53);
+  });
+
+  describe('the kiss beat', () => {
+    const kissRow = (id: number, a = 1, b = 2) => ({
+      id, type: 'kiss', initiator_id: a, target_id: b, agent_ids: [a, b],
+      real_timestamp: Date.now(), template_data: { description: 'x kissed y' },
+    });
+    async function kiss(a = 1, b = 2) {
+      const ctx = setup();
+      await flush();
+      ctx.sys.onData!(ctx.data([row(1, 'boot')]));
+      ctx.sys.onData!(ctx.data([kissRow(2, a, b), row(1, 'boot')]));
+      return ctx;
+    }
+
+    it('faces the pair toward each other, leans them, then gives the pose back', async () => {
+      const { sys, positions, showEmote } = await kiss(1, 2);
+      const p1 = positions.get('1')!, p2 = positions.get('2')!;
+      expect(showEmote.mock.calls.map(c => c[1])).toEqual(['kiss', 'blush']);
+      expect(p1.facing).toBe(1);   // agent 1 is left of agent 2
+      expect(p2.facing).toBe(-1);
+      expect(p1.kind).toBe('lean');
+      expect(p2.kind).toBe('lean');
+      sys.update(frame(0.5));
+      expect(p1.kind).toBe('lean');
+      sys.update(frame(0.8));      // 1.3 s in: past the 1.2 s lean
+      expect(p1.kind).toBe('none');
+      expect(p2.kind).toBe('none');
+    });
+
+    it('faces the other way round when the initiator stands to the right', async () => {
+      const { positions } = await kiss(5, 3);
+      expect(positions.get('5')!.facing).toBe(-1);
+      expect(positions.get('3')!.facing).toBe(1);
+    });
+
+    it('does not stomp a pose that took over during the lean, nor touch a sprite that vanished', async () => {
+      const { sys, positions } = await kiss(1, 2);
+      const p1 = positions.get('1')!, p2 = positions.get('2')!;
+      p1.kind = 'jog';             // someone else (ActivityFxSystem) moved agent 1 on
+      const calls2 = p2.setActivityPose.mock.calls.length;
+      positions.delete('2');       // agent 2's sprite is gone
+      sys.update(frame(1.3));
+      expect(p1.kind).toBe('jog');
+      expect(p2.setActivityPose.mock.calls.length).toBe(calls2);
+      // ...and the bookkeeping is empty: a later frame does not touch them again.
+      const calls1 = p1.setActivityPose.mock.calls.length;
+      sys.update(frame(1));
+      expect(p1.setActivityPose.mock.calls.length).toBe(calls1);
+    });
+
+    it('an agent kissed again mid-lean has it extended, and gets back "none", not "lean"', async () => {
+      const { sys, positions, data } = await kiss(1, 2);
+      const p2 = positions.get('2')!, p3 = positions.get('3')!;
+      sys.update(frame(0.9));
+      // The per-pair dedupe is 20 s, so the second kiss has to be a different pair (2 and 3).
+      sys.onData!(data([kissRow(3, 2, 3), row(1, 'boot')]));
+      expect(p3.kind).toBe('lean');
+      sys.update(frame(0.9));      // 0.9 s after the second kiss: the first lean would be over by now
+      expect(positions.get('1')!.kind).toBe('none');
+      expect(p2.kind).toBe('lean');
+      sys.update(frame(0.5));
+      expect(p2.kind).toBe('none');
+      expect(p3.kind).toBe('none');
+    });
+
+    it('destroy hands the pose back', async () => {
+      const { sys, positions } = await kiss(1, 2);
+      sys.destroy();
+      expect(positions.get('1')!.kind).toBe('none');
+      expect(positions.get('2')!.kind).toBe('none');
+    });
   });
 });

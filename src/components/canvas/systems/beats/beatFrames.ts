@@ -6,12 +6,12 @@ import type { BeatKind } from './beatDetect';
  * Keep `ANIMS` in step with the header comment of the Lua script.
  */
 export const BEATS_URL = '/sprites/fx/beats.png';
-export const BEATS_FRAME_COUNT = 48;
+export const BEATS_FRAME_COUNT = 53;
 export const BEATS_FRAME_SIZE = 32;
 
 export type FxName =
   | 'brawl' | 'giftBox' | 'giftPop' | 'heart' | 'broken' | 'cuffs'
-  | 'whisper' | 'levelup' | 'cake' | 'ghost' | 'ping';
+  | 'whisper' | 'levelup' | 'cake' | 'ghost' | 'ping' | 'kiss';
 
 export interface FxAnim {
   /** First cell in the strip. */
@@ -34,6 +34,7 @@ export const FX_ANIMS: Record<FxName, FxAnim> = {
   cake:    { start: 34, count: 4, fps: 6, loops: 2 },
   ghost:   { start: 38, count: 5, fps: 3, loops: 1 },
   ping:    { start: 43, count: 5, fps: 6, loops: 1 },
+  kiss:    { start: 48, count: 5, fps: 5, loops: 1 },
 };
 
 /** Seconds a whole animation lasts. */
@@ -49,6 +50,21 @@ export function fxFrame(name: FxName, elapsed: number): number {
   const last = a.count * a.loops - 1;
   return a.start + (Math.min(step, last) % a.count);
 }
+
+/** How long the two kissers lean into each other (the hearts outlast it a little). */
+export const KISS_LEAN_S = 1.2;
+
+/**
+ * Which way each of a kissing pair must face to look at the other: `[a, b]` with 1 = right,
+ * -1 = left. Null when they share a column (within 1 px) and there is no side to turn to, so the
+ * caller leaves their facing alone rather than flipping them at random.
+ */
+export function kissFacing(ax: number, bx: number): readonly [1 | -1, 1 | -1] | null {
+  if (Math.abs(ax - bx) < 1) return null;
+  return ax < bx ? FACE_RIGHT_LEFT : FACE_LEFT_RIGHT;
+}
+const FACE_RIGHT_LEFT: readonly [1 | -1, 1 | -1] = [1, -1];
+const FACE_LEFT_RIGHT: readonly [1 | -1, 1 | -1] = [-1, 1];
 
 /** A gifted box flies from giver to receiver for this long, then pops. */
 export const GIFT_TRAVEL_S = 0.8;
@@ -82,9 +98,8 @@ export const BEAT_STYLE: Record<BeatKind, BeatStyle> = {
   levelup:    { fx: 'levelup', lift: 16, emotes: ['levelup', null] },
   birthday:   { fx: 'cake',    lift: 11, dx: 15, emotes: ['cake', null] },
   death:      { fx: 'ghost',   lift: 14, emotes: [null, null] },
-  // Placeholder dressing: the hearts of a romance until the kiss beat gets its own
-  // lean-in and emotes (blush / kiss), which come with the intimacy visuals.
-  kiss:       { fx: 'heart',   lift: 22, emotes: ['heart', 'heart'] },
+  // Two small hearts rising between the faces; BeatSystem adds the lean-in. Suggestive only.
+  kiss:       { fx: 'kiss',    lift: 20, emotes: ['kiss', 'blush'] },
 };
 
 /** Whole life of one beat's effect, in seconds. */

@@ -16,6 +16,7 @@
 --   34-37 cake      birthday cake, candle flame flickering (loops)
 --   38-42 ghost     a small, peaceful wisp (death) — the system floats it upward
 --   43-47 ping      gold ring with sparkles (player intervention)
+--   48-52 kiss      a pop between the faces, two small hearts rise and fade (suggestive only)
 --
 -- Everything is centred on the cell centre (16,16) so the renderer can anchor at 0.5/0.5 on the
 -- midpoint between the agents. Effects are brighter than the world on purpose — they are the
@@ -617,12 +618,43 @@ local function ping(t)
   return cv
 end
 
+-- kiss: a small pop of light at the point between two faces (the cell centre, lower half), then two
+-- hearts of different sizes drift up and outward and fade. Deliberately modest — the lean-in of the
+-- two sprites and the blush/kiss emotes carry the moment.
+local function kissHearts(t)
+  local cv = canvas()
+  -- t = 0..4; a = the bigger, left heart; b = the smaller, right one that trails it.
+  local A = ({ { 15, 20, 3 }, { 13, 16, 4 }, { 12, 12, 5 }, { 12, 8, 5 }, { 12, 6, 4 } })[t + 1]
+  local B = ({ nil, { 19, 20, 3 }, { 20, 15, 4 }, { 21, 11, 4 }, { 21, 9, 3 } })[t + 1]
+  local alpha = ({ 1, 1, 1, 0.75, 0.4 })[t + 1]
+  local hearts = canvas()
+  heart(hearts, A[1], A[2], A[3])
+  if B then heart(hearts, B[1], B[2], B[3]) end
+  outline(hearts, hex(OUT))
+  fade(hearts, alpha)
+  stamp(cv, hearts)
+  -- The pop: sparkle where the lips met, shrinking as the hearts leave it.
+  if t <= 2 then
+    local sp = canvas()
+    sparkle(sp, 16, 24, 3 - t, GOLD, GOLD_LT)
+    stamp(cv, sp)
+  end
+  if t >= 2 and t <= 3 then
+    local sp = canvas()
+    sparkle(sp, 6, 10, 1, GOLD_LT, hex(0xffffff))
+    sparkle(sp, 26, 6, 1, GOLD_LT, hex(0xffffff))
+    fade(sp, alpha)
+    stamp(cv, sp)
+  end
+  return cv
+end
+
 -- ── Assembly ─────────────────────────────────────────────────────────────────────────────────
 
 local anims = {
   { "brawl", 6, brawl }, { "gift", 5, gift }, { "heart", 5, heartBurst }, { "broken", 5, brokenHeart },
   { "cuffs", 4, cuffs }, { "whisper", 4, whisper }, { "levelup", 5, levelup }, { "cake", 4, cake },
-  { "ghost", 5, ghost }, { "ping", 5, ping },
+  { "ghost", 5, ghost }, { "ping", 5, ping }, { "kiss", 5, kissHearts },
 }
 
 local cells, tags = {}, {}
