@@ -13,7 +13,7 @@ import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { getImportance } from './ImportanceScorer';
 import { goalClause } from '../goalText';
 import { itemPhrase, itemCountPhrase } from '../../data/economyData';
-import { endSentence } from '../factText';
+import { endSentence, withSelfAsFirstPerson } from '../factText';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isAdultAge } from '../intimacy/eligibility';
 
@@ -260,13 +260,20 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     },
   );
 
+  // A gossip memory is the owner's own first-person line, but the fact names them like anyone
+  // else ("I told Ana that Ray saw Bram" in Ray's own memory). Their name becomes I/me/my.
+  const ownFactText = (agentId: number, content: string): string => {
+    const name = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get()?.name;
+    return name ? withSelfAsFirstPerson(content, name) : content;
+  };
+
   simEvents.on(
     'gossip:learned',
-    ({ agentId, sourceName, content }: { agentId: number; sourceName: string; content: string }) => {
-      const description = describeEvent('gossip_learned', {
-
+    ({ agentId, sourceName, content, witnessed }: { agentId: number; sourceName: string; content: string; witnessed?: boolean }) => {
+      // `witnessed`: nobody told them (smallMisdeeds), "their own eyes told me that" is not a sentence.
+      const description = describeEvent(witnessed ? 'gossip_witnessed' : 'gossip_learned', {
         source: sourceName,
-        content,
+        content: ownFactText(agentId, content),
       });
       memoryService.record(agentId, 'observation', description, { subtype: 'gossip', sourceName, content });
     },
@@ -276,9 +283,8 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     'gossip:shared',
     ({ agentId, targetName, content }: { agentId: number; targetName: string; content: string }) => {
       const description = describeEvent('gossip_shared', {
-
-        other: targetName,
-        content,
+        other: targetName ?? 'someone',
+        content: ownFactText(agentId, content),
       });
       memoryService.record(agentId, 'observation', description, { subtype: 'gossip', targetName, content });
     },

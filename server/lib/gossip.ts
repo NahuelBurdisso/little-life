@@ -682,8 +682,10 @@ export function spreadGossip(
     const speakerName = getAgentName(_speakerId);
     // factType / factId are what ripple rules key on (affair_heartbreak). The other two emit
     // sites (godPowers, smallMisdeeds) have no fact row and leave them out.
-    simEvents.emit('gossip:learned', { agentId: listenerId, sourceName: speakerName, content: fact.content, factType: fact.type, factId: fact.id });
-    simEvents.emit('gossip:shared', { agentId: _speakerId, otherName: getAgentName(listenerId), content: fact.content });
+    // MemoryObserver reads `targetName` for the teller's memory: this used to say `otherName`, so
+    // every teller stored "I told undefined that ...".
+    simEvents.emit('gossip:learned', { agentId: listenerId, sourceId: _speakerId, sourceName: speakerName, content: fact.content, factType: fact.type, factId: fact.id });
+    simEvents.emit('gossip:shared', { agentId: _speakerId, targetId: listenerId, targetName: getAgentName(listenerId), content: fact.content });
     rumorReachedSubject(fact, _speakerId, listenerId);
 
     if (fact.sensitivity >= 2) {

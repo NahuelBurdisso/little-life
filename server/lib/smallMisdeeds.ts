@@ -218,7 +218,8 @@ export function smallMisdeedsHourly(hour: number, rng: Rng = Math.random): numbe
     const content = db.select({ content: shared_knowledge.content }).from(shared_knowledge)
       .where(eq(shared_knowledge.id, factId)).get()?.content ?? '';
     for (const w of witnesses) {
-      simEvents.emit('gossip:learned', { agentId: w, sourceName: 'their own eyes', content });
+      // `witnessed`: MemoryObserver words it "I saw it with my own eyes", not "their own eyes told me".
+      simEvents.emit('gossip:learned', { agentId: w, sourceName: 'their own eyes', witnessed: true, content });
     }
     // The first witness makes the feed line; the rest just know.
     const seer = byId.get(witnesses[0])!;

@@ -65,6 +65,12 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
     (ctx) => thatSentence(`${ctx.source} told me`, String(ctx.content)),
     (ctx) => thatSentence(`I heard from ${ctx.source}`, String(ctx.content)),
   ],
+  // A witness of a small misdeed was not told anything: "their own eyes told me that ..." read as
+  // a bug in the memory the LLM reads back.
+  gossip_witnessed: [
+    (ctx) => thatSentence('I saw with my own eyes', String(ctx.content)),
+    (ctx) => thatSentence('I saw for myself', String(ctx.content)),
+  ],
   gossip_shared: [
     (ctx) => thatSentence(`I told ${ctx.other}`, String(ctx.content)),
     (ctx) => thatSentence(`I shared with ${ctx.other}`, String(ctx.content)),

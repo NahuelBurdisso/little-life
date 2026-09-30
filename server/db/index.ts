@@ -15,6 +15,7 @@ import { backfillActivityLogGameMinutes } from './activityLogClock';
 import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
+import { repairUndefinedGossipMemories } from './gossipMemoryRepair';
 import { backfillOrientations, repairOrientationConflicts } from './orientationBackfill';
 import { repairMinorRomance } from './minorRomanceRepair';
 import { repairPartnerExclusivity } from './partnerExclusivityRepair';
@@ -423,6 +424,8 @@ export function initSchema(): void {
     () => backfillActivityLogGameMinutes(sqlite),
     // Every start; matches only old-orientation rows, so a no-op once healed.
     () => repairLegacySightingFacts(sqlite),
+    // Every start; matches only the old "I told undefined ..." lead-ins, so a no-op once healed.
+    () => { repairUndefinedGossipMemories(sqlite); },
     // After migrateSchema, which adds the column; fills only NULL rows, so a
     // no-op once every resident has one (also runs on save load via initSchema).
     () => { backfillOrientations(sqlite); },

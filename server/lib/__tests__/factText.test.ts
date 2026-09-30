@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { asClause, endSentence, extractConfidedQuote, thatSentence } from '../factText';
+import { asClause, endSentence, extractConfidedQuote, thatSentence, withSelfAsFirstPerson } from '../factText';
 
 describe('fact text normalisation', () => {
   it('drops the trailing full stop so the fact can sit inside a sentence', () => {
@@ -106,5 +106,53 @@ describe('thatSentence with the lead\'s own people (G7)', () => {
   it('leaves facts that do not name them alone', () => {
     expect(thatSentence('Marco Rivera told Priya Sharma', sighting, [marco, { name: 'Priya Sharma', gender: 'female' }]))
       .toBe("Marco Rivera told Priya Sharma that Yuki Tanaka spotted Diego Santos at a secret meeting they weren't supposed to attend.");
+  });
+});
+
+describe('withSelfAsFirstPerson', () => {
+  // The teller's own memory read "I told Ana that Ray saw Bram…": Ray talking about himself
+  // in the third person, and the LLM reads that line back verbatim.
+  const me = (clause: string) => withSelfAsFirstPerson(clause, 'Ray');
+
+  it('turns a leading name into "I" when a past-tense verb follows', () => {
+    expect(me('Ray spotted Bram')).toBe('I spotted Bram');
+    expect(me('Ray saw Bram at the docks')).toBe('I saw Bram at the docks');
+    expect(me('Ray stole a loaf')).toBe('I stole a loaf');
+  });
+
+  it('agrees the present-tense verbs that differ', () => {
+    expect(me('Ray is broke')).toBe('I am broke');
+    expect(me('Ray has been lying')).toBe('I have been lying');
+    expect(me('Ray does not care')).toBe('I do not care');
+    expect(me('Ray was there')).toBe('I was there');
+  });
+
+  it('keeps the name when the verb would not agree with "I"', () => {
+    expect(me('Ray owes Tom money')).toBe('Ray owes Tom money');
+    expect(me('Ray and Tom fought')).toBe('Ray and Tom fought');
+  });
+
+  it('turns the possessive into "my" and an object into "me"', () => {
+    expect(me("Tom stole Ray's horse")).toBe('Tom stole my horse');
+    expect(me("Ray's horse was stolen")).toBe('my horse was stolen');
+    expect(me('Tom punched Ray')).toBe('Tom punched me');
+    expect(me('Tom punched Ray yesterday')).toBe('Tom punched me yesterday');
+  });
+
+  it('uses the subject form for a name mid-clause that is followed by a verb', () => {
+    expect(me('Tom says Ray is broke')).toBe('Tom says I am broke');
+  });
+
+  it('leaves a conjoined mention alone rather than write "Tom and me was"', () => {
+    expect(me('Tom and Ray were together')).toBe('Tom and Ray were together');
+  });
+
+  it('does not touch other people or a longer name that contains the owner name', () => {
+    expect(me('Tom spotted Bram')).toBe('Tom spotted Bram');
+    expect(me('Raymond spotted Bram')).toBe('Raymond spotted Bram');
+  });
+
+  it('is a no-op for an empty name', () => {
+    expect(withSelfAsFirstPerson('Ray saw Bram', '  ')).toBe('Ray saw Bram');
   });
 });

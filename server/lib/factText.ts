@@ -91,6 +91,61 @@ export function withSelfAsPronoun(clause: string, self: FactSelf): string {
 }
 
 /**
+ * Past-tense verbs that are not spelled -ed, plus modals, which stay the same for "I".
+ * "Ray saw Bram" -> "I saw Bram" is right; "Ray owes Tom" -> "I owes Tom" is not, so a
+ * present-tense verb outside FIRST_PERSON_PRESENT keeps the name.
+ */
+const IRREGULAR_PAST = new Set([
+  'saw', 'was', 'had', 'did', 'went', 'took', 'stole', 'gave', 'told', 'lost', 'made', 'got', 'spent',
+  'slept', 'came', 'left', 'met', 'found', 'knew', 'caught', 'broke', 'ran', 'fought', 'sold', 'bought',
+  'kept', 'brought', 'thought', 'heard', 'said', 'felt', 'wrote', 'drank', 'ate', 'hit', 'put', 'cut',
+  'sat', 'stood', 'won', 'began', 'forgot', 'hid', 'swore', 'threw', 'drove', 'fed', 'led', 'wore',
+  'will', 'would', 'can', 'could', 'may', 'might', 'must', 'should', 'shall',
+]);
+/** -ed words that are nouns or adjectives, not a past-tense verb after a name. */
+const NOT_A_VERB = new Set(['need', 'bed', 'red', 'seed', 'speed', 'feed', 'breed', 'weed', 'deed', 'hundred']);
+const FIRST_PERSON_PRESENT: Record<string, string> = { is: 'am', has: 'have', does: 'do', was: 'was' };
+
+/** The verb as it reads after "I", or null when the word is not one we are sure agrees. */
+function firstPersonVerb(word: string | undefined): string | null {
+  if (!word) return null;
+  const lower = word.toLowerCase();
+  if (lower in FIRST_PERSON_PRESENT) return FIRST_PERSON_PRESENT[lower];
+  if (IRREGULAR_PAST.has(lower)) return lower;
+  if (lower.length > 2 && lower.endsWith('ed') && !NOT_A_VERB.has(lower)) return lower;
+  return null;
+}
+
+/**
+ * Write `name`'s own mentions in a fact clause in the first person, for the memory its owner
+ * keeps: "I told Ana that Ray saw Bram" read as Ray gossiping about himself, and the LLM reads
+ * that line back verbatim. Possessive "Ray's" -> "my"; a name followed by a finite verb -> "I"
+ * (is/has/does agreed); any other mention -> "me". A name at the start that is not followed by
+ * a verb we are sure agrees with "I" keeps the name ("Ray owes Tom" must not become "I owes
+ * Tom"), and so does a name joined by "and": "Tom and me were together" is worse than the
+ * third person.
+ */
+export function withSelfAsFirstPerson(clause: string, name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return clause;
+  const wordChar = '\\p{L}\\p{N}_';
+  const re = new RegExp(
+    `(?<![${wordChar}])${escapeRegExp(trimmed)}(['’]s)?(?![${wordChar}])(\\s+[\\p{L}'’]+)?`,
+    'gu',
+  );
+  return clause.replace(re, (match, possessive: string | undefined, next: string | undefined, offset: number, whole: string) => {
+    if (possessive) return `my${next ?? ''}`;
+    if (/\band\s+$/i.test(whole.slice(0, offset))) return match;
+    const nextWord = next?.trim();
+    if (nextWord?.toLowerCase() === 'and') return match;
+    const verb = firstPersonVerb(nextWord);
+    if (verb != null) return `I ${verb}`;
+    if (offset === 0) return match;
+    return `me${next ?? ''}`;
+  });
+}
+
+/**
  * "<lead> that <fact>." — the one shape every gossip/drama feed line uses.
  * "that + clause" needs no grammatical agreement with the fact, unlike the old
  * "overheard something about <fact>", which only worked for noun phrases and
