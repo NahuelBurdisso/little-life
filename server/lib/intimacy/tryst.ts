@@ -20,7 +20,7 @@ import { isIntimacyEligible } from './eligibility';
 import {
   clearStay, forEachPairIntimacy, forEachStay, getPairIntimacy, getStay, setStay, updatePairIntimacy, updateStay,
 } from './state';
-import { SNEAK_RANGE_PX, onlookersNear, withHiddenLoveBump } from './witnesses';
+import { SNEAK_RANGE_PX, onlookersNear, someoneNear, withHiddenLoveBump } from './witnesses';
 
 // ─── The tryst: where, when, and what the morning brings ─────────────────────
 //
@@ -48,7 +48,9 @@ import { SNEAK_RANGE_PX, onlookersNear, withHiddenLoveBump } from './witnesses';
 //        (`caught`: a `tryst_seen` secret, an `intimacy:caught` event, a feed row)
 //
 // An evening can also be walked in on: a housemate or spouse turning up at a home
-// during it ends it (`caught`), and the betrayed spouse learns of the affair.
+// during it ends it (`caught`), and the betrayed spouse learns of the affair. A child
+// arriving ends it too, but only adults are ever witnesses (`onlookersNear`); the
+// child is never a knower, named in a row or given a `caught` event.
 //
 // State lives in intimacy/state.ts: `activeTryst` on the pair, a `Stay` per guest.
 
@@ -569,9 +571,11 @@ function settleAgreed(key: string, time: ClockTime, rng: () => number): boolean 
   }
   const here = a.current_location === venue.id && b.current_location === venue.id;
   if (!here || !isFree(a) || !isFree(b)) return venueId !== rv.venueId;
-  // A home venue with somebody else awake in it (an unexpected arrival) waits: they may leave.
-  if (venue.type === 'home' && onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]).length > 0
-    && isExposed(a, b, venue.id)) return venueId !== rv.venueId;
+  // A home venue with somebody else awake in it (an unexpected arrival) waits: they may leave. Anyone
+  // counts, a child included (`someoneNear`, the privacy question, and not `onlookersNear`, which is
+  // who may KNOW and is adults only): nobody starts an evening with a child awake down the hall.
+  if (venue.type === 'home' && isExposed(a, b, venue.id)
+    && someoneNear({ id: a.id, current_location: venue.id, position: a.position }, b)) return venueId !== rv.venueId;
   return beginTryst(a, b, venue, time, rng) || venueId !== rv.venueId;
 }
 
@@ -606,10 +610,16 @@ export function trystPass(time: ClockTime, rng: () => number = Math.random): voi
     const venue = locationRow(t.venueId);
     if (!a || !b || !venue || !isIntimacyEligible(a, b)) { completeTryst(x, y, false, now); dirty = true; continue; }
 
-    // Somebody awake turned up at a home: the housemate, the spouse.
-    if (venue.type === 'home' && isExposed(a, b, venue.id)) {
-      const arrivals = onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]);
-      if (arrivals.length > 0) { interrupt(a, b, venue, arrivals, now); dirty = true; continue; }
+    // Somebody awake turned up at a home: the housemate, the spouse, a child. Anyone of any age ends
+    // the evening (`someoneNear`), but only the adults among them are witnesses (`onlookersNear`):
+    // a child who walked in is never named in a feed row, never a knower of the fact and never
+    // the subject of an `intimacy:caught` event, so a child alone ends it with nothing said.
+    if (venue.type === 'home' && isExposed(a, b, venue.id)
+      && someoneNear({ id: a.id, current_location: venue.id, position: a.position }, b)) {
+      const witnesses = onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]);
+      interrupt(a, b, venue, witnesses, now);
+      dirty = true;
+      continue;
     }
     if (now >= t.endsAt) { completeTryst(x, y, false, now); dirty = true; }
   }

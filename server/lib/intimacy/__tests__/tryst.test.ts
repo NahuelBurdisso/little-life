@@ -205,6 +205,19 @@ describe('the tryst', () => {
       expect(pickVenue(load(a), load(b), fair)).toEqual({ locationId: bHome, outdoors: false });
     });
 
+    it('a child living in the house blocks it too (nobody is private in front of a child)', () => {
+      const { a, b, aHome, bHome } = lovers();
+      insertAgent(`Little ${madeAgents.length}`, aHome, { age: 7, current_location: null, gender: 'male' });
+      expect(pickVenue(load(a), load(b), fair)).toEqual({ locationId: bHome, outdoors: false });
+    });
+
+    it('a child visiting a home blocks it as well', () => {
+      const { a, b, aHome, bHome } = lovers();
+      const neighbourHome = insertLocation('Neighbour Kids', 'home', 600);
+      insertAgent(`Playmate ${madeAgents.length}`, neighbourHome, { age: 11, current_location: aHome });
+      expect(pickVenue(load(a), load(b), fair)).toEqual({ locationId: bHome, outdoors: false });
+    });
+
     describe('with both homes taken', () => {
       function bothBlocked() {
         const l = lovers();
@@ -383,6 +396,24 @@ describe('the tryst', () => {
       expect(pair.pendingRendezvous).toBeUndefined();
       expect(pair.activeTryst).toMatchObject({ venueId: aHome });
       expect(load(b).current_action).toMatchObject({ zoneActivity: 'tryst', partnerId: a });
+    });
+
+    it('a child awake at the house holds the evening back (it waits, it does not start)', () => {
+      const { a, b, aHome } = lovers();
+      const family = insertLocation('Visitors', 'home', 800);
+      const child = insertAgent(`Visiting Child ${madeAgents.length}`, family, { age: 9, current_location: aHome, gender: 'male' });
+      agree(a, b, { venueId: aHome });
+      trystPass(TIME, () => 0);
+      let pair = getPairIntimacy(a, b)!;
+      expect(pair.trysts).toBe(0);
+      expect(pair.pendingRendezvous).toMatchObject({ agreed: true, venueId: aHome });
+      expect(load(b).current_action).toEqual({ type: 'idle' });
+
+      // Once the child has gone to bed the house is quiet, and the evening begins.
+      db.update(agents).set({ current_action: { type: 'sleeping' } }).where(eq(agents.id, child)).run();
+      trystPass(TIME, () => 0);
+      pair = getPairIntimacy(a, b)!;
+      expect(pair.trysts).toBe(1);
     });
 
     it('picks the venue but waits while one of them has not arrived', () => {
@@ -781,6 +812,57 @@ describe('the tryst', () => {
       expect(affair[0].known_by).toContain(spouse);
       expect(getPairIntimacy(a, b)!.activeTryst).toBeUndefined();
       db.delete(shared_knowledge).where(eq(shared_knowledge.subject_id, b)).run();
+    });
+
+    it('a child turning up at the house ends the evening, but is never a witness, a knower or a `caught` event', () => {
+      const { a, b, aHome } = eveningAtHome();
+      const family = insertLocation('Small Family', 'home', 800);
+      const child = insertAgent(`Wandering Child ${madeAgents.length}`, family, { age: 8, current_location: aHome, gender: 'male' });
+      const caught = captureEvents<{ a: number; b: number; witnessId: number }>('intimacy:caught');
+      try {
+        trystPass(at(20), () => 0);
+      } finally { caught.stop(); }
+
+      // The evening is over and the guest is on the way out...
+      expect(getPairIntimacy(a, b)!.activeTryst).toBeUndefined();
+      expect(load(b).current_action).toEqual({ type: 'idle' });
+      expect(getStay(b)!.leaving).toBe(true);
+      // ...but the child saw nothing that becomes a fact, a feed row or an event.
+      expect(caught.seen).toEqual([]);
+      expect(rowsOf('caught', b)).toHaveLength(0);
+      expect(factsOf(b)).toHaveLength(0);
+      const knownByChild = db.select().from(shared_knowledge).all()
+        .filter((f) => ((f.known_by as number[] | null) ?? []).includes(child));
+      expect(knownByChild).toEqual([]);
+    });
+
+    it('a child arriving with an adult interrupts, and only the adult is named', () => {
+      const { a, b, aHome } = eveningAtHome();
+      const family = insertLocation('Mixed Family', 'home', 800);
+      const child = insertAgent(`Tagalong ${madeAgents.length}`, family, { age: 6, current_location: aHome, gender: 'male' });
+      const mother = insertAgent(`Mother ${madeAgents.length}`, family, { current_location: aHome });
+      const caught = captureEvents<{ a: number; b: number; witnessId: number }>('intimacy:caught');
+      try {
+        trystPass(at(20), () => 0);
+      } finally { caught.stop(); }
+
+      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: mother }]);
+      const rows = rowsOf('caught', b);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].template_data).toMatchObject({ witness: load(mother).name });
+      expect(rows[0].agent_ids).not.toContain(child);
+      expect(factsOf(b)[0].known_by).toEqual([mother]);
+    });
+
+    it('a child does not interrupt a married couple at home (their own family is no scandal)', () => {
+      const { a, b, aHome } = lovers();
+      db.update(agents).set({ home: aHome }).where(eq(agents.id, b)).run();
+      marry(a, b);
+      beginTryst(load(a), load(b), locOf(aHome), TIME, () => 0);
+      const family = insertLocation('Married Kids', 'home', 800);
+      insertAgent(`Toddler ${madeAgents.length}`, family, { age: 4, current_location: aHome, gender: 'male' });
+      trystPass(at(20), () => 0);
+      expect(getPairIntimacy(a, b)!.activeTryst).toBeDefined();
     });
 
     it('somebody asleep in the house does not interrupt', () => {
