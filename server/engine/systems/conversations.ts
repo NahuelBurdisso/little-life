@@ -328,6 +328,17 @@ export function endOrphanedLLMConversations(): number {
   });
 }
 
+/**
+ * The distress a chat partner is in, as the goal and cascade listeners read it off `conversation:ended`.
+ * `sick` is the newest entry and deliberately the last resort: someone who is ill AND lonely is still
+ * reported as lonely (the ripple rules key on that list and know nothing of `sick`), and a partner who
+ * is only ill now reports `sick`, which is what advances a friend's protect goal (systems/goals.ts).
+ */
+const DISTRESS_STATES = ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt'];
+function partnerDistressState(states: readonly string[]): string | null {
+  return states.find((s) => DISTRESS_STATES.includes(s)) ?? (states.includes('sick') ? 'sick' : null);
+}
+
 export async function conversationsTick(): Promise<void> {
   // Collected LLM dispatch tasks — executed OUTSIDE the transaction (fire-and-forget async)
   const dispatches: Array<{
@@ -1387,9 +1398,7 @@ async function finishCompletedConversation(
     // Gather partner state and romance level for cascade rules
     const otherIds = otherParticipants.map((p) => p.id);
     const partnerStates = otherIds.flatMap((oid) => getAgentStates(oid));
-    const partnerState = partnerStates.find((s) =>
-      ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt'].includes(s),
-    ) ?? null;
+    const partnerState = partnerDistressState(partnerStates);
     const relForRomance = otherIds.length === 1
       ? db.select().from(relationships).where(
           and(eq(relationships.agent_a, Math.min(participant.id, otherIds[0])),
@@ -1921,9 +1930,7 @@ async function processTimedOutEntry(
   for (const agent of agentList) {
     const otherAgent = agentList.find((a) => a.id !== agent.id)!;
     const templatePartnerStates = getAgentStates(otherAgent.id);
-    const templatePartnerState = templatePartnerStates.find((s) =>
-      ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt'].includes(s),
-    ) ?? null;
+    const templatePartnerState = partnerDistressState(templatePartnerStates);
 
     simEvents.emit('conversation:ended', {
       agentId: agent.id,

@@ -19,6 +19,8 @@ import { simEvents } from '../../lib/simEvents';
 import { goalReviewer, pivotEvaluator } from '../../lib/goals/instance';
 import { compareOp, getRelationship, getRelField } from '../../lib/goals/relationshipConditions';
 import { gameMinutes } from '../../lib/gameClock';
+import { distance } from '../../lib/utils';
+import { isMarriedTags } from '../../lib/marriage';
 import {
   completeGoal, describeGoal, recordGoalOutcome, HOSTILE_CHAT, WARM_CHAT, type GoalOutcome,
 } from '../../lib/goals/goalProgress';
@@ -160,6 +162,93 @@ function checkTriggerCondition(
   }
 }
 
+// ─── Observer triggers ────────────────────────────────────────────────────────
+// `trigger_on: 'observers'` (protect a sick neighbour, comfort a grieving one): the goal belongs to
+// someone WATCHING the state and is aimed at the one who has it.
+
+/** Friendship (the watcher's own feeling) that makes someone's grief or illness the watcher's business. */
+const OBSERVER_MIN_FRIENDSHIP = 40;
+
+/**
+ * How ill someone has to be before a friend sets out to look after them. A cold is nobody's
+ * project; the later grave-illness flag (`metadata.grave`) counts at any severity.
+ */
+const OBSERVER_SICK_MIN_SEVERITY = 0.6;
+
+/**
+ * Most active goals of one type aimed at one sufferer, across the whole town. Without it a
+ * popular resident's grief drew a goal from every friend at once: a queue at the door reads as
+ * a script, not as a town that noticed.
+ */
+const MAX_OBSERVER_GOALS_PER_SUFFERER = 3;
+
+/** Per-tick facts observer triggers need that a single agent's row cannot give. */
+interface ObserverContext {
+  /** Active residents only: a sufferer who is gone (dead, moved away) is nobody's to visit. */
+  positions: Map<number, { x: number; y: number }>;
+  /** Active goals by `type:target`, kept current as this phase creates goals. */
+  crowd: Map<string, number>;
+}
+
+const crowdKey = (type: string, targetId: number): string => `${type}:${targetId}`;
+
+function buildObserverContext(
+  activeAgents: readonly { id: number; position: { x: number; y: number } }[],
+  goalRows: RowsByAgentSnapshot<GoalRow>,
+): ObserverContext {
+  const positions = new Map(activeAgents.map((a) => [a.id, a.position]));
+  const crowd = new Map<string, number>();
+  for (const g of goalRows.all()) {
+    if (g.status !== 'active' || g.target_id == null) continue;
+    const key = crowdKey(g.type, g.target_id);
+    crowd.set(key, (crowd.get(key) ?? 0) + 1);
+  }
+  return { positions, crowd };
+}
+
+/** Whether a state row is bad enough to bring watchers (only `sick` has a bar; grief always counts). */
+function needsWatchers(row: AgentStateRow): boolean {
+  if (row.type !== 'sick') return true;
+  return row.severity >= OBSERVER_SICK_MIN_SEVERITY || !!(row.metadata as { grave?: unknown } | null)?.grave;
+}
+
+/**
+ * The sufferer an observer trigger aims `agent` at, or null. A sufferer counts for a watcher who
+ * feels friendship >= 40 toward them or is married to them (parents of a shared child are, in
+ * practice, that pair already, so no separate family lookup), while the sufferer's own goal
+ * count is under the cap and the watcher has not just been through this goal for them.
+ * The closest one wins (position), the strongest tie breaks a draw.
+ */
+function pickObservedSufferer(
+  trigger: GoalTriggerDef,
+  agent: { id: number; position: { x: number; y: number } },
+  ctx: ObserverContext,
+  cachedRelationships: (typeof relationships.$inferSelect)[],
+  stateRows: AgentStateRowsSnapshot,
+  blockedTargets: ReadonlySet<number>,
+): number | null {
+  let best: { id: number; dist: number; tie: number } | null = null;
+  const seen = new Set<number>();
+  for (const row of stateRows.all()) {
+    if (row.type !== trigger.condition.state || row.agent_id === agent.id || seen.has(row.agent_id)) continue;
+    seen.add(row.agent_id);
+    const sufferer = row.agent_id;
+    const pos = ctx.positions.get(sufferer);
+    if (!pos || blockedTargets.has(sufferer) || !needsWatchers(row)) continue;
+    if ((ctx.crowd.get(crowdKey(trigger.generates, sufferer)) ?? 0) >= MAX_OBSERVER_GOALS_PER_SUFFERER) continue;
+
+    const rel = cachedRelationships.find((r) => r.agent_a === Math.min(agent.id, sufferer) && r.agent_b === Math.max(agent.id, sufferer));
+    if (!rel) continue;
+    const friendship = getRelField(rel, 'friendship', rel.agent_a === agent.id);
+    const married = isMarriedTags(rel.tags as string[] | null);
+    if (!married && friendship < OBSERVER_MIN_FRIENDSHIP) continue;
+
+    const cand = { id: sufferer, dist: agent.position ? distance(agent.position, pos) : 0, tie: married ? Infinity : friendship };
+    if (!best || cand.dist < best.dist || (cand.dist === best.dist && cand.tie > best.tie)) best = cand;
+  }
+  return best?.id ?? null;
+}
+
 // ─── evaluateTriggers ─────────────────────────────────────────────────────────
 
 function evaluateTriggers(
@@ -169,6 +258,7 @@ function evaluateTriggers(
   cachedRelationships: (typeof relationships.$inferSelect)[],
   stateRows: AgentStateRowsSnapshot,
   goalRows: RowsByAgentSnapshot<GoalRow>,
+  observers: ObserverContext,
 ): void {
   const personality = getEffectivePersonality(agent.id);
   // One read of the agent's goals serves both lists below (it was two queries
@@ -189,17 +279,25 @@ function evaluateTriggers(
     if (trigger.personality_gate && !checkPersonalityGate(personality, trigger.personality_gate)) continue;
 
     // `trigger_on: 'observers'` (protect a sick neighbour, comfort a grieving one) means the
-    // goal belongs to someone WATCHING the state, aimed at the one who has it. Nothing here
-    // implements that: `checkTriggerCondition` tests the agent's OWN states, so the sick or
-    // grieving resident got a target-less "protect" / "comfort_grieving" goal about themselves.
-    // Such a goal can never advance (progress needs a target: conversation listener below) nor
-    // end on `target_recovered` (needs one too), so it sat until the 3-day timeout: 47 of the 57
-    // goals of a 30-day, 13-resident soak, and 456 goals given up at 32 residents, all of them
-    // this. Skipped until observers exist rather than creating dead goals.
-    if (trigger.trigger_on === 'observers') continue;
-
-    const targetId = checkTriggerCondition(trigger, agent, nowMinutes, cachedKnowledge, cachedRelationships, stateRows);
-    if (targetId === false) continue;
+    // goal belongs to someone WATCHING the state, aimed at the one who has it. It used to run
+    // through `checkTriggerCondition`, which tests the agent's OWN states, so the sick or
+    // grieving resident got a target-less "protect" / "comfort_grieving" goal about themselves:
+    // it could never advance (progress needs a target) nor end on `target_recovered`, and sat
+    // until the 3-day timeout (47 of the 57 goals of a 30-day, 13-resident soak, 456 given up at
+    // 32 residents). Observers were then skipped outright, which left the goals with no source at
+    // all; now the watchers are found here, from the tick's state rows.
+    let targetId: number | null | false;
+    if (trigger.trigger_on === 'observers') {
+      // One at a time per type: a friend already visiting one sufferer does not also queue up
+      // for a second. Sufferers this watcher recently finished (or gave up on) with are out too.
+      if (activeGoals.some(g => g.type === trigger.generates)) continue;
+      const blocked = new Set(recentGoals.filter(g => g.type === trigger.generates && g.target_id != null).map(g => g.target_id!));
+      targetId = pickObservedSufferer(trigger, agent, observers, cachedRelationships, stateRows, blocked);
+      if (targetId === null) continue;
+    } else {
+      targetId = checkTriggerCondition(trigger, agent, nowMinutes, cachedKnowledge, cachedRelationships, stateRows);
+      if (targetId === false) continue;
+    }
 
     // Don't duplicate: skip if agent already has this goal type targeting the same agent
     // (active OR recently abandoned/completed — prevents create→abandon loops)
@@ -223,6 +321,10 @@ function evaluateTriggers(
     }).run();
 
     activeGoals.push({ type: trigger.generates, target_id: targetId } as any);
+    if (targetId != null) {
+      const key = crowdKey(trigger.generates, targetId);
+      observers.crowd.set(key, (observers.crowd.get(key) ?? 0) + 1);
+    }
 
     simEvents.emit('goal:created', { agentId: agent.id, goalType: trigger.generates, targetId: targetId });
 
@@ -254,10 +356,14 @@ function evaluateAbandonment(
 
     if (rule.condition.startsWith('state_expired:')) {
       const stateType = rule.condition.split(':')[1];
-      const hasState = allAgentStates.filter(
-        s => s.agent_id === agent.id && s.type === stateType,
+      // `on_target`: the state that has to end is the TARGET's (comfort_grieving waits for the
+      // mourner's grief to lift). It was always read off the owner, who never grieves, so an
+      // observer's comfort goal was abandoned on the very tick it was created.
+      const stateOwner = rule.on_target ? goal.target_id : agent.id;
+      const hasState = stateOwner == null ? [] : allAgentStates.filter(
+        s => s.agent_id === stateOwner && s.type === stateType,
       );
-      if (hasState.length === 0) {
+      if (stateOwner != null && hasState.length === 0) {
         shouldAbandon = rule.auto === true || (rule.chance != null && rollDailyChance(rule.chance, tickSpeed));
       }
     } else if (rule.condition.startsWith('relationship.')) {
@@ -311,7 +417,9 @@ function evaluateAbandonment(
       // A protect / comfort goal whose target got better after the owner had already been
       // there for them (a comfort, a gift, a few kind talks) is a job done, not a goal given
       // up: "target_recovered" used to abandon it whatever the owner had put in.
-      if (rule.condition === 'target_recovered' && (goal.progress ?? 0) >= RECOVERED_COUNTS_AS_DONE) {
+      const targetRecovered = rule.condition === 'target_recovered'
+        || (rule.condition.startsWith('state_expired:') && rule.on_target === true);
+      if (targetRecovered && (goal.progress ?? 0) >= RECOVERED_COUNTS_AS_DONE) {
         newStatus = 'completed';
       }
 
@@ -453,7 +561,8 @@ function initGoalProgressListeners(): void {
 export const initGoalProgressListenersForTest = initGoalProgressListeners;
 
 /** The partner states conversations.ts reports as `partnerState`. */
-const DISTRESS = new Set(['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt']);
+// `sick` goes last: a kind word to someone ill is what a protect goal is waiting for.
+const DISTRESS = new Set(['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt', 'sick']);
 
 const INTERACTION_OUTCOMES: Record<string, GoalOutcome> = {
   insult: 'insulted_target',
@@ -500,6 +609,8 @@ export function goalsTick(): void {
     (row) => row.agent_id,
   );
 
+  const observers = buildObserverContext(activeAgents, goalRows);
+
   for (const agent of activeAgents) {
     // Copies: abandonment writes the new status onto the goal object, and the
     // snapshot's rows are shared. Rowid order, as idx_goals_agent_status gave.
@@ -525,7 +636,7 @@ export function goalsTick(): void {
     }
 
     // 4. Check reactive triggers for new goals
-    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships, stateRows, goalRows);
+    evaluateTriggers(agent, nowMinutes, allActiveKnowledge, allRelationships, stateRows, goalRows, observers);
 
     // 5. Pivot evaluation (async fire-and-forget)
     void pivotEvaluator.evaluate(agent.id, nowMinutes);
