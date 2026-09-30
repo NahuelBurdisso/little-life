@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, ConversationPromptParams, PROPOSAL_TOPIC } from '../prompts';
+import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, romanceLevel, ConversationPromptParams, PROPOSAL_TOPIC } from '../prompts';
 import { clearVoiceDirectiveCache } from '../voiceDirective';
 
 const mockAgent = {
@@ -207,6 +207,36 @@ describe('buildConversationPrompt', () => {
     });
     expect(system).toContain('Constable for 6 years');
     expect(system).not.toContain('consider you neutral');
+  });
+
+  describe('romance grounding (playtest #3: "my love" at romance 26)', () => {
+    const withRomance = (romance_ab: number, romance_ba: number, tags: string[] = [], topic = 'catching up') =>
+      buildConversationPrompt({
+        ...baseParams,
+        conversation: { ...baseParams.conversation, topic },
+        relationship: { ...baseParams.relationship!, friendship_ab: 50, friendship_ba: 50, romance_ab, romance_ba, tags },
+      }).messages[0].content;
+
+    it('names the level and forbids pet names below a couple', () => {
+      expect(romanceLevel(26.6, [])).toBe('spark');
+      expect(romanceLevel(45, [])).toBe('courting');
+      expect(romanceLevel(80, [])).toBe('in love');
+      expect(romanceLevel(10, ['partner'])).toBe('partners');
+      expect(withRomance(26.6, 70)).toContain('A spark of attraction to Carlos, nothing more — no pet names like "my love"');
+      expect(withRomance(80, 30)).toContain("You're in love with Carlos, but you're not a couple — no pet names");
+    });
+
+    it('lets couples be tender, and says "no romance" only when it could be mistaken', () => {
+      expect(withRomance(80, 80, ['partner'])).not.toContain('pet names');
+      expect(withRomance(0, 0)).not.toContain('romance');
+      expect(withRomance(0, 40)).toContain('No romance on your side');
+      expect(withRomance(0, 0, [], 'flirting')).toContain('No romance on your side');
+    });
+
+    it('says a shared home once', () => {
+      const text = withRomance(0, 0, ['housemate', 'roommate']);
+      expect(text.split('You live together.').length - 1).toBe(1);
+    });
   });
 
   it('passes unknown topics through as a subject', () => {

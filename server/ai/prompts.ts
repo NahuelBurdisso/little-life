@@ -192,11 +192,39 @@ function buildSettingLine(world: WorldStateRow, locationName: string): string {
  */
 export type FirstMeeting = 'by-sight' | 'speaker-new' | 'listener-new' | null;
 
+export type RomanceLevel = 'none' | 'spark' | 'courting' | 'in love' | 'partners' | 'engaged' | 'married';
+
+/** The speaker's romantic standing with the listener: their own feeling, or the couple's tags. */
+export function romanceLevel(romance: number, tags: readonly string[]): RomanceLevel {
+  if (tags.includes('married')) return 'married';
+  if (tags.includes('engaged')) return 'engaged';
+  if (tags.includes('partner')) return 'partners';
+  if (romance > 60) return 'in love';
+  if (romance > 35) return 'courting';
+  if (romance > 15) return 'spark';
+  return 'none';
+}
+
+const NO_PET_NAMES = 'no pet names like "my love", "my dear" or "darling"';
+
+function buildRomanceLine(level: RomanceLevel, otherName: string, romanticScene: boolean): string {
+  switch (level) {
+    // Couples: the tag line already says so, and endearments are theirs.
+    case 'married': case 'engaged': case 'partners': return '';
+    case 'in love': return `You're in love with ${otherName}, but you're not a couple — ${NO_PET_NAMES}.`;
+    case 'courting': return `You're sweet on ${otherName}, nothing declared — ${NO_PET_NAMES}.`;
+    case 'spark': return `A spark of attraction to ${otherName}, nothing more — ${NO_PET_NAMES}.`;
+    default: return romanticScene ? `No romance on your side — ${NO_PET_NAMES}.` : '';
+  }
+}
+
 function buildRelationshipTag(
   relationship: RelationshipRow | null,
   speakerId: number,
   otherName: string,
   meeting: FirstMeeting = null,
+  /** A flirt topic or feelings from the other side: worth saying there are none here. */
+  romanticScene = false,
 ): string {
   if (!relationship) {
     return meeting === 'speaker-new' || meeting === 'listener-new'
@@ -240,19 +268,18 @@ function buildRelationshipTag(
     engaged: "You're engaged to be married.",
     married: "You're married to them.",
   };
-  for (const tag of relationship.tags) {
-    const mapped = tagMap[tag];
-    if (mapped) parts.push(mapped);
+  // A set: `housemate` and `roommate` both mapped to "You live together." and
+  // playtest #3 prompts said it twice.
+  for (const mapped of new Set(relationship.tags.map((t) => tagMap[t]).filter(Boolean))) {
+    parts.push(mapped);
   }
 
-  // Romance
-  if (romance > 60) {
-    parts.push(`You have deep feelings for ${otherName}.`);
-  } else if (romance > 40) {
-    parts.push(`You're attracted to ${otherName}.`);
-  } else if (romance > 20) {
-    parts.push(`You find ${otherName} appealing.`);
-  }
+  // Romance, as a level the model can't overshoot. Playtest #3: Rosa and Yuki
+  // called each other "my love" and "my dear" while Yuki's romance was 26.6
+  // and they weren't a couple — "You have deep feelings for Yuki" read as
+  // licence. Pet names belong to couples; below that the line says so.
+  const romanceLine = buildRomanceLine(romanceLevel(romance, relationship.tags), otherName, romanticScene);
+  if (romanceLine) parts.push(romanceLine);
 
   // Trust
   if (trust > 50) {
@@ -660,7 +687,11 @@ export function buildConversationPrompt(
   userParts.push(buildListenerLine(otherAgent, params.otherJobTitle ?? null));
 
   // Relationship tag
-  userParts.push(buildRelationshipTag(relationship, speaker.id, addressName(otherAgent.name), meeting));
+  const otherRomance = relationship
+    ? (relationship.agent_a === speaker.id ? relationship.romance_ba : relationship.romance_ab)
+    : 0;
+  const romanticScene = otherRomance > 15 || /^(?:flirting|romance)$/i.test(conversation.topic ?? '');
+  userParts.push(buildRelationshipTag(relationship, speaker.id, addressName(otherAgent.name), meeting, romanticScene));
 
   // Context items with prefixes
   const contextPrefixes: Record<ContextItem['type'], string> = {
