@@ -17,6 +17,7 @@ import { memoryService } from './lib/memory/instance';
 import { initMemoryObserver } from './lib/memory/MemoryObserver';
 import { initPlanEventAdapter } from './lib/planning/PlanEventAdapter';
 import { initCascade } from './lib/cascade';
+import { initConfrontationListeners } from './lib/confrontationEngine';
 import { reconstructZoneOccupancy } from './lib/interiorGrid';
 import { CONFIG } from './lib/constants';
 import './lib/giftEngine'; // Initialize gift-giving event listeners
@@ -89,6 +90,8 @@ console.log('Planning system initialized');
 
 // Initialize cascade system (ripple effects, tension, snap resolution)
 initCascade();
+// Cascade confrontations (heartbreak, jealousy, theft, a snap...) become scenes.
+initConfrontationListeners();
 
 // Bring back the in-memory sim state the previous process checkpointed
 // (hobbies, favors, tension, momentum, drift baselines, trackers). After

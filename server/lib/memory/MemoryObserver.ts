@@ -18,6 +18,20 @@ import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isAdultAge } from '../intimacy/eligibility';
 import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
+/** `interaction:completed` beat actions sent as bare nouns, as "I <phrase> with <other>." reads them. */
+const BEAT_ACTION_PHRASES: Record<string, string> = {
+  confrontation: 'had it out',
+  insult: 'traded insults',
+  flirt: 'flirted',
+};
+
+/** The other party of an `interaction:completed` cast, by name; undefined if it names nobody else. */
+function interactionOtherName(cast: { agentId: number; perpetratorId?: number | null; victimId?: number | null }): string | undefined {
+  const otherId = [cast.perpetratorId, cast.victimId].find((id) => id != null && id !== cast.agentId);
+  if (otherId == null) return undefined;
+  return db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name;
+}
+
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
 
@@ -328,11 +342,19 @@ export function initMemoryObserver(memoryService: MemoryService): void {
 
   simEvents.on(
     'interaction:completed',
-    ({ agentId, otherName, action }: { agentId: number; otherName: string; action: string }) => {
+    (payload: {
+      agentId: number; otherName?: string; action: string;
+      perpetratorId?: number | null; victimId?: number | null;
+    }) => {
+      const { agentId, action } = payload;
+      // The drama beats and the cascade send the cast as ids, not `otherName`, and
+      // a bare noun as the action: the memory read "I confrontation with undefined."
+      // Name the other party from the cast, and phrase the three beat nouns.
+      const otherName = payload.otherName ?? interactionOtherName(payload) ?? 'someone';
       const description = describeEvent('interaction_completed', {
 
         other: otherName,
-        action,
+        action: BEAT_ACTION_PHRASES[action] ?? action,
       });
       memoryService.record(agentId, 'observation', description, { subtype: 'interaction', otherName, action });
     },

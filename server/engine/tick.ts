@@ -348,7 +348,6 @@ export async function gameTick(): Promise<void> {
   // Cadences are game-time boundaries, not `totalTicks % N`: counting ticks ran
   // these every 40 game minutes / 4 game hours at 4x, and nested the hourly
   // checks inside the 10-tick gate.
-  const totalTicks = worldWithNewTime.time.totalTicks;
   const nowMinutes = gameMinutes(newTime);
   if (crossedBoundary(gameMinutes(oldTime), nowMinutes, 10)) {
     runGuarded('perception', () => perceptionSystem.scan(worldWithNewTime));
@@ -380,7 +379,9 @@ export async function gameTick(): Promise<void> {
     // A letter from home for someone the story passed by today (lib/personalEvents.ts).
     runGuarded('personalEvents', () => db.transaction(() => personalEventsHourly(newTime.hour, nowMinutes)));
     runGuarded('loneliness', () => lonelinessCheck(nowMinutes));
-    runGuarded('confrontation', () => confrontationCheck(totalTicks));
+    // In a transaction like the phases around it: a confrontation writes a feed row,
+    // a relationship event, reputation and goal progress, all or nothing.
+    runGuarded('confrontation', () => db.transaction(() => confrontationCheck(nowMinutes)));
     // The player's challenges, judged on the town's state (lib/challenges/evaluate.ts).
     runGuarded('challenges', () => db.transaction(() => runChallengeChecks()));
   }
