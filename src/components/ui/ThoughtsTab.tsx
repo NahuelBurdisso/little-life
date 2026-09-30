@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { CurrentThought } from "./CurrentThought";
+import type { ThoughtContext } from "../../lib/thoughtLine";
 import { GoalsView } from "./GoalsView";
 import { SecretsOpinions } from "./SecretsOpinions";
 import { MemoryLog } from "./MemoryLog";
@@ -25,8 +26,11 @@ interface ThoughtsTabProps {
     type: string;
     severity: number;
     source: string;
+    target_agent_id?: number | null;
     metadata: Record<string, any> | null;
   }[];
+  /** Names and the current conversation, for the inner-monologue line. */
+  thoughtContext: ThoughtContext;
   memories: {
     id: number;
     description: string;
@@ -71,6 +75,7 @@ export function ThoughtsTab({
   agent,
   needs,
   activeStates,
+  thoughtContext,
   memories,
   worldTick,
   tickSpeed,
@@ -87,6 +92,7 @@ export function ThoughtsTab({
         agent={agent}
         needs={needs}
         states={activeStates}
+        thoughtContext={thoughtContext}
       />
 
       {/* Layer 2: Goals & Ambition */}

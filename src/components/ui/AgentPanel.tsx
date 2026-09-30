@@ -14,6 +14,7 @@ import { RelationshipList } from "./RelationshipList";
 import { PlanTimeline } from "./PlanTimeline";
 import { ThoughtsTab } from "./ThoughtsTab";
 import { StoryTab } from "./StoryTab";
+import { conversationOf } from "../../lib/thoughtLine";
 import type { PersonalityProfile } from "../../../server/lib/personality";
 import { gameMinutes } from "../../../server/lib/gameClock";
 
@@ -429,6 +430,10 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
             agent={agent}
             needs={needs ?? null}
             activeStates={agentStates ?? []}
+            thoughtContext={{
+              nameOf: (id) => agentNameMap.get(String(id)),
+              conversation: conversationOf(agentId, activeConversations),
+            }}
             memories={memories ?? []}
             worldTick={worldTick}
             tickSpeed={tickSpeed}

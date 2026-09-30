@@ -55,6 +55,8 @@ import { toolbarClearance } from "./lib/toolbarLayout";
 import { useRecap } from "./hooks/useRecap";
 import { RecapCard } from "./components/ui/RecapCard";
 import { recapAutoDismissMs, recapVisible } from "./lib/recapDisplay";
+import { conversationOf, thoughtOf } from "./lib/thoughtLine";
+import { portraitMood } from "./components/ui/portraitMood";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -134,8 +136,10 @@ export default function App() {
     setBottomHeight(h => Math.max(24, Math.min(400, h - delta)));
   }, []);
 
-  // Tooltip state
-  const [hoveredAgent, setHoveredAgent] = useState<{ name: string; currentAction: unknown; place: string | null } | null>(null);
+  // Tooltip state. Only the id is kept: the card is derived from the live `agents` query on every
+  // render (see `tooltip` below), so it follows the resident while the pointer rests on them
+  // instead of freezing the action and thought seen at the moment the hover began.
+  const [hoveredAgentId, setHoveredAgentId] = useState<string | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
   // Context menu state
@@ -363,27 +367,47 @@ export default function App() {
   const handleAgentHover = useCallback(
     (agentId: string | null, pos?: { x: number; y: number }) => {
       if (!agentId || !pos) {
-        setHoveredAgent(null);
+        setHoveredAgentId(null);
         setHoverPos(null);
         return;
       }
-      const agent = agents.find((a) => String(a.id) === agentId);
-      if (agent) {
-        // The building the agent is in, so "working" can say where.
-        const place = locations?.find((l) => l.id === (agent as { current_location?: number | null }).current_location)?.name ?? null;
-        setHoveredAgent({ name: agent.name, currentAction: agent.current_action, place });
-        setHoverPos(pos);
-      }
+      setHoveredAgentId(agentId);
+      setHoverPos(pos);
     },
-    [agents, locations]
+    []
   );
+
+  const tooltip = useMemo(() => {
+    const agent = hoveredAgentId == null ? undefined : agents.find((a) => String(a.id) === hoveredAgentId);
+    if (!agent) return null;
+    // The building the agent is in, so "working" can say where.
+    const place = locations?.find((l) => l.id === agent.current_location)?.name ?? null;
+    const nameById = new Map(agents.map((a) => [a.id, a.name]));
+    const states = agent.activeStates ?? [];
+    const thought = thoughtOf(agent, {
+      nameOf: (id) => nameById.get(id),
+      conversation: conversationOf(agent.id, conversations),
+    });
+    return {
+      agent: {
+        name: agent.name,
+        currentAction: agent.current_action,
+        place,
+        portrait_sprite: agent.portrait_sprite,
+        gender: agent.gender,
+        age: agent.age,
+      },
+      thought,
+      mood: portraitMood(agent.needs?.mood, states),
+    };
+  }, [hoveredAgentId, agents, locations, conversations]);
 
   const handleAgentContextMenu = useCallback(
     (agentId: string, pos: { x: number; y: number }) => {
       setContextMenuAgent(agentId);
       setContextMenuPos(pos);
       // Clear tooltip when context menu opens
-      setHoveredAgent(null);
+      setHoveredAgentId(null);
       setHoverPos(null);
     },
     []
@@ -547,7 +571,7 @@ export default function App() {
       <Toasts />
 
       {/* Tooltip overlay */}
-      <AgentTooltip agent={hoveredAgent} position={hoverPos} />
+      <AgentTooltip agent={tooltip?.agent ?? null} thought={tooltip?.thought} mood={tooltip?.mood} position={hoverPos} />
 
       {/* Context menu */}
       {contextMenuAgent && contextMenuPos && (

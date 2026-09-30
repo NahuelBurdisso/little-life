@@ -1,8 +1,10 @@
 import { describeAction } from "../../lib/actionText";
 import { styleOf, stateLabel } from "../../lib/stateStyle";
+import { thoughtOf, toneClass, type ThoughtContext } from "../../lib/thoughtLine";
 
 interface CurrentThoughtProps {
   agent: {
+    id?: number | string;
     name: string;
     current_action: Record<string, any>;
     traits: string[];
@@ -21,8 +23,12 @@ interface CurrentThoughtProps {
     type: string;
     severity: number;
     source: string;
+    /** Whom the feeling is about, so the line can name them (`thoughtOf`). */
+    target_agent_id?: number | null;
     metadata: Record<string, any> | null;
   }[];
+  /** Who is who, and the talk this resident is in: what `thoughtOf` needs to name names. */
+  thoughtContext: ThoughtContext;
 }
 
 function getMoodEmoji(mood: number): string {
@@ -50,84 +56,18 @@ function getMoodColor(mood: number): string {
   return "text-red-400";
 }
 
-function assembleThought(
-  agent: CurrentThoughtProps["agent"],
-  needs: CurrentThoughtProps["needs"],
-  states: CurrentThoughtProps["states"]
-): string {
-  if (!needs) return `${agent.name} is just existing right now.`;
-
-  const { hunger, energy, social, mood, stress } = needs;
-
-  // Find the most pressing need
-  const pressures: { label: string; value: number; thought: string }[] = [
-    {
-      label: "hunger",
-      value: 100 - hunger,
-      thought: `${agent.name} is really craving something to eat.`,
-    },
-    {
-      label: "energy",
-      value: 100 - energy,
-      thought: `${agent.name} feels exhausted and needs rest.`,
-    },
-    {
-      label: "social",
-      value: 100 - social,
-      thought: `${agent.name} is feeling lonely and wants company.`,
-    },
-  ];
-
-  const topPressure = pressures.sort((a, b) => b.value - a.value)[0];
-
-  // Stress overrides if severe
-  if (stress > 70) {
-    return `${agent.name} is stressed out and struggling to focus.`;
-  }
-
-  // State-driven thoughts
-  const crushedState = states.find((s) => s.type === "heartbroken" || s.type === "in_love");
-  if (crushedState) {
-    return crushedState.type === "in_love"
-      ? `${agent.name} can't stop thinking about someone special.`
-      : `${agent.name} is still hurting inside.`;
-  }
-
-  const sickState = states.find((s) => s.type === "sick" || s.type === "injured");
-  if (sickState) {
-    return `${agent.name} isn't feeling well and wishes they could rest.`;
-  }
-
-  // High mood — upbeat thoughts
-  if (mood > 80) {
-    return `${agent.name} is feeling great and in good spirits today.`;
-  }
-
-  // Critical need
-  if (topPressure.value > 70) {
-    return topPressure.thought;
-  }
-
-  // Moderate mood
-  if (mood > 50) {
-    return `${agent.name} is getting through the day, one step at a time.`;
-  }
-
-  // Low mood fallback
-  return `${agent.name} feels a bit off and can't quite put their finger on why.`;
-}
-
-export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
+export function CurrentThought({ agent, needs, states, thoughtContext }: CurrentThoughtProps) {
   const mood = needs?.mood ?? 50;
-  const thought = assembleThought(agent, needs, states);
+  // The same line the hover card shows (lib/thoughtLine.ts), so the two never disagree.
+  const thought = thoughtOf({ id: agent.id, name: agent.name, needs, activeStates: states }, thoughtContext);
 
   return (
     <div className="px-3 py-2 border-b border-ui-line">
       <div className="text-xs text-ui-dim font-medium mb-1.5">Inner Monologue</div>
 
       {/* Thought sentence */}
-      <p className="text-[11px] text-ui-blue leading-relaxed italic mb-2">
-        "{thought}"
+      <p className={`text-[11px] leading-relaxed italic mb-2 ${toneClass(thought.tone)}`}>
+        "{thought.text}"
       </p>
 
       {/* Mood row */}
