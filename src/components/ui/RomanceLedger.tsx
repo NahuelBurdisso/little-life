@@ -1,7 +1,8 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { trpc } from "../../lib/trpc";
 import { COLORS } from "../../lib/constants";
 import { formatGameMinute, gameTimeAgo } from "../../lib/formatters";
+import { ledgerIsStale } from "../../lib/romanceUi";
 import type {
   Ledger,
   LedgerCouple,
@@ -295,10 +296,16 @@ interface RowProps {
  * a row opens the pair dossier, which stacks above this modal.
  */
 export function RomanceLedger({ isOpen, onClose, onViewPair, onSelectAgent }: RomanceLedgerProps) {
-  const { data: ledger, isLoading } = trpc.intimacy.getLedger.useQuery(undefined, {
-    enabled: isOpen,
-    placeholderData: (prev) => prev,
-  });
+  // No `placeholderData`: a ledger kept from before the rule changed would show its adult chapters
+  // (or hide them) until the refetch lands. The rule itself is the reference: a ledger built under
+  // the other one is treated as still loading (`ledgerIsStale`) and refetched.
+  const utils = trpc.useUtils();
+  const { data: ledger, isLoading } = trpc.intimacy.getLedger.useQuery(undefined, { enabled: isOpen });
+  const { data: rules } = trpc.world.getRules.useQuery(undefined, { enabled: isOpen });
+  const stale = ledgerIsStale(ledger, rules);
+  useEffect(() => {
+    if (stale) void utils.intimacy.getLedger.invalidate();
+  }, [stale, utils]);
   const { data: agents } = trpc.agents.getActive.useQuery(undefined, { enabled: isOpen });
 
   const portraits = useMemo(
@@ -329,7 +336,7 @@ export function RomanceLedger({ isOpen, onClose, onViewPair, onSelectAgent }: Ro
         </div>
 
         <div className="overflow-y-auto flex-1" style={{ colorScheme: "dark" }}>
-          {isLoading || !ledger ? (
+          {isLoading || !ledger || stale ? (
             <div className="px-4 py-3 space-y-2" role="status" aria-label="Loading">
               <Skeleton className="h-3 w-40" />
               <Skeleton className="h-16" />

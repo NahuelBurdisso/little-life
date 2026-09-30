@@ -142,6 +142,12 @@ export function useNudge() {
       }, {
         kind: 'arrange_rendezvous', agentIds: [agentA, agentB], icon: '🕯️',
         success: `${nameOf(agentA)} and ${nameOf(agentB)} will find a quiet moment`,
+      }).then((r) => {
+        // The dossier's button state (`intimacy.arrange`) changes the moment the invitation is out
+        // (or is refused), and the dossier otherwise only refreshes on the agents channel: without
+        // this the button stays lit for a few seconds and invites a second click.
+        void utils.relationships.getPair.invalidate();
+        return r;
       }),
     whisperThought: (agentId: Id, text: string) =>
       run({ action: { type: 'whisper_thought', agentId: Number(agentId), text } }, {

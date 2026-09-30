@@ -13,6 +13,7 @@ import type {
   HistoryPoint,
   PairDossier as PairDossierData,
 } from "../../../server/lib/pairDossier";
+import { arrangeButtonFor } from "../../lib/romanceUi";
 import { EmptyState } from "./EmptyState";
 import { MiniPortrait } from "./MiniPortrait";
 import { Skeleton } from "./Skeleton";
@@ -528,8 +529,8 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
       setArranging(false);
     }
   };
-  // Present only for two adults; unavailable (with the reason on hover) while the rule is off or they are not ready.
-  const arrange = dossier?.intimacy?.arrange ?? null;
+  // Present only for two adults with the adult-content rule on; unavailable (with the reason on hover) while they are not ready.
+  const arrange = arrangeButtonFor(dossier?.intimacy);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
