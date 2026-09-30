@@ -4,6 +4,7 @@ import { createSkyFxSystem } from "./skyFx/SkyFxSystem";
 import { createAmbientLifeSystem } from "./ambientLife/AmbientLifeSystem";
 import { createHeldItemSystem } from "./held/HeldItemSystem";
 import { createBeatSystem } from "./beats/BeatSystem";
+import { createTalkSystem } from "./talk/TalkSystem";
 import { createPlayerFxSystem } from "./playerFx/PlayerFxSystem";
 import { createActivityFxSystem } from "./activityFx/ActivityFxSystem";
 import { createPlaceLifeSystem } from "./placeLife/PlaceLifeSystem";
@@ -24,6 +25,9 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   createAmbientLifeSystem,
   createHeldItemSystem,
   createActivityFxSystem,
+  // Who is talking to whom: the tinted line and the message dot sit under the story beats, which
+  // should never be hidden behind a chat line (bubbles are drawn above every system layer anyway).
+  createTalkSystem,
   createBeatSystem,
   // A warning, not a scene: the lit fuse over a resident about to snap.
   createFuseSystem,

@@ -26,3 +26,35 @@ export function bubbleText(text: string, maxChars: number): string {
   const cut = (lastSpace > maxChars * 0.5 ? room.slice(0, lastSpace) : room).replace(/[\s,;:—–-]+$/, '');
   return `${cut}…`;
 }
+
+/** Horizontal gap (px) between neighbouring speakers' bubbles in one conversation. */
+const BUBBLE_SLOT_PX = 24;
+
+/**
+ * Sideways shift of speaker `i`'s bubble among `n` talkers, centred on 0. It used to be a flat
+ * +-20 for participant 0 vs everyone else, so a third speaker's bubble landed exactly on the
+ * second's. A lone speaker (or an unknown index) stays centred.
+ */
+export function bubbleOffsetX(i: number, n: number): number {
+  if (n <= 1 || i < 0 || i >= n) return 0;
+  return (i - (n - 1) / 2) * BUBBLE_SLOT_PX;
+}
+
+/**
+ * Tone of the bubble for `speakerId`'s newest line: that message's own sentiment, falling back
+ * to the conversation's. `convo.sentiment` is inserted as 0 and only averaged when the chat ends,
+ * so on its own every live bubble looked neutral.
+ */
+export function speakerSentiment(
+  messages: ReadonlyArray<{ speakerId?: number; sentiment?: number | null }> | undefined,
+  speakerId: number,
+  fallback: number | null | undefined,
+): number {
+  if (messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.speakerId === speakerId && typeof m.sentiment === "number" && Number.isFinite(m.sentiment)) return m.sentiment;
+    }
+  }
+  return fallback ?? 0;
+}

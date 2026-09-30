@@ -35,9 +35,6 @@ const POSE_EMOTES: Record<string, string> = {
 };
 const POSE_PUFF_INTERVAL_MS = 7000;
 
-/** Head height — where the conversation arc attaches, above the feet anchor. */
-const CONVO_LINK_LIFT = 14;
-
 /**
  * FNV-1a over everything that actually changes the static tilemap layers.
  * `world` is re-parsed from JSON on every poll, so array identity can't gate the
@@ -277,7 +274,8 @@ export const GameCanvas = React.memo(function GameCanvas({
       }
     }
 
-    // --- Active conversations: face the partner + draw a faint speech arc ---
+    // --- Active conversations: face the partner ---
+    // (The line between talkers, its tone and the message dot are the Talk canvas system's.)
     const convos = conversationsRef.current ?? [];
     if (spritePoolRef.current && convos.length > 0) {
       for (const convo of convos as any[]) {
@@ -289,9 +287,7 @@ export const GameCanvas = React.memo(function GameCanvas({
         if (!spriteA || !spriteB) continue;
 
         const ax = spriteA.container.x;
-        const ay = spriteA.container.y;
         const bx = spriteB.container.x;
-        const by = spriteB.container.y;
 
         // Standing still produces no step delta, so facing is whatever direction
         // they arrived in — often back to back. Turn them toward each other.
@@ -299,13 +295,6 @@ export const GameCanvas = React.memo(function GameCanvas({
           spriteA.setFacing(bx < ax ? -1 : 1);
           spriteB.setFacing(ax < bx ? -1 : 1);
         }
-
-        // Bowed upward and drawn at head height so it reads as an exchange rather
-        // than another relationship line.
-        const bow = Math.min(24, Math.max(8, Math.hypot(bx - ax, by - ay) * 0.3));
-        g.moveTo(ax, ay - CONVO_LINK_LIFT)
-          .quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 - CONVO_LINK_LIFT - bow, bx, by - CONVO_LINK_LIFT)
-          .stroke({ color: 0xfde68a, alpha: 0.3, width: 1.5 });
       }
     }
 

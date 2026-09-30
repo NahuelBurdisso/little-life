@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { bubbleText } from '../../lib/bubbleText';
+import { bubbleOffsetX, bubbleText, speakerSentiment } from '../../lib/bubbleText';
 import type { SpritePool } from "./SpritePool";
 import { loadStrip } from "./stripAtlas";
 import { idString } from "./idString";
@@ -35,6 +35,7 @@ const ACTIVITY_EMOTES: Record<string, string> = {
 
 /** Shared read-only stand-in for a missing `activeStates`, so the per-frame loop never allocates one. */
 const EMPTY_STATES: readonly any[] = [];
+const EMPTY_IDS: readonly number[] = [];
 
 /** First conversation listing `agentId` as a participant — a plain loop, `update` runs per frame. */
 function findConversation<C extends { participants?: number[] }>(conversations: C[], agentId: number): C | undefined {
@@ -393,7 +394,7 @@ export class BubbleSystem {
    * and sync positions with agent positions.
    */
   update(
-    conversations: Array<{ participants?: number[]; messages?: Array<{ speakerId?: number; text?: string; fallback?: boolean }> }>,
+    conversations: Array<{ participants?: number[]; sentiment?: number | null; messages?: Array<{ speakerId?: number; text?: string; fallback?: boolean; sentiment?: number | null }> }>,
     agents: Array<{ id: number; position: { x: number; y: number } }>,
     deltaTime: number,
     spritePool?: SpritePool,
@@ -500,12 +501,12 @@ export class BubbleSystem {
       if (lastMsg && messageCount > lastShown) {
         // New message arrived — show a fresh speech bubble
         this.shownMessageCounts.set(aid, messageCount);
-        const sentiment = (convo as any)?.sentiment ?? 0;
-        // Determine bubble offset for multi-agent conversations
-        const participantIds = (convo?.participants ?? []).map(String);
-        const isMultiAgent = participantIds.length > 1;
-        const participantIndex = participantIds.indexOf(aid);
-        const offsetX = isMultiAgent ? (participantIndex === 0 ? -20 : 20) : 0;
+        // The border tone is this speaker's own line, not `convo.sentiment`: that column is
+        // inserted as 0 and only averaged when the chat ends, so it never showed while people talked.
+        const sentiment = speakerSentiment(convo?.messages, numericAid, convo?.sentiment);
+        // Each talker gets a slot of their own (a third speaker used to land on the second's bubble).
+        const participants = convo?.participants ?? EMPTY_IDS;
+        const offsetX = bubbleOffsetX(participants.indexOf(numericAid), participants.length);
         if (!latestIsAction.has(aid)) this.showSpeechBubble(aid, lastMsg, pos, sentiment, offsetX);
       } else if (!lastMsg && !this.bubbles.has(aid)) {
         // No messages yet — show thought bubble while waiting
