@@ -632,6 +632,8 @@ export const GameCanvas = React.memo(function GameCanvas({
           position: a.position ?? { x: 0, y: 0 },
           current_location: a.current_location ?? null,
           activeStates: a.activeStates ?? [],
+          // Awake, asleep or in the private evening: what a house's lamp answers to.
+          current_action: a.current_action,
         })),
         {
           day_phase: world?.day_phase ?? 'morning',

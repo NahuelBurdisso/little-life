@@ -10,6 +10,7 @@ import { createPlaceLifeSystem } from "./placeLife/PlaceLifeSystem";
 import { createFuseSystem } from "./fuse/FuseSystem";
 import { createAudioSystem } from "./audio/AudioSystem";
 import { createCoupleSystem } from "./couples/CoupleSystem";
+import { createCurtainSystem } from "./curtains/CurtainSystem";
 
 /**
  * Every pluggable canvas system, in update order. Add one line per feature — order
@@ -28,6 +29,8 @@ export const SYSTEM_FACTORIES: SystemFactory[] = [
   createFuseSystem,
   // Married, engaged and courting pairs walk close and hold hands; the smitten steal glances.
   createCoupleSystem,
+  // A house hosting a private evening draws its curtains (the lamp turned down is LightingSystem's).
+  createCurtainSystem,
   // The player's own actions draw last: they should never be hidden under a story beat.
   createPlayerFxSystem,
   // Draws nothing: the soundscape (weather, places near the camera, story cues, thunder).

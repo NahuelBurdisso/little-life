@@ -157,6 +157,13 @@ export function southWindowXs(loc: {
 /** Distance from the south edge up to the vertical centre of a window rect. */
 export const WINDOW_CENTER_ABOVE_SOUTH_EDGE = 6;
 
+/**
+ * The lit pane of a south window, relative to the window's centre x (`southWindowXs`) and the
+ * building's south edge: `left` px left of centre, its top `above` px above the edge. Exported
+ * for CurtainSystem, which draws over exactly this rect, so the two cannot drift apart.
+ */
+export const WINDOW_GLASS = { left: 4, above: 9, w: 8, h: 6 } as const;
+
 /** Per-channel lighten toward white; `amount` 0 = unchanged, 1 = white. */
 function lighten(color: number, amount: number): number {
   const ch = (c: number) => Math.round(c + (255 - c) * amount);
@@ -627,7 +634,7 @@ export class BuildingRenderer {
     // Skipped where they'd collide with a south-facing door. ──
     for (const wx of southWindowXs(loc)) {
       walls.rect(Math.round(wx - 5), y + height - 10, 10, 8).fill({ color: 0x1a1510 });
-      walls.rect(Math.round(wx - 4), y + height - 9, 8, 6).fill({ color: 0xd8c07a, alpha: 0.9 });
+      walls.rect(Math.round(wx - WINDOW_GLASS.left), y + height - WINDOW_GLASS.above, WINDOW_GLASS.w, WINDOW_GLASS.h).fill({ color: 0xd8c07a, alpha: 0.9 });
     }
     const doorX = Math.round(ex - doorDef.w / 2);
     const doorY = Math.round(ey - doorDef.h / 2);
@@ -848,7 +855,7 @@ export class BuildingRenderer {
     g.rect(x, y + height - 3, width, 3).fill({ color: darken(palette.wall, 0.55) }); // plinth
     for (const wx of southWindowXs(loc)) {
       g.rect(Math.round(wx - 5), y + height - 10, 10, 8).fill({ color: 0x1a1510 });
-      g.rect(Math.round(wx - 4), y + height - 9, 8, 6).fill({ color: 0xd8c07a, alpha: 0.9 });
+      g.rect(Math.round(wx - WINDOW_GLASS.left), y + height - WINDOW_GLASS.above, WINDOW_GLASS.w, WINDOW_GLASS.h).fill({ color: 0xd8c07a, alpha: 0.9 });
       g.rect(Math.round(wx - 4), y + height - 6, 8, 1).fill({ color: 0x1a1510, alpha: 0.6 }); // mullion
     }
     const ex = loc.entry_point.x;

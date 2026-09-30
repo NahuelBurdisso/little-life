@@ -10,6 +10,7 @@ import { eventFamily } from '../../../server/data/worldEventCatalog';
 import { carriesLantern } from './lanterns';
 import { emitCanvasEvent } from '../../lib/canvasBus';
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
+import { type ActionLike, homeHostsTryst, homeLightLevel, stepHomeLight } from './homeLight';
 import {
   type AmbientProfile, PHASE_AMBIENT, computeAmbient, ambientKey, weatherMod,
   advanceTransition, blendAmbient, chanceOverDelta,
@@ -24,6 +25,22 @@ interface LightSource {
   color: number;
   intensity: number;
   flicker: number;
+  /** A house's light: `render` scales it by, and tints it with, the house's fade (see `HomeFade`). */
+  home?: HomeFade;
+}
+
+/**
+ * Where one house's light is right now, eased toward what its occupants call for. The door and
+ * both windows of a house share it, so they dim together. Owned per location and kept across
+ * polls (only the target is rewritten), which is what lets the light fade instead of snapping.
+ */
+interface HomeFade {
+  /** 0 = dark, 1 = full window light, `LAMP_TURNED_DOWN_LEVEL` = the lamp turned down. */
+  level: number;
+  target: number;
+  /** 0 = ordinary warm light, 1 = the lamp's redder tint. */
+  lamp: number;
+  lampTarget: number;
 }
 
 interface LocationData {
@@ -73,6 +90,8 @@ const WINDOW_GLOW_COLOR = 0xFFD9A0;
 const WINDOW_GLOW_RADIUS = 14;
 const WINDOW_GLOW_INTENSITY = 0.35;
 const WINDOW_GLOW_FLICKER = 0.06;
+/** Tint a house takes on while its lamp is turned down: the same warmth, redder and lower. */
+const LAMP_TINT = 0xE8905C;
 // Which building types render window glow (all enclosed buildings)
 const WINDOW_GLOW_TYPES = new Set([
   'home', 'shop', 'tavern', 'clinic', 'town_hall',
@@ -154,6 +173,10 @@ export class LightingSystem {
   /** Agent id for each entry of `agentLights`, same index. */
   private agentLightIds: string[] = [];
   private eventLights: LightSource[] = [];
+  /** Fade state of every house that is lit or fading, by location id. Emptied by day. */
+  private homeFades = new Map<number, HomeFade>();
+  /** `homeFades` as an array: `render` steps it every frame without an iterator allocation. */
+  private homeFadeList: HomeFade[] = [];
   /** Scratch buffer for `render`'s combined light list — reused every frame. */
   private allLights: LightSource[] = [];
 
@@ -216,7 +239,12 @@ export class LightingSystem {
    * Rebuilds light source lists from current state.
    */
   update(
-    agents: Array<{ id: number; position: { x: number; y: number }; current_location: number | null; activeStates?: Array<{ type: string }> }>,
+    agents: Array<{
+      id: number; position: { x: number; y: number }; current_location: number | null;
+      activeStates?: Array<{ type: string }>;
+      /** What each occupant is doing decides whether their house is lit, dim or dark. */
+      current_action?: ActionLike;
+    }>,
     world: { day_phase: string; weather: string; time: { season: string; hour: number } },
     locations: LocationData[],
     activeEvents: string[],
@@ -233,6 +261,7 @@ export class LightingSystem {
     for (const a of agents) {
       if (a.current_location != null) occupiedLocations.add(a.current_location);
     }
+    this.retargetHomes(agents, locations);
 
     // Ambient transition. Keyed on phase, season AND weather — it used to be
     // keyed on phase alone, so changing the weather mid-phase didn't touch the
@@ -273,7 +302,11 @@ export class LightingSystem {
 
       // Check conditions
       if (def.nightOnly && !this.isNightish) continue;
-      if (def.needsOccupants && !occupiedLocations.has(loc.id)) continue;
+      // A house is lit by who is awake in it, and fades (see `homeFades`); the others need only a body.
+      const homeFade = loc.type === 'home' ? this.homeFades.get(loc.id) : undefined;
+      if (loc.type === 'home') {
+        if (!homeFade) continue;
+      } else if (def.needsOccupants && !occupiedLocations.has(loc.id)) continue;
 
       // Non-nightOnly lights: gate by operating hours AND require it to be
       // dark enough (evening/dawn/night) to avoid visible blobs at full
@@ -295,6 +328,7 @@ export class LightingSystem {
         color: def.color,
         intensity: def.intensity,
         flicker: def.flicker * wm.flickerMul,
+        home: homeFade,
       });
     }
 
@@ -304,10 +338,12 @@ export class LightingSystem {
         if (OUTDOOR_TYPES.has(loc.type)) continue;
         if (!WINDOW_GLOW_TYPES.has(loc.type)) continue;
 
-        // Gate: home requires occupants; all others always glow at night
-        const bgDef = BUILDING_LIGHT[loc.type];
-        const needsOcc = bgDef?.needsOccupants ?? false;
-        if (needsOcc && !occupiedLocations.has(loc.id)) continue;
+        // Gate: a home needs someone awake (or the lamp turned down) and fades; the other
+        // types that need occupants need only one; all others always glow at night.
+        const homeFade = loc.type === 'home' ? this.homeFades.get(loc.id) : undefined;
+        if (loc.type === 'home') {
+          if (!homeFade) continue;
+        } else if ((BUILDING_LIGHT[loc.type]?.needsOccupants ?? false) && !occupiedLocations.has(loc.id)) continue;
 
         // Also respect operating hours for non-residential types that have them
         if (loc.operating_hours && loc.type !== 'home') {
@@ -328,6 +364,7 @@ export class LightingSystem {
             color: WINDOW_GLOW_COLOR,
             intensity: WINDOW_GLOW_INTENSITY,
             flicker: WINDOW_GLOW_FLICKER * wm.flickerMul,
+            home: homeFade,
           });
         }
       }
@@ -438,6 +475,44 @@ export class LightingSystem {
   }
 
   /**
+   * Point every house's fade at what its occupants call for now (`homeLightLevel`). Only houses
+   * that are lit or still fading keep an entry, and none survive the day: by morning the light is
+   * gone anyway, and a stale level would flash at dusk. A house that has gone dark and stays
+   * empty is dropped here, on the poll after its fade ran out, so it costs nothing while dark.
+   */
+  private retargetHomes(
+    agents: Array<{ current_location: number | null; current_action?: ActionLike }>,
+    locations: LocationData[],
+  ) {
+    if (!this.isNightish) {
+      if (this.homeFades.size > 0) {
+        this.homeFades.clear();
+        this.homeFadeList = [];
+      }
+      return;
+    }
+    const actionsByHome = new Map<number, ActionLike[]>();
+    for (const loc of locations) if (loc.type === 'home') actionsByHome.set(loc.id, []);
+    for (const a of agents) {
+      if (a.current_location != null) actionsByHome.get(a.current_location)?.push(a.current_action);
+    }
+    for (const [id, actions] of actionsByHome) {
+      const target = homeLightLevel(actions);
+      const lampTarget = homeHostsTryst(actions) ? 1 : 0;
+      let fade = this.homeFades.get(id);
+      if (!fade) {
+        if (target === 0) continue;
+        fade = { level: 0, target, lamp: lampTarget, lampTarget };
+        this.homeFades.set(id, fade);
+      }
+      fade.target = target;
+      fade.lampTarget = lampTarget;
+      if (fade.target === 0 && fade.level === 0) this.homeFades.delete(id);
+    }
+    this.homeFadeList = Array.from(this.homeFades.values());
+  }
+
+  /**
    * Called per animation frame in the ticker.
    * Renders the lightmap and composites it over the scene.
    */
@@ -463,6 +538,13 @@ export class LightingSystem {
         this.agentLights[i].x = p.x;
         this.agentLights[i].y = p.y;
       }
+    }
+
+    // Houses ease toward their target light; the lights themselves read it below.
+    for (let i = 0; i < this.homeFadeList.length; i++) {
+      const f = this.homeFadeList[i];
+      f.level = stepHomeLight(f.level, f.target, deltaFrames);
+      f.lamp = stepHomeLight(f.lamp, f.lampTarget, deltaFrames);
     }
 
     // Ensure lightmap texture matches screen size
@@ -565,9 +647,20 @@ export class LightingSystem {
       // Decompose light color and scale by intensity. Inlined rather than via
       // `hexToRgb` to keep this loop — which runs for every visible light on
       // every frame — from allocating a tuple per light.
-      const cr = (light.color >> 16) & 0xFF;
-      const cg = (light.color >> 8) & 0xFF;
-      const cb = light.color & 0xFF;
+      let cr = (light.color >> 16) & 0xFF;
+      let cg = (light.color >> 8) & 0xFF;
+      let cb = light.color & 0xFF;
+      const fade = light.home;
+      if (fade) {
+        // A house's light is its base light scaled by how lit it is, and reddened while the lamp is down.
+        intensity *= fade.level;
+        if (intensity <= 0.004) continue;
+        if (fade.lamp > 0) {
+          cr = Math.round(lerp(cr, (LAMP_TINT >> 16) & 0xFF, fade.lamp));
+          cg = Math.round(lerp(cg, (LAMP_TINT >> 8) & 0xFF, fade.lamp));
+          cb = Math.round(lerp(cb, LAMP_TINT & 0xFF, fade.lamp));
+        }
+      }
       const fr = Math.round(cr * intensity);
       const fg = Math.round(cg * intensity);
       const fb = Math.round(cb * intensity);
