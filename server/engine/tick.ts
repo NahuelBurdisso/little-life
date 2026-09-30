@@ -393,7 +393,7 @@ export async function gameTick(): Promise<void> {
 
   // Record tick timing + LLM slot state for the autoplay profiler. Both the
   // samples and these two DB round-trips are pure overhead while autoplay is
-  // off, which is the default.
+  // off (the Calm storyteller, or the switch).
   if (CONFIG.AUTOPLAY.ENABLED) {
     autoPlayer.perf.recordTick(performance.now() - tickStart);
     try {

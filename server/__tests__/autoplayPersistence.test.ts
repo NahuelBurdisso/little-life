@@ -68,7 +68,7 @@ describe('autoplay config per world', () => {
 
     // "Reboot": memory back to shipped defaults, then load from the DB.
     bootDefaults();
-    expect(CONFIG.AUTOPLAY.ENABLED).toBe(false);
+    expect(CONFIG.AUTOPLAY.BOREDOM_THRESHOLD).toBe(AUTOPLAY_DEFAULTS.BOREDOM_THRESHOLD);
     loadAutoplayConfig();
 
     expect(CONFIG.AUTOPLAY.ENABLED).toBe(true);
@@ -78,6 +78,16 @@ describe('autoplay config per world', () => {
       enabled: CONFIG.AUTOPLAY.ENABLED,
       boredThreshold: CONFIG.AUTOPLAY.BOREDOM_THRESHOLD,
     })).toBe('chaos');
+  });
+
+  it('ships on, and a town that switched it off stays off after a restart', async () => {
+    // On by default (the Balanced storyteller); the panel's switch is the way out.
+    expect(AUTOPLAY_DEFAULTS.ENABLED).toBe(true);
+    await autoplay.configure({ enabled: false });
+    bootDefaults();
+    expect(CONFIG.AUTOPLAY.ENABLED).toBe(true);
+    loadAutoplayConfig();
+    expect(CONFIG.AUTOPLAY.ENABLED).toBe(false);
   });
 
   it('a later rules change keeps the autoplay settings', async () => {

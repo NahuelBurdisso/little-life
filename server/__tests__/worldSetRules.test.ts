@@ -67,9 +67,11 @@ describe('Storyteller presets', () => {
   });
 
   it('reads a fresh world with default autoplay as Balanced', () => {
-    expect(matchStoryteller(DEFAULT_LIVE_RULES, { enabled: false, boredThreshold: 55 })).toBe('balanced');
-    // The threshold does nothing while autoplay is off, so it can't break the match.
-    expect(matchStoryteller(DEFAULT_LIVE_RULES, { enabled: false, boredThreshold: 90 })).toBe('balanced');
+    // Autoplay ships on at 55 (AUTOPLAY_CONFIG), which is Balanced's storyteller.
+    expect(matchStoryteller(DEFAULT_LIVE_RULES, { enabled: true, boredThreshold: 55 })).toBe('balanced');
+    // Switched off, the default rules are a hand-tuned mix; whatever threshold was left.
+    expect(matchStoryteller(DEFAULT_LIVE_RULES, { enabled: false, boredThreshold: 55 })).toBeNull();
+    expect(matchStoryteller(DEFAULT_LIVE_RULES, { enabled: false, boredThreshold: 90 })).toBeNull();
   });
 
   it('reads a hand-tuned mix as custom', () => {
