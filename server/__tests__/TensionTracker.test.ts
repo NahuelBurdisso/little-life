@@ -106,26 +106,45 @@ describe('TensionTracker', () => {
   // ─── Tick update ─────────────────────────────────────────────────────────────
 
   describe('tick update', () => {
-    it('applies natural decay (-0.3)', () => {
+    it('applies natural decay (-0.08/min)', () => {
       tracker.addTension(1, 10, { event: 'test', description: 'test', tick: 0 });
       tracker.tickUpdate(1, [], 1);
-      expect(tracker.getTension(1)).toBeCloseTo(9.7);
+      expect(tracker.getTension(1)).toBeCloseTo(9.92);
     });
 
-    it('applies passive gain for stressed (+0.5 - 0.3 = net +0.2)', () => {
+    it('applies passive gain for stressed (+0.25 - 0.08 = net +0.17)', () => {
       tracker.addTension(1, 10, { event: 'test', description: 'test', tick: 0 });
       tracker.tickUpdate(1, ['stressed'], 1);
-      expect(tracker.getTension(1)).toBeCloseTo(10.2);
+      expect(tracker.getTension(1)).toBeCloseTo(10.17);
     });
 
-    it('applies euphoric decay boost (-0.3 - 0.8 = -1.1)', () => {
+    it('applies euphoric decay boost (-0.08 - 0.4 = -0.48)', () => {
       tracker.addTension(1, 10, { event: 'test', description: 'test', tick: 0 });
       tracker.tickUpdate(1, ['euphoric'], 1);
-      expect(tracker.getTension(1)).toBeCloseTo(8.9);
+      expect(tracker.getTension(1)).toBeCloseTo(9.52);
+    });
+
+    it('a single 30-point grievance still lingers after three game hours', () => {
+      // The point of the slow drain: at the old 0.3/min this was gone in 100
+      // minutes, so two grievances a few hours apart never added up.
+      tracker.addTension(1, 30, { event: 'test', description: 'test', tick: 0 });
+      tracker.tickUpdate(1, [], 180);
+      expect(tracker.getTension(1)).toBeCloseTo(30 - 0.08 * 180);
+    });
+
+    it('three grievances in an afternoon reach a short temper', () => {
+      // neuro/impulse 100, warmth/morality 50: threshold 100-25-20+7.5+5 = 67.5
+      const personality = makePersonality({ neuroticism: 100, impulsiveness: 100 });
+      tracker.addTension(1, 30, { event: 'a', description: 'a', tick: 0 });
+      tracker.tickUpdate(1, [], 120);
+      tracker.addTension(1, 30, { event: 'b', description: 'b', tick: 0 });
+      tracker.tickUpdate(1, [], 120);
+      tracker.addTension(1, 30, { event: 'c', description: 'c', tick: 0 });
+      expect(tracker.shouldSnap(1, personality, 10_000)).toBe(true);
     });
 
     it('never goes below zero', () => {
-      tracker.addTension(1, 0.1, { event: 'test', description: 'test', tick: 0 });
+      tracker.addTension(1, 0.05, { event: 'test', description: 'test', tick: 0 });
       tracker.tickUpdate(1, [], 1);
       expect(tracker.getTension(1)).toBe(0);
     });
@@ -134,7 +153,7 @@ describe('TensionTracker', () => {
       // One 4x tick = four 1x ticks' worth of drift.
       tracker.addTension(1, 10, { event: 'test', description: 'test', tick: 0 });
       tracker.tickUpdate(1, ['stressed'], 4);
-      expect(tracker.getTension(1)).toBeCloseTo(10.8);
+      expect(tracker.getTension(1)).toBeCloseTo(10.68);
     });
   });
 
@@ -155,17 +174,16 @@ describe('TensionTracker', () => {
       expect(tracker.shouldSnap(1, personality, 300)).toBe(false);
     });
 
-    it('respects a 200-game-minute cooldown after snap', () => {
+    it('respects a 720-game-minute cooldown after snap', () => {
       const personality = makePersonality({ neuroticism: 100, impulsiveness: 100, morality: 0, warmth: 0 });
       tracker.addTension(1, 60, { event: 'rage', description: 'Snapped once', tick: 0 });
       tracker.recordSnap(1, 100); // snap at game minute 100, tension reset to 20
       // Add more tension to exceed threshold again
       tracker.addTension(1, 60, { event: 'rage2', description: 'Rage again', tick: 200 });
-      // Minute 250 — only 150 game minutes after the snap → still in cooldown
-      expect(tracker.shouldSnap(1, personality, 250)).toBe(false);
-      // Minute 300 — 200 game minutes after the snap → cooldown lifted. Stamped
-      // in ticks, this took 800 game minutes at 4x.
-      expect(tracker.shouldSnap(1, personality, 300)).toBe(true);
+      // Minute 810 — 710 game minutes after the snap → still in cooldown
+      expect(tracker.shouldSnap(1, personality, 810)).toBe(false);
+      // Minute 820 — 720 game minutes (12 h) after the snap → cooldown lifted.
+      expect(tracker.shouldSnap(1, personality, 820)).toBe(true);
     });
 
     it('lets an agent that never snapped snap at any game minute', () => {
