@@ -15,6 +15,9 @@ import { and, desc, eq, gt, or } from 'drizzle-orm';
 import { compareOp, getRelationship, getRelField } from './relationshipConditions';
 import { gameMinutesToMs } from '../worldClock';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
+import { completeGoal } from './goalProgress';
+import { repeatsExistingGoal } from './goalOverlap';
+import { ambitionText } from '../../data/ambitions';
 
 const MINUTES_PER_DAY = 1440;
 
@@ -238,7 +241,7 @@ export class GoalReviewer {
         age: agent.age,
         personality,
         traits: agent.traits,
-        ambition: ambition ? { description: ambition.description ?? ambition.type, type: ambition.type } : null,
+        ambition: ambition ? { description: ambition.description ?? ambitionText(ambition.type), type: ambition.type } : null,
         activeGoals: activeGoalSummaries,
         recentMemories,
         relationshipHighlights,
@@ -326,7 +329,15 @@ export class GoalReviewer {
 
       for (const ng of newGoalsToCreate) {
         const mapped = this.mapper.map(ng, allAgents);
+        // A type that needs a person (investigate, seduce, revenge…) with no
+        // person named can never progress: every outcome is keyed on the
+        // target. It is a goal about the self, and only "done" can end it.
+        if (mapped.target_id == null && GOAL_REGISTRY[mapped.type]?.requires_target) {
+          mapped.type = 'custom';
+          mapped.mapped_interactions = this.mapper.mapCategory('custom').interactions;
+        }
         if (isRedundantGoal(agentId, mapped.type, mapped.target_id, nowMinutes)) continue;
+        if (repeatsExistingGoal(agentId, ng.description, nowMinutes)) continue;
 
         const inserted = db.insert(goals).values({
           agent_id: agentId,
@@ -381,6 +392,11 @@ export class GoalReviewer {
 
     if (review.action === 'continue') {
       // No DB change needed — goal stays active as-is
+      return;
+    }
+
+    if (review.action === 'done') {
+      completeGoal(goal, nowMinutes, 1);
       return;
     }
 

@@ -46,7 +46,10 @@ interface AmbitionGenerationParams {
 }
 
 export const AMBITION_CATEGORIES = ['wealth', 'love', 'power', 'freedom', 'justice', 'knowledge', 'legacy', 'pleasure'];
-export const GOAL_CATEGORY_HINTS = ['romantic', 'hostile', 'social', 'economic', 'investigative', 'protective', 'custom'];
+// `personal` is for goals about oneself (a reputation, a craft, lost gloves):
+// without it the model filed them under `social`, which made them `befriend`
+// goals that no friendship could ever complete (playtest #4).
+export const GOAL_CATEGORY_HINTS = ['romantic', 'hostile', 'social', 'economic', 'investigative', 'protective', 'personal', 'custom'];
 
 /**
  * Structured-output schemas (callOllamaChat `format`). Before them the review
@@ -87,7 +90,7 @@ function goalReviewSchema(goalIds: number[], openSlots: number, otherAgents: str
         type: 'object',
         properties: {
           goal_id: { type: 'integer', enum: goalIds },
-          action: { type: 'string', enum: ['continue', 'adjust', 'abandon'] },
+          action: { type: 'string', enum: ['continue', 'adjust', 'done', 'abandon'] },
           reason: SHORT(160),
           new_strategy: SHORT(160),
         },
@@ -149,10 +152,14 @@ export function buildGoalReviewPrompt(params: GoalReviewPromptParams): JSONPromp
   const relationshipsText = relationshipHighlights.length > 0 ? relationshipHighlights.map((r) => `- ${r}`).join('\n') : '- No notable relationships.';
 
   const tasks = [
-    'Keep your ambition ("keep") unless recent events truly changed what you want.',
-    activeGoals.length > 0 ? 'For each active goal decide: continue, adjust (give a new strategy) or abandon.' : '',
+    // "truly" kept every ambition for 27 days in playtest #4; a life event is
+    // exactly what should move one.
+    'Keep your ambition ("keep") unless recent events changed what you want — a death, a new love, a betrayal or a run of failures can.',
+    // "done" is the only way a goal about no one in particular can finish:
+    // nothing else in the sim can tell that Ezra found his gloves.
+    activeGoals.length > 0 ? 'For each active goal decide: continue, adjust (give a new strategy), done (you have achieved it) or abandon.' : '',
     openSlots > 0
-      ? `You may start up to ${openSlots} new goal${openSlots > 1 ? 's' : ''} — things you want over the next few days, driven by your personality, ambition and what just happened; not errands like eating, sleeping or a hangover cure. Use target_agent when a goal is about one person.`
+      ? `You may start up to ${openSlots} new goal${openSlots > 1 ? 's' : ''} — things you want over the next few days, driven by your personality, ambition and what just happened; not errands like eating, sleeping or a hangover cure. Use target_agent when a goal is about one person, and only name people who live in town.`
       : 'You have no room for new goals today.',
     'Keep every text field to one short sentence.',
   ].filter(Boolean).join(' ');
@@ -174,7 +181,7 @@ ${relationshipsText}
 
 It's morning. ${tasks}
 
-Reply with JSON: {"ambition":"keep" or {"shift":"...","category":"...","reason":"..."}${activeGoals.length > 0 ? ',"reviews":[{"goal_id":N,"action":"continue|adjust|abandon","reason":"...","new_strategy":"..."}]' : ''}${openSlots > 0 ? ',"new_goals":[{"description":"...","target_agent":"Full Name" or null,"category_hint":"...","strategy":"...","priority":0.5}]' : ''}}`;
+Reply with JSON: {"ambition":"keep" or {"shift":"...","category":"...","reason":"..."}${activeGoals.length > 0 ? ',"reviews":[{"goal_id":N,"action":"continue|adjust|done|abandon","reason":"...","new_strategy":"..."}]' : ''}${openSlots > 0 ? ',"new_goals":[{"description":"...","target_agent":"Full Name" or null,"category_hint":"...","strategy":"...","priority":0.5}]' : ''}}`;
 
   const user = 'Review your ambition and goals for today.';
   return { system, user, format: goalReviewSchema(activeGoals.map((g) => g.id), openSlots, otherAgents) };
@@ -196,7 +203,7 @@ ${memoriesText}
 
 Pick a different, concrete approach — something you would actually do in town in the next day or two. One sentence.
 
-Reply with JSON: {"new_strategy":"...","new_category_hint":"${GOAL_CATEGORY_HINTS.join('|')}"}`;
+Reply with JSON: {"new_strategy":"..."}`;
 
   const user = 'What new approach will you try?';
   return {
@@ -204,8 +211,10 @@ Reply with JSON: {"new_strategy":"...","new_category_hint":"${GOAL_CATEGORY_HINT
     user,
     format: {
       type: 'object',
-      properties: { new_strategy: SHORT(200), new_category_hint: { type: 'string', enum: GOAL_CATEGORY_HINTS } },
-      required: ['new_strategy', 'new_category_hint'],
+      // No category: a pivot changes how, not what. It used to re-type the
+      // goal and keep its description ("befriend: Gather more rumors…").
+      properties: { new_strategy: SHORT(200) },
+      required: ['new_strategy'],
     },
   };
 }

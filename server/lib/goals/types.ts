@@ -8,7 +8,7 @@ export interface AmbitionShift {
 
 export interface GoalReviewAction {
   goal_id: number;
-  action: 'continue' | 'adjust' | 'abandon';
+  action: 'continue' | 'adjust' | 'done' | 'abandon';
   reason: string;
   new_strategy?: string;
 }
@@ -51,4 +51,10 @@ export interface MappedGoal {
 // Game minutes since `goals.created_at` (1 and 3 game days).
 export const PIVOT_THRESHOLD_MINUTES = 1440;
 export const STALE_ABANDON_MINUTES = 4320;
+/**
+ * A goal about no one in particular has no outcome to make progress on: only
+ * the morning review can call it done. It gets twice as long before the stale
+ * sweep gives up on it for the agent.
+ */
+export const STALE_ABANDON_UNTARGETED_MINUTES = STALE_ABANDON_MINUTES * 2;
 export const MAX_LLM_GOALS = 3;

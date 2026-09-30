@@ -39,6 +39,7 @@ import { saveWorldCaches } from '../engine/worldCaches';
 import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
 import { randomUUID } from 'crypto';
 import { nameHomes } from '../lib/homeNames';
+import { ambitionText } from '../data/ambitions';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -457,6 +458,7 @@ function seedWorld(
       status: 'active',
       adopted_at: 0,
       trigger: 'initial',
+      description: ambitionText(aspConfig.type),
     }).run();
   }
 

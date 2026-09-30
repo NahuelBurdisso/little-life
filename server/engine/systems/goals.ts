@@ -271,8 +271,10 @@ function evaluateTriggers(
   // Also load recently abandoned/completed goals to prevent create→abandon spam.
   // Without this, a persistent trigger (e.g., infatuated state) creates a goal every tick
   // that gets immediately abandoned, flooding the activity log.
+  // Measured from when the goal ENDED: a goal that lived past the window was
+  // re-created the tick after it was abandoned (create→abandon loops).
   const recentGoals = agentGoalRows
-    .filter(g => g.status !== 'active' && (nowMinutes - g.created_at) < RECREATE_COOLDOWN_MINUTES);
+    .filter(g => g.status !== 'active' && (nowMinutes - (g.completed_at ?? g.created_at)) < RECREATE_COOLDOWN_MINUTES);
 
   for (const trigger of GOAL_TRIGGER_REGISTRY) {
     if (activeGoals.length >= MAX_GOALS_PER_AGENT) break;
@@ -605,7 +607,11 @@ export function goalsTick(): void {
   const goalRows = new RowsByAgentSnapshot<GoalRow>(
     () => getTableWriteVersion('goals'),
     () => db.select().from(goals)
-      .where(or(eq(goals.status, 'active'), gte(goals.created_at, nowMinutes - RECREATE_COOLDOWN_MINUTES)))
+      .where(or(
+        eq(goals.status, 'active'),
+        gte(goals.created_at, nowMinutes - RECREATE_COOLDOWN_MINUTES),
+        gte(goals.completed_at, nowMinutes - RECREATE_COOLDOWN_MINUTES),
+      ))
       .orderBy(goals.id)
       .all(),
     (row) => row.agent_id,
