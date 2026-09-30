@@ -11,12 +11,13 @@
  * resident's `ResidentLook`, the same look the map sprite uses.
  *
  * Expressions follow the Lua script's recipe (grin + squint, frown + drooping outer lids + a
- * tear, glare + tight mouth + furrow, wide eyes + open mouth) but are drawn directly, since the
+ * tear, glare + tight mouth + furrow, wide eyes + open mouth, the grin plus rosy cheeks for
+ * `smitten`) but are drawn directly, since the
  * generator knows exactly where every feature is.
  */
 import type { PortraitMood } from "../../components/ui/portraitMood";
 import type { ResidentLook } from "./look";
-import { createImage, getPixel, hex, luma, paintRow, setPixel, shade, type PixelImage, type RGBA } from "./pixels";
+import { createImage, getPixel, hex, luma, mix, paintRow, setPixel, shade, type PixelImage, type RGBA } from "./pixels";
 
 export const PORTRAIT_SIZE = 64;
 
@@ -26,6 +27,7 @@ const GLINT = hex("ffffff");
 const PUPIL = hex("0a0604");
 const TEAR = hex("9cc8e8");
 const TEAR_HI = hex("d8eeff");
+const ROSE = hex("e85a78");
 const COLLAR = hex("e8e4d8");
 const COLLAR_SHADE = hex("c8c0b0");
 const APRON = hex("e8e4d8");
@@ -239,6 +241,8 @@ function paintFacial(img: PixelImage, look: ResidentLook, pal: Palette): void {
 const MOUTHS: Record<PortraitMood, readonly string[]> = {
   neutral: ["............", "QQQQRQQRQQQQ", "QRRRRRRRRRRQ", ".SSSSSSSSSS.", "..RRRRRRRR.."],
   happy: ["Q..........Q", ".QQQQQQQQQQ.", ".QKKKKKKKKQ.", "..QRRRRRRQ..", "...SSSSSS..."],
+  // Same smile as happy; the blush lives in `paintEyes`.
+  smitten: ["Q..........Q", ".QQQQQQQQQQ.", ".QKKKKKKKKQ.", "..QRRRRRRQ..", "...SSSSSS..."],
   sad: ["............", "...QQQQQQ...", "..QRRRRRRQ..", ".Q........Q.", "............"],
   angry: ["............", "............", ".QQQQQQQQQQ.", "..SSSSSSSS..", "............"],
   shocked: ["....QQQQ....", "...QOOOOQ...", "...QOOOOQ...", "....QSSQ....", "............"],
@@ -260,6 +264,28 @@ function paintMouth(img: PixelImage, look: ResidentLook, pal: Palette, mood: Por
   });
 }
 
+/**
+ * Rosy cheeks: { dx from the pupil (+ towards the nose), dy under the pupil row, blend strength }.
+ * Mirrors portrait-moods.lua's CHEEK table, so a generated face blushes like the hand-drawn ones.
+ */
+const CHEEK: ReadonlyArray<readonly [number, number, number]> = [
+  [-1, 3, 0.3], [0, 3, 0.5], [1, 3, 0.5], [2, 3, 0.3],
+  [-2, 4, 0.3], [-1, 4, 0.55], [0, 4, 0.6], [1, 4, 0.55], [2, 4, 0.3],
+  [-1, 5, 0.3], [0, 5, 0.45], [1, 5, 0.3],
+];
+
+/** Tint the skin under each eye toward rose. Only skin is tinted, so a beard or outline is never smudged. */
+function paintBlush(img: PixelImage, pal: Palette): void {
+  const skin = new Set<RGBA>([pal.H, pal.P, pal.F, pal.J, pal.I]);
+  for (const { cx, dir } of [{ cx: 23, dir: 1 }, { cx: 40, dir: -1 }]) {
+    for (const [dx, dy, k] of CHEEK) {
+      const x = cx + dir * dx, y = 32 + dy;
+      const p = getPixel(img, x, y);
+      if (skin.has(p)) setPixel(img, x, y, mix(p, ROSE, k));
+    }
+  }
+}
+
 /** Eyes are 7 px wide boxes at x 20..26 and 37..43 (lid line row 30, lower lid row 34). */
 function paintEyes(img: PixelImage, pal: Palette, mood: PortraitMood): void {
   const eyes = [
@@ -269,6 +295,7 @@ function paintEyes(img: PixelImage, pal: Palette, mood: PortraitMood): void {
   for (const e of eyes) {
     switch (mood) {
       case "happy":
+      case "smitten":
         // Squint: the lower lid rises over the bottom eye row.
         for (let x = e.x0 + 1; x <= e.x1 - 1; x++) setPixel(img, x, 33, pal.F);
         break;
@@ -301,6 +328,7 @@ function paintEyes(img: PixelImage, pal: Palette, mood: PortraitMood): void {
         break;
     }
   }
+  if (mood === "smitten") paintBlush(img, pal);
   if (mood === "angry") {
     setPixel(img, 31, 29, pal.F);
     setPixel(img, 32, 30, pal.F);

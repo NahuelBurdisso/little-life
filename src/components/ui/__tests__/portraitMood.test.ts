@@ -23,10 +23,24 @@ describe("portraitMood", () => {
     expect(portraitMood(24, [])).toBe("sad");
   });
 
-  it("euphoria, infatuation and a high mood read as happy", () => {
+  it("euphoria and a high mood read as happy", () => {
     expect(portraitMood(50, s("euphoric"))).toBe("happy");
-    expect(portraitMood(50, s("infatuated"))).toBe("happy");
     expect(portraitMood(76, [])).toBe("happy");
+  });
+
+  it("infatuation and the morning after read as smitten (a blushing smile)", () => {
+    expect(portraitMood(50, s("infatuated"))).toBe("smitten");
+    expect(portraitMood(50, s("afterglow"))).toBe("smitten");
+    // A blushing face beats the plain grin, and a state beats the mood number either way.
+    expect(portraitMood(90, s("afterglow"))).toBe("smitten");
+    expect(portraitMood(50, s("euphoric", "infatuated"))).toBe("smitten");
+  });
+
+  it("the heavier feelings still win over smitten", () => {
+    expect(portraitMood(50, s("afterglow", "guilty"))).toBe("sad");
+    expect(portraitMood(50, s("infatuated", "jealous"))).toBe("angry");
+    expect(portraitMood(50, s("infatuated", "heartbroken"))).toBe("sad");
+    expect(portraitMood(50, s("afterglow", "arrested"))).toBe("shocked");
   });
 
   it("an arrest reads as shocked, over everything else", () => {
@@ -52,6 +66,6 @@ describe("portraitSrc", () => {
   });
 
   it("lists every mood the art script produces", () => {
-    expect([...PORTRAIT_MOODS].sort()).toEqual(["angry", "happy", "neutral", "sad", "shocked"]);
+    expect([...PORTRAIT_MOODS].sort()).toEqual(["angry", "happy", "neutral", "sad", "shocked", "smitten"]);
   });
 });

@@ -1,10 +1,10 @@
 // Which expression a resident's portrait wears. Pure so it can be unit-tested; the art comes from
 // scripts/aseprite/portrait-moods.lua (`<portrait>_<mood>.png`, neutral being the original file).
 
-export type PortraitMood = "neutral" | "happy" | "sad" | "angry" | "shocked";
+export type PortraitMood = "neutral" | "happy" | "sad" | "angry" | "shocked" | "smitten";
 
 /** Every expression the art script produces. */
-export const PORTRAIT_MOODS: readonly PortraitMood[] = ["neutral", "happy", "sad", "angry", "shocked"];
+export const PORTRAIT_MOODS: readonly PortraitMood[] = ["neutral", "happy", "sad", "angry", "shocked", "smitten"];
 
 // Thresholds sit outside the "fine" band of the 0..100 mood need so an ordinary day stays neutral.
 const SAD_BELOW = 25;
@@ -12,11 +12,14 @@ const HAPPY_ABOVE = 75;
 
 const ANGRY_STATES = new Set(["angry", "jealous"]);
 const SAD_STATES = new Set(["heartbroken", "grieving", "depressed", "guilty"]);
-const HAPPY_STATES = new Set(["euphoric", "infatuated", "afterglow"]);
+const HAPPY_STATES = new Set(["euphoric"]);
+// The blushing smile: infatuation and the morning after a tryst. It sits above plain happy so a
+// resident who is both euphoric and in love shows the blush, but under every heavier feeling.
+const SMITTEN_STATES = new Set(["infatuated", "afterglow"]);
 const SHOCKED_STATES = new Set(["arrested"]);
 
 /**
- * Precedence: shocked (a sharp, rare event) > angry > sad > happy > neutral. A state always beats
+ * Precedence: shocked (a sharp, rare event) > angry > sad > smitten > happy > neutral. A state always beats
  * the mood number, so a grieving resident with a decent mood still looks sad, and sad beats happy
  * when both apply because the heavier feeling is the one you'd read on a face.
  */
@@ -32,6 +35,7 @@ export function portraitMood(
   if (has(SHOCKED_STATES)) return "shocked";
   if (has(ANGRY_STATES)) return "angry";
   if (has(SAD_STATES)) return "sad";
+  if (has(SMITTEN_STATES)) return "smitten";
   if (has(HAPPY_STATES)) return "happy";
   if (mood !== undefined) {
     if (mood < SAD_BELOW) return "sad";

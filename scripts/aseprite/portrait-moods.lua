@@ -5,7 +5,7 @@
 --   (add --script-param only=carlos_mendez to rebuild one agent)
 --
 -- The hand-authored `<name>_portrait.png` stays the source of truth (it is the "neutral" face).
--- For each one this writes `<name>_portrait_<mood>.png` for mood in happy|sad|angry|shocked, plus
+-- For each one this writes `<name>_portrait_<mood>.png` for mood in happy|sad|angry|shocked|smitten, plus
 -- `<name>_portraits.aseprite` with one tagged frame per mood (neutral first). The client picks the
 -- file from the resident's mood/states (src/components/ui/portraitMood.ts) and falls back to the
 -- neutral portrait when a variant is missing — so a portrait whose anatomy can't be detected is
@@ -28,6 +28,9 @@
 --   sad     frown, upper lid dropped at the OUTER corners (inner corners look raised), one tear
 --   angry   upper lid dropped at the INNER corners (glare), tight flat mouth, furrow above the nose
 --   shocked eyes opened upward (extra sclera row, lid line lifted), small open oval mouth
+--   smitten the happy face plus rosy cheeks: a soft patch of pixels under each eye, blended from the
+--           portrait's own skin toward rose so it works on every skin tone. Suggestive only; it is
+--           what afterglow / infatuated residents wear and matches the `blush` emote's warm patches.
 
 local W, H = 64, 64
 local pc = app.pixelColor
@@ -257,11 +260,43 @@ local function eyesShocked(img, a)
   end
 end
 
+-- Rosy cheeks for `smitten`. The patch is tinted from the skin already there (a blend toward rose,
+-- so a pale face flushes and a dark one warms) rather than painted in a fixed colour, and skips
+-- anything that isn't skin (outline, beard, hair) so it can never smudge a bearded face.
+local ROSE = { 0xe8, 0x5a, 0x78 }
+-- { dx from the pupil (+ towards the nose), dy below the pupil row, blend strength }
+local CHEEK = {
+  { -1, 3, 0.30 }, { 0, 3, 0.50 }, { 1, 3, 0.50 }, { 2, 3, 0.30 },
+  { -2, 4, 0.30 }, { -1, 4, 0.55 }, { 0, 4, 0.60 }, { 1, 4, 0.55 }, { 2, 4, 0.30 },
+  { -1, 5, 0.30 }, { 0, 5, 0.45 }, { 1, 5, 0.30 },
+}
+local function blushPixel(img, x, y, k)
+  local p = get(img, x, y)
+  -- Skin is opaque and mid-to-light; the outline / dark beards sit well under this.
+  if A(p) < 255 or luma(p) < 55 then return end
+  local function mix(v, t) return math.floor(v + (t - v) * k) end
+  put(img, x, y, rgba(mix(R(p), ROSE[1]), mix(G(p), ROSE[2]), mix(B(p), ROSE[3])))
+end
+local function blush(img, a)
+  for _, e in ipairs(eyes(a)) do
+    for _, c in ipairs(CHEEK) do
+      -- dx is measured from the pupil, positive towards the nose (`dir` mirrors it for the right eye).
+      blushPixel(img, e.cx + e.dir * c[1], a.py + c[2], c[3])
+    end
+  end
+end
+
+local function eyesSmitten(img, a)
+  eyesHappy(img, a)
+  blush(img, a)
+end
+
 local MOODS = {
   { name = "happy", eyes = eyesHappy, mouth = mouthHappy },
   { name = "sad", eyes = eyesSad, mouth = mouthSad },
   { name = "angry", eyes = eyesAngry, mouth = mouthAngry },
   { name = "shocked", eyes = eyesShocked, mouth = mouthShocked },
+  { name = "smitten", eyes = eyesSmitten, mouth = mouthHappy },
 }
 
 -- ── Build ──────────────────────────────────────────────────────────────────────────────────

@@ -43,6 +43,13 @@ export function shade(c: RGBA, k: number): RGBA {
   return pack(r * k, g * k, b * k, a);
 }
 
+/** Blend `c` toward `toward` by `k` (0 = c, 1 = toward), keeping c's alpha. */
+export function mix(c: RGBA, toward: RGBA, k: number): RGBA {
+  const [r, g, b, a] = channels(c);
+  const [tr, tg, tb] = channels(toward);
+  return pack(r + (tr - r) * k, g + (tg - g) * k, b + (tb - b) * k, a);
+}
+
 export function createImage(w: number, h: number): PixelImage {
   return { w, h, data: new Uint8ClampedArray(w * h * 4) };
 }
