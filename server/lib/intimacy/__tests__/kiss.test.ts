@@ -468,6 +468,28 @@ describe('the kiss against the DB', () => {
       expect(watcher).toBeGreaterThan(0);
     });
 
+    it('a child in the room is no witness, but nobody kisses in front of one either', () => {
+      const { a, b } = pair();
+      const child = insertAgent('Little Watcher', { gender: 'female', age: 9 });
+      const seen: Array<{ witnessIds: number[] }> = [];
+      const onKiss = (p: { witnessIds: number[] }) => seen.push(p);
+      simEvents.on('intimacy:kiss', onKiss);
+      try {
+        // 0.30 alone, 0.09 with anyone at all present: rng 0.2 passes alone, fails watched.
+        onKissConversationEnded(warm(a, b, 1), () => 0.2);
+        expect(getPairIntimacy(a, b)).toBeUndefined();
+        // Same room, same odds at rng 0: it does happen, and the child is never a knower.
+        onKissConversationEnded(warm(a, b, 2), rng0);
+      } finally {
+        simEvents.off('intimacy:kiss', onKiss);
+      }
+      expect(seen).toHaveLength(1);
+      expect(seen[0].witnessIds).toEqual([]);
+      const facts = db.select().from(shared_knowledge)
+        .where(or(inArray(shared_knowledge.subject_id, [a, b]), inArray(shared_knowledge.target_id, [a, b]))).all();
+      for (const f of facts) expect(f.known_by as number[]).not.toContain(child);
+    });
+
     it('sleeping, absent or distant people are not witnesses', () => {
       const { a, b } = pair({ aOver: { personality: {
         honesty: 50, aggression: 30, warmth: 60, impulsiveness: 90, vanity: 40,

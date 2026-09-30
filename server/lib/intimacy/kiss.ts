@@ -15,7 +15,7 @@ import { MINUTES_PER_DAY } from '../gameClock';
 import { isIntimacyEligible, type IntimacyParty } from './eligibility';
 import { relieveLonging } from './longing';
 import { getPairIntimacy, updatePairIntimacy } from './state';
-import { withHiddenLoveBump, witnessesOf } from './witnesses';
+import { someoneNear, withHiddenLoveBump, witnessesOf } from './witnesses';
 
 // ─── The kiss ────────────────────────────────────────────────────────────────
 //
@@ -233,7 +233,9 @@ export function onKissConversationEnded(p: KissConversationEnded, rng: () => num
   // turn a zero chance into a positive one, only scale a positive one.
   if (kissChance(base) <= 0) return;
   const witnessIds = witnessesOf(initRow, recvRow);
-  const chance = kissChance({ ...base, romanceBoost: romanceBoostActive(), thirdPresent: witnessIds.length > 0 });
+  // Privacy counts anyone present, a child included (witnesses are adults only, so
+  // the two lists differ): nobody kisses in front of a child either.
+  const chance = kissChance({ ...base, romanceBoost: romanceBoostActive(), thirdPresent: someoneNear(initRow, recvRow) });
   if (chance <= 0) return;
 
   const rebuff = receiver.romance < REBUFF_BELOW_ROMANCE;

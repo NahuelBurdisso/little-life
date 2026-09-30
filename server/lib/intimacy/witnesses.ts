@@ -64,6 +64,33 @@ export function onlookersNear(
   exclude: number[],
   range: number = WITNESS_RANGE_PX,
 ): number[] {
+  // Adults only: a child who saw two people is never told their secret, so a
+  // minor never becomes a knower of a romance or intimacy fact, never
+  // reacts to one and never reaches an `intimacy:*` event's witness list.
+  return awakeNear(spot, exclude, range).filter((o) => isAdultAge(o.age)).map((o) => o.id);
+}
+
+/**
+ * Whether anyone at all, of any age, is awake and close enough to see two people
+ * kissing (same reach as `witnessesOf`). This is a question about privacy, not
+ * about who learns what: nobody kisses in front of a child either, even though
+ * the child is never a witness, so the kiss asks this for its audience penalty
+ * and `witnessesOf` for who knows.
+ */
+export function someoneNear(a: Placed, b: Placed): boolean {
+  return awakeNear(
+    { current_location: a.current_location ?? b.current_location, position: a.position },
+    [a.id, b.id],
+    WITNESS_RANGE_PX,
+  ).length > 0;
+}
+
+/** Every awake, active person (never one of `exclude`) who could see `spot`, whatever their age. */
+function awakeNear(
+  spot: { current_location: number | null; position: unknown },
+  exclude: number[],
+  range: number,
+): Array<{ id: number; age: number | null }> {
   const others = db.select({
     id: agents.id,
     current_location: agents.current_location,
@@ -76,19 +103,13 @@ export function onlookersNear(
     .all();
 
   const origin = spot.position as { x: number; y: number } | null;
-  return others
-    .filter((o) => {
-      if (!couldSee(o)) return false;
-      // Adults only: a child who saw two people is never told their secret, so a
-      // minor never becomes a knower of a romance or intimacy fact, never
-      // reacts to one and never reaches an `intimacy:*` event's witness list.
-      if (!isAdultAge(o.age)) return false;
-      if (spot.current_location != null) return o.current_location === spot.current_location;
-      if (o.current_location != null || !origin) return false;
-      const p = o.position as { x: number; y: number };
-      return Math.hypot(p.x - origin.x, p.y - origin.y) <= range;
-    })
-    .map((o) => o.id);
+  return others.filter((o) => {
+    if (!couldSee(o)) return false;
+    if (spot.current_location != null) return o.current_location === spot.current_location;
+    if (o.current_location != null || !origin) return false;
+    const p = o.position as { x: number; y: number };
+    return Math.hypot(p.x - origin.x, p.y - origin.y) <= range;
+  });
 }
 
 /**

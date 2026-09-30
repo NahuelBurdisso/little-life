@@ -293,7 +293,7 @@ describe('stir_feeling', () => {
     const plaza = insertLocation('stir plaza');
     ana = insertAgent('Stir Ana', plaza, GOSSIP);
     ben = insertAgent('Stir Ben', plaza, GOSSIP);
-    // Love needs two adults who could be drawn to each other (isIntimacyEligible).
+    // Love needs two adults and the one who falls drawn to the other's gender (mayRomanceGrow).
     db.update(agents).set({ gender: 'male' }).where(eq(agents.id, ben)).run();
   });
 
@@ -350,6 +350,22 @@ describe('stir_feeling', () => {
     }
     expect(db.select().from(shared_knowledge)
       .where(and(eq(shared_knowledge.type, 'crush'), eq(shared_knowledge.subject_id, kid))).all()).toHaveLength(0);
+  });
+
+  it('allows an unrequited crush between adults, but only toward someone the one who falls could be drawn to', async () => {
+    const yard = insertLocation('stir garden');
+    // A gay man (drawn to men) falls for straight Ben: Ben could never return it, and that is allowed.
+    const gay = insertAgent('Stir Gay', yard, GOSSIP);
+    db.update(agents).set({ gender: 'male', orientation: 'gay' }).where(eq(agents.id, gay)).run();
+    const ok = await caller().execute({ action: { type: 'stir_feeling', agentId: gay, state: 'infatuated', targetId: ben } });
+    expect(ok.success).toBe(true);
+    expect(statesOf(gay, 'infatuated').filter((s) => s.target_agent_id === ben)).toHaveLength(1);
+
+    // The other way round is the one-sided gate saying no: straight Ben is not drawn to a man.
+    const refused = await caller().execute({ action: { type: 'stir_feeling', agentId: ben, state: 'infatuated', targetId: gay } });
+    expect(refused.success).toBe(false);
+    expect((refused as { reason?: string }).reason).toMatch(/adults/);
+    expect(statesOf(ben, 'infatuated').filter((s) => s.target_agent_id === gay)).toHaveLength(0);
   });
 
   it('refuses jealousy over a love interest when a minor is in the triangle, but rivalry without one is open', async () => {
