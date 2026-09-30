@@ -6,8 +6,9 @@ import {
   worldEvents, worldState,
 } from '../../../db/schema';
 import {
-  BOLD_IMPULSIVENESS, DATE_FACTOR, FIRST_KISS_CHANCE, KISSED_BEFORE_CHANCE, KISSED_TAG, PRIVACY_FACTOR,
-  ROMANCE_BOOST_FACTOR, isDateHour, kissChance, onKissConversationEnded, pickKissInitiator,
+  BOLD_IMPULSIVENESS, DATE_FACTOR, FIRST_KISS_CHANCE, KISSED_BEFORE_CHANCE, KISSED_TAG, NEGLECT_STRAY_FACTOR, PRIVACY_FACTOR,
+  ROMANCE_BOOST_FACTOR, SERIAL_KISS_FACTOR, STRAY_MIN_ROMANCE, faithfulnessFactor, isDateHour, kissChance, onKissConversationEnded,
+  pickKissInitiator, recentKissPartners, receiverStrays,
   type KissChanceCtx, type KissParty,
 } from '../kiss';
 import { clearIntimacy, ensureAgentIntimacy, getAgentIntimacy, getPairIntimacy, updatePairIntimacy } from '../state';
@@ -86,6 +87,55 @@ describe('kissChance', () => {
     expect(kissChance(ctx({
       initiator: party({ orientation: 'gay' }), receiver: party({ id: 2, gender: 'female', orientation: 'gay' }),
     }))).toBeGreaterThan(0);
+  });
+});
+
+// I2: a kiss used to ignore commitment and loyalty (one resident kissed 7 people, a married one 5).
+describe('faithfulness', () => {
+  it('temptation is (1 - loyalty/100) * (1 - morality/200), floored at 0', () => {
+    expect(faithfulnessFactor(0, 0)).toBe(1);
+    expect(faithfulnessFactor(50, 60)).toBeCloseTo(0.5 * 0.7);
+    expect(faithfulnessFactor(100, 0)).toBe(0);
+    expect(faithfulnessFactor(100, 100)).toBe(0);
+    // Out-of-range personality never leaves 0..1.
+    expect(faithfulnessFactor(-40, -10)).toBe(1);
+    expect(faithfulnessFactor(140, 50)).toBe(0);
+  });
+
+  it('a loyal, moral spouse essentially never kisses a third person; an impulsive disloyal one sometimes does', () => {
+    const spokenFor = (loyalty: number, morality: number, extra: Partial<KissChanceCtx> = {}) =>
+      kissChance(ctx({ initiatorSpokenFor: true, initiator: party({ loyalty, morality }), ...extra }));
+    expect(spokenFor(100, 60)).toBe(0);
+    expect(spokenFor(90, 80)).toBeLessThan(FIRST_KISS_CHANCE * 0.1);
+    expect(spokenFor(20, 30)).toBeCloseTo(FIRST_KISS_CHANCE * 0.8 * 0.85);
+    // Free people are not touched by it, whatever their loyalty.
+    expect(kissChance(ctx({ initiator: party({ loyalty: 100, morality: 100 }) }))).toBeCloseTo(FIRST_KISS_CHANCE);
+  });
+
+  it('a neglected partner raises it back up somewhat, never past 1 and never for the perfectly loyal', () => {
+    const base = ctx({ initiatorSpokenFor: true, initiator: party({ loyalty: 40, morality: 40 }) });
+    const plain = kissChance(base);
+    expect(kissChance({ ...base, initiatorNeglected: true })).toBeCloseTo(plain * NEGLECT_STRAY_FACTOR);
+    expect(NEGLECT_STRAY_FACTOR).toBeGreaterThan(1);
+    expect(NEGLECT_STRAY_FACTOR).toBeLessThanOrEqual(2);
+    const saint = ctx({ initiatorSpokenFor: true, initiatorNeglected: true, initiator: party({ loyalty: 100, morality: 100 }) });
+    expect(kissChance(saint)).toBe(0);
+  });
+
+  it('serial kissing is rare: every other person kissed lately halves it', () => {
+    expect(SERIAL_KISS_FACTOR).toBe(0.5);
+    expect(kissChance(ctx({ recentPartners: 0 }))).toBeCloseTo(FIRST_KISS_CHANCE);
+    expect(kissChance(ctx({ recentPartners: 1 }))).toBeCloseTo(FIRST_KISS_CHANCE * 0.5);
+    expect(kissChance(ctx({ recentPartners: 3 }))).toBeCloseTo(FIRST_KISS_CHANCE * 0.125);
+  });
+
+  it('the one being kissed while spoken for strays only when keen enough and the roll beats their faithfulness', () => {
+    const wife = { romance: STRAY_MIN_ROMANCE, loyalty: 60, morality: 60 };
+    const temptation = faithfulnessFactor(60, 60);
+    expect(receiverStrays(wife, () => temptation - 0.01)).toBe(true);
+    expect(receiverStrays(wife, () => temptation + 0.01)).toBe(false);
+    expect(receiverStrays({ ...wife, romance: STRAY_MIN_ROMANCE - 1 }, () => 0)).toBe(false);
+    expect(receiverStrays({ ...wife, loyalty: 100 }, () => 0)).toBe(false);
   });
 });
 
@@ -252,6 +302,85 @@ describe('the kiss against the DB', () => {
     updatePairIntimacy(a, b, (p) => { p.lastKissAt = NOW - 2 * DAY; });
     onKissConversationEnded(warm(a, b, 2), rng0);
     expect(db.select().from(goals).where(eq(goals.id, wooing)).get()!.status).toBe('completed');
+  });
+
+  // ─── I2: commitment and loyalty ───────────────────────────────────────────
+  const personality = (loyalty: number, morality: number) => ({
+    honesty: 50, aggression: 30, warmth: 60, impulsiveness: 50, vanity: 40,
+    curiosity: 50, loyalty, morality, sensuality: 50, neuroticism: 40,
+  });
+  /** Marries `id` to a new spouse (married rows are what `committedTo` reads). */
+  const marry = (id: number) => {
+    const spouse = insertAgent(`Spouse ${made.length}`, { gender: 'male' });
+    db.insert(relationships).values({
+      agent_a: Math.min(id, spouse), agent_b: Math.max(id, spouse), friendship_ab: 80, friendship_ba: 80,
+      romance_ab: 70, romance_ba: 70, trust_ab: 70, trust_ba: 70, familiarity: 90, interaction_count: 80,
+      last_interaction: 0, average_interaction_sentiment: 0.5, tags: [MARRIED_TAG], status: 'partners',
+      status_since_minute: NOW - 100 * DAY, created_at: 0, last_updated: 0,
+    }).run();
+    return spouse;
+  };
+  const seq = (...values: number[]) => { let i = 0; return () => values[Math.min(i++, values.length - 1)]; };
+
+  it('a loyal spouse does not kiss a third person, whatever the rng says', () => {
+    const { a, b } = pair({ romanceA: 90, romanceB: 70, aOver: { personality: personality(100, 60) } });
+    marry(a);
+    onKissConversationEnded(warm(a, b), rng0);
+    expect(getPairIntimacy(a, b)).toBeUndefined();
+    expect(feed('first_kiss', a)).toHaveLength(0);
+    expect(feed('kiss_rebuffed', a)).toHaveLength(0);
+  });
+
+  it('an impulsive, disloyal spouse does, and it seeds the affair secret', () => {
+    const { a, b } = pair({ romanceA: 90, romanceB: 70, aOver: { personality: personality(0, 0) } });
+    marry(a);
+    onKissConversationEnded(warm(a, b), rng0);
+    expect(getPairIntimacy(a, b)?.kisses).toBe(1);
+    expect(db.select().from(shared_knowledge).all().filter((f) => f.type === 'affair' && f.subject_id === a)).toHaveLength(1);
+  });
+
+  it('being kissed while married usually ends in a rebuff: the loyal one turns away even when keen', () => {
+    const { a, b } = pair({ romanceA: 80, romanceB: 75, bOver: { personality: personality(60, 60) } });
+    marry(b);
+    onKissConversationEnded(warm(a, b), seq(0, 0.99));
+    expect(feed('kiss_rebuffed', a)).toHaveLength(1);
+    expect(feed('first_kiss', a)).toHaveLength(0);
+    expect(getPairIntimacy(a, b)).toBeUndefined();
+  });
+
+  it('... but the keen and weakly loyal may give in, and only from romance 60', () => {
+    const strays = pair({ romanceA: 80, romanceB: 75, bOver: { personality: personality(0, 0) } });
+    marry(strays.b);
+    onKissConversationEnded(warm(strays.a, strays.b), seq(0, 0.5));
+    expect(getPairIntimacy(strays.a, strays.b)?.kisses).toBe(1);
+
+    // Romance 50 toward the kisser: not enough to betray a marriage, however faithless.
+    const cool = pair({ romanceA: 80, romanceB: 50, bOver: { personality: personality(0, 0) } });
+    marry(cool.b);
+    onKissConversationEnded(warm(cool.a, cool.b), seq(0, 0));
+    expect(feed('kiss_rebuffed', cool.a)).toHaveLength(1);
+    expect(getPairIntimacy(cool.a, cool.b)).toBeUndefined();
+  });
+
+  it("a kiss with the receiver's OWN spouse is not a betrayal", () => {
+    const { a, b } = pair({ romanceA: 80, romanceB: 75, tags: [MARRIED_TAG], bOver: { personality: personality(100, 100) } });
+    onKissConversationEnded(warm(a, b), rng0);
+    expect(getPairIntimacy(a, b)?.kisses).toBe(1);
+  });
+
+  it('recentKissPartners: distinct others in the last 7 days, the receiver and older kisses left out', () => {
+    const { a, b } = pair();
+    const x = insertAgent(`X ${made.length}`, { gender: 'male' });
+    const y = insertAgent(`Y ${made.length}`, { gender: 'male' });
+    const z = insertAgent(`Z ${made.length}`, { gender: 'male' });
+    updatePairIntimacy(a, b, (p) => { p.lastKissAt = NOW - DAY; });
+    updatePairIntimacy(a, x, (p) => { p.lastKissAt = NOW - 2 * DAY; });
+    updatePairIntimacy(y, a, (p) => { p.lastKissAt = NOW - 6 * DAY; });
+    updatePairIntimacy(a, z, (p) => { p.lastKissAt = NOW - 8 * DAY; });
+    updatePairIntimacy(x, y, (p) => { p.lastKissAt = NOW - DAY; });
+    expect(recentKissPartners(a, b, NOW)).toBe(2);
+    expect(recentKissPartners(a, x, NOW)).toBe(2);
+    expect(recentKissPartners(b, a, NOW)).toBe(0);
   });
 
   it('a refused kiss moves no goal', () => {

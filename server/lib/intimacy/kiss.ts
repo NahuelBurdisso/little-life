@@ -6,6 +6,7 @@ import { logActivity } from '../activityLogger';
 import { addMoodModifier } from '../dailyLife';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
+import { clamp } from '../utils';
 import { MILESTONE_TAGS, affairInvolvesMarriage, affairSensitivity } from '../marriage';
 import { committedTo } from './committed';
 import { PIVOTAL_SENTIMENT } from '../storyBeats';
@@ -16,7 +17,8 @@ import { gameMinutesNow } from '../worldClock';
 import { MINUTES_PER_DAY } from '../gameClock';
 import { isIntimacyEligible, type IntimacyParty } from './eligibility';
 import { relieveLonging } from './longing';
-import { getPairIntimacy, updatePairIntimacy } from './state';
+import { forEachPairIntimacy, getPairIntimacy, updatePairIntimacy } from './state';
+import { wandersToward } from './wandering';
 import { someoneNear, withHiddenLoveBump, witnessesOf } from './witnesses';
 
 // ─── The kiss ────────────────────────────────────────────────────────────────
@@ -38,6 +40,13 @@ import { someoneNear, withHiddenLoveBump, witnessesOf } from './witnesses';
 // `intimacy:kiss` event for whatever reacts to it (witnesses, rumours). If
 // either is spoken for to a third person it is also the seed of an affair
 // secret, known to whoever was there.
+//
+// Commitment and character shape it (a 30-day soak saw one resident kiss 7 people and
+// a married one 5): a person who is spoken for to somebody else rarely leans in, by how
+// faithful they are (`faithfulnessFactor`; a neglected partner's eye wanders back up),
+// the one being kissed while spoken for usually turns away (`receiverStrays`), and every
+// OTHER person the initiator kissed in the last week halves the odds again (serial
+// kissing is rare).
 
 // ─── Tuning ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +69,19 @@ export const REBUFF_BELOW_ROMANCE = 30;
 export const REBUFF_MOOD = -10;
 export const REBUFF_MOOD_MINUTES = 4 * 60;
 export const REBUFF_ROMANCE = -5;
+/**
+ * A person spoken for to somebody else kisses a third one with chance scaled by
+ * `faithfulnessFactor`; a neglected partner (neglect.ts) is tempted this much more, capped at 1.
+ */
+export const NEGLECT_STRAY_FACTOR = 1.5;
+/** Each other person kissed within `KISS_RECENT_DAYS` multiplies the initiator's chance by this. */
+export const SERIAL_KISS_FACTOR = 0.5;
+export const KISS_RECENT_DAYS = 7;
+/**
+ * The one being kissed while spoken for to somebody else gives in only when they feel at
+ * least this much toward the kisser, and then only if a roll beats their faithfulness factor.
+ */
+export const STRAY_MIN_ROMANCE = 60;
 /** Nobody is in the mood: a kiss is not on the cards for someone in one of these states. */
 export const KISS_BLOCKING_STATES: readonly string[] = ['heartbroken', 'grieving', 'sick', 'arrested'];
 
@@ -72,6 +94,9 @@ export interface KissParty extends IntimacyParty {
   /** This person's romance toward the other one, 0..100. */
   romance: number;
   impulsiveness: number;
+  /** 0..100, 50 when unknown. Only read for someone spoken for elsewhere. */
+  loyalty?: number;
+  morality?: number;
   /** Agent state types (`getAgentStates`). */
   states: readonly string[];
 }
@@ -91,6 +116,31 @@ export interface KissChanceCtx {
   thirdPresent: boolean;
   /** They already kissed on this game day. */
   kissedToday: boolean;
+  /** The initiator is engaged, married or partnered to somebody other than the receiver (`committedTo`). */
+  initiatorSpokenFor?: boolean;
+  /** ... and is neglected by that partner (`wandersToward`): the eye wanders. */
+  initiatorNeglected?: boolean;
+  /** How many people other than the receiver the initiator kissed in the last `KISS_RECENT_DAYS` days. */
+  recentPartners?: number;
+}
+
+/**
+ * How tempted someone is to stray, 0..1: `(1 - loyalty/100) * (1 - morality/200)`. A loyal, moral
+ * spouse (loyalty 90, morality 80) is at 0.06 and essentially never does; a loyalty-100 one at 0; an impulsive
+ * disloyal one (20 / 30) at 0.68 sometimes does. Pure, floored at 0.
+ */
+export function faithfulnessFactor(loyalty: number, morality: number): number {
+  return clamp((1 - clamp(loyalty, 0, 100) / 100) * (1 - clamp(morality, 0, 100) / 200), 0, 1);
+}
+
+/**
+ * The one being kissed is spoken for elsewhere: do they give in? Only when they feel enough
+ * for the kisser (`STRAY_MIN_ROMANCE`) and a roll beats their faithfulness factor, so being
+ * kissed while married usually ends in a rebuff. Pure; `rng` is injectable.
+ */
+export function receiverStrays(receiver: { romance: number; loyalty: number; morality: number }, rng: () => number): boolean {
+  if (!(receiver.romance >= STRAY_MIN_ROMANCE)) return false;
+  return rng() < faithfulnessFactor(receiver.loyalty, receiver.morality);
 }
 
 /**
@@ -127,6 +177,12 @@ export function kissChance(ctx: KissChanceCtx): number {
   if (ctx.isDate) chance *= DATE_FACTOR;
   if (ctx.romanceBoost) chance *= ROMANCE_BOOST_FACTOR;
   if (ctx.thirdPresent && !(initiator.impulsiveness > BOLD_IMPULSIVENESS)) chance *= PRIVACY_FACTOR;
+  if (ctx.initiatorSpokenFor) {
+    let temptation = faithfulnessFactor(initiator.loyalty ?? 50, initiator.morality ?? 50);
+    if (ctx.initiatorNeglected) temptation = Math.min(1, temptation * NEGLECT_STRAY_FACTOR);
+    chance *= temptation;
+  }
+  chance *= SERIAL_KISS_FACTOR ** Math.max(0, ctx.recentPartners ?? 0);
   return Math.min(1, chance);
 }
 
@@ -159,13 +215,33 @@ function romanceBoostActive(): boolean {
 }
 
 function partyOf(row: AgentRow, rel: RelRow): KissParty {
-  const personality = getEffectivePersonality(row.id) ?? (row.personality as { impulsiveness?: number } | null);
+  const personality = getEffectivePersonality(row.id)
+    ?? (row.personality as { impulsiveness?: number; loyalty?: number; morality?: number } | null);
   return {
     id: row.id, age: row.age, gender: row.gender, orientation: row.orientation, is_active: row.is_active,
     romance: romanceToward(rel, row.id),
     impulsiveness: personality?.impulsiveness ?? 50,
+    loyalty: personality?.loyalty ?? 50,
+    morality: personality?.morality ?? 50,
     states: getAgentStates(row.id),
   };
+}
+
+/**
+ * How many people other than `exceptId` `agentId` kissed within the last `KISS_RECENT_DAYS` days, from the
+ * pairs' own `lastKissAt` (in-memory and checkpointed, so no query and it survives a restart). Someone
+ * who kisses the same partner every day counts zero: only a widening circle is "serial".
+ */
+export function recentKissPartners(agentId: number, exceptId: number, now: number): number {
+  const since = now - KISS_RECENT_DAYS * MINUTES_PER_DAY;
+  let n = 0;
+  forEachPairIntimacy((key, p) => {
+    if (p.lastKissAt == null || p.lastKissAt < since) return;
+    const [x, y] = key.split('-').map(Number);
+    if (x !== agentId && y !== agentId) return;
+    if ((x === agentId ? y : x) !== exceptId) n++;
+  });
+  return n;
 }
 
 /** Whether `initiator` was already turned away by `target` within the last game day. */
@@ -234,16 +310,29 @@ export function onKissConversationEnded(p: KissConversationEnded, rng: () => num
   // two DB reads below: who could see, and whether a festival is on. Neither can
   // turn a zero chance into a positive one, only scale a positive one.
   if (kissChance(base) <= 0) return;
+  // Commitment and circle (I2): someone spoken for to a third person, and how many others they kissed lately.
+  const spokenFor = committedTo(initiator.id, receiver.id) != null;
+  const committed: KissChanceCtx = {
+    ...base,
+    initiatorSpokenFor: spokenFor,
+    initiatorNeglected: spokenFor && wandersToward(initRow, recvRow, now),
+    recentPartners: recentKissPartners(initiator.id, receiver.id, now),
+  };
+  if (kissChance(committed) <= 0) return;
   const witnessIds = witnessesOf(initRow, recvRow);
   // Privacy counts anyone present, a child included (witnesses are adults only, so
   // the two lists differ): nobody kisses in front of a child either.
-  const chance = kissChance({ ...base, romanceBoost: romanceBoostActive(), thirdPresent: someoneNear(initRow, recvRow) });
+  const chance = kissChance({ ...committed, romanceBoost: romanceBoostActive(), thirdPresent: someoneNear(initRow, recvRow) });
   if (chance <= 0) return;
 
-  const rebuff = receiver.romance < REBUFF_BELOW_ROMANCE;
+  if (!(rng() < chance)) return;
+  // The one being kissed turns away when they feel too little, or, spoken for to somebody else, unless
+  // they are keen and weakly faithful enough to give in (a second roll, only for them).
+  const rebuff = receiver.romance < REBUFF_BELOW_ROMANCE
+    || (committedTo(receiver.id, initiator.id) != null
+      && !receiverStrays({ romance: receiver.romance, loyalty: receiver.loyalty ?? 50, morality: receiver.morality ?? 50 }, rng));
   // A refused suitor does not try again the same day (each try would cost the pair -5 romance).
   if (rebuff && rebuffedRecently(initiator.id, receiver.id, now)) return;
-  if (!(rng() < chance)) return;
 
   if (rebuff) rebuffKiss(initRow, recvRow, now);
   else shareKiss(rel, initRow, recvRow, witnessIds, now);
