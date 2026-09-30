@@ -142,7 +142,7 @@ export class PlanDecomposer {
     return {
       homeId: row.home ?? null,
       workplaceId: row.workplace ?? null,
-      locations: db.select({ id: locations.id, name: locations.name }).from(locations).all(),
+      locations: db.select({ id: locations.id, name: locations.name, type: locations.type }).from(locations).all(),
       otherAgentNames: db.select({ id: agents.id, name: agents.name }).from(agents).all()
         .filter((a) => a.id !== agentId)
         .map((a) => a.name),

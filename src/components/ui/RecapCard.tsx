@@ -14,6 +14,10 @@ interface RecapCardProps {
   /** "Everything that happened" opens the Journal's Timeline. */
   onOpenJournal: () => void;
   onDismiss: () => void;
+  /** Dismiss on its own after this long (Director on), or null (lib/recapDisplay.ts). */
+  autoDismissMs?: number | null;
+  /** Step aside without dismissing, while the Director's caption is on screen. */
+  hidden?: boolean;
 }
 
 /**
@@ -25,7 +29,7 @@ interface RecapCardProps {
  * The recap is a snapshot of the moment it opened, so the query never refetches.
  * An empty span dismisses the card instead of showing "nothing happened".
  */
-export function RecapCard({ request, agents, onFocusAgent, onOpenJournal, onDismiss }: RecapCardProps) {
+export function RecapCard({ request, agents, onFocusAgent, onOpenJournal, onDismiss, autoDismissMs = null, hidden = false }: RecapCardProps) {
   const { data } = trpc.chronicle.getRecap.useQuery(
     { sinceMinute: request?.sinceMinute ?? 0 },
     { enabled: request != null, staleTime: Infinity, gcTime: 0 },
@@ -36,7 +40,16 @@ export function RecapCard({ request, agents, onFocusAgent, onOpenJournal, onDism
     if (request && empty) onDismiss();
   }, [request, empty, onDismiss]);
 
-  if (!request || !data || empty) return null;
+  // Director on: the card leaves on its own (lib/recapDisplay.ts). The timer
+  // runs from when the card has something to show, hidden or not.
+  const hasContent = request != null && data != null && !empty;
+  useEffect(() => {
+    if (!hasContent || autoDismissMs == null) return;
+    const timer = window.setTimeout(onDismiss, autoDismissMs);
+    return () => window.clearTimeout(timer);
+  }, [hasContent, autoDismissMs, onDismiss]);
+
+  if (!request || !data || empty || hidden) return null;
 
   const living = new Map(agents.map((a) => [String(a.id), a.name.split(" ")[0]]));
   const focusable = (b: RecapBullet) => b.agentIds.map(String).find((id) => living.has(id));

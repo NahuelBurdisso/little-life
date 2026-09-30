@@ -226,9 +226,34 @@ export function queueMaxWait(gameMinutes: number): number {
  * expire the moment play resumes, having waited no game time at all. The
  * scheduler first sees an entry the tick after it is queued, so at most one
  * tick of extra wait.
+ *
+ * The wait is at least QUEUE_WAIT_REAL_FLOOR_MS of REAL time at the current
+ * speed. Game minutes are the right unit for how long a pair stands around,
+ * but not for what most entries wait on — an LLM slot, which frees when a
+ * conversation's model turns finish, in real seconds at every speed. At 4x the
+ * default 10 game minutes is 2.5 real seconds, less than one conversation, so
+ * any entry that didn't get a slot at once timed out: playtest #3 counted 106
+ * queue timeouts against ~83 conversations started. The floor sits below the
+ * default wait at 1x (8 s < 10 game minutes), so 1x behaves exactly as before;
+ * at 4x an entry waits 32 game minutes.
  */
-export function queueDeadlineGameMin(entry: { max_wait: number }, nowGameMin: number): number {
-  return Math.round(nowGameMin + entry.max_wait / CONFIG.TICK_INTERVAL_MS);
+export function queueDeadlineGameMin(entry: { max_wait: number }, nowGameMin: number, tickSpeed = 1): number {
+  return Math.round(nowGameMin + queueWaitGameMinutes(entry.max_wait, tickSpeed));
+}
+
+/** The UI's top speed: the real-time floor never grows past its value there. */
+const QUEUE_WAIT_FLOOR_MAX_SPEED = 4;
+
+/** Game minutes a queue entry with this 1x-equivalent `max_wait` may wait at `tickSpeed`. */
+export function queueWaitGameMinutes(maxWaitMs: number, tickSpeed: number): number {
+  const gameMinutes = maxWaitMs / CONFIG.TICK_INTERVAL_MS;
+  // Capped: under "skip to morning" (30 game minutes a tick) the floor would be
+  // four game hours, stored in the entry and still standing once the skip ends.
+  const realFloor = turnGameMinutes(
+    CONFIG.CONVERSATIONS.QUEUE_WAIT_REAL_FLOOR_MS,
+    Math.min(tickSpeed, QUEUE_WAIT_FLOOR_MAX_SPEED),
+  );
+  return Math.max(gameMinutes, realFloor);
 }
 
 // ---------------------------------------------------------------------------

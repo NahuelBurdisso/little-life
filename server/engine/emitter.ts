@@ -67,7 +67,21 @@ export class TickEmitter {
     }
   }
 
+  private flushHooks: Array<() => void> = [];
+
+  /**
+   * Run `hook` at the start of every `flush()`, so it can mark channels whose
+   * dirtiness is derived rather than announced (relationships.all: a write
+   * counter on the table, see engine/relationshipsChannel.ts).
+   */
+  addFlushHook(hook: () => void): void {
+    this.flushHooks.push(hook);
+  }
+
   flush() {
+    for (const hook of this.flushHooks) {
+      try { hook(); } catch (err) { console.warn('[emitter] flush hook failed:', (err as Error).message); }
+    }
     const now = Date.now();
     for (const channel of this.dirty) {
       const subs = this.subscribers.get(channel);

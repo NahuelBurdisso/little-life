@@ -542,7 +542,7 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       throw new Error('entry never timed out');
     }
 
-    it('times out after the same game minutes at 1x and 4x', async () => {
+    it('times out on game minutes at 1x, with a real-time floor at 4x', async () => {
       const slow = await ticksToTimeout(1);
       // 1x is what it always was: ten seconds, one game minute each.
       expect(slow).toEqual({ ticks: 11, gameMin: 11 });
@@ -550,8 +550,10 @@ describe('conversationsTick — game-time conversation budget (G1)', () => {
       db.delete(templateUsage).where(inArray(templateUsage.agent_a, [a, b])).run();
 
       const fast = await ticksToTimeout(4);
-      // Used to be ten seconds = 40 game minutes at 4x.
-      expect(fast).toEqual({ ticks: 3, gameMin: 12 });
+      // Ten game minutes would be 2.5 real seconds at 4x — shorter than any LLM
+      // conversation, so a busy slot meant a timeout. The 8 s floor = 32 game
+      // minutes (was 40 when the wait was wall-clock, 12 when it was pure game time).
+      expect(fast).toEqual({ ticks: 9, gameMin: 36 });
       expect(taggedConversations().map((c) => c.trigger_reason)).toEqual([`${TAG} (template)`]);
     });
 

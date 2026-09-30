@@ -157,6 +157,11 @@ export const CONFIG = {
     // 40 / 120 game minutes and the conversation rate followed real time. The
     // 1x behaviour is unchanged: one game minute per real second.
     QUEUE_MAX_WAIT_GAME_MINUTES: 10,
+    // WALL-CLOCK MS. Floor under every queue wait above: an entry waiting for an
+    // LLM slot waits on real seconds, and at 4x ten game minutes is 2.5 s — less
+    // than one conversation (conversationPacing.queueDeadlineGameMin). Below the
+    // 10-minute default at 1x, so 1x is unchanged.
+    QUEUE_WAIT_REAL_FLOOR_MS: 8000,
     PLAYER_NUDGE_PRIORITY: 200,
     PLAYER_NUDGE_MAX_WAIT_GAME_MINUTES: 30,
     // CLOCK: GAME MINUTES. Extra wait a protected entry (player nudge, comfort
@@ -299,6 +304,11 @@ export const CONFIG = {
     // day phase.
     RANDOM_EVENT_CHANCE_PER_HOUR: 0.20,
     MAX_CONCURRENT_EVENTS: 5,
+    // CLOCK: GAME DAYS. A random roll skips any event type that started in this
+    // window (events.ts recentlyStartedTypes): playtest #3 got Bountiful Catch
+    // and Full Moon three times each in about two game days. Two, not more: 14
+    // types roll at ~5 events a day, and a longer window would drain the pool.
+    RANDOM_TYPE_COOLDOWN_DAYS: 2,
     WEATHER_DURATION_RANGE: { min: 2, max: 8 },
   },
 

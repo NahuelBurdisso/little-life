@@ -127,7 +127,7 @@ beforeEach(() => {
 
 const llmAnswers = (minutes = 60) =>
   vi.mocked(callOllamaChat).mockImplementation(async () =>
-    ({ text: JSON.stringify({ actions: [{ action: 'Wander the market', location: marketName, minutes }] }) }) as never);
+    ({ text: JSON.stringify({ actions: [{ action: 'Haggle with the market traders', location: marketName, minutes }] }) }) as never);
 
 // ---------------------------------------------------------------------------
 // L2: blocks decomposed without the LLM
@@ -163,7 +163,7 @@ describe('blocks that need no LLM', () => {
   it('prefetches the next block deterministically too', async () => {
     hour = 8; // last hour of the first block
     const { act, plan, settled } = setup([
-      { start_hour: 7, end_hour: 9, broad_action: 'Wander the market', location_hint: marketName },
+      { start_hour: 7, end_hour: 9, broad_action: 'Haggle with the market traders', location_hint: marketName },
       { start_hour: 9, end_hour: 12, broad_action: 'Serve customers', location_hint: shopName },
     ]);
     llmAnswers();
@@ -177,7 +177,7 @@ describe('blocks that need no LLM', () => {
   });
 
   it('still asks the LLM for blocks that are not routine', async () => {
-    const { act, settled, plan } = setup([{ start_hour: 10, end_hour: 11, broad_action: 'Wander the market', location_hint: marketName }]);
+    const { act, settled, plan } = setup([{ start_hour: 10, end_hour: 11, broad_action: 'Haggle with the market traders', location_hint: marketName }]);
     llmAnswers();
     expect(act()).toMatchObject({ action: 'idle', score: 6000 }); // held while the call is out
     await settled();
@@ -215,7 +215,7 @@ describe('blocks that need no LLM', () => {
   });
 
   it('does not re-read the DB on every pass for a block that needs the LLM', async () => {
-    const { act, settled } = setup([{ start_hour: 10, end_hour: 11, broad_action: 'Wander the market', location_hint: marketName }]);
+    const { act, settled } = setup([{ start_hour: 10, end_hour: 11, broad_action: 'Haggle with the market traders', location_hint: marketName }]);
     vi.mocked(callOllamaChat).mockImplementation(() => { throw new Error('down'); });
     const select = vi.spyOn(db, 'select');
     act();
@@ -234,7 +234,7 @@ describe('blocks that need no LLM', () => {
 
 describe('block status persistence', () => {
   it('saves pending -> active -> completed as they happen', async () => {
-    const { act, settled } = setup([{ start_hour: 10, end_hour: 11, broad_action: 'Wander the market', location_hint: marketName }]);
+    const { act, settled } = setup([{ start_hour: 10, end_hour: 11, broad_action: 'Haggle with the market traders', location_hint: marketName }]);
     llmAnswers(30);
     expect(savedStatuses()).toEqual(['pending']);
 
@@ -251,7 +251,7 @@ describe('block status persistence', () => {
   it('a block whose hours pass without it starting is saved as skipped', () => {
     hour = 12;
     const { act } = setup([
-      { start_hour: 8, end_hour: 9, broad_action: 'Wander the market', location_hint: marketName },
+      { start_hour: 8, end_hour: 9, broad_action: 'Haggle with the market traders', location_hint: marketName },
       { start_hour: 9, end_hour: 12, broad_action: 'Serve customers', location_hint: shopName },
       { start_hour: 12, end_hour: 13, broad_action: 'Lunch at home', location_hint: homeName },
     ]);
@@ -261,8 +261,8 @@ describe('block status persistence', () => {
 
   it('an active block left behind by the clock is saved as completed', () => {
     const { act } = setup([
-      { start_hour: 10, end_hour: 11, broad_action: 'Wander the market', location_hint: marketName, status: 'active' },
-      { start_hour: 11, end_hour: 12, broad_action: 'Wander the market', location_hint: marketName },
+      { start_hour: 10, end_hour: 11, broad_action: 'Haggle with the market traders', location_hint: marketName, status: 'active' },
+      { start_hour: 11, end_hour: 12, broad_action: 'Haggle with the market traders', location_hint: marketName },
     ]);
     hour = 11;
     act();
@@ -284,7 +284,7 @@ describe('block status persistence', () => {
   it('survives a cache reload (server restart)', () => {
     hour = 12;
     const { act } = setup([
-      { start_hour: 8, end_hour: 9, broad_action: 'Wander the market', location_hint: marketName },
+      { start_hour: 8, end_hour: 9, broad_action: 'Haggle with the market traders', location_hint: marketName },
       { start_hour: 12, end_hour: 13, broad_action: 'Lunch at home', location_hint: homeName },
     ]);
     act();

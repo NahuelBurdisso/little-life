@@ -39,7 +39,8 @@ describe('classifyBlock', () => {
   it('leaves bedtime routines and company to the LLM', () => {
     expect(classifyBlock(block(21, 22, 'Prepare for bed', 'Rosa Cottage'), ctx)).toBeNull();
     expect(classifyBlock(block(21, 22, 'Wind down for bed', 'Rosa Cottage'), ctx)).toBeNull();
-    expect(classifyBlock(block(21, 22, 'Read in bed', 'Rosa Cottage'), ctx)).toBeNull();
+    // Not sleep — but since L2 a plain home routine (an idle at home), no LLM.
+    expect(classifyBlock(block(21, 22, 'Read in bed', 'Rosa Cottage'), ctx)).toBe('home');
     expect(classifyBlock(block(21, 22, 'Sleep over at Marco Rivera', 'Rosa Cottage'), ctx)).toBeNull();
   });
 
@@ -92,6 +93,82 @@ describe('classifyBlock', () => {
     expect(classifyBlock(block(22, 24, 'Sleep', 'Rosa Cottage'), farm)).toBe('sleep');
     expect(classifyBlock(block(12, 13, 'Lunch', 'Rosa Cottage'), farm)).toBe('meal');
     expect(classifyBlock(block(9, 12, 'Tend the accounts', 'Rosa Cottage'), farm)).toBe('work');
+  });
+});
+
+describe('classifyBlock — widened routine kinds (L2)', () => {
+  const STREET = 4;
+  const PARK = 5;
+  const OTHER_HOME = 6;
+  const CHURCH = 7;
+  const typed: DeterministicContext = {
+    ...ctx,
+    otherAgentNames: ['Marco Rivera', 'Yuki Tanaka', 'Rosa Chen'],
+    locations: [
+      { id: HOME, name: 'Rosa Cottage', type: 'home' },
+      { id: SHOP, name: "Rosa's General Store", type: 'shop' },
+      { id: TAVERN, name: 'Old Tavern', type: 'tavern' },
+      { id: STREET, name: 'Main Street', type: 'mainstreet' },
+      { id: PARK, name: 'Riverside Park', type: 'park' },
+      { id: OTHER_HOME, name: "Marco's cottage", type: 'home' },
+      { id: CHURCH, name: 'St. Anne', type: 'church' },
+    ],
+  };
+  const kind = (s: number, e: number, a: string, l: string) => classifyBlock(block(s, e, a, l), typed);
+
+  it('takes home routines, alone or as a meal plus a routine', () => {
+    expect(kind(6, 7, 'Wake up and dress quietly', 'Rosa Cottage')).toBe('home');
+    expect(kind(20, 21, 'Read by oil lamp', 'Rosa Cottage')).toBe('home');
+    expect(kind(20, 21, 'Eat supper and rest', 'Rosa Cottage')).toBe('home');
+    expect(kind(21, 22, 'Eat quietly and go to bed', 'Rosa Cottage')).toBe('home');
+    expect(kind(8, 9, 'Tidy the kitchen and sweep', 'Rosa Cottage')).toBe('home');
+  });
+
+  it('leaves scenes at home to the LLM', () => {
+    expect(kind(19, 20, 'Prepare thoughts for mill meeting', 'Rosa Cottage')).toBeNull();
+    expect(kind(21, 22, 'Take a drink from flask', 'Rosa Cottage')).toBeNull();
+    expect(kind(20, 21, 'Bring tea to Yuki', 'Rosa Cottage')).toBeNull();
+    expect(kind(20, 21, 'Nap and then cook', 'Rosa Cottage')).toBeNull(); // sleep not last
+    expect(kind(18, 22, 'Read by oil lamp', 'Rosa Cottage')).toBeNull(); // 4 h
+  });
+
+  it('takes meals out anywhere but someone else\'s house', () => {
+    expect(kind(12, 13, 'Eat lunch alone', 'Old Tavern')).toBe('meal_out');
+    expect(kind(12, 13, 'Eat bread by the river', 'Riverside Park')).toBe('meal_out');
+    expect(kind(12, 13, 'Quick lunch at the store', "Rosa's General Store")).toBe('meal_out');
+    expect(kind(19, 20, 'Eat supper', "Marco's cottage")).toBeNull();
+    expect(kind(19, 20, 'Eat supper and watch people', 'Old Tavern')).toBeNull();
+    expect(kind(12, 13, 'Lunch with Marco', 'Old Tavern')).toBeNull();
+  });
+
+  it('takes errands at shops, walks on streets and rest outdoors', () => {
+    expect(kind(17, 18, "Buy supplies at Rosa's", "Rosa's General Store")).toBe('errand');
+    expect(kind(17, 18, 'Buy bread and tea', 'Old Tavern')).toBe('errand');
+    expect(kind(8, 9, 'Walk slowly to Town Hall', 'Main Street')).toBe('walk');
+    expect(kind(14, 15, 'Walk toward work', 'Main Street')).toBe('walk');
+    expect(kind(16, 17, 'Sit alone by the river', 'Riverside Park')).toBe('outdoors');
+    expect(kind(9, 10, 'Attend the morning service', 'St. Anne')).toBe('worship');
+  });
+
+  it('leaves named people (first names too), snooping and drink to the LLM', () => {
+    expect(kind(13, 14, 'Ask Rosa about the gossip', "Rosa's General Store")).toBeNull();
+    expect(kind(13, 14, 'Buy bread and flirt', "Rosa's General Store")).toBeNull();
+    expect(kind(15, 16, 'Walk to find Marco', 'Main Street')).toBeNull();
+    expect(kind(15, 16, 'Walk home and rest', 'Main Street')).toBeNull();
+    expect(kind(13, 15, 'Eavesdrop on fishermen', 'Riverside Park')).toBeNull();
+    expect(kind(22, 23, 'Drink ale alone', 'Old Tavern')).toBeNull();
+    expect(kind(9, 10, 'Buy a ribbon', 'Main Street')).toBeNull(); // not a shop
+    expect(kind(9, 10, 'Walk the aisles', 'Old Tavern')).toBeNull(); // walks are outdoors
+  });
+
+  it('decomposes a home block into one action per clause, summing to the block', () => {
+    const actions = decomposeDeterministically(block(20, 22, 'Eat supper and read the paper', 'Rosa Cottage'), typed)!;
+    expect(actions.map((a) => [a.action_type, a.duration_minutes])).toEqual([['eating', 60], ['idle', 60]]);
+    expect(actions.every((a) => a.resolved_location_id === HOME)).toBe(true);
+    const [walk] = decomposeDeterministically(block(8, 9, 'Walk to Town Hall', 'Main Street'), typed)!;
+    expect(walk).toMatchObject({ action_type: 'walking', resolved_location_id: STREET, duration_minutes: 60 });
+    const [buy] = decomposeDeterministically(block(17, 18, "Buy supplies at Rosa's", "Rosa's General Store"), typed)!;
+    expect(buy).toMatchObject({ action_type: 'shopping', resolved_location_id: SHOP });
   });
 });
 

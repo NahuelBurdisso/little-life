@@ -1,6 +1,6 @@
 import { db } from '../../db';
 import { worldState, worldEvents, agents } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, gte } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { gameMinutes, hourChanged } from '../../lib/gameClock';
 import { weightedRandom } from '../../lib/utils';
@@ -117,6 +117,17 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
   return { ok: true, event };
 }
 
+/** Event types started within the random-roll cooldown before `nowMinutes`. */
+function recentlyStartedTypes(nowMinutes: number): Set<string> {
+  const since = nowMinutes - CONFIG.EVENTS.RANDOM_TYPE_COOLDOWN_DAYS * 1440;
+  return new Set(
+    db.select({ type: worldEvents.type }).from(worldEvents)
+      .where(gte(worldEvents.started_at, since))
+      .all()
+      .map((r) => r.type),
+  );
+}
+
 export function eventsTick(): void {
   const world = db.select().from(worldState).get();
   if (!world) return;
@@ -223,11 +234,16 @@ export function eventsTick(): void {
 
   // Filter to eligible events
   const activeTypes = new Set(currentActiveEvents.map((e) => e.type));
+  // Per-type cooldown: a type that started (by any trigger) in the last
+  // RANDOM_TYPE_COOLDOWN_DAYS is not rolled again. With ~5 random events a day
+  // over a small eligible pool, playtest #3 got Bountiful Catch and Full Moon
+  // three times each in about two game days — the same news every few hours.
+  const recentTypes = recentlyStartedTypes(gameMinutes(world.time!));
   const eligible = (Object.keys(WORLD_EVENTS) as WorldEventType[]).flatMap((type) => {
     const random = (WORLD_EVENTS[type] as WorldEventDef).random;
     // Weight 0 means "never on its own" (weddings belong to a real couple now):
     // left in, a lone eligible zero-weight entry made weightedRandom throw.
-    return random && random.weight > 0 && !activeTypes.has(type)
+    return random && random.weight > 0 && !activeTypes.has(type) && !recentTypes.has(type)
       && random.condition(currentPhase, world.weather, world.time!.season)
       ? [{ value: type, weight: random.weight }]
       : [];

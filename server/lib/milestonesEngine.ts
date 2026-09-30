@@ -164,7 +164,8 @@ export const milestonesSnapshotStore: SnapshotStore = {
  * impulsive or loyal; a cautious, guarded proposer takes the full week.
  */
 export function proposalDelayDays(p: { romance: number; trust: number; impulsiveness: number; loyalty: number }): number {
-  // Partners already have romance > 70 both ways, so readiness starts there.
+  // Partners have romance > 65 on the lower side (relationships.ts romanceIsPartnership);
+  // readiness counts from 70, so a couple that only just qualified proposes latest.
   const romance = clamp((p.romance - 70) / 30, 0, 1);
   const trust = clamp(p.trust / 100, 0, 1);
   const temperament = clamp((p.impulsiveness * 0.6 + p.loyalty * 0.4) / 100, 0, 1);

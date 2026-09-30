@@ -52,7 +52,7 @@ import { resetChronicleCache } from '../lib/chronicle';
 import { resetBrewingCache } from '../lib/brewing';
 import { resetCliqueCache } from '../lib/cliques';
 import { goalReviewer, pivotEvaluator } from '../lib/goals/instance';
-import { planLLMGate, planLLMQueue } from '../lib/planning/instance';
+import { nightPlanner, planLLMGate, planLLMQueue } from '../lib/planning/instance';
 import { resetConversationPacing } from '../lib/conversationPacing';
 import { clearSpotlight } from '../lib/spotlight';
 import { nightSkip } from './nightSkip';
@@ -181,6 +181,9 @@ export function clearPerWorldCaches(): void {
   // as well and are cleared by setup.ts via replanEvaluator.clear().
   planLLMGate.clear();
   planLLMQueue.clear();
+  // Once-per-night markers keyed on agent id and day: a new world restarts at
+  // day 1 with reused ids, and a stale marker would skip that night's plan.
+  nightPlanner.clear();
 
   // Per-agent identity-bound caches
   clearPersonalityBaselines();

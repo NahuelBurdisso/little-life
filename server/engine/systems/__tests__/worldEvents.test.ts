@@ -250,6 +250,23 @@ describe('eventsTick under the Drama Intensity rule', () => {
   });
 });
 
+describe('eventsTick per-type cooldown (playtest #3)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('does not roll the same event type twice inside the cooldown', () => {
+    // Every hourly roll passes and weightedRandom always takes the first
+    // eligible entry: without the cooldown, the same type restarts as soon as
+    // its previous instance expires (Bountiful Catch x3 in ~2 days).
+    let time = resetClock(0, 4);
+    vi.spyOn(Math, 'random').mockReturnValue(0.001);
+    const hours = 48; // inside the 2-day cooldown
+    for (let i = 0; i < (hours * 60) / 4; i++) time = tickEvents(time, 4);
+    const started = db.select({ type: worldEvents.type }).from(worldEvents).all().map((r) => r.type);
+    expect(started.length).toBeGreaterThan(1);
+    expect(new Set(started).size).toBe(started.length);
+  });
+});
+
 describe('storm weather', () => {
   afterEach(() => vi.restoreAllMocks());
 

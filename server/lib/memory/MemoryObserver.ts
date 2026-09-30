@@ -43,8 +43,31 @@ export function shouldRecordPerception(agentId: number, description: string, now
   return true;
 }
 
+/**
+ * Game minutes in which a resident stores a world event of the same name only
+ * once. Every event start writes a memory for every resident; playtest #3 had
+ * Bountiful Catch three times in ~2 days and stored "Word around town:
+ * Bountiful Catch…" 33 times plus 19 in the other wording — the same news,
+ * again and again, crowding retrieval and the reflection trigger. The random
+ * roll now has a per-type cooldown too (events.ts); this also covers the
+ * player, autoplay and life events starting the same thing back to back.
+ */
+export const WORLD_EVENT_MEMORY_REPEAT_MINUTES = 2 * 1440;
+
+const lastWorldEvent = new Map<string, number>();
+
+/** Whether this resident should store this world event now (and remember it if so). */
+export function shouldRecordWorldEvent(agentId: number, name: string, nowMinutes: number): boolean {
+  const key = `${agentId}|${name.trim().toLowerCase()}`;
+  const last = lastWorldEvent.get(key);
+  if (last != null && nowMinutes - last >= 0 && nowMinutes - last < WORLD_EVENT_MEMORY_REPEAT_MINUTES) return false;
+  lastWorldEvent.set(key, nowMinutes);
+  return true;
+}
+
 export function clearPerceptionDedup(): void {
   lastPerceived.clear();
+  lastWorldEvent.clear();
   pendingSummaries.clear();
 }
 
@@ -275,6 +298,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
   });
 
   simEvents.on('event:world', ({ agentId, name, description }: { agentId: number; name: string; description: string }) => {
+    if (!shouldRecordWorldEvent(agentId, name, gameMinutesNow())) return;
     const text = description?.trim()
       ? describeEvent('world_event', { name, description })
       : `Word around town: ${endSentence(name)}`;

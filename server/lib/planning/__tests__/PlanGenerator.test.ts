@@ -6,7 +6,7 @@ vi.mock('../../../ai/ollama', () => ({ callOllamaChat: vi.fn() }));
 vi.mock('../../activityLogger', () => ({ logActivity: vi.fn(), pruneActivityLog: vi.fn() }));
 
 import { db } from '../../../db';
-import { agents, locations } from '../../../db/schema';
+import { agents, locations, needs } from '../../../db/schema';
 import { callOllamaChat } from '../../../ai/ollama';
 import { LLMEmptyReplyError } from '../../../ai/llmErrors';
 import { logActivity } from '../../activityLogger';
@@ -707,5 +707,37 @@ describe('PlanExecutor prefetch', () => {
     expect(decomposer.queueDecomposition).not.toHaveBeenCalled();
     expect(executor.getPlannedAction(agentId, 9, 0, 1, 31)).toBeNull();
     expect(decomposer.queueDecomposition).toHaveBeenCalledWith(agentId, 'b1', expect.any(Number));
+  });
+});
+
+describe('PlanGenerator planning ahead of waking (G8)', () => {
+  it('describes a night-time sleeper as rested, and a daytime one as they are', async () => {
+    const id = ids[2];
+    db.insert(needs).values({
+      agent_id: id, hunger: 70, energy: 15, social: 60, comfort: 50, fun: 50, mood: 60, stress: 20,
+      decay_rates: { hunger: 1, energy: 1, social: 1, comfort: 1, fun: 1 },
+      thresholds: { critical: 15, low: 35, satisfied: 80 },
+      mood_modifiers: [],
+      last_updated: 0,
+    }).run();
+    const systemOf = (n: number) => vi.mocked(callOllamaChat).mock.calls[n][0].system as string;
+
+    // 01:00, wake at 7: the plan is for the morning.
+    clock = { day: 5, hour: 1, minute: 0 };
+    let s = setup();
+    succeed();
+    s.gen.queueGeneration(id, clock);
+    await settled(s.queue, id);
+    expect(systemOf(0)).toContain('energy: rested');
+    // Plans outrank the low-priority bulk (goal reviews, self-descriptions, gazette).
+    expect(vi.mocked(callOllamaChat).mock.calls[0][0].priority).toBe('normal');
+
+    // 10:00 (a late catch-all plan): the real energy.
+    clock = { day: 6, hour: 10, minute: 0 };
+    s = setup();
+    succeed();
+    s.gen.queueGeneration(id, clock);
+    await settled(s.queue, id);
+    expect(systemOf(1)).toContain('energy: exhausted');
   });
 });

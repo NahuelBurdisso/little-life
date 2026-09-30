@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { worldState, agents } from '../db/schema';
+import { worldState } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { logActivity, pruneActivityLog } from '../lib/activityLogger';
 import { emitter } from './emitter';
@@ -18,8 +18,9 @@ import { cascadeTick } from '../lib/cascade';
 import { CONFIG } from '../lib/constants';
 import { crossedBoundary, gameMinutes, hourChanged } from '../lib/gameClock';
 import { cacheAllAgentStates, clearAgentStatesCache, invalidateAgentStatesCache } from '../lib/states';
-import { reflectionTrigger, reflectionRunner, memoryConsolidator, selfDescriptionGenerator, memoryService } from '../lib/memory/instance';
+import { reflectionTrigger, reflectionRunner, memoryConsolidator, memoryService } from '../lib/memory/instance';
 import { runEmbeddingBackfill } from '../lib/memory/embeddingBackfill';
+import { nightPlanner } from '../lib/planning/instance';
 import { writeIssue } from '../lib/gazette';
 import { perceptionSystem } from '../lib/perception/instance';
 import { refreshAllReputations } from '../lib/reputationEngine';
@@ -437,6 +438,10 @@ export async function gameTick(): Promise<void> {
     }
   });
 
+  // Tomorrow's daily plans and the self-descriptions, asked for in the small
+  // hours so the plans are cached before anyone wakes (lib/planning/nightPlanner.ts).
+  runGuarded('nightPlanning', () => nightPlanner.tick(newTime));
+
   // On day change: run memory archival (tiered retention + summaries)
   const dayChanged = transitions.some(t => t.type === 'day_changed');
   // Memories and activity rows are stamped in ticks; their game-day retention is
@@ -449,20 +454,9 @@ export async function gameTick(): Promise<void> {
   const tickClock = { nowTicks: newTime.totalTicks, nowMinutes, tickSpeed: ledgerSpeed };
   if (dayChanged) {
     runGuarded('memoryConsolidation', () => memoryConsolidator.consolidate(tickClock));
-    // Regenerate self-descriptions for all agents (async, non-blocking)
-    // Active only: self-description regeneration is an LLM call, and the dead
-    // never change. Unfiltered, every corpse cost one generation per game day
-    // for the rest of the run, and the result was never read by anything.
-    runGuarded('selfDescriptions', () => {
-      const allAgentIds = db
-        .select({ id: agents.id })
-        .from(agents)
-        .where(eq(agents.is_active, true))
-        .all();
-      for (const { id } of allAgentIds) {
-        void selfDescriptionGenerator.maybeRegenerate(id, newTime.day);
-      }
-    });
+    // Self-descriptions are no longer regenerated here: at midnight they held
+    // chat slots the goal reviews and tomorrow's plans needed. The night
+    // planner asks for them from 03:00, staggered (lib/planning/nightPlanner.ts).
     // Memories written without a vector (a new world's seeded backstory).
     runGuarded('embeddingBackfill', () => { void runEmbeddingBackfill(() => memoryService.invalidateEmbeddings()); });
     // The Town Crier: yesterday's edition (async LLM call, low priority).

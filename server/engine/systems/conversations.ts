@@ -636,8 +636,10 @@ export async function conversationsTick(): Promise<void> {
       // times the game time (10 s = 40 game minutes), so the conversation rate
       // tracked real time. Producers write a 1x-equivalent `max_wait`; the
       // deadline is derived once and stored, so a later speed change can't move it.
+      // Above 1x it gets a real-time floor: the LLM slot an entry waits for
+      // frees in real seconds (conversationPacing.queueDeadlineGameMin).
       if (entry.deadline_game_min == null) {
-        entry.deadline_game_min = queueDeadlineGameMin(entry, nowGameMin);
+        entry.deadline_game_min = queueDeadlineGameMin(entry, nowGameMin, world.tick_speed);
         db.update(conversationQueue)
           .set({ deadline_game_min: entry.deadline_game_min })
           .where(eq(conversationQueue.id, entry.id))

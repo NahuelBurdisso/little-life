@@ -30,6 +30,27 @@ export function applyDiminishing(currentValue: number, delta: number): number {
   return delta;
 }
 
+/**
+ * Is the romance, both ways, that of a couple? The lower side past
+ * PARTNERS_MIN_ROMANCE and the pair's average past PARTNERS_AVG_ROMANCE.
+ *
+ * Was "both > 70". Diminishing returns (applyDiminishing) make every point
+ * near 70 cost ~1.7x one near 0, and the side with the lower sensuality gains
+ * less per conversation, so in real play the lagging side stalled in the 60s:
+ * in playtest #3 no couple became partners in five game days (Lucia/Diego
+ * 60/72) and proposals and weddings never happened. With the reciprocity pull
+ * (relationshipImpact.ts) a simulation of the conversation engine
+ * (relationshipThresholds.test.ts) puts a devoted couple — two or three warm
+ * talks a day, a third of them romantic — at partners in ~4-6 game days, while
+ * warm friends and one-sided crushes never get there.
+ */
+export const PARTNERS_MIN_ROMANCE = 65;
+export const PARTNERS_AVG_ROMANCE = 70;
+
+export function romanceIsPartnership(minRomance: number, maxRomance: number): boolean {
+  return minRomance > PARTNERS_MIN_ROMANCE && (minRomance + maxRomance) / 2 > PARTNERS_AVG_ROMANCE;
+}
+
 export function deriveStatus(
   fAB: number,
   fBA: number,
@@ -53,7 +74,7 @@ export function deriveStatus(
   // the `married` tag and lets the thresholds speak again.
   if (married) return 'partners';
 
-  if (minRomance > 70 && avgFriendship > 30) return 'partners';
+  if (romanceIsPartnership(minRomance, maxRomance) && avgFriendship > 30) return 'partners';
   if (maxRomance > 30 && avgFriendship < -10) return 'complicated';
   if (maxRomance > 30) return 'romantic_interest';
   if (avgFriendship > 90) return 'best_friends';
@@ -94,7 +115,7 @@ function updateTags(
   // A married pair stays each other's partner even when romance cools below the
   // courtship line: code that asks "are they together?" reads the `partner` tag
   // (goals, perception), and a marriage only ends by an explicit breakup.
-  if (isMarriedTags(existingTags) || metrics.minRomance > 70) {
+  if (isMarriedTags(existingTags) || romanceIsPartnership(metrics.minRomance, metrics.maxRomance)) {
     tags.delete('crush');
     tags.add('partner');
   } else if (metrics.maxRomance > 40) {
