@@ -2,6 +2,7 @@ import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { db } from '../../db';
 import { agents } from '../../db/schema';
 import { MARRIED_AFFAIR_SENSITIVITY } from '../marriage';
+import { isAdultAge } from './eligibility';
 
 // ─── Who could see it ────────────────────────────────────────────────────────
 //
@@ -33,7 +34,7 @@ function couldSee(row: { current_action: unknown; is_active: boolean }): boolean
 }
 
 /**
- * Agent ids (never `a` or `b`) that saw the pair. Inside a building that is
+ * Adult agent ids (never `a` or `b`) that saw the pair. Inside a building that is
  * everyone awake in the same location; outdoors (no location), everyone awake
  * and outdoors within `WITNESS_RANGE_PX` of `a` (the pair are talking, so `b`
  * is at their side). A person indoors never sees the street and vice versa.
@@ -53,7 +54,7 @@ export function witnessesOf(a: Placed, b: Placed): number[] {
 export const SNEAK_RANGE_PX = 96;
 
 /**
- * Everyone awake (never one of `exclude`) who could see a person standing at
+ * Every adult awake (never one of `exclude`) who could see a person standing at
  * `spot`: in a building, everyone awake in it; outdoors, everyone awake and
  * outdoors within `range`. Used on its own by tryst.ts for one person leaving,
  * where there is no pair to anchor the location on.
@@ -69,6 +70,7 @@ export function onlookersNear(
     position: agents.position,
     current_action: agents.current_action,
     is_active: agents.is_active,
+    age: agents.age,
   }).from(agents)
     .where(and(eq(agents.is_active, true), notInArray(agents.id, exclude)))
     .all();
@@ -77,6 +79,10 @@ export function onlookersNear(
   return others
     .filter((o) => {
       if (!couldSee(o)) return false;
+      // Adults only: a child who saw two people is never told their secret, so a
+      // minor never becomes a knower of a romance or intimacy fact, never
+      // reacts to one and never reaches an `intimacy:*` event's witness list.
+      if (!isAdultAge(o.age)) return false;
       if (spot.current_location != null) return o.current_location === spot.current_location;
       if (o.current_location != null || !origin) return false;
       const p = o.position as { x: number; y: number };

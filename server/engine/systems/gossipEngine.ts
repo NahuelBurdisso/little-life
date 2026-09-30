@@ -27,7 +27,8 @@ import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
-import { isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
+import { isAdultsOnlyFact, isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
+import { isAdultAge } from '../../lib/intimacy/eligibility';
 import { chancePerTick } from '../../lib/gameClock';
 import { recordGoalOutcome } from '../../lib/goals/goalProgress';
 
@@ -37,6 +38,7 @@ interface AgentInfo {
   gender: string | null;
   current_location: number | null;
   personality: PersonalityProfile | null;
+  age: number;
 }
 
 /**
@@ -91,6 +93,7 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
     gender: agents.gender,
     current_location: agents.current_location,
     personality: agents.personality,
+    age: agents.age,
   }).from(agents).where(eq(agents.is_active, true)).all() as AgentInfo[];
 
   const allFacts = db.select().from(shared_knowledge).where(eq(shared_knowledge.is_active, true)).all();
@@ -154,6 +157,8 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
         for (const eavesdropper of eavesdroppers) {
           const knownBy = fact.known_by as number[];
           if (knownBy.includes(eavesdropper.id)) continue;
+          // A child in the room does not pick up a kiss or a night together from a whisper.
+          if (isAdultsOnlyFact(fact) && !isAdultAge(eavesdropper.age)) continue;
 
           // Eavesdrop chance: curiosity-driven
           const curiosity = eavesdropper.personality?.curiosity ?? 50;
@@ -204,6 +209,8 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
         const knownBy = f.known_by as number[];
         if (!knownBy.includes(agent.id)) return false;
         if (knownBy.includes(target.id)) return false;
+        // Romance and intimacy are told between adults only (neither end a minor).
+        if (isAdultsOnlyFact(f) && !(isAdultAge(agent.age) && isAdultAge(target.age))) return false;
         // Nobody gossips about themselves. The subject always knows their own
         // secret, so without this Marco would "tell" the town that he is
         // secretly in love with Carlos (see isOwnSecret for pair facts).
@@ -272,6 +279,7 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
       const discoverable = allFacts.filter(f => {
         if ((f.known_by as number[]).includes(agent.id)) return false; // already knows
         if (!coLocatedIds.includes(f.subject_id)) return false;
+        if (isAdultsOnlyFact(f) && !isAdultAge(agent.age)) return false; // a child does not "notice" it
         return f.sensitivity >= 2; // only discover non-public shared_knowledge
       });
 

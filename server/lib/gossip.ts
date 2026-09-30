@@ -9,6 +9,7 @@ import { thatSentence, type FactSelf } from './factText';
 import { gameMinutesNow } from './worldClock';
 import { affairInvolvesMarriage, affairSensitivity } from './marriage';
 import { recordGoalOutcome } from './goals/goalProgress';
+import { isAdultAge } from './intimacy/eligibility';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -477,6 +478,29 @@ export function getHiddenSinCount(agentId: number): number {
   return hiddenFacts.length;
 }
 
+// ─── Romance a minor is never told, and never tells ──────────────────────────
+
+/** Fact types that are about love or a night together: never passed to or from someone under 18. */
+const ADULTS_ONLY_FACT_TYPES: readonly string[] = [
+  'kiss_seen', 'tryst_seen', 'illegitimate_pregnancy', 'affair', 'seduction', 'paternity',
+];
+
+/**
+ * Whether this fact is about romance or intimacy, so that a minor may neither hear
+ * it nor pass it on. Beyond the listed types, a `pregnancy` at sensitivity 3 is an
+ * unwed one (family.ts creates it at 3 when unwed, 2 when married): the married
+ * kind is family news a child may hear, the unwed kind is the scandal.
+ */
+export function isAdultsOnlyFact(fact: { type: string; sensitivity: number }): boolean {
+  return ADULTS_ONLY_FACT_TYPES.includes(fact.type) || (fact.type === 'pregnancy' && fact.sensitivity >= 3);
+}
+
+/** Fail closed: an unknown agent or a missing age is not an adult. */
+function isAdultAgent(agentId: number): boolean {
+  const row = db.select({ age: agents.age }).from(agents).where(eq(agents.id, agentId)).get();
+  return row != null && isAdultAge(row.age);
+}
+
 // ─── getShareableFacts ────────────────────────────────────────────────────────
 
 export function getShareableFacts(
@@ -491,6 +515,10 @@ export function getShareableFacts(
     .orderBy(desc(shared_knowledge.sensitivity), desc(shared_knowledge.created_at))
     .all();
 
+  // Asked at most once, and only when a romantic fact is on the table.
+  let bothAdults: boolean | null = null;
+  const speakerAndListenerAreAdults = () => (bothAdults ??= isAdultAgent(speakerId) && isAdultAgent(listenerId));
+
   const shareable = allActive.filter((fact) => {
     const knownBy: number[] = fact.known_by as number[];
 
@@ -498,6 +526,8 @@ export function getShareableFacts(
     if (!knownBy.includes(speakerId)) return false;
     // Listener must not already know it
     if (knownBy.includes(listenerId)) return false;
+    // Romance and intimacy travel between adults only: neither end may be a minor.
+    if (isAdultsOnlyFact(fact) && !speakerAndListenerAreAdults()) return false;
     // A speaker's own secrets are not gossip. Offering them here fed them to the
     // LLM as "things you could gossip about" and let spreadGossip leak them the
     // moment the speaker said their own name. Confessing is a separate path.
