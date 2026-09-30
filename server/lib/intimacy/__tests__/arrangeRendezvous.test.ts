@@ -203,7 +203,7 @@ describe('the arrange_rendezvous nudge', () => {
       const { a, b } = couple({ longingA: 30, longingB: 80 });
       const r = await arrange(a, b);
       expect(r).toMatchObject({ success: true });
-      expect(pending(a, b)).toEqual({ initiatorId: b, since: NOW });
+      expect(pending(a, b)).toEqual({ initiatorId: b, since: NOW, byPlayer: true });
       const q = queued(a, b);
       expect(q).toHaveLength(1);
       expect(q[0]).toMatchObject({
@@ -270,6 +270,47 @@ describe('the arrange_rendezvous nudge', () => {
       await onRendezvousConversationEnded(noTalk(a, b), { llm: false });
       expect(pending(a, b)).toBeUndefined();
       expect(getPairIntimacy(a, b)?.rendezvousRetryAfter).toBeGreaterThan(NOW);
+    });
+
+    it('the player is told how it went, in the second person and discreetly: a yes, a no', async () => {
+      const yesTalk = (asker: number, other: number) => ({
+        ...noTalk(asker, other),
+        messages: [
+          { speakerId: asker, text: 'Would you spend the evening with me, somewhere quiet?' },
+          { speakerId: other, text: 'Yes, I would love to.' },
+        ],
+      });
+      const outcomes = () => db.select().from(activityLog).all().filter((r) => r.type === 'player_outcome');
+      const before = outcomes().length;
+
+      const yes = couple();
+      await arrange(yes.a, yes.b);
+      await onRendezvousConversationEnded(yesTalk(yes.a, yes.b), { llm: false });
+      expect(pending(yes.a, yes.b)?.agreed).toBe(true);
+      const agreed = outcomes().slice(before);
+      expect(agreed).toHaveLength(1);
+      expect(agreed[0].agent_ids).toEqual([yes.a, yes.b]);
+      expect(agreed[0].template_data).toMatchObject({
+        description: expect.stringMatching(/^Your arrangement: .* and .* agreed to spend the evening together.$/),
+        trigger: 'player_arrange',
+      });
+
+      const no = couple();
+      await arrange(no.a, no.b);
+      await onRendezvousConversationEnded(noTalk(no.a, no.b), { llm: false });
+      const refused = outcomes().slice(before + 1);
+      expect(refused).toHaveLength(1);
+      expect(refused[0].template_data).toMatchObject({
+        description: expect.stringMatching(/^Your arrangement: .* turned .* down.$/),
+      });
+    });
+
+    it("an invitation the pair made on their own is not the player's to be told about", async () => {
+      const { a, b } = couple();
+      updatePairIntimacy(a, b, (p) => { p.pendingRendezvous = { initiatorId: a, since: NOW - 5 }; });
+      const before = db.select().from(activityLog).all().filter((r) => r.type === 'player_outcome').length;
+      await onRendezvousConversationEnded(noTalk(a, b), { llm: false });
+      expect(db.select().from(activityLog).all().filter((r) => r.type === 'player_outcome')).toHaveLength(before);
     });
 
     it('and a character that would never says no whatever the player arranged', async () => {

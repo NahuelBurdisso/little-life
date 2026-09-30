@@ -454,6 +454,18 @@ describe('the kiss against the DB', () => {
     expect(getPairIntimacy(a, b)).toBeUndefined();
   });
 
+  it('the one who turned away remembers being asked, more lightly than the one who was refused', () => {
+    const { a, b } = pair({ romanceA: 70, romanceB: 20 });
+    const memories: Array<{ agentId: number; description: string; importance: number; relatedAgentId: number }> = [];
+    const onMemory = (m: (typeof memories)[number]) => memories.push(m);
+    simEvents.on('life:milestone', onMemory);
+    try { onKissConversationEnded(warm(a, b), rng0); } finally { simEvents.off('life:milestone', onMemory); }
+    const [asker, refused] = [memories.find((m) => m.agentId === a)!, memories.find((m) => m.agentId === b)!];
+    expect(asker).toMatchObject({ importance: 6, relatedAgentId: b });
+    expect(refused).toMatchObject({ importance: 4, relatedAgentId: a });
+    expect(refused.description).toMatch(/tried to kiss me, and I turned away.$/);
+  });
+
   it('a refused suitor does not try again the same day', () => {
     const { a, b } = pair({ romanceA: 70, romanceB: 20 });
     onKissConversationEnded(warm(a, b, 1), rng0);

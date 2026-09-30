@@ -3,6 +3,7 @@ import { db } from '../../db';
 import { agentStates, agents, conversationQueue, conversations, relationships, shared_knowledge } from '../../db/schema';
 import { SUSPICION_TOPIC } from '../../ai/prompts';
 import { emitter } from '../../engine/emitter';
+import { logActivity } from '../activityLogger';
 import { queueMaxWait } from '../conversationPacing';
 import { applyAffairFallout, insertPairEvent, pairRelationship } from '../conversationBeats';
 import { MINUTES_PER_DAY, gameMinutes, type ClockTime } from '../gameClock';
@@ -67,6 +68,10 @@ export const SUSPICION_AFTER_TALK = 1;
 export const SUSPICION_TRIGGER = 'suspicion';
 
 type AgentRow = typeof agents.$inferSelect;
+
+const remember = (agentId: number, description: string, valence: number, importance: number, relatedAgentId: number): void => {
+  simEvents.emit('life:milestone', { agentId, description, valence, importance, relatedAgentId });
+};
 
 // ─── Knowing ─────────────────────────────────────────────────────────────────
 
@@ -287,10 +292,12 @@ export function onSuspicionConversationEnded(p: SuspicionConversationEnded): voi
   }
   const now = gameMinutesNow();
 
-  // It went so badly that whatever was suspected is now believed: the same fallout as finding out.
+  // It went so badly that whatever was suspected is now believed: the same fallout as finding out
+  // (the discoverer's memory and the pair's chronicle beat are applyAffairFallout's own).
   if ((p.sentiment ?? 0) <= FIGHT_SENTIMENT
     && applyAffairFallout(observer, partner, rel, now,
       `${observer.name} confronted ${partner.name} about the nights spent away from home, and broke up!`)) {
+    remember(partner.id, `${observer.name} confronted me about my nights away, and it ended between us.`, -0.8, 8, observer.id);
     clearSuspicion(p.agentId, partnerId);
     emitter.markDirty('agents.all');
     return;
@@ -300,6 +307,16 @@ export function onSuspicionConversationEnded(p: SuspicionConversationEnded): voi
   insertPairEvent(observer.id, partner.id, 'suspicion',
     `${observer.name} asked ${partner.name} where they had been at night`,
     { friendshipFrom: 0, friendshipTo: 0, trustFrom: DISTRUST_TRUST }, -0.3);
+  // A scene in the feed (a toast for a favourite, never the paper) and a memory each: the asker was not
+  // put at ease, the asked did not tell the truth.
+  logActivity({
+    type: 'suspicion',
+    initiator: observer.id,
+    target: partner.id,
+    templateData: { agent1: observer.name, agent2: partner.name },
+  });
+  remember(observer.id, `I asked ${partner.name} where they had been at night, and I was not put at ease.`, -0.5, 6, partner.id);
+  remember(partner.id, `${observer.name} asked me where I had been at night. I did not tell the truth.`, -0.4, 6, observer.id);
   updateAgentIntimacy(observer.id, (a) => { a.suspicion[partner.id] = SUSPICION_AFTER_TALK; });
   db.delete(agentStates)
     .where(and(eq(agentStates.agent_id, observer.id), eq(agentStates.type, 'suspicious'), eq(agentStates.target_agent_id, partner.id)))

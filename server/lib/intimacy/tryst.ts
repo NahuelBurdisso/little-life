@@ -312,7 +312,8 @@ function reportCaught(subject: AgentRow, other: AgentRow, witnessIds: number[], 
     });
     if (stay) updateStay(subject.id, (s) => { s.caughtLogged = true; });
   }
-  for (const w of witnessIds) simEvents.emit('intimacy:caught', { a: subject.id, b: other.id, witnessId: w });
+  // `scene` rides along so the witness's memory (reactions.ts) says where they saw it.
+  for (const w of witnessIds) simEvents.emit('intimacy:caught', { a: subject.id, b: other.id, witnessId: w, scene });
 }
 
 // ─── Beginning ───────────────────────────────────────────────────────────────

@@ -35,8 +35,11 @@ export interface PairIntimacy {
    *   tryst.ts owns everything after this: it picks the venue, walks the pair
    *   there and clears the pending when the night begins. An agreed pending
    *   nobody acts on is dropped ~6 game hours after `agreedAt`.
+   *
+   * `byPlayer` marks an invitation the player arranged (the `arrange_rendezvous` nudge): the
+   * answer is then reported back to them as a `player_outcome` row, like every nudge's is.
    */
-  pendingRendezvous?: { initiatorId: number; since: number; venueId?: number; agreed?: true; agreedAt?: number };
+  pendingRendezvous?: { initiatorId: number; since: number; venueId?: number; agreed?: true; agreedAt?: number; byPlayer?: true };
   /**
    * The evening in progress (tryst.ts): from the moment both are at the venue
    * until `endsAt`, when the pass ends it and calls `onTrystCompleted` (or
@@ -245,6 +248,7 @@ function restorePair(raw: unknown): PairIntimacy | null {
     const venueId = asNumber(rv.venueId);
     const agreedAt = asNumber(rv.agreedAt);
     p.pendingRendezvous = { initiatorId, since };
+    if (rv.byPlayer === true) p.pendingRendezvous.byPlayer = true;
     if (venueId !== null) p.pendingRendezvous.venueId = venueId;
     if (rv.agreed === true) {
       p.pendingRendezvous.agreed = true;

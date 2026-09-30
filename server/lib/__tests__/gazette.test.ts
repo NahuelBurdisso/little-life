@@ -90,13 +90,14 @@ describe('gatherMaterial', () => {
     row('tryst', { ...names, venue: 'Ada Cottage' });
     row('caught', { ...names, witness: 'Cora', scene: 'dawn' });
     row('scandal', { agent1: 'Ada' });
+    row('suspicion', names);
     const { items } = gatherMaterial(10);
     expect(items).toHaveLength(2);
     expect(items.join(' ')).toContain('Cora saw Ada slipping out');
     expect(items.join(' ')).toContain('Whispers follow Ada');
-    expect(items.join(' ')).not.toMatch(/kiss|slipped away together/);
+    expect(items.join(' ')).not.toMatch(/kiss|slipped away together|where they had been/);
     // The registry says so too: private by default, the leak and the scandal are not.
-    for (const t of ['first_kiss', 'kiss', 'kiss_rebuffed', 'tryst']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).toBe(false);
+    for (const t of ['first_kiss', 'kiss', 'kiss_rebuffed', 'tryst', 'suspicion']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).toBe(false);
     for (const t of ['caught', 'scandal']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).not.toBe(false);
   });
 });

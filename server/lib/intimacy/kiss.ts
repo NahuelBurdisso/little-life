@@ -271,6 +271,12 @@ function rebuffKiss(initiator: AgentRow, receiver: AgentRow, now: number): void 
     description: `I tried to kiss ${receiver.name}, and they turned away.`,
     valence: -0.6, importance: 6, relatedAgentId: receiver.id,
   });
+  // The other side of it: who turned away remembers being asked (lighter: they chose it).
+  simEvents.emit('life:milestone', {
+    agentId: receiver.id,
+    description: `${initiator.name} tried to kiss me, and I turned away.`,
+    valence: -0.1, importance: 4, relatedAgentId: initiator.id,
+  });
 }
 
 function shareKiss(rel: RelRow, initiator: AgentRow, receiver: AgentRow, witnessIds: number[], now: number): void {

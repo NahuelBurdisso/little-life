@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { alertTier } from '../alertTiers';
+import { ACTIVITY_REGISTRY } from '../../data/activityRegistry';
 import { activityRouter } from '../../routers/activity';
 import { logActivity } from '../activityLogger';
 
@@ -123,4 +124,26 @@ describe('alertTier: trysts (lib/intimacy/tryst.ts)', () => {
     // A favourite who only saw it counts too: it is their story.
     expect(alertTier(seen, new Set([9]))).toBe('major');
   });
+});
+
+describe('alertTier: the whole intimacy table, at the registry\'s own importances', () => {
+  // [type, tier for nobody in particular, tier when a favourite is in the row]
+  const TABLE: Array<[string, 'major' | 'minor' | null, 'major' | 'minor' | null]> = [
+    ['first_kiss', null, 'minor'],
+    ['kiss', null, null],
+    ['kiss_rebuffed', null, null],
+    ['tryst', null, 'minor'],
+    ['caught', 'minor', 'major'],
+    ['scandal', 'major', 'major'],
+    ['suspicion', null, 'minor'],
+  ];
+
+  for (const [type, stranger, favourite] of TABLE) {
+    it(`${type}: ${stranger ?? 'no toast'} for the town, ${favourite ?? 'no toast'} for a favourite`, () => {
+      const def = ACTIVITY_REGISTRY[type];
+      const r = row({ type, category: def.category, importance: def.base_importance, agent_ids: [7, 8, 9], initiator_id: 7, target_id: 8 });
+      expect(alertTier(r)).toBe(stranger);
+      expect(alertTier(r, new Set([8]))).toBe(favourite);
+    });
+  }
 });

@@ -645,7 +645,7 @@ describe('the tryst', () => {
       expect(rows[0].target_id).toBe(a);
       expect(rows[0].template_data).toMatchObject({ witness: load(snoop).name, agent1: load(b).name, agent2: load(a).name });
       expect(rows[0].metadata).toEqual({ beat: 'caught' });
-      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: snoop }]);
+      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: snoop, scene: 'dawn' }]);
     });
 
     it('once somebody has seen, the pair is no longer a secret', () => {
@@ -786,7 +786,7 @@ describe('the tryst', () => {
       } finally { caught.stop(); }
 
       expect(getPairIntimacy(a, b)!.activeTryst).toBeUndefined();
-      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: sister }]);
+      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: sister, scene: 'found' }]);
       const rows = rowsOf('caught', b);
       expect(rows).toHaveLength(1);
       expect(rows[0].template_data).toMatchObject({ witness: load(sister).name, scene: 'found' });
@@ -846,7 +846,7 @@ describe('the tryst', () => {
         trystPass(at(20), () => 0);
       } finally { caught.stop(); }
 
-      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: mother }]);
+      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: mother, scene: 'found' }]);
       const rows = rowsOf('caught', b);
       expect(rows).toHaveLength(1);
       expect(rows[0].template_data).toMatchObject({ witness: load(mother).name });

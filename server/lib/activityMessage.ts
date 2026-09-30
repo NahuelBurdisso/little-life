@@ -70,6 +70,8 @@ export function renderMessage(entry: ActivityEntry): string {
       ? `${d.agent1} and ${d.agent2} slipped away together to ${d.venue}.`
       : `${d.agent1} and ${d.agent2} slipped away together.`;
   }
+  // A partner's question about a night away (lib/intimacy/suspicion.ts): agent1 asked agent2.
+  if (entry.type === 'suspicion' && d.agent1 && d.agent2) return `${d.agent1} asked ${d.agent2} where they had been at night.`;
   // The unwed pregnancy the town has noticed (lib/intimacy/pregnancy.ts): agent1 is the mother, never more.
   if (entry.type === 'scandal' && d.agent1) return `Whispers follow ${d.agent1} through town.`;
   if (entry.type === 'caught' && d.witness && d.agent1 && d.agent2) {

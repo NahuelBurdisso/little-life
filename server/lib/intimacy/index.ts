@@ -4,6 +4,7 @@ import { gameMinutes, type ClockTime } from '../gameClock';
 import { registerKissListener } from './kiss';
 import { longingPass } from './longing';
 import { pregnancyPass } from './pregnancy';
+import { registerReactionListeners } from './reactions';
 import { registerRendezvousListener, rendezvousPass } from './rendezvous';
 import { registerSuspicionListeners, suspicionPass } from './suspicion';
 import { trystPass } from './tryst';
@@ -18,6 +19,8 @@ import { trystPass } from './tryst';
 // A warm conversation can end in a kiss (kiss.ts). The listener registers on import,
 // like milestonesEngine's; later tasks add theirs next to it.
 registerKissListener();
+// Whoever saw a kiss or a walk home at dawn remembers it, and a partner or a crush feels it (reactions.ts).
+registerReactionListeners();
 // A lover's invitation is answered on the asker's conversation:ended (rendezvous.ts, adult layer).
 registerRendezvousListener();
 // A partner's empty bed becomes suspicion, a confrontation and (badly ended) a breakup (suspicion.ts, adult layer).

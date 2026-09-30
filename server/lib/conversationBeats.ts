@@ -267,6 +267,18 @@ export function applyAffairFallout(
   const pid = discoverer.id;
   const otherId = partner.id;
 
+  // Whatever they do about it, they found out: the memory that will surface in their reflections and
+  // a beat on the pair's story (zero deltas, since each branch below moves the numbers itself; the
+  // sentiment makes it pivotal, so the chronicle keeps it). The forgiving branch used to leave
+  // nothing at all, so a partner who chose to stay had no story and no memory of the day they learned.
+  simEvents.emit('life:milestone', {
+    agentId: pid,
+    description: `I found out that ${partner.name} has been unfaithful to me.`,
+    valence: -0.9, importance: 9, relatedAgentId: otherId,
+  });
+  insertPairEvent(pid, otherId, 'affair_discovered', `${discoverer.name} found out about ${partner.name}'s affair`,
+    { friendshipFrom: 0, friendshipTo: 0 }, -0.8);
+
   if (personality.aggression > 60) {
     // A real breakup: the engagement or marriage goes with it (the relationship phase keeps a
     // `married` pair at `partners` otherwise).

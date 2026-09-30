@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../db';
-import { activityLog, agentStates, agents, locations, relationships, shared_knowledge } from '../../db/schema';
+import { activityLog, agentStates, agents, locations, relationshipEvents, relationships, shared_knowledge } from '../../db/schema';
+import { simEvents } from '../simEvents';
 import { reactToPartnerAffair, pairRelationship, type BeatAgent } from '../conversationBeats';
 import { addKnowers, createFact, learnFact } from '../gossip';
 
@@ -60,6 +61,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  db.delete(relationshipEvents).where(or(inArray(relationshipEvents.agent_a, ids), inArray(relationshipEvents.agent_b, ids))).run();
   db.delete(activityLog).where(or(inArray(activityLog.initiator_id, ids), inArray(activityLog.target_id, ids))).run();
   db.delete(agentStates).where(inArray(agentStates.agent_id, ids)).run();
   db.delete(shared_knowledge).where(or(inArray(shared_knowledge.subject_id, ids), inArray(shared_knowledge.target_id, ids))).run();
@@ -135,6 +137,48 @@ describe('reactToPartnerAffair', () => {
     expect(rel.status).toBe('rivals');
     expect(rel.tags).not.toContain('partner');
     expect(rel.tags).toContain('grudge');
+  });
+});
+
+describe('what discovering an affair leaves behind', () => {
+  const found = (personality: unknown) => {
+    const memories: Array<{ agentId: number; description: string; importance: number; relatedAgentId?: number }> = [];
+    const onMemory = (p: { agentId: number; description: string; importance: number; relatedAgentId?: number }) => memories.push(p);
+    simEvents.on('life:milestone', onMemory);
+    try {
+      createFact('affair', partner, lover, 3, [discoverer], 'observed');
+      reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', personality), beat(partner, 'Percival Ashby'), 1000);
+    } finally { simEvents.off('life:milestone', onMemory); }
+    return memories;
+  };
+  const storyBeats = () => db.select().from(relationshipEvents)
+    .where(inArray(relationshipEvents.event_type, ['affair_discovered'])).all()
+    .filter((e) => [e.agent_a, e.agent_b].every((id) => [discoverer, partner].includes(id)));
+
+  // Rage, forgiveness and a quiet parting all leave the discoverer with the memory and the pair with a beat:
+  // the forgiving branch wrote nothing at all before, so a wife who chose to stay had no story.
+  for (const [name, personality] of [['a rage', RAGE], ['forgiveness', { aggression: 10, loyalty: 90 }], ['a quiet parting', QUIET]] as const) {
+    it(`${name}: the discoverer remembers it (weighs 9) and the pair has a pivotal chronicle beat`, () => {
+      const before = storyBeats().length;
+      const memories = found(personality);
+      expect(memories).toEqual([expect.objectContaining({
+        agentId: discoverer, importance: 9, relatedAgentId: partner,
+        description: 'I found out that Percival Ashby has been unfaithful to me.',
+      })]);
+      const beats = storyBeats().slice(before);
+      expect(beats).toHaveLength(1);
+      expect(beats[0]).toMatchObject({ description: "Delphine Ashby found out about Percival Ashby's affair" });
+      // Pure story: the branch's own writes (trust, status, states) already moved the numbers.
+      expect(beats[0]).toMatchObject({ friendship_delta_ab: 0, friendship_delta_ba: 0, trust_delta_ab: 0, trust_delta_ba: 0, romance_delta_ab: 0, romance_delta_ba: 0 });
+      expect(Math.abs(beats[0].sentiment)).toBeGreaterThanOrEqual(0.5);
+    });
+  }
+
+  it('nothing at all without a personality to react with', () => {
+    createFact('affair', partner, lover, 3, [discoverer], 'observed');
+    const before = storyBeats().length;
+    expect(reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', null), beat(partner, 'Percival Ashby'), 1000)).toBe(false);
+    expect(storyBeats()).toHaveLength(before);
   });
 });
 

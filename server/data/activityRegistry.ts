@@ -132,6 +132,12 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   tryst:  { category: 'relationship', base_importance: 0.5, retention: 'medium', template: '{agent1} and {agent2} slipped away together to {venue}', newsworthy: false },
   caught: { category: 'drama', base_importance: 0.75, retention: 'long', template: '{witness} saw {agent1} slipping out of {agent2}\'s house at dawn' },
 
+  // A partner asked where the other had been at night and was not put at ease
+  // (lib/intimacy/suspicion.ts). A private scene between two people, so never the paper's
+  // (a suspicion is not yet a fact) and below the recap's bar; a toast only for a favourite
+  // (alertTiers.ts: drama at 0.5 or more).
+  suspicion: { category: 'drama', base_importance: 0.6, retention: 'medium', template: '{agent1} asked {agent2} where they had been at night', newsworthy: false },
+
   // ─── The scandal (lib/intimacy/pregnancy.ts, the adult layer) ─────────────
   // An unwed pregnancy the town can see: a headline, worded discreetly (activityMessage.ts).
   scandal: { category: 'drama', base_importance: 0.85, retention: 'long', template: 'Whispers follow {agent1} through town', newsworthy: true },

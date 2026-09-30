@@ -91,6 +91,16 @@ describe('snapshot store', () => {
     expect(getPairIntimacy(1, 2)?.pendingRendezvous).toEqual({ initiatorId: 1, since: 10 });
   });
 
+  it('remembers that the player arranged an invitation across a save, and takes only a real true', () => {
+    updatePairIntimacy(1, 2, (p) => { p.pendingRendezvous = { initiatorId: 1, since: 10, byPlayer: true }; });
+    const blob = JSON.parse(JSON.stringify(intimacySnapshotStore.serialize()));
+    clearIntimacy();
+    intimacySnapshotStore.restore(blob);
+    expect(getPairIntimacy(1, 2)?.pendingRendezvous).toEqual({ initiatorId: 1, since: 10, byPlayer: true });
+    intimacySnapshotStore.restore({ pairs: { '1-2': { pendingRendezvous: { initiatorId: 1, since: 10, byPlayer: 'yes' } } } });
+    expect(getPairIntimacy(1, 2)?.pendingRendezvous).toEqual({ initiatorId: 1, since: 10 });
+  });
+
   it('restores tolerantly from junk and replaces prior content', () => {
     ensurePairIntimacy(1, 2);
     for (const junk of [null, undefined, 5, 'x', [], { pairs: 3, agents: 'no' }]) {

@@ -6,6 +6,7 @@ import { firstName } from '../../ai/names';
 import { RENDEZVOUS_TOPIC } from '../../ai/prompts';
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { emitter } from '../../engine/emitter';
+import { logActivity } from '../activityLogger';
 import { CONFIG } from '../constants';
 import { queueMaxWait } from '../conversationPacing';
 import { addMoodModifier } from '../dailyLife';
@@ -615,7 +616,7 @@ export function arrangeRendezvous(aId: number, bId: number, initiatorId?: number
 
   const now = gameMinutesNow();
   updatePairIntimacy(a.id, b.id, (p) => {
-    p.pendingRendezvous = { initiatorId: initiator.id, since: now };
+    p.pendingRendezvous = { initiatorId: initiator.id, since: now, byPlayer: true };
     delete p.rendezvousRetryAfter;
   });
   let queued = false;
@@ -705,7 +706,25 @@ export async function onRendezvousConversationEnded(
   const now = gameMinutesNow();
   if (decision.accepted) acceptRendezvous(p.agentId, otherId, now);
   else refuseRendezvous(initiator, answerer, now);
+  // The player asked for this evening: they hear how it went (second person, discreet, never in the paper).
+  if (rv.byPlayer) reportArrangement(initiator, answerer, decision.accepted);
   emitter.markDirty('agents.all');
+}
+
+/** What the arranged invitation came to, as `playerOutcomes.ts` words every nudge's result: a `player_outcome` row. */
+function reportArrangement(initiator: AgentRow, answerer: AgentRow, accepted: boolean): void {
+  const asker = firstName(initiator.name);
+  const asked = firstName(answerer.name);
+  logActivity({
+    type: 'player_outcome',
+    agents: [initiator.id, answerer.id],
+    templateData: {
+      description: accepted
+        ? `Your arrangement: ${asker} and ${asked} agreed to spend the evening together.`
+        : `Your arrangement: ${asked} turned ${asker} down.`,
+      trigger: 'player_arrange',
+    },
+  });
 }
 
 /** Yes: the evening is agreed. The venue is tryst.ts's `pickVenue` to choose, so `venueId` stays unset. */

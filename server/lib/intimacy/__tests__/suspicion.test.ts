@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import {
-  agentStates, agents, conversationQueue, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
+  activityLog, agentStates, agents, conversationQueue, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
 } from '../../../db/schema';
 import { SUSPICION_TOPIC } from '../../../ai/prompts';
 import {
@@ -15,6 +15,7 @@ import { clearIntimacy, ensureAgentIntimacy, getAgentIntimacy, getSuspicionProce
 import { MARRIED_TAG } from '../../marriage';
 import { learnFact } from '../../gossip';
 import { setRuleOverrides } from '../../worldRules';
+import { renderMessage } from '../../activityMessage';
 import { gameMinutes } from '../../gameClock';
 import { simEvents } from '../../simEvents';
 import { getActiveStatePrompts } from '../../states';
@@ -108,6 +109,7 @@ const awayLastNight = (guest: number, host: number, hoursAgo = 9) => {
 const statesOf = (id: number) => db.select().from(agentStates).where(eq(agentStates.agent_id, id)).all();
 const queued = () => db.select().from(conversationQueue).where(eq(conversationQueue.trigger_reason, SUSPICION_TRIGGER)).all();
 const suspicionOf = (observer: number, partner: number) => getAgentIntimacy(observer)?.suspicion[partner];
+const load = (id: number) => db.select().from(agents).where(eq(agents.id, id)).get()!;
 const relOf = (id: number) => db.select().from(relationships).where(eq(relationships.id, id)).get()!;
 
 describe('suspicion of an empty bed', () => {
@@ -413,6 +415,42 @@ describe('suspicion of an empty bed', () => {
       expect([mine, theirs]).toEqual([-10, 0]);
       expect(suspicionOf(p, g)).toBe(SUSPICION_AFTER_TALK);
       expect(statesOf(p).map((s) => s.type)).not.toContain('suspicious');
+    });
+
+    it('a calm one is still a scene: the feed says who asked whom, and both remember it', () => {
+      const { p, g } = household({ pPersonality: { aggression: 90 } });
+      suspicious(p, g);
+      const memories: Array<{ agentId: number; description: string; importance: number; relatedAgentId?: number }> = [];
+      const onMemory = (m: (typeof memories)[number]) => memories.push(m);
+      simEvents.on('life:milestone', onMemory);
+      try { ended(p, g, 0.1); } finally { simEvents.off('life:milestone', onMemory); }
+
+      const rows = db.select().from(activityLog).where(eq(activityLog.type, 'suspicion')).all()
+        .filter((r) => (r.agent_ids as number[]).includes(p));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ initiator_id: p, target_id: g, category: 'drama' });
+      expect(rows[0].importance).toBeCloseTo(0.6);
+      const [asker, asked] = [load(p).name, load(g).name];
+      expect(renderMessage({ type: 'suspicion', template_data: rows[0].template_data, timestamp: 0 }))
+        .toBe(`${asker} asked ${asked} where they had been at night.`);
+
+      const mine = memories.find((m) => m.agentId === p)!;
+      const theirs = memories.find((m) => m.agentId === g)!;
+      expect(mine).toMatchObject({ importance: 6, relatedAgentId: g, description: `I asked ${asked} where they had been at night, and I was not put at ease.` });
+      expect(theirs).toMatchObject({ importance: 6, relatedAgentId: p, description: `${asker} asked me where I had been at night. I did not tell the truth.` });
+    });
+
+    it('a bad ending: the one who was confronted remembers the end of it too', () => {
+      const { p, g } = household({ pPersonality: { aggression: 90 } });
+      suspicious(p, g);
+      const memories: Array<{ agentId: number; description: string; importance: number }> = [];
+      const onMemory = (m: (typeof memories)[number]) => memories.push(m);
+      simEvents.on('life:milestone', onMemory);
+      try { ended(p, g, -0.7); } finally { simEvents.off('life:milestone', onMemory); }
+      // The discoverer's own memory is conversationBeats' (I found out ...); the partner's is this one's.
+      expect(memories.find((m) => m.agentId === p)?.description).toBe(`I found out that ${load(g).name} has been unfaithful to me.`);
+      expect(memories.find((m) => m.agentId === g)).toMatchObject({ importance: 8 });
+      expect(memories.find((m) => m.agentId === g)!.description).toBe(`${load(p).name} confronted me about my nights away, and it ended between us.`);
     });
 
     it('acts once: the answerer\'s copy of the event, a second run, and a template chat do nothing', () => {
