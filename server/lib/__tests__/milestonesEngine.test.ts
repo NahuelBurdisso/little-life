@@ -6,7 +6,7 @@ import {
   simSnapshots, worldEvents, worldState,
 } from '../../db/schema';
 import {
-  PROPOSAL_MAX_DAYS, PROPOSAL_MIN_DAYS, PROPOSAL_QUEUE_PRIORITY, WEDDING_DELAY_MINUTES,
+  PROPOSAL_MAX_DAYS, PROPOSAL_MIN_DAYS, PROPOSAL_PENDING_MINUTES, PROPOSAL_QUEUE_PRIORITY, WEDDING_DELAY_MINUTES,
   PROPOSAL_SEEK_SCORE, canProposeNow, canSeekPartner, clearMilestones, deterministicAnswer, getPairMilestone,
   inNoProposalState, isWeddingHour, milestonesSnapshotStore, milestonesTick, pendingProposalPartner, pickProposer,
   proposalDelayDays, proposalOutcome, queuePendingProposalNow, type SeekParty,
@@ -311,8 +311,73 @@ describe('milestones against the DB', () => {
       db.update(agents).set({ position: { x: 900, y: 0 } }).where(eq(agents.id, b)).run();
       tick();
       expect(getPairMilestone(a, b)?.proposerId).toBe(a);
-      tick(12, NOW + 19 * 60);
-      expect(getPairMilestone(a, b)).toEqual({ retryAfter: NOW + 19 * 60 + DAY });
+      tick(12, NOW + 43 * 60);
+      expect(getPairMilestone(a, b)).toEqual({ retryAfter: NOW + 43 * 60 + DAY });
+    });
+
+    it('keeps a pending proposal alive past a day, so it always spans two evenings', () => {
+      // The old 18 h window could end just before the only evening the pair shares: a
+      // decision at 23:00 expired at 17:00 the next day, before the 19-22 window.
+      expect(PROPOSAL_PENDING_MINUTES).toBe(42 * 60);
+      const { a, b } = couple({}, { current_location: null });
+      db.update(agents).set({ position: { x: 900, y: 0 } }).where(eq(agents.id, b)).run();
+      tick();
+      tick(12, NOW + 20 * 60);
+      expect(getPairMilestone(a, b)).toMatchObject({ proposerId: a, pendingSince: NOW });
+      // ...and the last minute of the window still counts; one past it does not.
+      tick(12, NOW + PROPOSAL_PENDING_MINUTES);
+      expect(getPairMilestone(a, b)?.proposerId).toBe(a);
+      tick(12, NOW + PROPOSAL_PENDING_MINUTES + 10);
+      expect(getPairMilestone(a, b)?.proposerId).toBeUndefined();
+    });
+
+    it('announces a proposal once, even when it expires and is decided again', () => {
+      const { a, b } = couple();
+      tick();
+      expect(queued(a, b)).toHaveLength(1);
+      expect(feed('proposal', a)).toHaveLength(1);
+
+      // The queued conversation never got a slot (the queue gave up on it) and the
+      // pending state times out: the retry entry remembers the feed line was written.
+      db.delete(conversationQueue).where(eq(conversationQueue.trigger_reason, 'proposal')).run();
+      const expiredAt = NOW + PROPOSAL_PENDING_MINUTES + 10;
+      // The pair is together, so `tick` would seat it again before the window ends;
+      // move them apart first so the expiry pass is the one that runs.
+      db.update(agents).set({ current_location: squareId, position: { x: 900, y: 0 } }).where(eq(agents.id, b)).run();
+      db.update(agents).set({ current_location: homeId, position: { x: 0, y: 0 } }).where(eq(agents.id, a)).run();
+      tick(12, expiredAt);
+      expect(getPairMilestone(a, b)).toEqual({ retryAfter: expiredAt + DAY, announced: true });
+      expect(queued(a, b)).toHaveLength(0);
+
+      // A day later the pair decides again, and the two are together this time.
+      db.update(agents).set({ current_location: homeId, position: { x: 0, y: 0 } }).where(eq(agents.id, b)).run();
+      const retryAt = expiredAt + DAY + 10;
+      tick(12, retryAt);
+      expect(getPairMilestone(a, b)).toMatchObject({ proposerId: a, pendingSince: retryAt, announced: true });
+      expect(queued(a, b)).toHaveLength(1);
+      expect(feed('proposal', a)).toHaveLength(1);
+    });
+
+    it('the proposer remembers the question they never got to ask', () => {
+      const { a, b } = couple({}, { current_location: null });
+      db.update(agents).set({ position: { x: 900, y: 0 } }).where(eq(agents.id, b)).run();
+      tick();
+      const heard: Array<{ agentId: number; description: string; valence: number; relatedAgentId?: number }> = [];
+      // Couples left over from earlier tests are partners in the same DB and expire on the same pass.
+      const listener = (m: (typeof heard)[number]) => { if (m.agentId === a) heard.push(m); };
+      simEvents.on('life:milestone', listener);
+      try {
+        tick(12, NOW + 20 * 60);
+        expect(heard).toHaveLength(0); // still inside the window: nothing to grieve
+        tick(12, NOW + PROPOSAL_PENDING_MINUTES + 10);
+      } finally {
+        simEvents.off('life:milestone', listener);
+      }
+      const partner = db.select({ name: agents.name }).from(agents).where(eq(agents.id, b)).get()!.name;
+      expect(heard).toHaveLength(1);
+      expect(heard[0]).toMatchObject({ agentId: a, relatedAgentId: b, valence: -0.2 });
+      expect(heard[0].description).toContain(partner);
+      expect(heard[0].description).toContain('marry');
     });
   });
 
@@ -544,6 +609,21 @@ describe('milestones against the DB', () => {
       restoreWorldCaches();
       expect(milestonesSnapshotStore.serialize()).toEqual(before);
       expect(getPairMilestone(9, 3)).toEqual({ engagedAt: 1234 });
+    });
+
+    it('a retry entry keeps its announced flag through a checkpoint, and old checkpoints without it still load', () => {
+      milestonesSnapshotStore.restore({
+        '3-9': { retryAfter: 500, announced: true },
+        '4-8': { retryAfter: 600 },
+        // `announced` alone (no timer to hang it on) is not state.
+        '5-6': { announced: true },
+      });
+      expect(milestonesSnapshotStore.serialize()).toEqual({
+        '3-9': { retryAfter: 500, announced: true },
+        '4-8': { retryAfter: 600 },
+      });
+      expect(getPairMilestone(3, 9)).toEqual({ retryAfter: 500, announced: true });
+      expect(getPairMilestone(4, 8)).toEqual({ retryAfter: 600 });
     });
 
     it('restore skips malformed entries', () => {

@@ -63,8 +63,14 @@ export const PROPOSAL_RETRY_AFTER_REFUSAL_DAYS = 7;
  * A proposer who has not managed to pop the question this long after deciding
  * to (the two never ended up together and free) gives up for a day and
  * decides again. Keeps a pending proposal from lingering forever.
+ *
+ * 42 h, not the 18 h it used to be: the only time a couple who keep different
+ * hours share is the evening (canSeekPartner rules out shifts and bed hours), and
+ * a decision taken at 23:00 expired at 17:00 the next day, just before the 19-22
+ * window, so the proposer gave up having never had a real chance. 42 h always
+ * spans two full evenings whatever the hour of the decision.
  */
-export const PROPOSAL_PENDING_MINUTES = 18 * 60;
+export const PROPOSAL_PENDING_MINUTES = 42 * 60;
 /** How long the queued conversation may wait for a slot, in game minutes. */
 export const PROPOSAL_QUEUE_WAIT_MINUTES = 60;
 /**
@@ -113,6 +119,9 @@ export interface PairMilestone {
   /** No new proposal before this game minute (after a refusal or an abandoned attempt). */
   retryAfter?: number;
 }
+// `announced` also rides along on a `retryAfter` entry (an ABANDONED attempt, never a refusal):
+// the feed already said "X has something important to ask Y", and saying it again a day later
+// for the same unasked question was the bug. The next pending state inherits it.
 
 /** Keyed by `pairKey` (lower id first). */
 const pairs = new Map<string, PairMilestone>();
@@ -157,7 +166,11 @@ export const milestonesSnapshotStore: SnapshotStore = {
       }
       if (engagedAt !== null) entry.engagedAt = engagedAt;
       if (r.shotgun === true && (entry.proposerId != null || entry.engagedAt != null)) entry.shotgun = true;
-      if (retryAfter !== null) entry.retryAfter = retryAfter;
+      if (retryAfter !== null) {
+        entry.retryAfter = retryAfter;
+        // Older checkpoints have no flag on a retry entry: absent means not announced.
+        if (r.announced === true) entry.announced = true;
+      }
       if (Object.keys(entry).length > 0) pairs.set(k, entry);
     }
   },
@@ -396,8 +409,16 @@ export function milestonesTick(time: ClockTime, nowMinutes: number): void {
     // --- Proposals ---
     if (state.proposerId != null && state.pendingSince != null) {
       if (nowMinutes - state.pendingSince > (state.shotgun ? SHOTGUN_PENDING_MINUTES : PROPOSAL_PENDING_MINUTES)) {
-        // Never managed it: think it over for a day.
-        pairs.set(key, { retryAfter: nowMinutes + 24 * 60 });
+        // Never managed it: think it over for a day. The flag is kept so the feed does not
+        // announce the same unasked question a second time when the pair decides again, and
+        // the proposer is left with the memory of having meant to ask.
+        pairs.set(key, { retryAfter: nowMinutes + 24 * 60, ...(state.announced ? { announced: true as const } : {}) });
+        // A still-queued question would otherwise be asked out of the blue after the pair gave up.
+        dropQueuedProposals(a.id, b.id);
+        const proposerId = state.proposerId;
+        const partnerId = proposerId === a.id ? b.id : a.id;
+        remember(proposerId, `I meant to ask ${nameOf(partnerId)} to marry me, but the moment never came.`, -0.2, 5, partnerId);
+        dirty = true;
         continue;
       }
       const proposer = state.proposerId === a.id ? a : b;
@@ -417,7 +438,8 @@ export function milestonesTick(time: ClockTime, nowMinutes: number): void {
       { id: a.id, romanceToward: feelings(rel, a.id).romance, impulsiveness: pa?.impulsiveness ?? 50 },
       { id: b.id, romanceToward: feelings(rel, b.id).romance, impulsiveness: pb?.impulsiveness ?? 50 },
     );
-    const pending: PairMilestone = { proposerId, pendingSince: nowMinutes };
+    // Inherits `announced` from an abandoned attempt's retry entry: same question, one feed line.
+    const pending: PairMilestone = { proposerId, pendingSince: nowMinutes, ...(state.announced ? { announced: true as const } : {}) };
     pairs.set(key, pending);
     // Already together: no reason to wait for the next pass.
     const proposer = proposerId === a.id ? a : b;
@@ -645,7 +667,7 @@ export function onConversationEnded(p: ConversationEndedPayload): void {
   // after which `conversationId != null` held for them too, their script topic
   // never matched PROPOSAL_TOPIC, and a proposal that fell to the template tier (a
   // slot busy for PROPOSAL_QUEUE_WAIT_MINUTES, or no LLM at all) was ignored,
-  // expired 18 h later and was re-announced a day after that, forever. A 30-day
+  // expired at the (then) 18 h limit and was re-announced a day after that, forever. A 30-day
   // soak saw 12 proposals from 4 couples and not one answer.
   const isLLM = p.conversationId != null && !p.template;
   if (isLLM && p.summary !== PROPOSAL_TOPIC) return;
