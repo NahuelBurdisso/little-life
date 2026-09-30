@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-29 — `tsc` 0 errors, vitest 255 files / 2870 tests passing (autonomous improvement session, waves 1–6 + playtest #3 merged).
+**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 274 files / 3019 tests passing, `npm run deadcode` 0/0 (autonomous improvement session complete; live world reset to the wizard, backup in `data/backup-2026-09-30-pre-reset/`).
 Branch `feat/living-agents-phase1`. Two sessions commit to it: engine/gameplay fixes and the
 worldgen v2 tracks (`docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -392,8 +392,9 @@ before merging.
 
 ## Next steps (suggested order)
 
-1. Playtest #3 with the real LLM at 1x and 4x — validates G1/G2 live and the LLM rework (Gemma 4
-   26B, structured output) — and compare with playtest #2.
-2. E11 hunger level / winter food check.
-3. E10 template-chat social payoff, E8 gift frequency.
-4. G5–G7 dialogue/template/gossip quality.
+1. Play a fresh world (Quick Start) with the real LLM for a few game days at 1x/4x — first live run of
+   family, calendar festivals/election, overnight planning and the story-health pass.
+2. Tune from what you see: pregnancy chance (`family.ts` `PREGNANCY_CHANCE_PER_DAY`), gossip share,
+   flirt odds (`templateBeats.ts`), arrest threshold (`decisions.ts:~2383`).
+3. Give prompts a roster of real townsfolk so the model stops inventing names.
+4. Clean up merged agent worktrees.
