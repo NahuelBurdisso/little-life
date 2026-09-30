@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { db } from '../../db';
 import { worldState } from '../../db/schema';
-import { clearRulesCache, getRules, setRuleOverrides, RuleOverridesSchema } from '../worldRules';
+import { clearRulesCache, getRules, isAdultContent, setRuleOverrides, RuleOverridesSchema } from '../worldRules';
 import { clearPerWorldCaches } from '../../engine/worldCaches';
 import { DEFAULT_LIVE_RULES } from '../../data/rulesCatalog';
 
@@ -77,6 +77,39 @@ describe('getRules', () => {
     writeRow({ sicknessRate: 'off' }, null); // what replaceWorld leaves behind
     clearPerWorldCaches();
     expect(getRules().sicknessRate).toBe('off');
+  });
+});
+
+describe('adultContent', () => {
+  it('is off on a fresh world', () => {
+    expect(getRules().adultContent).toBe(false);
+    expect(isAdultContent()).toBe(false);
+  });
+
+  it('persists when set and is read back', () => {
+    const rules = setRuleOverrides({ adultContent: true });
+    expect(rules.adultContent).toBe(true);
+    expect(getRules().adultContent).toBe(true);
+    expect(isAdultContent()).toBe(true);
+    setRuleOverrides({ adultContent: false });
+    expect(isAdultContent()).toBe(false);
+  });
+
+  it('reads the wizard toggle and ignores a non-boolean', () => {
+    writeRow({ adultContent: true }, null);
+    clearRulesCache();
+    expect(isAdultContent()).toBe(true);
+    writeRow({ adultContent: 'yes' }, null);
+    clearRulesCache();
+    expect(isAdultContent()).toBe(false);
+    writeRow({ adultContent: 1 }, null);
+    clearRulesCache();
+    expect(isAdultContent()).toBe(false);
+  });
+
+  it('is validated by the overrides schema', () => {
+    expect(RuleOverridesSchema.safeParse({ adultContent: true }).success).toBe(true);
+    expect(RuleOverridesSchema.safeParse({ adultContent: 'yes' }).success).toBe(false);
   });
 });
 

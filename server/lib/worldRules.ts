@@ -58,6 +58,7 @@ function pickValid(raw: unknown): Partial<LiveRules> {
   if ((SICKNESS_LEVELS as readonly unknown[]).includes(r.contagionRate)) out.contagionRate = r.contagionRate as LiveRules['contagionRate'];
   if ((DRAMA_LEVELS as readonly unknown[]).includes(r.dramaIntensity)) out.dramaIntensity = r.dramaIntensity as LiveRules['dramaIntensity'];
   if (typeof r.populationFlow === 'boolean') out.populationFlow = r.populationFlow;
+  if (typeof r.adultContent === 'boolean') out.adultContent = r.adultContent;
   if (r.populationTarget === null) out.populationTarget = null;
   else if (
     typeof r.populationTarget === 'number' && Number.isInteger(r.populationTarget)
@@ -100,6 +101,7 @@ export const RuleOverridesSchema = z
     dramaIntensity: z.enum(DRAMA_LEVELS),
     populationFlow: z.boolean(),
     populationTarget: z.number().int().min(POPULATION_TARGET_MIN).max(POPULATION_TARGET_MAX).nullable(),
+    adultContent: z.boolean(),
   })
   .partial()
   .strict()
@@ -143,6 +145,17 @@ export function setRuleOverrides(patch: RuleOverrides): LiveRules {
 /** "Death Enabled" (default on): whether agents can die of neglect, sickness, age or accidents. */
 export function isDeathEnabled(): boolean {
   return getRules().deathEnabled;
+}
+
+/**
+ * "Adult content (18+)" (default off): whether the adult layer of romance runs
+ * (longing, rendezvous, trysts, unwed pregnancy, a franker tone). Kisses and
+ * chaste courting never check it. Even when on, every intimacy path still
+ * requires both people to be adults — the rule widens what adults do, it never
+ * relaxes who may take part.
+ */
+export function isAdultContent(): boolean {
+  return getRules().adultContent;
 }
 
 /** Scale on the hourly random-event roll and the dark cascade rules. */

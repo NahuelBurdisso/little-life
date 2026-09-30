@@ -43,6 +43,14 @@ export interface LiveRules {
    * the town started at.
    */
   populationTarget: number | null;
+  /**
+   * Opt-in, 18+: the adult layer of romance (lib/intimacy/). It unlocks
+   * longing, private rendezvous, lovers spending the night together (always
+   * implied and off-screen), the scandal of an unwed pregnancy and a franker
+   * adult tone in dialogue. Only adults are ever involved. Kisses and chaste
+   * courting work without it, so a town with this off still has romance.
+   */
+  adultContent: boolean;
 }
 
 /** Bounds of `populationTarget`: a town of fewer than four is not a town; the top is the world cap. */
@@ -56,6 +64,7 @@ export const DEFAULT_LIVE_RULES: Readonly<LiveRules> = {
   dramaIntensity: 'medium',
   populationFlow: true,
   populationTarget: null,
+  adultContent: false,
 };
 
 /**

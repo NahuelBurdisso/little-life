@@ -59,6 +59,11 @@ export const CONFIG_REGISTRY: ConfigParam[] = [
     options: [...DRAMA_LEVELS],
   },
   {
+    key: 'adultContent', label: 'Adult content (18+)',
+    description: 'Lovers, desire, affairs and scandal. Intimacy is implied and off-screen. Only adults (18+) are ever involved.',
+    type: 'toggle', default: DEFAULT_LIVE_RULES.adultContent, category: 'simulation',
+  },
+  {
     key: 'tickSpeed', label: 'Tick Speed',
     description: 'Simulation speed multiplier',
     type: 'slider', default: 1, category: 'simulation',
