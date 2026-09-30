@@ -94,6 +94,8 @@ export interface DailyPlanPromptParams {
   hobbies?: Array<{ hobby: string; level: number }>;
   reputationLabel?: string;
   moodMomentum?: number;
+  /** One line about children / a baby on the way (lib/familyState.ts `familyPlanLine`). */
+  family?: string;
 }
 
 export interface DecompositionPromptParams {
@@ -173,6 +175,7 @@ export function buildDailyPlanPrompt(params: DailyPlanPromptParams): PlanPrompt 
       ? `Hobbies: ${params.hobbies.map((h) => `${h.hobby} (lv${h.level})`).join(', ')}.`
       : '',
     params.reputationLabel ? `Reputation: ${params.reputationLabel}.` : '',
+    params.family ?? '',
     params.moodMomentum && Math.abs(params.moodMomentum) > 3
       ? `Lately you've been ${params.moodMomentum > 0 ? 'getting happier' : 'going through a rough patch'}.`
       : '',

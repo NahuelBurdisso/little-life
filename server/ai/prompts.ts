@@ -19,6 +19,19 @@ import { TOWN_SETTING } from './setting';
  */
 export const PROPOSAL_TOPIC = 'proposal';
 
+/**
+ * Topic of the conversation lib/family.ts queues when a husband learns the
+ * baby may be another man's: he opens it, facing the man. Its own label so
+ * the opener gets an intent written for that scene (`topicIntent`), not the
+ * generic "something they did has been eating at you".
+ */
+export const PATERNITY_TOPIC = "the baby's real father";
+
+/** Topic a friend brings to new parents (engine/systems/decisions.ts). */
+export function congratsTopic(childName: string): string {
+  return `congratulations on baby ${childName}`;
+}
+
 // ---------------------------------------------------------------------------
 // Row types (matching server/db/schema.ts column names)
 // ---------------------------------------------------------------------------
@@ -113,6 +126,11 @@ export interface AgentEnrichment {
   hobbies: Array<{ hobby: string; level: number }>;
   moodMomentum: number;
   drinkCount: number;
+  /**
+   * One line about the speaker's children and any baby on the way
+   * (lib/familyState.ts `familyPromptLine`); '' or absent for everyone else.
+   */
+  family?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +299,8 @@ export function topicIntent(topic: string, other: string): string {
   const t = topic.trim().toLowerCase();
   const gossip = topic.trim().match(/^gossip about (.+)$/i);
   if (gossip) return `You heard something about ${gossip[1]} and can't keep it to yourself.`;
+  const congrats = topic.trim().match(/^congratulations on baby (.+)$/i);
+  if (congrats) return `${other} just had a baby, little ${congrats[1]}. Congratulate them warmly and ask after the child.`;
   if (t.startsWith('checking on')) return `You want to see how ${other} is really doing — ask about the specific thing you know is going on with them, not a general "how are you".`;
   const intents: Record<string, string> = {
     'flirting': `You're drawn to ${other}. Flirt a little: tease, compliment something specific, or hint at how you feel.`,
@@ -318,6 +338,8 @@ export function topicIntent(topic: string, other: string): string {
     // Queued by lib/milestonesEngine.ts. The proposer always opens; the answer
     // comes from the turn instruction below (PROPOSAL_TOPIC).
     [PROPOSAL_TOPIC]: `You've made up your mind: ask ${other} to marry you, today. Do it your own way, in the manner of the time, and ask the question plainly.`,
+    // Queued by lib/family.ts; the husband opens.
+    [PATERNITY_TOPIC]: `You've just learned your wife's baby may be ${other}'s, not yours. Face ${other} with it — demand the truth.`,
   };
   if (intents[t]) return intents[t];
   const smallTalk = ['weather', 'daily life', 'food', 'work', 'weekend plans', 'memories', 'the farm'];
@@ -487,9 +509,12 @@ export function buildAgentSystemPrompt(
     hobbyLine = `Your hobbies: ${hobbyParts.join(', ')}.`;
   }
 
+  // Family: children and a baby on the way, one line (lib/familyState.ts).
+  const familyLine = enrichment?.family ?? '';
+
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING}`;
-  const middle = [descriptionLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
+  const middle = [descriptionLine, familyLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
   let toneHint = '';
