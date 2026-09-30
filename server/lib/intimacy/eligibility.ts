@@ -55,7 +55,12 @@ export function isIntimacyEligible(a: IntimacyParty, b: IntimacyParty): boolean 
   return canBeAttractedTo(a, b) && canBeAttractedTo(b, a);
 }
 
-/** A real, finite number of years at or above the line. Anything else is not an adult. */
-function isAdultAge(age: unknown): boolean {
+/**
+ * A real, finite number of years at or above the line. Anything else is not an
+ * adult. Exported so the romance-gain paths (attraction.ts, the relationship
+ * tick's choke point) share this one fail-closed check instead of re-deriving
+ * `age >= 18` and getting the missing-age case wrong.
+ */
+export function isAdultAge(age: unknown): boolean {
   return typeof age === 'number' && Number.isFinite(age) && age >= INTIMACY_MIN_AGE;
 }

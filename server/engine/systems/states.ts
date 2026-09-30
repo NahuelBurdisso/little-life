@@ -26,6 +26,7 @@ import {
   type AgentStateRow,
 } from '../../lib/states';
 import { emitter } from '../emitter';
+import { isIntimacyEligible } from '../../lib/intimacy/eligibility';
 import { createFact, deactivateStaleFacts, getAgentName, jealousRumorContext } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
 import { simEvents } from '../../lib/simEvents';
@@ -470,6 +471,23 @@ function computeEffectivePersonality(
  * base of 0.0001; 'off' makes it 0, and a roll `Math.random() < 0` never
  * passes.
  */
+/**
+ * Who a manipulative flirt may set their sights on: someone in the same room
+ * with a sensual streak, AND intimacy-eligible with the seducer. The eligibility
+ * gate is the adults-only line (a minor is never a target, and never a target's
+ * seducer) plus orientation, so a seducer does not pick someone neither of them
+ * could be drawn to. The relationship tick zeroes the romance of any such event
+ * that slips through some other way; this keeps the story from even starting.
+ */
+export function seductionTargets(agent: AgentRow, allAgents: AgentRow[]): AgentRow[] {
+  return allAgents.filter(a => {
+    if (a.id === agent.id || a.current_location !== agent.current_location) return false;
+    const tp = a.personality as PersonalityProfile | null;
+    if (!tp || tp.sensuality <= 50) return false;
+    return isIntimacyEligible(agent, a);
+  });
+}
+
 export function environmentSickChancePerMinute(
   weather: string,
   season: string,
@@ -2384,12 +2402,7 @@ function processStateEffects(
   // ── Seduction: manipulative flirting for personal gain ──────────────────
   if (personality && personality.sensuality > 70 && personality.morality < 40 && agent.current_location != null) {
     if (Math.random() < chancePerTick(0.02, tickSpeed)) { // 2% per game minute
-      const nearbyTargets = allAgents.filter(a => {
-        if (a.id === agent.id || a.current_location !== agent.current_location) return false;
-        const tp = a.personality as PersonalityProfile | null;
-        if (!tp || tp.sensuality <= 50) return false;
-        return true;
-      });
+      const nearbyTargets = seductionTargets(agent, allAgents);
 
       if (nearbyTargets.length > 0) {
         const target = nearbyTargets[Math.floor(Math.random() * nearbyTargets.length)];

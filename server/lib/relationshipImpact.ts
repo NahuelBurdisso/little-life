@@ -9,6 +9,7 @@
  */
 
 import { PersonalityProfile } from './personality';
+import { romanceGainMultiplier, type RomanceParty } from './intimacy/attraction';
 
 // --- Input: everything about the conversation ---
 
@@ -24,6 +25,17 @@ export interface ConversationImpactContext {
   existingRomanceAB: number;
   existingRomanceBA: number;
   isTemplate: boolean;              // template vs LLM conversation
+  /**
+   * Who A and B are, for the attraction layer (orientation, adults only,
+   * chemistry, age gap). Optional and all-or-nothing: without both parties and
+   * a seed the romance maths is the plain sensuality/sentiment one, which is
+   * what hand-built contexts (the threshold simulations) want. Callers with
+   * real agent rows always pass them; the relationship tick enforces the
+   * hard adults/orientation gate again on the queued event regardless.
+   */
+  partyA?: RomanceParty;
+  partyB?: RomanceParty;
+  worldSeed?: string | number;
 }
 
 // --- Output: all relationship deltas ---
@@ -144,6 +156,17 @@ export function computeRelationshipDeltas(ctx: ConversationImpactContext): Relat
     const gapB = ctx.existingRomanceAB - ctx.existingRomanceBA;
     if (romanceBA > 0 && gapB > 0 && ctx.existingRomanceAB > RECIPROCITY_MIN_ROMANCE) {
       romanceBA += gapB * RECIPROCITY_RATE * overallSentiment;
+    }
+
+    // Attraction: who is drawn to whom, and how well the two click. Applied
+    // last so it scales the finished gain (reciprocity included) and can only
+    // shrink or zero a POSITIVE delta; negative ones (a bad chat cooling a
+    // crush) are left as they are. Per direction: A may pine for B while B
+    // feels nothing.
+    if (ctx.partyA && ctx.partyB) {
+      const seed = ctx.worldSeed ?? 0;
+      if (romanceAB > 0) romanceAB *= romanceGainMultiplier(ctx.partyA, ctx.partyB, seed);
+      if (romanceBA > 0) romanceBA *= romanceGainMultiplier(ctx.partyB, ctx.partyA, seed);
     }
   }
 

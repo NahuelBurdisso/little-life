@@ -10,6 +10,7 @@ import { emitter } from '../emitter';
 import type { RelationshipStatus } from '../../lib/types';
 import { simEvents } from '../../lib/simEvents';
 import { isMarriedTags, withoutMilestoneTags } from '../../lib/marriage';
+import { mayRomanceGrow } from '../../lib/intimacy/attraction';
 
 // --- Types ---
 
@@ -338,6 +339,15 @@ export function tick(
   }
 
   // --- 2. Process Relationship Events ---
+  // Agent rows for the romance gate below: the active ones are already loaded,
+  // anyone else (a dead or departed party to a queued event) is read on demand.
+  const romanceAgents = new Map<number, AgentRow | undefined>(activeAgents.map((ag) => [ag.id, ag]));
+  const agentForRomance = (id: number): AgentRow | undefined => {
+    if (!romanceAgents.has(id)) {
+      romanceAgents.set(id, db.select().from(agents).where(eq(agents.id, id)).get());
+    }
+    return romanceAgents.get(id);
+  };
   const events = db
     .select()
     .from(relationshipEvents)
@@ -391,8 +401,25 @@ export function tick(
     const wasEstranged = rel.tags.includes('estranged');
     const fDeltaAB = wasEstranged ? Math.min(0, rawFDeltaAB) : rawFDeltaAB;
     const fDeltaBA = wasEstranged ? Math.min(0, rawFDeltaBA) : rawFDeltaBA;
-    const rDeltaAB = wasEstranged ? Math.min(0, rawRDeltaAB) : rawRDeltaAB;
-    const rDeltaBA = wasEstranged ? Math.min(0, rawRDeltaBA) : rawRDeltaBA;
+    let rDeltaAB = wasEstranged ? Math.min(0, rawRDeltaAB) : rawRDeltaAB;
+    let rDeltaBA = wasEstranged ? Math.min(0, rawRDeltaBA) : rawRDeltaBA;
+
+    // The one guarantee for every romance source. Positive romance is queued by
+    // conversations, but also by seduction (states.ts), gifts, ripple rules,
+    // secret sharing, the town calendar and template beats, and most of those
+    // know nothing about age or orientation. Rather than trust each writer,
+    // this is where every queued delta finally lands: a POSITIVE romance delta
+    // is dropped in any direction where the feeler or the target is not an
+    // adult, or the feeler is not drawn to the target's gender. Per direction,
+    // because unrequited love is fine (see mayRomanceGrow). Negative deltas
+    // pass (a minor's crush can still be hurt by a rebuff); friendship and
+    // trust are untouched. Fail closed: a missing agent row blocks the gain.
+    if (rDeltaAB > 0 || rDeltaBA > 0) {
+      const pa = agentForRomance(a);
+      const pb = agentForRomance(b);
+      if (rDeltaAB > 0 && !(pa && pb && mayRomanceGrow(pa, pb))) rDeltaAB = 0;
+      if (rDeltaBA > 0 && !(pa && pb && mayRomanceGrow(pb, pa))) rDeltaBA = 0;
+    }
 
     const newFriendshipAB = clamp(
       rel.friendship_ab + applyDiminishing(rel.friendship_ab, fDeltaAB),

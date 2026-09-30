@@ -55,6 +55,7 @@ import { extractTopics } from '../../ai/topics';
 import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
+import { currentWorldSeed } from '../../lib/intimacy/worldSeed';
 import { llmSocialGain, templateSocialGain } from '../../lib/socialGain';
 import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
@@ -1125,6 +1126,9 @@ async function finishCompletedConversation(
   let totalRomanceDelta = 0;
   let totalTrustDelta = 0;
 
+  // Salt for per-pair chemistry, read once for every pair of this conversation.
+  const worldSeed = currentWorldSeed();
+
   // Create relationship events for each pair
   for (let i = 0; i < participants.length; i++) {
     for (let j = i + 1; j < participants.length; j++) {
@@ -1141,8 +1145,10 @@ async function finishCompletedConversation(
         : [agentB.id, agentA.id];
 
       // --- Compute relationship deltas via engine ---
-      const personalityA = (aIsFirst ? agentA : agentB).personality as PersonalityProfile | null;
-      const personalityB = (aIsFirst ? agentB : agentA).personality as PersonalityProfile | null;
+      const rowA = aIsFirst ? agentA : agentB;
+      const rowB = aIsFirst ? agentB : agentA;
+      const personalityA = rowA.personality as PersonalityProfile | null;
+      const personalityB = rowB.personality as PersonalityProfile | null;
 
       let compat = 1.0;
       if (personalityA && personalityB) {
@@ -1164,6 +1170,10 @@ async function finishCompletedConversation(
         existingRomanceAB: existingRelationship?.romance_ab ?? 0,
         existingRomanceBA: existingRelationship?.romance_ba ?? 0,
         isTemplate: false,
+        // Same order as the personalities: `*AB` is orderedA -> orderedB.
+        partyA: rowA,
+        partyB: rowB,
+        worldSeed,
       };
 
       const deltas = computeRelationshipDeltas(impactCtx);
@@ -1868,6 +1878,9 @@ async function processTimedOutEntry(
     existingRomanceAB: existingRel?.romance_ab ?? 0,
     existingRomanceBA: existingRel?.romance_ba ?? 0,
     isTemplate: true,
+    partyA: agentA,
+    partyB: agentB,
+    worldSeed: currentWorldSeed(),
   };
 
   const templateDeltas = computeRelationshipDeltas(templateImpactCtx);
