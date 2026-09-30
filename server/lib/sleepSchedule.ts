@@ -45,7 +45,10 @@ export function effectiveSleepWindow(
     if (personality.neuroticism > 60) sleepShift *= 0.5;
     sleepShift = Math.max(-2, Math.min(3, Math.round(sleepShift)));
   }
-  const baseSleepTime = schedule.sleepTime === 0 ? 24 : schedule.sleepTime;
+  // A bedtime after midnight (0, 1, 2) is the END of the 19..26 range, not its start: read as the
+  // literal hour 1 the clamp below floored it to 19:00, so the wizard's night owls (sleepTime 1) went
+  // to bed at 19:00 and slept through the evening.
+  const baseSleepTime = schedule.sleepTime < 12 ? schedule.sleepTime + 24 : schedule.sleepTime;
   const sleepHour = Math.max(19, Math.min(26, baseSleepTime + sleepShift)) % 24 || 24;
   let wakeHour = Math.max(4, Math.min(12, schedule.wakeTime + sleepShift));
   const start = schedule.workStart;
