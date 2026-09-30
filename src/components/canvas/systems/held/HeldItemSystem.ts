@@ -167,6 +167,7 @@ class HeldItemSystem implements CanvasSystem {
     return heldItemFor({
       actionType: type,
       bag: e.bagUntil > 0,
+      baby: agent.carries_baby === true,
       zoneActivity: zone ?? null,
       locationType: here != null ? this.locationTypes.get(here) ?? null : null,
       atWorkplace: agent.workplace != null && here === agent.workplace,
