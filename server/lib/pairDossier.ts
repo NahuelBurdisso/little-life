@@ -34,6 +34,11 @@ import { isPivotalEvent } from './storyBeats';
 import { CONFIG } from './constants';
 import { clamp } from './utils';
 import { childAgeDays, childrenOfAny } from './familyState';
+import { isAdultAge } from './intimacy/eligibility';
+import { KISSED_TAG } from './intimacy/kiss';
+import { checkArrangeRendezvous } from './intimacy/rendezvous';
+import { getPairIntimacy } from './intimacy/state';
+import { isAdultContent } from './worldRules';
 
 /** How many past conversations the dossier lists. */
 export const DOSSIER_CONVERSATIONS = 10;
@@ -146,6 +151,28 @@ export interface DossierChild {
   rumoured: boolean;
 }
 
+/**
+ * What the two have shared, for a pair of ADULTS only (the dossier omits it for anyone
+ * under 18, whatever else is on file). Discreet: counts and dates, never a telling.
+ * The adult-layer fields (nights, lovers, secret) read as empty while the
+ * `adultContent` rule is off, like the ledger.
+ */
+export interface DossierIntimacy {
+  kissed: boolean;
+  kisses: number;
+  /** Game minute of their first kiss. */
+  firstKissMinute: number | null;
+  /** Nights (evenings) spent together. */
+  nights: number;
+  firstNightMinute: number | null;
+  lovers: boolean;
+  /** Nobody in town knows about them. */
+  secret: boolean;
+  adultContent: boolean;
+  /** Whether the player may arrange a quiet evening for them right now, and if not, why. */
+  arrange: { available: boolean; reason: string | null };
+}
+
 export interface PairDossier {
   a: { id: number; name: string };
   b: { id: number; name: string };
@@ -164,6 +191,8 @@ export interface PairDossier {
    * knows — the one the paternity secret says is the other's. Eldest first.
    */
   children: DossierChild[];
+  /** Null unless both are adults. */
+  intimacy: DossierIntimacy | null;
   history: {
     friendship: HistoryPoint[];
     romance: HistoryPoint[];
@@ -316,6 +345,38 @@ function feelingOf(rel: typeof relationships.$inferSelect, from: number): Feelin
 }
 
 /**
+ * The intimacy block for two adults. The first kiss and first night come from the
+ * pair's own stamps, or, when those are gone (a restart from an old save), from the
+ * pivotal `first_kiss` / `first_tryst` events, which are kept forever.
+ */
+function dossierIntimacy(
+  aId: number,
+  bId: number,
+  tags: readonly string[],
+  eventRows: readonly EventRow[],
+): DossierIntimacy {
+  const adult = isAdultContent();
+  const state = getPairIntimacy(aId, bId);
+  const eventMinute = (type: string): number | null => {
+    const minutes = eventRows.filter((e) => e.event_type === type && e.game_minute != null).map((e) => e.game_minute!);
+    return minutes.length > 0 ? Math.min(...minutes) : null;
+  };
+  const kisses = state?.kisses ?? 0;
+  const arrange = checkArrangeRendezvous(aId, bId);
+  return {
+    kissed: tags.includes(KISSED_TAG) || kisses > 0,
+    kisses,
+    firstKissMinute: state?.firstKissAt ?? eventMinute('first_kiss'),
+    nights: adult ? (state?.trysts ?? 0) : 0,
+    firstNightMinute: adult ? (state?.firstTrystAt ?? eventMinute('first_tryst')) : null,
+    lovers: adult && tags.includes('lovers'),
+    secret: adult && state?.secret === true,
+    adultContent: adult,
+    arrange: arrange.ok ? { available: true, reason: null } : { available: false, reason: arrange.reason },
+  };
+}
+
+/**
  * The full picture for one pair, or null when either id isn't a resident.
  * Removed residents still resolve (their history is still part of the story).
  * `nowMs` is injectable so tests don't depend on the wall clock.
@@ -324,7 +385,7 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
   if (aId === bId) return null;
 
   const people = db
-    .select({ id: agents.id, name: agents.name })
+    .select({ id: agents.id, name: agents.name, age: agents.age })
     .from(agents)
     .where(inArray(agents.id, [aId, bId]))
     .all();
@@ -536,9 +597,14 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
       return [{ id: c.id, name: c.name, sex: c.sex, ageDays: childAgeDays(c.birth_game_minute, nowMinute), rumoured }];
     });
 
+  // --- What they have shared (adults only) ---------------------------------------
+  const intimacy = isAdultAge(a.age) && isAdultAge(b.age)
+    ? dossierIntimacy(aId, bId, relationship?.tags ?? [], eventRows)
+    : null;
+
   return {
-    a,
-    b,
+    a: { id: a.id, name: a.name },
+    b: { id: b.id, name: b.name },
     nowMinute,
     relationship,
     events: timeline,
@@ -546,6 +612,7 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
     secrets,
     arcs,
     children: sharedChildren,
+    intimacy,
     history,
   };
 }

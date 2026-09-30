@@ -18,6 +18,7 @@ export type InterventionKind =
   | 'give_money'
   | 'tell_secret'
   | 'force_confront'
+  | 'arrange_rendezvous'
   | 'introduce_agent'
   | 'remove_agent'
   | 'whisper_thought'

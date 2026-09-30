@@ -7,6 +7,7 @@ import type {
   DossierArc,
   DossierConversation,
   DossierEvent,
+  DossierIntimacy,
   DossierSecret,
   Feeling,
   HistoryPoint,
@@ -43,6 +44,12 @@ const EVENT_LOOK: Record<string, { icon: string; label: string }> = {
   arrested: { icon: "⛓️", label: "Arrested" },
   confession: { icon: "💌", label: "Confession" },
   seduction: { icon: "🌹", label: "Advance" },
+  first_kiss: { icon: "💋", label: "First kiss" },
+  kiss: { icon: "💋", label: "Kiss" },
+  kiss_rebuffed: { icon: "💔", label: "Turned away" },
+  first_tryst: { icon: "🕯️", label: "First night together" },
+  tryst: { icon: "🕯️", label: "Evening together" },
+  caught: { icon: "👀", label: "Seen together" },
   gift: { icon: "🎁", label: "Gift" },
   reconciliation: { icon: "🤝", label: "Made up" },
   conversation: { icon: "💬", label: "Talked" },
@@ -236,6 +243,53 @@ function History({ dossier, first, second }: { dossier: PairDossierData; first: 
         are no longer kept, and slow drift between events is folded into the earlier points.
       </p>
     </div>
+  );
+}
+
+// --- What they have shared ---------------------------------------------------------------------
+
+function When({ minute, now }: { minute: number | null; now: number }) {
+  if (minute == null) return <span className="text-ui-muted">not yet</span>;
+  return (
+    <span className="tabular-nums" title={formatGameMinute(minute)}>
+      {formatGameMinute(minute)} <span className="text-ui-muted">· {gameTimeAgo(minute, now)}</span>
+    </span>
+  );
+}
+
+/**
+ * Kisses and evenings together, for a pair of adults only (the server omits the block
+ * otherwise). Discreet: counts and dates. The nights rows exist only while the adult
+ * layer is on; with it off the section is just the kiss.
+ */
+function SharedSection({ intimacy, now }: { intimacy: DossierIntimacy; now: number }) {
+  const row = (label: string, value: ReactNode) => (
+    <div className="flex items-baseline justify-between gap-3 text-[11px]">
+      <dt className="text-ui-dim">{label}</dt>
+      <dd className="text-ui-text text-right">{value}</dd>
+    </div>
+  );
+  return (
+    <Section title="What they have shared">
+      <dl className="space-y-1">
+        {row("First kiss", <When minute={intimacy.firstKissMinute} now={now} />)}
+        {row("Kisses", intimacy.kisses)}
+        {intimacy.adultContent && (
+          <>
+            {row("Nights together", intimacy.nights)}
+            {row("First night", <When minute={intimacy.firstNightMinute} now={now} />)}
+          </>
+        )}
+      </dl>
+      {(intimacy.lovers || intimacy.secret) && (
+        <div className="flex gap-1.5 mt-1.5">
+          {intimacy.lovers && <span className="text-[9px] px-1.5 py-px border border-ui-line-accent text-ui-gold">Lovers</span>}
+          {intimacy.secret && (
+            <span className="text-[9px] px-1.5 py-px border border-ui-warn/60 text-ui-warn" title="Nobody in town knows">Secret</span>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -441,6 +495,7 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
     { enabled: pair != null, placeholderData: (prev) => prev },
   );
   const [talking, setTalking] = useState(false);
+  const [arranging, setArranging] = useState(false);
 
   if (!pair) return null;
 
@@ -460,6 +515,17 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
       setTalking(false);
     }
   };
+
+  const arrangeEvening = async () => {
+    setArranging(true);
+    try {
+      await nudge.arrangeRendezvous(pair.a, pair.b);
+    } finally {
+      setArranging(false);
+    }
+  };
+  // Present only for two adults; unavailable (with the reason on hover) while the rule is off or they are not ready.
+  const arrange = dossier?.intimacy?.arrange ?? null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -507,6 +573,18 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
             >
               💬 Make them talk
             </button>
+            {arrange && (
+              <span title={arrange.available ? `Arrange a quiet evening for ${first} and ${second}; either can still say no` : (arrange.reason ?? undefined)}>
+                <button
+                  type="button"
+                  disabled={!arrange.available || arranging}
+                  onClick={arrangeEvening}
+                  className={`px-3 py-1 text-xs ${W.btn}`}
+                >
+                  🕯️ Arrange a quiet evening
+                </button>
+              </span>
+            )}
           </div>
 
           {isLoading || !dossier ? (
@@ -548,6 +626,10 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
                   />
                 )}
               </Section>
+
+              {dossier.intimacy && (dossier.intimacy.kissed || dossier.intimacy.nights > 0) && (
+                <SharedSection intimacy={dossier.intimacy} now={dossier.nowMinute} />
+              )}
 
               <Section title="How it got here">
                 <History dossier={dossier} first={first} second={second} />

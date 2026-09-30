@@ -132,6 +132,17 @@ export function useNudge() {
         kind: 'force_confront', agentIds: [agentA, agentB], icon: '⚔',
         success: `${nameOf(agentA)} is going to confront ${nameOf(agentB)}`,
       }),
+    /** Adult layer: put out the invitation for a quiet evening; the other can still say no. */
+    arrangeRendezvous: (agentA: Id, agentB: Id, initiatorId?: Id) =>
+      run({
+        action: {
+          type: 'arrange_rendezvous', agentA: Number(agentA), agentB: Number(agentB),
+          ...(initiatorId != null ? { initiatorId: Number(initiatorId) } : {}),
+        },
+      }, {
+        kind: 'arrange_rendezvous', agentIds: [agentA, agentB], icon: '🕯️',
+        success: `${nameOf(agentA)} and ${nameOf(agentB)} will find a quiet moment`,
+      }),
     whisperThought: (agentId: Id, text: string) =>
       run({ action: { type: 'whisper_thought', agentId: Number(agentId), text } }, {
         kind: 'whisper_thought', agentIds: [agentId], icon: '💭',

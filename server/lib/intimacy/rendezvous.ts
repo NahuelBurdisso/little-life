@@ -24,7 +24,7 @@ import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isIntimacyEligible } from './eligibility';
 import { KISSED_TAG } from './kiss';
 import {
-  forEachPairIntimacy, forEachStay, getAgentIntimacy, getPairIntimacy, updatePairIntimacy, type PairIntimacy,
+  forEachPairIntimacy, forEachStay, getAgentIntimacy, getPairIntimacy, getStay, updatePairIntimacy, type PairIntimacy,
 } from './state';
 
 // ─── Rendezvous: a lover asks, the other may say no ──────────────────────────
@@ -537,6 +537,94 @@ export function queuePendingRendezvousNow(initiatorId: number): boolean {
     emitter.markDirty('agents.all');
   }
   return true;
+}
+
+// ─── The player's hand ───────────────────────────────────────────────────────
+
+/** Whether this person is already in the middle of an evening (invited, agreed, in it, or a guest asleep). */
+function hasEveningPlanned(agentId: number): boolean {
+  let busy = false;
+  forEachPairIntimacy((key, p) => {
+    if (busy || !(p.pendingRendezvous || p.activeTryst)) return;
+    if (key.split('-').map(Number).includes(agentId)) busy = true;
+  });
+  return busy || getStay(agentId) !== undefined;
+}
+
+export type ArrangeCheck =
+  | { ok: true; a: AgentRow; b: AgentRow }
+  | { ok: false; reason: string };
+
+/**
+ * May the player arrange an evening for these two? Every gate the sim's own
+ * invitation has (the rule, the one age gate, a first kiss behind them, nobody
+ * already spoken for tonight) minus the ones that are the player's to override:
+ * how much either aches, the hour of day, and the two-day wait after a refusal.
+ * Whether the other says yes is still decided by the consent flow.
+ *
+ * Reasons are shown to the player as they are: short, discreet, and never a hint
+ * at why an age check failed. Also read by the pair dossier to grey the button out.
+ */
+export function checkArrangeRendezvous(aId: number, bId: number): ArrangeCheck {
+  if (!isAdultContent()) return { ok: false, reason: 'Adult content is turned off in this town.' };
+  if (aId === bId) return { ok: false, reason: 'That takes two people.' };
+  const rows = db.select().from(agents).where(inArray(agents.id, [aId, bId])).all();
+  const a = rows.find((r) => r.id === aId);
+  const b = rows.find((r) => r.id === bId);
+  if (!a?.is_active || !b?.is_active) return { ok: false, reason: 'Agent not found or inactive' };
+  // The one age gate (and attraction): a minor pair, or two people not drawn to each other, get the same plain refusal.
+  if (!isIntimacyEligible(a, b)) return { ok: false, reason: 'That is not something you can arrange for them.' };
+  const rel = relBetween(aId, bId);
+  if (!rel?.tags.includes(KISSED_TAG)) return { ok: false, reason: "They haven't even kissed yet." };
+  for (const x of [a, b]) {
+    if (actionType(x) === 'sleeping') return { ok: false, reason: `${x.name} is sleeping` };
+    if (inNoProposalState(getAgentStates(x.id))) return { ok: false, reason: `${x.name} is in no state for it right now.` };
+    if (hasEveningPlanned(x.id)) return { ok: false, reason: `${x.name} already has an evening planned.` };
+  }
+  return { ok: true, a, b };
+}
+
+export type ArrangeResult =
+  | { ok: true; initiator: AgentRow; other: AgentRow; queued: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * The player arranges a quiet evening: the same invitation the evening pass would
+ * make, put out now. The one who asks is `initiatorId` when the player chose, else
+ * whoever aches more (`pickRendezvousInitiator`). It goes through the existing path
+ * and nothing shortcuts it: a pending invitation (the asker walks over,
+ * decisions.ts `RENDEZVOUS_SEEK_SCORE`) and, when the two are already together and
+ * free, the `rendezvous` conversation queued right away (`RENDEZVOUS_TRIGGER`, so
+ * its topic is not stripped). The other can still say no there, and a refusal costs
+ * the asker exactly what it always does.
+ *
+ * Arranging clears a refusal's two-day wait: the player is asking again, on purpose.
+ */
+export function arrangeRendezvous(aId: number, bId: number, initiatorId?: number): ArrangeResult {
+  const check = checkArrangeRendezvous(aId, bId);
+  if (!check.ok) return check;
+  const { a, b } = check;
+  if (initiatorId != null && initiatorId !== aId && initiatorId !== bId) {
+    return { ok: false, reason: 'Only one of the two can be the one to ask.' };
+  }
+  const lead = initiatorId ?? pickRendezvousInitiator(
+    { id: a.id, longing: longingOf(a.id) }, { id: b.id, longing: longingOf(b.id) },
+  ).initiator.id;
+  const initiator = lead === a.id ? a : b;
+  const other = lead === a.id ? b : a;
+
+  const now = gameMinutesNow();
+  updatePairIntimacy(a.id, b.id, (p) => {
+    p.pendingRendezvous = { initiatorId: initiator.id, since: now };
+    delete p.rendezvousRetryAfter;
+  });
+  let queued = false;
+  if (canProposeNow(initiator, other)) {
+    if (!rendezvousQueued(a.id, b.id)) queueRendezvous(initiator, other);
+    queued = true;
+  }
+  emitter.markDirty('agents.all');
+  return { ok: true, initiator, other, queued };
 }
 
 // ─── The answer ──────────────────────────────────────────────────────────────

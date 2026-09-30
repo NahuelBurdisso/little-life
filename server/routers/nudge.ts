@@ -32,6 +32,7 @@ import { perceptionSystem } from '../lib/perception/instance';
 import { createResident, retireResident } from '../lib/residents';
 import { notePlayerCare } from '../lib/populationFlow';
 import { isSimOnlyTopic } from '../ai/prompts';
+import { arrangeRendezvous } from '../lib/intimacy/rendezvous';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -96,6 +97,8 @@ const nudgeInput = z.object({
     z.object({ type: z.literal('remove_agent'), agentId: z.number() }),
     z.object({ type: z.literal('tell_secret'), agentId: z.number(), targetId: z.number(), factId: z.number() }),
     z.object({ type: z.literal('force_confront'), agentA: z.number(), agentB: z.number() }),
+    // Adult layer: needs the rule on, two eligible adults who have kissed (lib/intimacy/rendezvous.ts).
+    z.object({ type: z.literal('arrange_rendezvous'), agentA: z.number(), agentB: z.number(), initiatorId: z.number().optional() }),
     // God powers that plant something and let the sim grow it (lib/godPowers.ts).
     // The length caps are generous by a margin so a limit the client enforces
     // is not a hard error here; godPowers trims to the real limit.
@@ -588,6 +591,26 @@ export const nudgeRouter = router({
           emitter.markDirty('agents.all');
           emitter.flush();
           return queuedResult(agentA, agentB);
+        }
+
+        // ─── arrange_rendezvous ─────────────────────────────────────────────
+        // The same invitation the evening pass would make, put out on the player's say-so.
+        // Every gate (rule, age, orientation, a first kiss) is arrangeRendezvous's; the
+        // one who is asked can still refuse in the conversation it queues.
+        case 'arrange_rendezvous': {
+          const arranged = arrangeRendezvous(action.agentA, action.agentB, action.initiatorId);
+          if (!arranged.ok) return { success: false, reason: arranged.reason };
+          const { initiator, other } = arranged;
+
+          logActivity({
+            type: 'player_nudge',
+            agents: [initiator.id, other.id],
+            templateData: { description: `You arranged for ${initiator.name} and ${other.name} to find a quiet moment.` },
+          });
+
+          emitter.markDirty('agents.all');
+          emitter.flush();
+          return queuedResult(initiator, other);
         }
 
         // ─── whisper_thought / start_rumor / stir_feeling ──────────────────
