@@ -154,6 +154,13 @@ export function classifyActivity(row: ActivityRow): { kind: BeatKind; agentIds: 
     if (ids.length === 0) return null;
     return { kind: row.type === 'kiss_rebuffed' ? 'heartbreak' : 'kiss', agentIds: ids };
   }
+  // The adult layer's typed rows (server/lib/intimacy/tryst.ts): a night together is hearts, being
+  // seen leaving at dawn is a secret getting out. Suggestive at most, never a picture of the act.
+  if (row.type === 'tryst' || row.type === 'caught') {
+    const ids = pairOf(row);
+    if (ids.length === 0) return null;
+    return { kind: row.type === 'caught' ? 'secret' : 'romance', agentIds: ids };
+  }
   if (row.type === 'gift') {
     const ids = pairOf(row);
     return ids.length > 0 ? { kind: 'gift', agentIds: ids } : null;

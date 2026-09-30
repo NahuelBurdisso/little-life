@@ -62,6 +62,20 @@ export function renderMessage(entry: ActivityEntry): string {
     if (entry.type === 'kiss_rebuffed') return `${d.agent2} turned away from ${d.agent1}'s kiss.`;
   }
 
+  // Trysts (lib/intimacy/tryst.ts): discreet by design, and never more than this. `tryst` names
+  // the place; `caught` says how it got out (`scene`: the dawn walk out of a house by default,
+  // a house walked in on, or a barn or grove after dark). agent1 is the one seen leaving.
+  if (entry.type === 'tryst' && d.agent1 && d.agent2) {
+    return d.venue
+      ? `${d.agent1} and ${d.agent2} spent the evening together at ${d.venue}.`
+      : `${d.agent1} and ${d.agent2} spent the evening together.`;
+  }
+  if (entry.type === 'caught' && d.witness && d.agent1 && d.agent2) {
+    if (d.scene === 'found') return `${d.witness} found ${d.agent1} and ${d.agent2} together.`;
+    if (d.scene === 'outdoors') return `${d.witness} saw ${d.agent1} and ${d.agent2} slipping away together after dark.`;
+    return `${d.witness} saw ${d.agent1} slipping out of ${d.agent2}'s house at dawn.`;
+  }
+
   // Goals
   // `goalPhrase` because trigger-generated goals carry the raw GOAL_REGISTRY key
   // here, the same as the completed/abandoned rows; LLM-authored ones carry prose

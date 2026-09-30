@@ -400,3 +400,10 @@ describe('life milestones (server/lib/milestonesEngine.ts)', () => {
     expect(detectBeats(s, snap({ events: [{ id: 1, type: 'wedding', triggered_by: 'random' }] }), NOW)).toEqual([]);
   });
 });
+
+describe('the adult layer\'s typed rows (server/lib/intimacy/tryst.ts)', () => {
+  it('a night together is the romance beat, being seen leaving at dawn a secret', () => {
+    expect(classifyActivity(row({ type: 'tryst' }))).toEqual({ kind: 'romance', agentIds: [1, 2] });
+    expect(classifyActivity(row({ type: 'caught' }))).toEqual({ kind: 'secret', agentIds: [1, 2] });
+  });
+});

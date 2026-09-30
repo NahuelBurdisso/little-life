@@ -71,6 +71,13 @@ export function alertTier(row: AlertCandidate, favoriteIds: ReadonlySet<number> 
   if (PLAYER_TYPES.has(row.type)) return 'player';
   if (QUIET_TYPES.has(row.type)) return null;
 
+  // The adult layer's rows (lib/intimacy/tryst.ts). A night together is nobody's
+  // business but the couple's: quiet, a toast only for the player's favourites.
+  // Being seen slipping out at dawn is the scandal: it interrupts for a favourite
+  // (major) and is worth a quiet toast for anyone else.
+  if (row.type === 'tryst') return involves(row, favoriteIds) ? 'minor' : null;
+  if (row.type === 'caught') return involves(row, favoriteIds) ? 'major' : 'minor';
+
   if (row.type === 'relationship_status_change') {
     const status = String(row.template_data?.status ?? '');
     if (MAJOR_STATUSES.has(status)) return 'major';

@@ -37,6 +37,14 @@ export interface PairIntimacy {
    *   nobody acts on is dropped ~6 game hours after `agreedAt`.
    */
   pendingRendezvous?: { initiatorId: number; since: number; venueId?: number; agreed?: true; agreedAt?: number };
+  /**
+   * The evening in progress (tryst.ts): from the moment both are at the venue
+   * until `endsAt`, when the pass ends it and calls `onTrystCompleted` (or
+   * sooner, when somebody walks in). Kept here rather than read back from the
+   * two agents' actions so the completion fires exactly once and the rendezvous
+   * pass can see the pair is spoken for tonight.
+   */
+  activeTryst?: { venueId: number; startedAt: number; endsAt: number; secret: boolean };
   /** No new invitation for this pair before this game minute (after a refusal). */
   rendezvousRetryAfter?: number;
   /** Nobody in town knows (yet). Flips false when it gets out. */
@@ -52,9 +60,30 @@ export interface AgentIntimacy {
   suspicion: Record<number, number>;
 }
 
+/**
+ * A night spent at somebody else's home (tryst.ts). Only the GUEST has one: the
+ * host sleeps in their own bed like any other night.
+ */
+export interface Stay {
+  /** The home they are staying at. */
+  locationId: number;
+  /** The other half of the pair, whose home it is. */
+  hostId: number;
+  /** Game minute after which the stay lapses on its own (a stay nobody ended). */
+  until: number;
+  /** Set when they are told to go now (somebody walked in): the next decision is the walk home. */
+  leaving?: boolean;
+  /** Game minute the walk home began; the witness watch runs for a while after it. */
+  leftAt?: number;
+  /** Everyone who already saw them leave, so the same sighting is not reported twice. */
+  seenBy: number[];
+}
+
 /** Keyed by `pairKey` (lower id first). */
 const pairs = new Map<string, PairIntimacy>();
 const agentsIntimacy = new Map<number, AgentIntimacy>();
+/** Guest agent id -> where they sleep tonight. */
+const stays = new Map<number, Stay>();
 
 /**
  * Game minute up to which longing has been applied (null before the first
@@ -125,10 +154,37 @@ export function forEachAgentIntimacy(fn: (id: number, a: AgentIntimacy) => void)
   for (const [id, a] of agentsIntimacy) fn(id, a);
 }
 
+export function getStay(agentId: number): Readonly<Stay> | undefined {
+  return stays.get(agentId);
+}
+
+/** Start (or replace) a guest's stay. */
+export function setStay(agentId: number, stay: Omit<Stay, 'seenBy'> & { seenBy?: number[] }): Stay {
+  const s: Stay = { ...stay, seenBy: [...(stay.seenBy ?? [])] };
+  stays.set(agentId, s);
+  return s;
+}
+
+/** Patch a stay in place; a no-op when there is none. */
+export function updateStay(agentId: number, patch: (s: Stay) => void): void {
+  const s = stays.get(agentId);
+  if (s) patch(s);
+}
+
+export function clearStay(agentId: number): void {
+  stays.delete(agentId);
+}
+
+/** Visit every stay (`agentId` is the guest); collect first if the visit removes entries. */
+export function forEachStay(fn: (agentId: number, s: Stay) => void): void {
+  for (const [id, s] of stays) fn(id, s);
+}
+
 /** Drop everything (world replace: agent ids are reused and the clock restarts). */
 export function clearIntimacy(): void {
   pairs.clear();
   agentsIntimacy.clear();
+  stays.clear();
   longingProcessedAt = null;
 }
 
@@ -160,7 +216,34 @@ function restorePair(raw: unknown): PairIntimacy | null {
       if (agreedAt !== null) p.pendingRendezvous.agreedAt = agreedAt;
     }
   }
+  const at = asRecord(r.activeTryst);
+  const venueId = at ? asNumber(at.venueId) : null;
+  const startedAt = at ? asNumber(at.startedAt) : null;
+  const endsAt = at ? asNumber(at.endsAt) : null;
+  if (at && venueId !== null && startedAt !== null && endsAt !== null) {
+    p.activeTryst = { venueId, startedAt, endsAt, secret: at.secret === true };
+  }
   return p;
+}
+
+function restoreStay(raw: unknown): Stay | null {
+  const r = asRecord(raw);
+  if (!r) return null;
+  const locationId = asNumber(r.locationId);
+  const hostId = asNumber(r.hostId);
+  const until = asNumber(r.until);
+  if (locationId === null || hostId === null || until === null) return null;
+  const stay: Stay = { locationId, hostId, until, seenBy: [] };
+  if (r.leaving === true) stay.leaving = true;
+  const leftAt = asNumber(r.leftAt);
+  if (leftAt !== null) stay.leftAt = leftAt;
+  if (Array.isArray(r.seenBy)) {
+    for (const v of r.seenBy) {
+      const id = asNumber(v);
+      if (id !== null) stay.seenBy.push(id);
+    }
+  }
+  return stay;
 }
 
 function restoreAgent(raw: unknown): AgentIntimacy | null {
@@ -180,7 +263,8 @@ function restoreAgent(raw: unknown): AgentIntimacy | null {
 
 /**
  * Checkpoint: { pairs: {[pairKey]: PairIntimacy}, agents: {[id]: AgentIntimacy},
- * longingAt }. Always an object (never undefined), so an empty town still
+ * stays: {[guestId]: Stay}, longingAt }. `stays` is absent from checkpoints
+ * written before the tryst existed (restore reads it as empty). Always an object (never undefined), so an empty town still
  * overwrites an older world's row.
  */
 export const intimacySnapshotStore: SnapshotStore = {
@@ -189,11 +273,17 @@ export const intimacySnapshotStore: SnapshotStore = {
   serialize: () => {
     const outPairs: Record<string, PairIntimacy> = {};
     for (const [k, v] of pairs) {
-      outPairs[k] = { ...v, ...(v.pendingRendezvous ? { pendingRendezvous: { ...v.pendingRendezvous } } : {}) };
+      outPairs[k] = {
+        ...v,
+        ...(v.pendingRendezvous ? { pendingRendezvous: { ...v.pendingRendezvous } } : {}),
+        ...(v.activeTryst ? { activeTryst: { ...v.activeTryst } } : {}),
+      };
     }
     const outAgents: Record<string, AgentIntimacy> = {};
     for (const [k, v] of agentsIntimacy) outAgents[String(k)] = { ...v, suspicion: { ...v.suspicion } };
-    return { pairs: outPairs, agents: outAgents, longingAt: longingProcessedAt };
+    const outStays: Record<string, Stay> = {};
+    for (const [k, v] of stays) outStays[String(k)] = { ...v, seenBy: [...v.seenBy] };
+    return { pairs: outPairs, agents: outAgents, stays: outStays, longingAt: longingProcessedAt };
   },
   restore: (data) => {
     clearIntimacy();
@@ -209,6 +299,12 @@ export const intimacySnapshotStore: SnapshotStore = {
       if (id === null) continue;
       const a = restoreAgent(raw);
       if (a) agentsIntimacy.set(id, a);
+    }
+    for (const [k, raw] of Object.entries(asRecord(root.stays) ?? {})) {
+      const id = asId(k);
+      if (id === null) continue;
+      const stay = restoreStay(raw);
+      if (stay) stays.set(id, stay);
     }
     longingProcessedAt = asNumber(root.longingAt);
   },

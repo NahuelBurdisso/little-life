@@ -66,6 +66,9 @@ import {
 import {
   RENDEZVOUS_SEEK_SCORE, pendingRendezvousPartner, queuePendingRendezvousNow,
 } from '../../lib/intimacy/rendezvous';
+import {
+  TRYST_SEEK_SCORE, sleepTargetFor, startSneakHome, trystStepFor,
+} from '../../lib/intimacy/tryst';
 import { isAdultContent } from '../../lib/worldRules';
 
 // --- Types ---
@@ -468,7 +471,8 @@ export function checkEmergency(
       return { action: 'eating', score: 9999, targetLocationId: hungerMeal?.locationId };
     }
     case 'energy': {
-      return { action: 'sleeping', score: 9999, targetLocationId: agent.home };
+      // Bed is wherever tonight's bed is: a guest at their lover's stays there (lib/intimacy/tryst.ts).
+      return { action: 'sleeping', score: 9999, targetLocationId: sleepTargetFor(agent) };
     }
     case 'social': {
       return socialTarget;
@@ -537,6 +541,46 @@ export function proposalSeekDecision(
     targetAgentId: partner.id,
     source: 'proposal_seek',
   };
+}
+
+/**
+ * What an agreed tryst, or the night after one, asks of this agent (adult layer,
+ * score 6350), or null while it asks nothing. The rules are lib/intimacy/tryst.ts's
+ * (`trystStepFor`); this turns a step into a decision:
+ *  - `meet` / `stay`: idle at the venue (a 10-minute idle, re-decided until the
+ *    pair are both there and the pass starts the evening);
+ *  - `sleep`: bed where they are (the sleeping validation below accepts it: the
+ *    guest's `sleepTargetFor` is that house tonight);
+ *  - `sneak_home`: walk home with `zoneActivity: 'sneak_home'` (the zone verb rides
+ *    on `source`, see `zoneVerbOf`); at dawn this also starts the witness watch.
+ * Always null with the `adultContent` rule off. Someone in no state for romance
+ * (sick, grieving...) or on shift does not go to the venue.
+ */
+export function trystDecision(
+  agent: AgentRow,
+  hour: number,
+  nowMinutes: number,
+  states: readonly string[],
+): ScoredAction | null {
+  if (!isAdultContent()) return null;
+  const personality = getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null;
+  const awake = !inSleepWindow(effectiveSleepWindow(agent.schedule, personality, agent.workplace != null), hour);
+  const step = trystStepFor(agent, { awake });
+  if (!step) return null;
+  switch (step.kind) {
+    case 'meet': {
+      const onShift = !!agent.workplace && hour >= agent.schedule.workStart && hour < agent.schedule.workEnd;
+      if (onShift || inNoProposalState(states)) return null;
+      return { action: 'idle', score: TRYST_SEEK_SCORE, targetLocationId: step.locationId };
+    }
+    case 'stay':
+      return { action: 'idle', score: TRYST_SEEK_SCORE, targetLocationId: step.locationId };
+    case 'sleep':
+      return { action: 'sleeping', score: TRYST_SEEK_SCORE, targetLocationId: step.locationId };
+    case 'sneak_home':
+      if (step.dawn) startSneakHome(agent.id, nowMinutes);
+      return { action: 'idle', score: TRYST_SEEK_SCORE, targetLocationId: step.locationId, source: 'sneak_home' };
+  }
 }
 
 /** What `canSeekPartner` needs to know about one of the two (shared by the proposal and rendezvous walks). */
@@ -684,12 +728,12 @@ function checkSchedule(
   if (effectiveSleepTime > effectiveWakeTime) {
     // Normal case: sleep 22 → wake 7 → sleeping when hour >= 22 OR hour < 7
     if (hour >= effectiveSleepTime || hour < effectiveWakeTime) {
-      return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+      return { action: 'sleeping', score: 5000, targetLocationId: sleepTargetFor(agent) };
     }
   } else {
     // Inverted case: sleep 2 → wake 10 → sleeping when hour >= 2 AND hour < 10
     if (hour >= effectiveSleepTime && hour < effectiveWakeTime) {
-      return { action: 'sleeping', score: 5000, targetLocationId: agent.home };
+      return { action: 'sleeping', score: 5000, targetLocationId: sleepTargetFor(agent) };
     }
   }
 
@@ -1737,6 +1781,16 @@ export function tick(world: WorldRow): void {
       }
     }
 
+    // Phase 1a'''-: an agreed tryst, and the night and dawn after it (adult layer,
+    // score 6350: above the rendezvous seek below, since an evening already agreed
+    // outranks asking for one; below the proposal above). Walks to the venue, holds a
+    // guest at the house through the evening, sends them to bed there, and at dawn
+    // home again, quietly. Once both are at the venue the periodic pass starts the
+    // evening itself (lib/intimacy/tryst.ts).
+    if (!decision) {
+      decision = trystDecision(agent, world.time.hour, nowMinutes, getAgentStates(agent.id));
+    }
+
     // Phase 1a''': a pending rendezvous invitation (adult layer, score 6300, right
     // below the proposal block above, same guards). The asker goes to find the one
     // they want to ask, and the invitation is seated the moment they are together.
@@ -1900,7 +1954,7 @@ export function tick(world: WorldRow): void {
     if (decision.action === 'sleeping') {
       const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
       const supper = agentNeeds.hunger < low && agentNeeds.energy >= SUPPER_MIN_ENERGY
-        ? mealPlan(agent.home ?? undefined)
+        ? mealPlan(sleepTargetFor(agent, nowMinutes))
         : null;
       if (supper) decision = { action: 'eating', score: decision.score, targetLocationId: supper.locationId };
     }
@@ -1913,9 +1967,13 @@ export function tick(world: WorldRow): void {
         if (decision.action === 'working' && decision.targetLocationId !== agent.workplace) {
           decision = { action: 'idle', score: 0, targetLocationId: agent.home };
         }
-        // Can't sleep anywhere except home
-        if (decision!.action === 'sleeping' && decision!.targetLocationId !== agent.home) {
-          decision = { action: 'sleeping', score: decision!.score, targetLocationId: agent.home };
+        // Can't sleep anywhere except in tonight's bed: home, or a lover's house for a guest
+        // whose night there is on (sleepTargetFor, lib/intimacy/tryst.ts).
+        if (decision!.action === 'sleeping') {
+          const bed = sleepTargetFor(agent, nowMinutes);
+          if (decision!.targetLocationId !== bed) {
+            decision = { action: 'sleeping', score: decision!.score, targetLocationId: bed };
+          }
         }
         // Check operating hours for commercial locations
         if (['eating', 'shopping'].includes(decision!.action)) {
@@ -2381,6 +2439,8 @@ export function tick(world: WorldRow): void {
     if (agent.current_location == null) continue;
     const action = agent.current_action as any;
     if (action?.type === 'talking' || action?.type === 'sleeping' || action?.type === 'working') continue;
+    // A private evening (lib/intimacy/tryst.ts) is not a spare pair for a chance chat.
+    if (action?.zoneActivity === 'tryst') continue;
 
     const group = locationGroups.get(agent.current_location) ?? [];
     group.push(agent);

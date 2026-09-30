@@ -122,6 +122,13 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   kiss:          { category: 'relationship', base_importance: 0.3, retention: 'short', template: '{agent1} and {agent2} kissed', newsworthy: false },
   kiss_rebuffed: { category: 'drama', base_importance: 0.5, retention: 'medium', template: "{agent2} turned away from {agent1}'s kiss", newsworthy: false },
 
+  // ─── Trysts (lib/intimacy/tryst.ts, the adult layer) ───────────────────────
+  // The evening itself is a quiet line (the town does not know: the paper leaves
+  // it alone); being seen slipping out at dawn is the scandal, and reads as one.
+  // Wording stays discreet in both (activityMessage.ts renders them).
+  tryst:  { category: 'relationship', base_importance: 0.5, retention: 'medium', template: '{agent1} and {agent2} spent the evening together at {venue}', newsworthy: false },
+  caught: { category: 'drama', base_importance: 0.75, retention: 'long', template: '{witness} saw {agent1} slipping out of {agent2}\'s house at dawn' },
+
   // ─── The town calendar (lib/townCalendar.ts) ────────────────────────────────
   // "The Harvest Festival is in two days": town news the feed should carry, but
   // not the paper's material — the gazette gets its own "Coming up" section from

@@ -106,3 +106,21 @@ describe('activity.getAlerts', () => {
     expect(alerts.map((a) => (a.template_data as Record<string, string>).description)).toEqual(['drama 2', 'drama 3']);
   });
 });
+
+describe('alertTier: trysts (lib/intimacy/tryst.ts)', () => {
+  const tryst = (type: string, category: string, importance: number) => row({ type, category, importance, agent_ids: [7, 8, 9] });
+
+  it('a night together is quiet: a minor toast for a favourite, nothing for everyone else', () => {
+    const night = tryst('tryst', 'relationship', 0.5);
+    expect(alertTier(night)).toBeNull();
+    expect(alertTier(night, new Set([8]))).toBe('minor');
+  });
+
+  it('being seen leaving at dawn is a scandal: major for a favourite, a minor toast for anyone else', () => {
+    const seen = tryst('caught', 'drama', 0.75);
+    expect(alertTier(seen)).toBe('minor');
+    expect(alertTier(seen, new Set([7]))).toBe('major');
+    // A favourite who only saw it counts too: it is their story.
+    expect(alertTier(seen, new Set([9]))).toBe('major');
+  });
+});

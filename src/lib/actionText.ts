@@ -26,6 +26,9 @@ const ZONE_ACTIVITY_TEXT: Record<string, string> = {
   arrest: "making an arrest",
   pickpocket: "lurking with sticky fingers",
   shoplifting: "up to no good",
+  // The adult layer (server/lib/intimacy/tryst.ts): said plainly and no further.
+  tryst: "spending the evening together",
+  sneak_home: "slipping home",
 };
 
 /** `place` is null-safe so callers can pass "location unknown" straight through. */

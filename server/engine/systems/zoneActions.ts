@@ -25,6 +25,9 @@ const ZONE_ACTION_EFFECTS: Record<string, () => ZoneActionEffect> = {
   watch:       () => ({ needDeltas: { fun: 3, social: 2 } }),
   browse:      () => ({ needDeltas: { fun: 2 } }),
   jog:         () => ({ needDeltas: { fun: 3, mood: 2, energy: -4 } }),
+  // A private evening (lib/intimacy/tryst.ts): a little comfort and joy, nothing that
+  // narrates it. The night's rest after it comes from the normal sleep path.
+  tryst:       () => ({ needDeltas: { comfort: 3, fun: 4 } }),
 };
 
 /**

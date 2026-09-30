@@ -44,7 +44,11 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   // discreet on purpose; the town fills in the rest.
   kiss_seen: (s, t) =>
     `${s} was seen kissing ${t ?? 'someone'}`,
-  tryst_seen: (s, t) =>
+  // `detail` says where the sighting was (lib/intimacy/tryst.ts): the default is the dawn
+  // walk out of a house, the others an evening barn or grove and a house entered late.
+  tryst_seen: (s, t, ctx) =>
+    ctx?.detail === 'outdoors' ? `${s} was seen slipping away with ${t ?? 'someone'} after dark` :
+    ctx?.detail === 'found' ? `${s} was found alone with ${t ?? 'someone'} at ${t ?? 'someone'}'s house late in the evening` :
     `${s} was seen leaving ${t ?? 'someone'}'s house at dawn`,
   financial: (s, _t, ctx) =>
     ctx?.detail ? `${s} is struggling with money — ${ctx.detail}` :

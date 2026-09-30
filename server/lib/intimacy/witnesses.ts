@@ -38,7 +38,30 @@ function couldSee(row: { current_action: unknown; is_active: boolean }): boolean
  * is at their side). A person indoors never sees the street and vice versa.
  */
 export function witnessesOf(a: Placed, b: Placed): number[] {
-  const location = a.current_location ?? b.current_location;
+  return onlookersNear(
+    { current_location: a.current_location ?? b.current_location, position: a.position },
+    [a.id, b.id],
+  );
+}
+
+/**
+ * How far a person leaving a house at dawn can be seen from outdoors: farther
+ * than a whispered conversation, since a doorway and the lane in front of it are
+ * watched. (tryst.ts; the kiss keeps `WITNESS_RANGE_PX`.)
+ */
+export const SNEAK_RANGE_PX = 96;
+
+/**
+ * Everyone awake (never one of `exclude`) who could see a person standing at
+ * `spot`: in a building, everyone awake in it; outdoors, everyone awake and
+ * outdoors within `range`. Used on its own by tryst.ts for one person leaving,
+ * where there is no pair to anchor the location on.
+ */
+export function onlookersNear(
+  spot: { current_location: number | null; position: unknown },
+  exclude: number[],
+  range: number = WITNESS_RANGE_PX,
+): number[] {
   const others = db.select({
     id: agents.id,
     current_location: agents.current_location,
@@ -46,17 +69,17 @@ export function witnessesOf(a: Placed, b: Placed): number[] {
     current_action: agents.current_action,
     is_active: agents.is_active,
   }).from(agents)
-    .where(and(eq(agents.is_active, true), notInArray(agents.id, [a.id, b.id])))
+    .where(and(eq(agents.is_active, true), notInArray(agents.id, exclude)))
     .all();
 
-  const origin = a.position as { x: number; y: number } | null;
+  const origin = spot.position as { x: number; y: number } | null;
   return others
     .filter((o) => {
       if (!couldSee(o)) return false;
-      if (location != null) return o.current_location === location;
+      if (spot.current_location != null) return o.current_location === spot.current_location;
       if (o.current_location != null || !origin) return false;
       const p = o.position as { x: number; y: number };
-      return Math.hypot(p.x - origin.x, p.y - origin.y) <= WITNESS_RANGE_PX;
+      return Math.hypot(p.x - origin.x, p.y - origin.y) <= range;
     })
     .map((o) => o.id);
 }

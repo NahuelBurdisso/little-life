@@ -2,6 +2,7 @@ import { gameMinutes, type ClockTime } from '../gameClock';
 import { registerKissListener } from './kiss';
 import { longingPass } from './longing';
 import { registerRendezvousListener, rendezvousPass } from './rendezvous';
+import { trystPass } from './tryst';
 
 // ─── Intimacy: the periodic pass ─────────────────────────────────────────────
 //
@@ -17,10 +18,12 @@ registerKissListener();
 registerRendezvousListener();
 
 /**
- * One pass: longing first (the rendezvous pass reads it), then invitations.
+ * One pass: longing first (the rendezvous pass reads it), then invitations, then
+ * the evenings they led to (an agreed pair is settled the same tick it is agreed).
  * Suspicion and pregnancy join it later.
  */
 export function intimacyTick(time: ClockTime): void {
   longingPass(gameMinutes(time));
   rendezvousPass(time);
+  trystPass(time);
 }

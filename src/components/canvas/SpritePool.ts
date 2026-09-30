@@ -7,7 +7,8 @@ export interface AgentData {
   name: string;
   position: { x: number; y: number };
   sprite_sheet?: string;
-  current_action?: { type?: string; pose?: string } | string;
+  // `zoneActivity` is the specific thing an idle agent is doing ('tryst' and 'sneak_home' are the adult layer's: the sprite shows only a hushed pose, never the act), `partnerId` who they are with.
+  current_action?: { type?: string; pose?: string; zoneActivity?: string; partnerId?: number } | string;
   current_location?: number | null;
   needs?: {
     mood?: number;

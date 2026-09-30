@@ -23,7 +23,7 @@ import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isIntimacyEligible } from './eligibility';
 import { KISSED_TAG } from './kiss';
 import {
-  forEachPairIntimacy, getAgentIntimacy, getPairIntimacy, updatePairIntimacy, type PairIntimacy,
+  forEachPairIntimacy, forEachStay, getAgentIntimacy, getPairIntimacy, updatePairIntimacy, type PairIntimacy,
 } from './state';
 
 // ─── Rendezvous: a lover asks, the other may say no ──────────────────────────
@@ -401,6 +401,8 @@ export function rendezvousPass(time: ClockTime): void {
   const busyAgents = new Set<number>();
   forEachPairIntimacy((key, p) => {
     const rv = p.pendingRendezvous;
+    // Spoken for tonight: in a tryst right now (tryst.ts) is as busy as an invitation out.
+    if (p.activeTryst) key.split('-').map(Number).forEach((id) => busyAgents.add(id));
     if (!rv) return;
     const [x, y] = key.split('-').map(Number);
     if (!adult) { stale.push({ key, retry: false }); return; }
@@ -411,6 +413,8 @@ export function rendezvousPass(time: ClockTime): void {
     if (expired || now < rv.since) { stale.push({ key, retry: true }); return; }
     busyAgents.add(x); busyAgents.add(y);
   });
+  // A guest asleep at their lover's house is not free to be asked either.
+  forEachStay((id) => busyAgents.add(id));
   for (const { key, retry } of stale) {
     const [x, y] = key.split('-').map(Number);
     updatePairIntimacy(x, y, (p) => {
