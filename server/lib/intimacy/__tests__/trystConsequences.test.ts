@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } 
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import {
-  agentStates, agents, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
+  agentStates, agents, goals, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
 } from '../../../db/schema';
 import { AFTERGLOW_MINUTES, GUILTY_MINUTES, LOVERS_TAG, LONGING_AFTER_NIGHT } from '../aftermath';
 import { beginTryst, trystPass } from '../tryst';
@@ -207,6 +207,44 @@ describe('what a night leaves behind', () => {
       }
       // One afterglow each, refreshed, not stacked.
       expect(statesOf(a).filter((s) => s.type === 'afterglow')).toHaveLength(1);
+    });
+  });
+
+  describe('a seduction', () => {
+    it('is achieved by the night: the seduce goal completes for whoever had it, once, and the feed says so', () => {
+      const { a, b, aHome } = lovers();
+      relate(a, b, ['kissed']);
+      const goal = (agent: number, target: number, type = 'seduce') => db.insert(goals).values({
+        agent_id: agent, type, target_id: target, motivation: 'state_gained:infatuated', priority: 0.5, progress: 0.2,
+        status: 'active', created_at: 0,
+      }).returning({ id: goals.id }).get().id;
+      const wooing = goal(a, b);
+      const grudge = goal(b, a, 'revenge');
+      const done: unknown[] = [];
+      const onDone = (p: unknown) => done.push(p);
+      simEvents.on('goal:completed', onDone);
+      try {
+        nightTogether(a, b, aHome);
+      } finally { simEvents.off('goal:completed', onDone); }
+
+      const row = (id: number) => db.select().from(goals).where(eq(goals.id, id)).get()!;
+      expect(row(wooing)).toMatchObject({ status: 'completed', progress: 1 });
+      expect(row(grudge)).toMatchObject({ status: 'active', progress: 0.2 });
+      expect(done).toEqual([expect.objectContaining({ agentId: a, goalType: 'seduce', victimId: b })]);
+    });
+
+    it('is not achieved by an evening that was walked in on', () => {
+      const { a, b, aHome } = lovers();
+      relate(a, b, ['kissed']);
+      const id = db.insert(goals).values({
+        agent_id: a, type: 'seduce', target_id: b, motivation: 'x', priority: 0.5, progress: 0, status: 'active', created_at: 0,
+      }).returning({ id: goals.id }).get().id;
+      // A housemate arrives while it is on: no night happened.
+      const housemate = insertAgent('Housemate', aHome, { current_location: aHome });
+      void housemate;
+      expect(beginTryst(load(a), load(b), locOf(aHome), at(0), () => 0)).toBe(true);
+      trystPass(at(10), () => 0);
+      expect(db.select().from(goals).where(eq(goals.id, id)).get()!.status).toBe('active');
     });
   });
 

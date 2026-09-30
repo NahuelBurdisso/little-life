@@ -4,6 +4,7 @@ import { agentStates, agents, relationships } from '../../db/schema';
 import { addMoodModifier } from '../dailyLife';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
+import { recordGoalOutcome } from '../goals/goalProgress';
 import { affairInvolvesMarriage, affairSensitivity } from '../marriage';
 import { LOVERS_TAG } from '../storyBeats';
 import { committedTo } from './committed';
@@ -142,6 +143,9 @@ function spendTheNight(t: TrystCompletion, a: AgentRow, b: AgentRow): void {
     t.first ? 0.8 : 0.4);
 
   for (const [me, other] of [[a, b], [b, a]] as const) {
+    // A night together is a seduction achieved for whoever had that goal aimed at the other (a first
+    // and a later night alike: an already-completed goal is simply not active any more).
+    recordGoalOutcome(me.id, other.id, 'night_together');
     relieveLongingTo(me.id, LONGING_AFTER_NIGHT);
     giveState(me.id, 'afterglow', other.id, AFTERGLOW_MINUTES, t.now, 'intimacy:tryst');
     addMoodModifier(me.id, AFTERGLOW_MOOD, 'afterglow', AFTERGLOW_MINUTES, t.now);

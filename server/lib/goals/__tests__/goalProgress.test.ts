@@ -30,6 +30,17 @@ describe('goalProgressGain (pure)', () => {
     expect(goalProgressGain('nonsense_type', 'warm_chat')).toBe(0);
   });
 
+  it('a kiss answers a seduction and a night together finishes it; nothing else of the romance layer moves a grudge', () => {
+    // Half-way on a kiss (it needs a flirt or a date to close), done on the night.
+    expect(goalProgressGain('seduce', 'kissed')).toBeGreaterThan(0);
+    expect(goalProgressGain('seduce', 'kissed') * 1.5).toBeLessThan(completionAt('seduce'));
+    expect(goalProgressGain('seduce', 'night_together')).toBeGreaterThanOrEqual(completionAt('seduce'));
+    for (const outcome of ['kissed', 'night_together'] as const) {
+      expect(goalProgressGain('revenge', outcome), outcome).toBe(0);
+      expect(goalProgressGain('befriend', outcome), outcome).toBe(0);
+    }
+  });
+
   it('clamps intensity so one outcome can neither vanish nor finish a goal alone', () => {
     const base = GOAL_OUTCOME_GAINS.befriend.warm_chat!;
     expect(goalProgressGain('befriend', 'warm_chat', 0)).toBeCloseTo(base * 0.5);

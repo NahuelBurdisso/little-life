@@ -4,7 +4,7 @@ import { eq, inArray } from 'drizzle-orm';
 vi.stubGlobal('fetch', async () => { throw new TypeError('fetch failed (test: LLM disabled)'); });
 
 import { db } from '../../../db';
-import { agents, agentStates, goals, locations, worldState } from '../../../db/schema';
+import { agents, agentStates, goals, locations, relationships, shared_knowledge, worldState } from '../../../db/schema';
 import { goalsTick } from '../goals';
 import { GOAL_TRIGGER_REGISTRY } from '../../../data/goalRegistry';
 
@@ -87,5 +87,65 @@ describe('goal triggers', () => {
 
     const rows = db.select().from(goals).where(eq(goals.agent_id, smitten)).all();
     expect(rows.map((g) => [g.type, g.target_id, g.status])).toEqual([['seduce', crush, 'active']]);
+  });
+});
+
+/**
+ * "Affair discovery → revenge" (goalRegistry `fact_learned` affair `involves_partner`), from an
+ * affair born of an act (lib/intimacy/): the trigger reads `known_by` off the facts table, so a
+ * spouse who was merged into the row as a witness (no `gossip:learned` fires for that) gets the
+ * goal exactly like one who was told. Only the betrayed party does.
+ */
+describe('affair discovery starts a revenge goal', () => {
+  const relate = (x: number, y: number, tags: string[]) => db.insert(relationships).values({
+    agent_a: Math.min(x, y), agent_b: Math.max(x, y), friendship_ab: 50, friendship_ba: 50, romance_ab: 70, romance_ba: 70,
+    trust_ab: 50, trust_ba: 50, familiarity: 50, interaction_count: 5, last_interaction: 0,
+    average_interaction_sentiment: 0, tags, status: 'partners', created_at: 0, last_updated: 0,
+  }).run();
+  const affair = (subject: number, target: number, knownBy: number[]) => db.insert(shared_knowledge).values({
+    type: 'affair', subject_id: subject, target_id: target, content: 'x and y are getting suspiciously close',
+    sensitivity: 3, known_by: knownBy, created_at: 0, is_active: true, source: 'committed',
+  }).run();
+  const revenge = (id: number) => db.select().from(goals).where(eq(goals.agent_id, id)).all()
+    .filter((g) => g.type === 'revenge').map((g) => g.target_id);
+
+  it('the wife who is a witness gets it, aimed at her husband; the lover, whose row reads partner too, does not', () => {
+    const wife = insertAgent('Wife Wanda');
+    const husband = insertAgent('Husband Hal');
+    const lover = insertAgent('Lover Lena');
+    relate(wife, husband, ['partner', 'married']);
+    // The lover's row with the husband is "partner" as well (a warm enough pair): still not the betrayed one.
+    relate(husband, lover, ['partner', 'lovers']);
+    // Born of the act, known to the two; the wife then walked in (merged into known_by, no gossip event).
+    affair(husband, lover, [husband, lover, wife]);
+
+    goalsTick();
+
+    expect(revenge(wife)).toEqual([husband]);
+    expect(revenge(lover)).toEqual([]);
+    expect(revenge(husband)).toEqual([]);
+  });
+
+  it('a fact that names the lover first is still about the cheater the agent is with', () => {
+    const wife = insertAgent('Wife Wilma');
+    const husband = insertAgent('Husband Hugo');
+    const lover = insertAgent('Lover Lia');
+    relate(wife, husband, ['partner']);
+    // Subject is the other man (both are spoken for, so the lower id leads): the target is the husband.
+    affair(lover, husband, [lover, husband, wife]);
+    goalsTick();
+    expect(revenge(wife)).toEqual([husband]);
+  });
+
+  it('nobody who does not know it, and nobody who is not partnered with one of them', () => {
+    const wife = insertAgent('Wife Wren');
+    const husband = insertAgent('Husband Hank');
+    const lover = insertAgent('Lover Lark');
+    const bystander = insertAgent('Bystander Bea');
+    relate(wife, husband, ['partner']);
+    affair(husband, lover, [husband, lover, bystander]);
+    goalsTick();
+    expect(revenge(wife)).toEqual([]); // has not heard
+    expect(revenge(bystander)).toEqual([]); // heard, but it is nobody's betrayal
   });
 });

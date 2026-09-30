@@ -100,22 +100,29 @@ function checkTriggerCondition(
     }
 
     case 'fact_learned': {
-      const relevantFacts = cachedKnowledge
-        .filter(f => {
-          if (f.type !== cond.fact_type!) return false;
-          const knownBy = f.known_by as number[];
-          if (!knownBy.includes(agent.id)) return false;
-          if (cond.is_victim && f.target_id !== agent.id) return false;
-          if (cond.involves_partner) {
-            const a = Math.min(agent.id, f.subject_id);
-            const b = Math.max(agent.id, f.subject_id);
-            const rel = cachedRelationships.find(r => r.agent_a === a && r.agent_b === b);
-            if (!rel || !(rel.tags as string[])?.includes('partner')) return false;
-          }
-          return true;
-        });
-      if (relevantFacts.length === 0) return false;
-      return relevantFacts[0].subject_id;
+      // Read off `known_by`, not off an event: a fact learned by gossip, by a merge into the row
+      // (a witness, the spouse who walked in: intimacy/tryst.ts) or by being born knowing counts alike.
+      const partnered = (other: number): boolean => {
+        const rel = cachedRelationships.find(r => r.agent_a === Math.min(agent.id, other) && r.agent_b === Math.max(agent.id, other));
+        return !!rel && !!(rel.tags as string[])?.includes('partner');
+      };
+      for (const f of cachedKnowledge) {
+        if (f.type !== cond.fact_type!) continue;
+        if (!(f.known_by as number[]).includes(agent.id)) continue;
+        if (cond.is_victim && f.target_id !== agent.id) continue;
+        if (cond.involves_partner) {
+          // The betrayed one, not a party to it: the lover a fact names is not wronged by their own affair
+          // (their row with the straying partner can read "partner" too), and a fact that names the lover
+          // first (the subject is whoever is spoken for, the lower id when both are) is still about
+          // the cheater the agent is with. The revenge is aimed at THAT person.
+          if (f.subject_id === agent.id || f.target_id === agent.id) continue;
+          const betrayer = [f.subject_id, f.target_id].find((id): id is number => id != null && partnered(id));
+          if (betrayer == null) continue;
+          return betrayer;
+        }
+        return f.subject_id;
+      }
+      return false;
     }
 
     case 'aspiration_pressure': {

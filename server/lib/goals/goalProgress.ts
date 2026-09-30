@@ -52,7 +52,11 @@ export type GoalOutcome =
   /** A warm talk with the target while they were down (lonely, grieving, heartbroken...). */
   | 'comforted'
   | 'gift_given'
-  | 'reconciled';
+  | 'reconciled'
+  /** They kissed (lib/intimacy/kiss.ts): what a courtship was after, though not yet all of it. */
+  | 'kissed'
+  /** They spent the night together (lib/intimacy/aftermath.ts): a seduction achieved. */
+  | 'night_together';
 
 /** Sentiment thresholds that make a conversation "warm" or "hostile" for goal purposes. */
 export const WARM_CHAT = 0.2;
@@ -75,7 +79,8 @@ export const GOAL_OUTCOME_GAINS: Record<string, Partial<Record<GoalOutcome, numb
   undermine: {
     hostile_chat: 0.05, insulted_target: 0.2, fought_target: 0.2, confrontation_won: 0.3, rumor_spread: 0.3,
   },
-  seduce: { warm_chat: 0.12, comforted: 0.15, flirt: 0.3, gift_given: 0.15, reconciled: 0.2 },
+  // A kiss is most of the way (a flirt or a date closes it); a night together is the goal met.
+  seduce: { warm_chat: 0.12, comforted: 0.15, flirt: 0.3, gift_given: 0.15, reconciled: 0.2, kissed: 0.6, night_together: 1.0 },
   befriend: {
     warm_chat: 0.15, gift_given: 0.2, comforted: 0.25, reconciled: 0.4, confrontation_resolved: 0.3,
   },

@@ -10,6 +10,7 @@ import { MILESTONE_TAGS, affairInvolvesMarriage, affairSensitivity } from '../ma
 import { committedTo } from './committed';
 import { PIVOTAL_SENTIMENT } from '../storyBeats';
 import { simEvents } from '../simEvents';
+import { recordGoalOutcome } from '../goals/goalProgress';
 import { getAgentStates, getEffectivePersonality } from '../states';
 import { gameMinutesNow } from '../worldClock';
 import { MINUTES_PER_DAY } from '../gameClock';
@@ -292,6 +293,9 @@ function shareKiss(rel: RelRow, initiator: AgentRow, receiver: AgentRow, witness
     if (s.firstKissAt == null) s.firstKissAt = now;
   });
   for (const id of [initiator.id, receiver.id]) relieveLonging(id, 10);
+  // Whoever set out to win the other over (a `seduce` goal, from an infatuation) has a kiss to show for it.
+  recordGoalOutcome(initiator.id, receiver.id, 'kissed');
+  recordGoalOutcome(receiver.id, initiator.id, 'kissed');
 
   logActivity({
     type: firstTime ? 'first_kiss' : 'kiss',

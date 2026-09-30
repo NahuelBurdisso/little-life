@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import {
-  activityLog, agents, agentStates, conversations, locations, needs, relationshipEvents, relationships, shared_knowledge,
+  activityLog, agents, agentStates, conversations, goals, locations, needs, relationshipEvents, relationships, shared_knowledge,
   worldEvents, worldState,
 } from '../../../db/schema';
 import {
@@ -10,7 +10,7 @@ import {
   ROMANCE_BOOST_FACTOR, isDateHour, kissChance, onKissConversationEnded, pickKissInitiator,
   type KissChanceCtx, type KissParty,
 } from '../kiss';
-import { clearIntimacy, ensureAgentIntimacy, getAgentIntimacy, getPairIntimacy } from '../state';
+import { clearIntimacy, ensureAgentIntimacy, getAgentIntimacy, getPairIntimacy, updatePairIntimacy } from '../state';
 import { simEvents } from '../../simEvents';
 import { gameMinutes } from '../../gameClock';
 import { MARRIED_TAG } from '../../marriage';
@@ -229,6 +229,38 @@ describe('the kiss against the DB', () => {
     db.delete(locations).where(eq(locations.id, homeId)).run();
     clearIntimacy();
     vi.restoreAllMocks();
+  });
+
+  it('a kiss answers a seduction: a seduce goal aimed at the other moves, one aimed elsewhere or of another kind does not', () => {
+    const { a, b } = pair({ romanceA: 70, romanceB: 60 });
+    const elsewhere = insertAgent(`Elsewhere ${made.length}`, { gender: 'male' });
+    const goal = (agent: number, target: number, type: string) => db.insert(goals).values({
+      agent_id: agent, type, target_id: target, motivation: 'state_gained:infatuated', priority: 0.5, progress: 0,
+      status: 'active', created_at: 0,
+    }).returning({ id: goals.id }).get().id;
+    const wooing = goal(a, b, 'seduce');
+    const wooedBack = goal(b, a, 'seduce');
+    const otherTarget = goal(a, elsewhere, 'seduce');
+    const grudge = goal(a, b, 'revenge');
+    onKissConversationEnded(warm(a, b), rng0);
+    const progress = (id: number) => db.select().from(goals).where(eq(goals.id, id)).get()!.progress;
+    expect(progress(wooing)).toBeCloseTo(0.6);
+    expect(progress(wooedBack)).toBeCloseTo(0.6);
+    expect(progress(otherTarget)).toBe(0);
+    expect(progress(grudge)).toBe(0);
+    // A second kiss (the next day) closes it: a courtship that got what it wanted.
+    updatePairIntimacy(a, b, (p) => { p.lastKissAt = NOW - 2 * DAY; });
+    onKissConversationEnded(warm(a, b, 2), rng0);
+    expect(db.select().from(goals).where(eq(goals.id, wooing)).get()!.status).toBe('completed');
+  });
+
+  it('a refused kiss moves no goal', () => {
+    const { a, b } = pair({ romanceA: 70, romanceB: 20 });
+    const id = db.insert(goals).values({
+      agent_id: a, type: 'seduce', target_id: b, motivation: 'x', priority: 0.5, progress: 0, status: 'active', created_at: 0,
+    }).returning({ id: goals.id }).get().id;
+    onKissConversationEnded(warm(a, b), rng0);
+    expect(db.select().from(goals).where(eq(goals.id, id)).get()!.progress).toBe(0);
   });
 
   it('an eligible pair kisses: tag, first_kiss event, feed row, memories, longing relieved', () => {
