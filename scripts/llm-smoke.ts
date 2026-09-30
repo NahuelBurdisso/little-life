@@ -2,10 +2,12 @@
  * Send one of each structured prompt (built by the real prompt builders from a
  * fixed fake agent) to a model and show what comes back and what the game's
  * parser makes of it. A fast check after editing a prompt or schema, and a
- * quick look at how a new model handles them — no server, no database.
+ * quick look at how a new model handles them — no server, and no live database: the prompt builders
+ * read the live rules, so `throwawayDb.ts` points them at a scratch copy of the test schema.
  *
  *   npx tsx scripts/llm-smoke.ts [--model gemma4:26b] [--only plan.daily,goal.review]
  */
+import './throwawayDb'; // first: the prompt builders reach server/db, which must never be the live world
 import { callOllamaChat } from '../server/ai/ollama';
 import { CONFIG } from '../server/lib/constants';
 import type { LLMPurpose } from '../server/ai/llmMetrics';
@@ -15,6 +17,7 @@ import { buildGoalReviewPrompt, buildPivotPrompt, buildAmbitionGenerationPrompt 
 import { parseGoalReview, parsePivotResult, parseAmbitionGeneration } from '../server/lib/goals/goalParser';
 import { buildQuestionPrompt, buildSynthesisPrompt } from '../server/lib/memory/reflectionPrompts';
 import { parseQuestions, parseInsights } from '../server/lib/memory/reflectionParser';
+import { buildConsentPrompt, parseConsent } from '../server/lib/intimacy/consentPrompt';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -96,6 +99,31 @@ const cases: Case[] = [
     purpose: 'reflection.insights', numPredict: 512,
     prompt: buildSynthesisPrompt({ name: 'Diego Santos', personality, traits, questions: ['Why does Marco keep humiliating me?', 'Can I afford to stay in this town?', 'Who here is actually on my side?'], evidence: memories.slice(0, 5).map((description, i) => ({ lineNum: i + 1, description })) }),
     parse: parseInsights,
+  },
+  {
+    // Adult layer: did the one who was asked say yes? Two transcripts (a warm yes and a polite no)
+    // so a model that answers "accepted" for both shows up as a wrong answer, not an OK. The prompt
+    // module is pure (no database), like the other builders here.
+    purpose: 'intimacy.consent', numPredict: 80,
+    prompt: buildConsentPrompt({
+      lines: [
+        { speakerId: 1, speaker: 'Diego Santos', text: 'Lucia, would you spend the evening with me, somewhere quiet?' },
+        { speakerId: 2, speaker: 'Lucia Fernandez', text: 'I would like that very much, Diego. Come by the house after supper.' },
+      ],
+      initiatorName: 'Diego Santos', answererId: 2, answererName: 'Lucia Fernandez', willingness: 0.8,
+    }),
+    parse: (t) => { const r = parseConsent(t); return r?.accepted === true ? r : null; },
+  },
+  {
+    purpose: 'intimacy.consent', numPredict: 80,
+    prompt: buildConsentPrompt({
+      lines: [
+        { speakerId: 1, speaker: 'Diego Santos', text: 'Lucia, would you spend the evening with me, somewhere quiet?' },
+        { speakerId: 2, speaker: 'Lucia Fernandez', text: 'That is kind of you, Diego, but no. I am not ready for that.' },
+      ],
+      initiatorName: 'Diego Santos', answererId: 2, answererName: 'Lucia Fernandez', willingness: 0.5,
+    }),
+    parse: (t) => { const r = parseConsent(t); return r?.accepted === false ? r : null; },
   },
 ];
 

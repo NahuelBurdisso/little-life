@@ -23,6 +23,7 @@ import { isAdultContent } from '../worldRules';
 import { gameMinutesNow } from '../worldClock';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isIntimacyEligible } from './eligibility';
+import { buildConsentPrompt, parseConsent, type ConsentInput, type ConsentLine } from './consentPrompt';
 import { KISSED_TAG } from './kiss';
 import {
   forEachPairIntimacy, forEachStay, getAgentIntimacy, getPairIntimacy, getStay, updatePairIntimacy, type PairIntimacy,
@@ -101,8 +102,6 @@ export const RENDEZVOUS_QUEUE_PRIORITY = PROPOSAL_QUEUE_PRIORITY;
 export const RENDEZVOUS_SEEK_SCORE = 6300;
 /** The trigger_reason of the queued conversation. */
 export const RENDEZVOUS_TRIGGER = 'rendezvous';
-/** LLM consent reads only the tail of the conversation: the answer is in the last lines. */
-export const CONSENT_LINES = 4;
 
 // ─── Pure rules (exported for tests) ─────────────────────────────────────────
 
@@ -168,76 +167,12 @@ export function isRendezvousHour(hour: number): boolean {
 
 // ─── Reading the answer ──────────────────────────────────────────────────────
 
-export interface ConsentLine {
-  speakerId: number;
-  speaker: string;
-  text: string;
-}
-
 export type ConsentSource = 'llm' | 'regex' | 'rule' | 'character';
 
 export interface ConsentDecision {
   accepted: boolean;
   source: ConsentSource;
   reason?: string;
-}
-
-export interface ConsentInput {
-  /** The transcript, oldest first. */
-  lines: readonly ConsentLine[];
-  initiatorName: string;
-  answererId: number;
-  answererName: string;
-  /** `willingness` of the one who was asked. */
-  willingness: number;
-}
-
-export function buildConsentPrompt(input: ConsentInput): { system: string; user: string; format: Record<string, unknown> } {
-  const transcript = input.lines.slice(-CONSENT_LINES)
-    .map((l) => `${firstName(l.speaker)}: ${l.text}`).join('\n');
-  const asker = firstName(input.initiatorName);
-  const answerer = firstName(input.answererName);
-  const system = `You read the end of a short conversation in a small town around 1900. ${asker} has asked ${answerer} to spend the evening together somewhere private.
-
-${transcript}
-
-Decide whether ${answerer} accepted the invitation. A clear yes, or a warm and willing reply, is accepted. A no, a refusal, a deflection, an excuse or real hesitation is not. Judge only ${answerer}'s own words.
-
-Reply with JSON: {"accepted": true or false, "reason": "a few words"}`;
-  return {
-    system,
-    user: `Did ${answerer} accept?`,
-    format: {
-      type: 'object',
-      properties: { accepted: { type: 'boolean' }, reason: { type: 'string', maxLength: 120 } },
-      required: ['accepted', 'reason'],
-    },
-  };
-}
-
-/** `{accepted, reason}` from whatever the model returned, or null when it is unusable. Tolerant of prose around the JSON and of "yes"/"true" strings. */
-export function parseConsent(raw: string): { accepted: boolean; reason: string } | null {
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
-  let data: unknown;
-  try {
-    data = JSON.parse(raw.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-  if (!data || typeof data !== 'object') return null;
-  const d = data as Record<string, unknown>;
-  let accepted: boolean | null = null;
-  if (typeof d.accepted === 'boolean') accepted = d.accepted;
-  else if (typeof d.accepted === 'string') {
-    const v = d.accepted.trim().toLowerCase();
-    if (v === 'true' || v === 'yes') accepted = true;
-    else if (v === 'false' || v === 'no') accepted = false;
-  }
-  if (accepted === null) return null;
-  const reason = typeof d.reason === 'string' ? d.reason.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
-  return { accepted, reason };
 }
 
 /** One structured call; null when it fails or is unusable (the caller falls back). */

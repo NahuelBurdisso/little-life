@@ -18,10 +18,10 @@ import { simEvents } from '../../simEvents';
 import { gameMinutes } from '../../gameClock';
 import { setRuleOverrides } from '../../worldRules';
 import {
-  CHARACTER_VETO_BELOW, CONSENT_LINES, REFUSAL_MOOD, REFUSAL_MOOD_MINUTES, REFUSAL_RETRY_MINUTES, buildConsentPrompt,
-  decideConsent, onRendezvousConversationEnded, parseConsent, registerRendezvousListener, regexConsent,
-  type ConsentInput, type ConsentLine,
+  CHARACTER_VETO_BELOW, REFUSAL_MOOD, REFUSAL_MOOD_MINUTES, REFUSAL_RETRY_MINUTES,
+  decideConsent, onRendezvousConversationEnded, registerRendezvousListener, regexConsent,
 } from '../rendezvous';
+import { CONSENT_LINES, buildConsentPrompt, parseConsent, type ConsentInput, type ConsentLine } from '../consentPrompt';
 import { clearIntimacy, ensureAgentIntimacy, getPairIntimacy, updatePairIntimacy } from '../state';
 import { KISSED_TAG } from '../kiss';
 
