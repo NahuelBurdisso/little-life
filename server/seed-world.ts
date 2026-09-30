@@ -1,93 +1,42 @@
 /**
- * Re-initializes the game world with the full 12-character cast.
- * Calls the running server's setup.initialize endpoint.
- * Run with: npx tsx server/seed-world.ts
+ * Re-initializes the running server's world as the setup wizard's Quick Start
+ * does: the default cast and relationships, the default world/rules/worldgen,
+ * and the default drama preset (so the opening hooks, lib/dramaHooks.ts, are
+ * seeded too). Calls the running server's setup.initialize endpoint, which
+ * replaces the world in whatever database that server has open.
+ *
+ * Run with: npx tsx server/seed-world.ts [--seed <seed>]
+ *
+ * It used to post `AGENT_SEEDS` with its own rules, 08:00 and no scenario — a
+ * town no player ever gets from the wizard, with none of the starting drama.
+ * The defaults are imported rather than restated (as scripts/soak.ts does) so
+ * this follows the wizard when they change.
  */
-import { AGENT_SEEDS } from './data/agents';
 import { createTRPCClient, createWSClient, wsLink } from '@trpc/client';
 import type { AppRouter } from './router';
 import WebSocket from 'ws';
+import { getDefaultAgents, getDefaultRelationships } from '../src/components/setup/defaults';
+import { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } from '../src/components/setup/types';
 
-const agents = AGENT_SEEDS.map((seed, i) => ({
-  id: `agent-${i + 1}`,
-  name: seed.name,
-  age: seed.age,
-  gender: seed.gender,
-  bio: seed.bio,
-  traits: seed.traits,
-  job: seed.job,
-  jobTitle: seed.jobTitle,
-  salary: seed.salary,
-  homeName: seed.homeName,
-  workplaceName: seed.workplaceName,
-  schedule: seed.schedule,
-  personality: seed.personality,
-  backstoryMemories: seed.backstoryMemories,
-  aspiration: getAspiration(seed),
-}));
+const seedArg = process.argv.indexOf('--seed');
+// The wizard draws a fresh seed per visit; so does this, unless one is given.
+const seed = seedArg >= 0 ? process.argv[seedArg + 1] : Math.random().toString(36).slice(2, 10);
 
-function getAspiration(seed: typeof AGENT_SEEDS[0]) {
-  const p = seed.personality;
-  if (p.vanity > 60) return { type: 'legacy', intensity: 0.7 };
-  if (p.sensuality > 70) return { type: 'love', intensity: 0.8 };
-  if (p.curiosity > 70) return { type: 'knowledge', intensity: 0.7 };
-  if (p.impulsiveness > 60) return { type: 'freedom', intensity: 0.6 };
-  if (p.loyalty > 70) return { type: 'love', intensity: 0.6 };
-  return { type: 'legacy', intensity: 0.5 };
-}
-
-// Build relationships (deduplicated)
-const relationships: any[] = [];
-const seenPairs = new Set<string>();
-for (const seed of AGENT_SEEDS) {
-  for (const rel of seed.initialRelationships) {
-    const key = [seed.name, rel.otherName].sort().join('|');
-    if (seenPairs.has(key)) continue;
-    seenPairs.add(key);
-    relationships.push({
-      agentAName: seed.name,
-      agentBName: rel.otherName,
-      friendshipAB: rel.friendshipAB,
-      friendshipBA: rel.friendshipBA,
-      romanceAB: rel.romanceAB,
-      romanceBA: rel.romanceBA,
-      trustAB: rel.trustAB,
-      trustBA: rel.trustBA,
-      familiarity: rel.familiarity,
-      status: rel.status,
-      tags: rel.tags,
-    });
-  }
-}
-
+const agents = getDefaultAgents();
 const setupConfig = {
   agents,
-  relationships,
-  world: {
-    season: 'spring' as const,
-    weather: 'sunny' as const,
-    startHour: 8,
-    startDay: 1,
-  },
-  rules: {
-    deathEnabled: true,
-    sicknessRate: 'low',
-    contagionRate: 'low',
-    dramaIntensity: 'high',
-    tickSpeed: 1,
-    startingMoney: 50,
-  },
-  worldgen: {
-    sizeTier: 'auto' as const,
-    overrides: {},
-  },
+  relationships: getDefaultRelationships(),
+  world: DEFAULT_WORLD,
+  rules: DEFAULT_RULES,
+  worldgen: { ...DEFAULT_WORLDGEN, seed },
+  scenario: { ...DEFAULT_PRESET.values, seed },
 };
 
 async function main() {
-  console.log(`Seeding world with ${agents.length} agents, ${relationships.length} relationships...`);
+  console.log(`Seeding world with ${agents.length} agents (preset ${DEFAULT_PRESET.label}, seed ${seed})...`);
 
   const wsClient = createWSClient({
-    url: 'ws://localhost:3001',
+    url: process.env.VITE_WS_URL ?? 'ws://localhost:3001',
     WebSocket: WebSocket as any,
   });
 
