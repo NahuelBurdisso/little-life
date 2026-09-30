@@ -49,6 +49,66 @@ reads tags, `drama` feed rows with `metadata.beat`, `current_action.zoneActivity
 | Portrait mood | `smitten` (blush) |
 | Emotes | `blush`, `kiss`, `wink` |
 
+## Amendments from the code review (override the task text where they conflict)
+
+- **A1 Single romance choke point (Task 3).** Positive romance also comes from seduction
+  (`engine/systems/states.ts:~2385`, no age check), gifts (`giftEngine.ts:~398`), ripple rules,
+  secretSharing, townCalendar, templateBeats. In `engine/systems/relationships.ts` event application
+  (~396-413, where `rDeltaAB/BA` come from `event.romance_delta_*`) zero any *positive* romance delta when
+  either party is under 18 or `!canBeAttractedTo(self, other)` for that direction. This is the
+  authoritative adults-only/orientation guarantee; the `computeRelationshipDeltas` multiplier (chemistry,
+  age gap) is applied **after** the reciprocity block (~140-147). Add the new ctx fields as optional
+  (`relationshipThresholds.test.ts` builds the ctx by hand). Also gate the seduction state's target
+  selection with `isIntimacyEligible`. World seed: `world_state.setup_config.worldgen.seed` (fallback 0).
+- **A2 Orientation seeding (Task 2).** Agent inserts: `routers/setup.ts:~413` (`seedWorld`; relationships
+  are inserted later ~700-712 → run an update pass after them), `db/seed.ts:~147`, and newcomers in
+  `lib/residents.ts:~239` (assign at insert: 88/7/5). Startup backfill goes in `runStartupSteps([...])`
+  inside `server/db/index.ts` `initSchema` (idempotent, runs on save load too), not `server/index.ts`.
+- **A3 Feed rows (Tasks 6, 9, 12).** `logActivity` has no per-row importance/newsworthy: both are per
+  activity TYPE in `server/data/activityRegistry.ts`, and `drama` is base 0.8 (gazette-worthy). Register new
+  types instead of `drama` rows: `first_kiss` (0.65), `kiss` (0.3, newsworthy false, short retention),
+  `kiss_rebuffed` (0.5, newsworthy false), `tryst` (0.5, newsworthy false), `caught` (0.75),
+  `scandal` (0.85). Still set `metadata.beat` (add the beats to the `DramaBeat` union, add `'kiss'` to
+  `DramaBeatKind`). The client `beatDetect.ts` returns null for non-`drama` types (~162) → map these types
+  explicitly like `engagement`/`wedding` (~145-148). Alert tiers in `alertTiers.ts` per type.
+- **A4 Pivotal events (Tasks 6, 10).** `ROMANTIC_EVENTS` rows are kept forever by
+  `pruneRelationshipEvents`. Use relationship event types `first_kiss` and `first_tryst` (pivotal, in
+  `ROMANTIC_EVENTS`) and plain `kiss` / `tryst` for routine ones (not pivotal).
+- **A5 Facts (Tasks 4, 6, 7, 9).** `createFact` dedupes on type+subject+target among non-public rows and
+  returns null without merging `known_by`. Export a `addKnowers(factId|match, ids)` helper from
+  `gossip.ts` (generalise the one in `family.ts:~475`) and use "create or add knowers" everywhere intimacy
+  creates facts. `gossip:learned` payload gets `factType` and `factId` at `gossip.ts:~594` (the only site
+  with a fact row); `affair_heartbreak` matches `factType === 'affair'`. Witnesses learning via
+  `known_by` don't emit `gossip:learned` → intimacy ripple reactions listen to `intimacy:*` events.
+- **A6 conversation:ended fires once per participant** (conversations.ts ~1395, ~1908) → dedupe by
+  `conversationId` (or act on one side only, like milestones). Relationship deltas apply next tick
+  (`processed:false`), so romance/tags read at listener time are one conversation stale — acceptable.
+- **A7 Decisions (Tasks 8, 9).** Insert the tryst (6350) then rendezvous (6300) blocks right after the
+  proposal-seek block (~1696-1706). Sleep target is hard-coded to `agent.home` at decisions.ts ~467
+  (energy emergency), ~655/~660 (`checkSchedule`), ~1855 (supper) and the validation ~1868-1871 → all go
+  through `sleepTargetFor(agent)`. Zone-verb duration is chosen ~1948-1962 (`idle` default 10 min) → special
+  case `tryst` 60-90 min. `buildAction` (~1424) gains optional `partnerId` on `current_action`. The
+  `sneak_home` walk is produced by the tryst tier code at wake-up. `move pairKey` to `server/lib/utils.ts`
+  (importing milestonesEngine runs its side effects).
+- **A8 Beds (Task 4).** Only `INTERIOR_ZONES.home.bed` changes; update `zoneActions.test.ts:~41-57` (and
+  `interiorDataIntegrity.test.ts` if it pins it). Bed `allowedActions` += `tryst`.
+- **A9 Family refactor (Task 12).** `Pregnancy.fatherId` becomes `number | null`, add `unwed: boolean`;
+  export a `startPregnancy({ motherId, fatherId, trueFatherId?, unwed })` from `family.ts` (wrapping the
+  private `conceive`). Unwed pregnancies skip `tellSpouse`/`announce` (their own timers in
+  `intimacy/pregnancy.ts`); birth wording stays neutral. Roll conception on a tryst **only when the mother is
+  unmarried**; a married mother's affair already goes through `conceive`'s lover-paternity roll (husband =
+  `fatherId`, lover = `trueFatherId`). A denied father → `father_id = null` (NOT `true_father_id`, which
+  drives the paternity drama).
+- **A10 Shotgun proposal (Task 12) / same-sex gate (Task 10).** Proposal state and helpers are private and
+  gated on `status === 'partners'` (tick filter ~327, `onConversationEnded` ~602, `ready()` ~429 incl.
+  `isSpokenFor`). Add an exported `queueShotgunProposal(proposerId, partnerId)` that sets
+  `{proposerId, pendingSince, shotgun: true}` and make those three checks accept `shotgun` pairs. Add the
+  opposite-sex check in `ready()`.
+- **A11 Client types.** `AgentData.current_action` (SpritePool.ts:5-30) lacks `zoneActivity`/`partnerId`
+  → extend the type. `GameCanvas.tsx:~627` must pass `current_action` into `LightingSystem.update`.
+- **A12 Prompts (Tasks 8, 14).** `RENDEZVOUS_TOPIC` needs the same "can say no" exemptions as
+  `PROPOSAL_TOPIC` at prompts.ts ~416, ~484, ~805.
+
 ## File map
 
 Create:
@@ -490,3 +550,31 @@ feed row; client nudge button where pair nudges live.
 - [ ] `npx tsx scripts/llm-smoke.ts` (consent prompt added to smoke if the script lists prompts).
 - [ ] `preview_start little-life-verify`, screenshot a kiss beat, couple walking, lights-out home.
 - [ ] Update `docs/STATUS.md` (area row, open issues, test count), commit `docs(status): intimacy realism`.
+
+### Task 25: Narrative integration audit (requested by the user)
+
+Every new event must reach the story layer, not just the sim. Audit each path end to end, fix gaps
+with tests, and record the result as a table in `docs/STATUS.md`:
+
+| Event | Feed row + alert tier | Chronicle arc (`chronicle.ts`, `storyBeats.ts`) | Gazette (`gazette.ts`) | Recap (`recap.ts`) | Memory + reflection | Goals (`goalRegistry.ts`) | Gossip / cascade | Pair dossier |
+|---|---|---|---|---|---|---|---|---|
+| first kiss / rebuff | | | | | | | | |
+| tryst (secret / open) | | | | | | | | |
+| caught at dawn | | | | | | | | |
+| affair from act → discovery | | | | | | | | |
+| suspicion → confrontation | | | | | | | | |
+| unwed pregnancy → shotgun wedding / scandal | | | | | | | | |
+
+- [ ] Chronicle: `kiss` and `tryst` in `ROMANTIC_EVENTS`; love triangles detected from `lovers` + spouse;
+      scandal arcs from `illegitimate_pregnancy` / `tryst_seen` facts.
+- [ ] Gazette: only *public* knowledge prints (common-knowledge facts, witnessed kisses, scandals,
+      shotgun weddings) — period-discreet wording; private trysts never leak into the paper.
+- [ ] Alerts: first kiss of a favourite = minor, caught / scandal = major, tryst of a favourite = minor.
+- [ ] Goals: `seduce` completes on kiss/tryst; affair discovery → `revenge` (existing) fires from
+      act-born facts; jilted after rebuff → reflection-worthy memory; `win_back` / `end_affair` if goals
+      of that kind exist (don't invent a new goal system).
+- [ ] Reflection: first kiss / first night / being caught are high-importance memories that surface in
+      reflections and self-descriptions (check importance thresholds).
+- [ ] Autoplay boredom nudger / profiler counts intimacy beats as engagement (`engagementCollector.ts`).
+- [ ] One live verify run (adultContent on) reading the chronicle, gazette and recap after 1–2 game days.
+- [ ] Commit `feat(story): intimacy reaches the chronicle, the paper and the recap`.
