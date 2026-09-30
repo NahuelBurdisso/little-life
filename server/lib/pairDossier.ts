@@ -34,7 +34,7 @@ import { isPivotalEvent } from './storyBeats';
 import { CONFIG } from './constants';
 import { clamp } from './utils';
 import { childAgeDays, childrenOfAny } from './familyState';
-import { isAdultAge } from './intimacy/eligibility';
+import { ADULT_ONLY_EVENT_TYPES, isAdultAge } from './intimacy/eligibility';
 import { KISSED_TAG } from './intimacy/kiss';
 import { checkArrangeRendezvous } from './intimacy/rendezvous';
 import { getPairIntimacy } from './intimacy/state';
@@ -448,7 +448,12 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
 
   // Timeline order is by when it happened; the sparkline below needs processing
   // order (id), so it walks `eventRows` as fetched.
-  const timeline = [...eventRows]
+  // With the rule off the adult layer's own events (a night, being caught, a suspicion) are left
+  // out, so turning it off hides the past as well as stopping the future. The series below still
+  // walks every row: their deltas really did move the numbers.
+  const adultOn = isAdultContent();
+  const timeline = eventRows
+    .filter((e) => adultOn || !ADULT_ONLY_EVENT_TYPES.includes(e.event_type))
     .sort((x, y) => minuteOf(x) - minuteOf(y) || x.id - y.id)
     .slice(-DOSSIER_EVENTS)
     .map((e): DossierEvent => {

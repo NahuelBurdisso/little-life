@@ -76,6 +76,20 @@ const ADULTS_ONLY_FACT_TYPES: readonly string[] = [
 ];
 
 /**
+ * `relationship_events.event_type`s that only exist because of the adult layer (a night together,
+ * being caught, a partner's suspicion). While the `adultContent` rule is off, history views (the
+ * pair dossier's timeline, the chronicle's arcs) leave them out, so switching the rule off hides
+ * the layer's past as well as stopping its future. Kisses are PG and stay.
+ */
+export const ADULT_ONLY_EVENT_TYPES: readonly string[] = ['first_tryst', 'tryst', 'caught', 'suspicion'];
+
+/**
+ * Fact types the chronicle would turn into a scandal arc that stem from a night together. Hidden
+ * with the rule off, like the events above.
+ */
+export const ADULT_ONLY_SCANDAL_TYPES: readonly string[] = ['tryst_seen', 'illegitimate_pregnancy'];
+
+/**
  * Whether this fact is about romance or intimacy, so that a minor may neither hear
  * it nor pass it on. Beyond the listed types, a `pregnancy` at sensitivity 3 is an
  * unwed one (family.ts creates it at 3 when unwed, 2 when married): the married

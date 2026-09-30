@@ -78,6 +78,7 @@ function input(over: Partial<ChronicleInput> = {}): ChronicleInput {
     relationships: [],
     events: [],
     secrets: [],
+    adultContent: true,
     ...over,
   };
 }
@@ -484,6 +485,59 @@ describe('buildArcs and intimacy', () => {
     expect(arcs[0].secret).toBeUndefined();
     // Another sensitive secret held by two people is still not a scandal.
     expect(buildArcs(input({ secrets: [secretFact({ known_by: [2, 3] })] }), NOW).some((a) => a.kind === 'scandal')).toBe(false);
+  });
+
+  describe('with the adult content rule off', () => {
+    it('the lovers tag makes no triangle and no secret couple, and the night is not a beat', () => {
+      const arcs = buildArcs(affairTown({ adultContent: false }), NOW);
+      expect(arcs.find((a) => a.kind === 'love_triangle')).toBeUndefined();
+      for (const arc of arcs) {
+        expect(arc.beats.map((b) => b.eventType)).not.toContain('first_tryst');
+        expect(arc.secret).toBeUndefined();
+      }
+      // Nothing else links Jonas and Edda but the night, so they are no story at all.
+      expect(arcs.some((a) => a.participants.includes(3))).toBe(false);
+    });
+
+    it('a hidden couple who turned the rule off is no longer a secret romance arc', () => {
+      const town = affairTown({
+        relationships: [
+          rel(1, 2, { status: 'partners', romance_ab: 80, romance_ba: 80, tags: ['partner'] }),
+          rel(2, 3, { status: 'partners', romance_ab: 70, romance_ba: 70, tags: ['partner', 'lovers'] }),
+        ],
+      });
+      expect(buildArcs(town, NOW).find((a) => a.participants.includes(3))?.secret).toBe(true);
+      const off = buildArcs({ ...town, adultContent: false }, NOW).find((a) => a.kind === 'romance' && a.participants.includes(3));
+      expect(off?.secret).toBeUndefined();
+      expect(off?.beats.map((b) => b.eventType) ?? []).not.toContain('first_tryst');
+    });
+
+    it('tryst, caught and suspicion events drop out of a romance arc, kisses stay', () => {
+      const arcs = buildArcs(input({
+        adultContent: false,
+        relationships: [rel(2, 3, { status: 'partners', romance_ab: 70, romance_ba: 70, tags: ['kissed'] })],
+        events: [
+          evt(2, 3, 'first_kiss', 0.7, 90, { romance_delta_ab: 5, romance_delta_ba: 5 }),
+          evt(2, 3, 'first_tryst', 0.8, 60, { romance_delta_ab: 5, romance_delta_ba: 5 }),
+          evt(2, 3, 'tryst', 0.5, 40),
+          evt(2, 3, 'caught', -0.6, 20),
+          evt(2, 3, 'suspicion', -0.3, 10),
+        ],
+      }), NOW);
+      const types = arcs.find((a) => a.kind === 'romance')!.beats.map((b) => b.eventType);
+      expect(types).toEqual(['first_kiss']);
+    });
+
+    it('a sighting or an unwed pregnancy is no scandal arc, while an ordinary secret still is', () => {
+      const off = (secret: ChronicleInput['secrets'][number]) =>
+        buildArcs(input({ adultContent: false, secrets: [secret], agents: [...AGENTS, { id: 5, name: 'Ilse' }] }), NOW);
+      expect(off(secretFact({ type: 'tryst_seen', subject_id: 3, target_id: 2, known_by: [1, 4, 5] }))).toEqual([]);
+      expect(off(secretFact({
+        type: 'illegitimate_pregnancy', subject_id: 1, target_id: 2, known_by: [1, 2], source: 'observed',
+      }))).toEqual([]);
+      expect(off(secretFact({ type: 'financial', subject_id: 3, target_id: null, known_by: [1, 4, 5] }))
+        .some((a) => a.kind === 'scandal')).toBe(true);
+    });
   });
 
   it('a tryst seen by three, or an affair the spouse learned of, is a scandal arc', () => {

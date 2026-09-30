@@ -26,6 +26,8 @@ import {
   ROMANTIC_EVENTS,
   isPivotalEvent,
 } from './storyBeats';
+import { ADULT_ONLY_EVENT_TYPES, ADULT_ONLY_SCANDAL_TYPES } from './intimacy/eligibility';
+import { isAdultContent } from './worldRules';
 
 export type ArcKind =
   | 'romance'
@@ -220,6 +222,7 @@ export function detectStoryArcs(): StoryArc[] {
         .from(shared_knowledge)
         .where(eq(shared_knowledge.is_active, true))
         .all(),
+      adultContent: isAdultContent(),
     },
     gameMinutes(world.time),
   );
@@ -237,6 +240,12 @@ export interface ChronicleInput {
   /** Any order; sorted newest-first (by game minute) in `buildArcs`. */
   events: EventRow[];
   secrets: typeof shared_knowledge.$inferSelect[];
+  /**
+   * The `adultContent` rule as it stands. Off, nothing derived from a night together is an arc:
+   * no `lovers`-tag triangles, no tryst/caught/suspicion beats, no scandal about a sighting or an
+   * unwed pregnancy. Required, so a caller cannot forget it and leak the layer's past.
+   */
+  adultContent: boolean;
 }
 
 /**
@@ -252,7 +261,10 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   const nameOf = new Map<number, string>(agentRows.map((a) => [a.id, a.name]));
   const genderOf = new Map<number, string | null>(agentRows.map((a) => [a.id, a.gender ?? null]));
   const relationshipRows = input.relationships;
-  const eventRows = [...input.events].sort(newestFirst);
+  // Rule off: the adult layer's beats are not part of any story (see ADULT_ONLY_EVENT_TYPES).
+  const eventRows = input.events
+    .filter((e) => input.adultContent || !ADULT_ONLY_EVENT_TYPES.includes(e.event_type))
+    .sort(newestFirst);
 
   // Newest-first within each pair, inherited from the caller's ordering.
   const eventsByPair = new Map<string, EventRow[]>();
@@ -299,7 +311,8 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   };
   /** Lovers who must hide it (spoken for elsewhere, or a same-sex pair in 1900: tryst.ts `secret`) and have not been found out. */
   const isHiddenPair = (rel: { agent_a: number; agent_b: number; tags: string[] }): boolean =>
-    rel.tags.includes(LOVERS_TAG)
+    input.adultContent
+    && rel.tags.includes(LOVERS_TAG)
     && !affairIsLoose(rel.agent_a, rel.agent_b)
     && (committedElsewhere(rel.agent_a, rel.agent_b) != null
       || committedElsewhere(rel.agent_b, rel.agent_a) != null
@@ -422,6 +435,8 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   // a person who is not their partner is a triangle whatever the romance numbers say, since
   // the act, not pining, is what started it. Fallen-out exes (`lovers` is sticky) are not.
   for (const lov of relationshipRows) {
+    // `lovers` is a sticky tag: with the rule off it is history the UI must not show.
+    if (!input.adultContent) break;
     if (!lov.tags.includes(LOVERS_TAG) || HOSTILE_STATUSES.has(lov.status)) continue;
     if (!nameOf.has(lov.agent_a) || !nameOf.has(lov.agent_b)) continue;
     for (const [anchor, third] of [[lov.agent_a, lov.agent_b], [lov.agent_b, lov.agent_a]] as const) {
@@ -510,6 +525,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   // clock everywhere it is written, so it can't be shown as an age.
   for (const secret of input.secrets) {
     if (secret.sensitivity < 3) continue;
+    if (!input.adultContent && ADULT_ONLY_SCANDAL_TYPES.includes(secret.type)) continue;
     const holders = secret.known_by?.length ?? 0;
     // An unwed pregnancy is only a fact once she shows and the town has been told (a `scandal`
     // feed row went out with it), so it is a scandal from the first person who holds it.

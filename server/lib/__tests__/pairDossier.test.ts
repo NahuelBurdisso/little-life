@@ -12,6 +12,7 @@ import {
 } from '../../db/schema';
 import { applyDiminishing } from '../../engine/systems/relationships';
 import { resetChronicleCache } from '../chronicle';
+import { setRuleOverrides } from '../worldRules';
 import {
   conversationMinute,
   DOSSIER_CONVERSATIONS,
@@ -277,6 +278,26 @@ describe('getPairDossier', () => {
       const friendship = dossier.history.friendship;
       expect(friendship[0].aToB).toBeCloseTo(21.2766, 3);
       expect(friendship[friendship.length - 1].aToB).toBe(30);
+    });
+  });
+
+  describe('with the adult content rule off', () => {
+    afterEach(() => setRuleOverrides({ adultContent: false }));
+
+    it('leaves night, caught and suspicion events out of the timeline, and shows them again with the rule on', () => {
+      relate(a, b, { fAB: 50, fBA: 50 });
+      logEvent(a, b, { minute: NOW - 500, type: 'first_kiss', sentiment: 0.7 });
+      for (const [i, type] of ['first_tryst', 'tryst', 'caught', 'suspicion'].entries()) {
+        logEvent(a, b, { minute: NOW - 400 + i, type, sentiment: 0.5 });
+      }
+      logEvent(a, b, { minute: NOW - 100, type: 'conversation' });
+
+      setRuleOverrides({ adultContent: false });
+      expect(getPairDossier(a, b, NOW_MS)!.events.map((e) => e.eventType)).toEqual(['first_kiss', 'conversation']);
+
+      setRuleOverrides({ adultContent: true });
+      expect(getPairDossier(a, b, NOW_MS)!.events.map((e) => e.eventType))
+        .toEqual(['first_kiss', 'first_tryst', 'tryst', 'caught', 'suspicion', 'conversation']);
     });
   });
 
