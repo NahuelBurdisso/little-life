@@ -93,6 +93,21 @@ export function pickConversationGist(
   lines: readonly GistLine[],
   nameOf: (speakerId: number) => string | undefined = () => undefined,
 ): ConversationGist | null {
+  const best = pickLoadedLine(lines, nameOf);
+  return best ? { speakerId: best.speakerId, quote: shorten(best.text) } : null;
+}
+
+/**
+ * The most loaded line itself (sanitised, not shortened), or null when nothing
+ * clears the gist's bar. Confided secrets use it: they used to take the
+ * speaker's latest line with four words in it, so a canned "Lucia Fernandez
+ * smiled and nodded." and a goodbye ("I will see you at the house later this
+ * evening.") became sensitivity-3 secrets that the town then passed around.
+ */
+export function pickLoadedLine(
+  lines: readonly GistLine[],
+  nameOf: (speakerId: number) => string | undefined = () => undefined,
+): { speakerId: number; text: string } | null {
   let best: { line: GistLine; text: string; score: number } | null = null;
   for (const line of lines) {
     if (!line.text || isFallbackMessage(line, nameOf(line.speakerId))) continue;
@@ -104,5 +119,5 @@ export function pickConversationGist(
     if (s !== null && (!best || s > best.score)) best = { line, text, score: s };
   }
   if (!best || best.score < MIN_SCORE) return null;
-  return { speakerId: best.line.speakerId, quote: shorten(best.text) };
+  return { speakerId: best.line.speakerId, text: best.text };
 }

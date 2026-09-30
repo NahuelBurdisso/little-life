@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { pickConversationGist } from '../conversationGist';
+import { pickConversationGist, pickLoadedLine } from '../conversationGist';
 import { initMemoryObserver } from '../MemoryObserver';
 import type { MemoryService } from '../MemoryService';
 import { simEvents } from '../../simEvents';
@@ -16,6 +16,29 @@ const confession = [
   { speakerId: YUKI, text: 'Oh. I feel the same way, Rosa. I have for months.', sentiment: 0.8 },
   { speakerId: ROSA, text: 'See you tomorrow then?', sentiment: 0.4 },
 ];
+
+describe('pickLoadedLine (confided secrets)', () => {
+  const nameOf = (id: number) => (id === ROSA ? 'Rosa Chen' : 'Yuki Tanaka');
+
+  it('never picks a canned fallback action, even a long one', () => {
+    // The playtest turned "Lucia Fernandez smiled and nodded." into a secret.
+    expect(pickLoadedLine([
+      { speakerId: ROSA, text: 'Rosa Chen smiled and nodded.', sentiment: 0 },
+      { speakerId: ROSA, text: 'Rosa Chen paused thoughtfully.', sentiment: 0, fallback: true },
+    ], nameOf)).toBeNull();
+  });
+
+  it('skips a plain goodbye, keeps the disclosure and returns the unshortened line', () => {
+    const line = pickLoadedLine([
+      { speakerId: ROSA, text: "I'm scared I've lost Yuki for good. I never told her how I feel about her.", sentiment: -0.5 },
+      { speakerId: ROSA, text: 'I will see you at the house later this evening. Good luck with the tinctures.', sentiment: 0.2 },
+    ], nameOf);
+    expect(line?.text).toBe("I'm scared I've lost Yuki for good. I never told her how I feel about her.");
+    expect(pickLoadedLine([
+      { speakerId: ROSA, text: 'I will see you at the house later this evening. Good luck with the tinctures.', sentiment: 0.2 },
+    ], nameOf)).toBeNull();
+  });
+});
 
 describe('pickConversationGist', () => {
   it('picks the most loaded line, not the small talk', () => {

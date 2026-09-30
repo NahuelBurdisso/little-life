@@ -63,6 +63,7 @@ import { llmSocialGain, templateSocialGain } from '../../lib/socialGain';
 import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
 import { extractConfidedQuote } from '../../lib/factText';
+import { pickLoadedLine } from '../../lib/memory/conversationGist';
 import {
   emitFightBeat, emitFlirtBeat, emitInsultBeat, findConfessableSin, GRAVE_SINS,
   performConfession, performReconciliation, reactToPartnerAffair,
@@ -1340,16 +1341,19 @@ async function finishCompletedConversation(
         const friendship = rel ? (participantId < otherId ? rel.friendship_ab : rel.friendship_ba) : 0;
         if (friendship > 60) {
           // The secret is what they actually said. Conversations carry no
-          // structured summary, so take the latest line with real speech in it:
-          // stage directions stripped, whole sentences only. A fixed 80-char
+          // structured summary, so take the speaker's most loaded line (the
+          // gist's bar: emotional charge or a disclosure, never a canned
+          // fallback or a goodbye), then whole sentences only. A fixed 80-char
           // cut used to turn "(My heart gives a little skip, and I feel a
           // warmth bloom…" into a sensitivity-3 secret the town then passed
           // around. No quotable line means nothing was confided — no fact.
-          const quote = messages
-            .filter(m => m.speakerId === participantId)
-            .reverse()
-            .map(m => extractConfidedQuote(m.text))
-            .find((q): q is string => q != null);
+          const loaded = pickLoadedLine(
+            messages
+              .filter(m => m.speakerId === participantId)
+              .map(m => ({ speakerId: m.speakerId, text: m.text, sentiment: m.sentiment, fallback: isFallback(m) })),
+            (id) => participants.find((p) => p.id === id)?.name,
+          );
+          const quote = loaded ? extractConfidedQuote(loaded.text) : null;
           if (quote) {
             createFact('secret_told', participantId, otherId, 3, [participantId, otherId], 'confided', {
               quote,
