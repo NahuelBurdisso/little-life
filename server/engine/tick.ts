@@ -27,6 +27,7 @@ import { processAllMoodMomentum } from '../lib/moodMomentum';
 import { tavernTick } from '../lib/tavernEngine';
 import { lonelinessCheck } from '../lib/lonelinessEngine';
 import { dailyLifeHourly } from '../lib/dailyLife';
+import { smallMisdeedsHourly } from '../lib/smallMisdeeds';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { milestonesTick } from '../lib/milestonesEngine';
@@ -356,6 +357,8 @@ export async function gameTick(): Promise<void> {
   if (hourChanged(transitions)) {
     // A burnt loaf, a soaking, a coin in the street (lib/dailyLife.ts): the day's friction.
     runGuarded('dailyLife', () => db.transaction(() => dailyLifeHourly(newTime.hour, worldWithNewTime.weather, nowMinutes)));
+    // A white lie, an unpaid tab, a crush noticed (lib/smallMisdeeds.ts): fresh secrets.
+    runGuarded('smallMisdeeds', () => db.transaction(() => smallMisdeedsHourly(newTime.hour)));
     runGuarded('loneliness', () => lonelinessCheck(nowMinutes));
     runGuarded('confrontation', () => confrontationCheck(totalTicks));
     // The player's challenges, judged on the town's state (lib/challenges/evaluate.ts).

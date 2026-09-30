@@ -129,10 +129,13 @@ export function emitFlirtBeat(flirter: BeatAgent, target: BeatAgent, description
 export const GRAVE_SINS: ReadonlySet<string> = new Set(['theft', 'affair', 'blackmail']);
 
 /**
- * Secrets someone might own up to over small talk: the grave sins plus a drunken scene they
- * regret. Only ones few people know — a secret the whole town has heard is no confession.
+ * Secrets someone might own up to over small talk: the grave sins plus the small misdeeds a
+ * calm town produces (lib/smallMisdeeds.ts). Only ones few people know — a secret the whole
+ * town has heard is no confession.
  */
-export const CONFESSABLE_TYPES: ReadonlySet<string> = new Set([...GRAVE_SINS, 'drunk_incident']);
+export const CONFESSABLE_TYPES: ReadonlySet<string> = new Set([
+  ...GRAVE_SINS, 'drunk_incident', 'debt', 'lie', 'white_lie', 'broken_promise',
+]);
 
 /** A secret of `agentId`'s worth confessing: active, about them, known by two people at most. */
 export function findConfessableSin(agentId: number, types: ReadonlySet<string> = CONFESSABLE_TYPES) {
