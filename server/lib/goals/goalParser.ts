@@ -34,7 +34,7 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-const VALID_ACTIONS = new Set(['continue', 'adjust', 'abandon']);
+const VALID_ACTIONS = new Set(['continue', 'adjust', 'done', 'abandon']);
 
 export function parseGoalReview(raw: string): GoalReviewResult | null {
   const data = safeParse(raw) as Record<string, unknown> | null;
@@ -68,7 +68,7 @@ export function parseGoalReview(raw: string): GoalReviewResult | null {
       const obj = r as Record<string, unknown>;
       return {
         goal_id: obj.goal_id as number,
-        action: obj.action as 'continue' | 'adjust' | 'abandon',
+        action: obj.action as GoalReviewAction['action'],
         reason: obj.reason as string,
         new_strategy: typeof obj.new_strategy === 'string' ? obj.new_strategy : undefined,
       };

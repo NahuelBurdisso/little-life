@@ -213,7 +213,7 @@ describe('buildConversationPrompt', () => {
   it('carries the stable self facts and drops the empty "neutral" reputation', () => {
     const system = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], {
       reputationLabel: 'neutral', reputationScore: 3, hobbies: [], moodMomentum: 0, drinkCount: 0,
-      selfFacts: 'Facts about you (keep them straight): Constable for 6 years; came to town 6 years ago.',
+      selfFacts: 'Facts about you (keep them straight, mention them only when they come up): Constable for 6 years; came to town 6 years ago.',
     });
     expect(system).toContain('Constable for 6 years');
     expect(system).not.toContain('consider you neutral');
@@ -393,6 +393,25 @@ describe('buildConversationPrompt', () => {
     expect(last).toContain(`Don't repeat your question "How are you doing, really?"`);
     // Only the speaker's own lines count — Carlos's "Is it?" is not Ray's question.
     expect(last).not.toContain('Is it?"');
+  });
+
+  it('asks the speaker not to restate a span of years they already mentioned (playtest #4: "twelve years")', () => {
+    const msgs = [
+      { speakerId: 1, text: 'I have kept this valley stable for twelve years.' },
+      { speakerId: 2, text: 'Stability is a fine thing.' },
+      { speakerId: 1, text: 'Order matters.' },
+      { speakerId: 2, text: 'It does.' },
+      { speakerId: 1, text: 'Indeed it does.' },
+      { speakerId: 2, text: 'I was away for 3 years once.' },
+    ];
+    const { messages } = buildConversationPrompt({
+      ...baseParams,
+      conversation: { ...baseParams.conversation, messages: msgs },
+    });
+    const turn = messages[messages.length - 1].content.split('[Your turn]')[1];
+    // Older than the last two own lines, still named; the other side's years are not.
+    expect(turn).toContain(`You've already mentioned "twelve years"`);
+    expect(turn).not.toContain('3 years');
   });
 
   describe('rendezvous (lib/intimacy/rendezvous.ts)', () => {

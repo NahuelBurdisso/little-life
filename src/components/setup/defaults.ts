@@ -34,7 +34,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 1', workplaceName: 'Green Acres Farm',
       schedule: { wakeTime: 5, sleepTime: 20, workStart: 6, workEnd: 15, lunchTime: 12, freeTimePreferences: ['tavern', 'home', 'park'] },
       personality: { honesty: 70, aggression: 35, warmth: 45, impulsiveness: 20, vanity: 15, curiosity: 25, loyalty: 85, morality: 70, sensuality: 20, neuroticism: 30 },
-      aspiration: { type: 'legacy', intensity: 0.65 },
+      aspiration: { type: 'freedom', intensity: 0.65 },
       backstoryMemories: [
         'I\'ve worked this farm for over twenty years, first under Elena\'s parents, now under her. The soil knows my hands better than I do.',
         'My wife Margaret passed seven years ago. I still set two places at the table sometimes out of habit. The farm keeps me from dwelling too much.',
@@ -68,7 +68,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 3', workplaceName: 'Rosa\'s General Store',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 8, workEnd: 18, lunchTime: 12, freeTimePreferences: ['home', 'park', 'tavern'] },
       personality: { honesty: 55, aggression: 30, warmth: 75, impulsiveness: 30, vanity: 40, curiosity: 50, loyalty: 70, morality: 65, sensuality: 40, neuroticism: 35 },
-      aspiration: { type: 'legacy', intensity: 0.95 },
+      aspiration: { type: 'wealth', intensity: 0.95 },
       backstoryMemories: [
         'My parents built this store from a market stall. I grew up counting inventory and making change. This store is more than a business — it\'s their dream made real.',
         'I keep a ledger of everyone\'s credit in town. Some people think I\'m cold for tracking it, but extending credit is how I help without making people feel like charity cases.',
@@ -120,7 +120,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 4', workplaceName: 'Dr. Petrov\'s Clinic',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 8, workEnd: 17, lunchTime: 12, freeTimePreferences: ['park', 'home', 'town_square'] },
       personality: { honesty: 65, aggression: 15, warmth: 80, impulsiveness: 20, vanity: 15, curiosity: 55, loyalty: 75, morality: 80, sensuality: 30, neuroticism: 25 },
-      aspiration: { type: 'legacy', intensity: 1.0 },
+      aspiration: { type: 'love', intensity: 1.0 },
       backstoryMemories: [
         'I came to Little Life with nothing. The town took me in without questions. I owe this place a debt I repay every day by being useful.',
         'I trained as a paramedic before I came here. The skills transferred well. Sofia handles the complex medicine; I handle everything else.',
@@ -137,7 +137,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 5', workplaceName: 'Town Hall',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: ['home', 'town_square', 'tavern'] },
       personality: { honesty: 60, aggression: 35, warmth: 40, impulsiveness: 20, vanity: 70, curiosity: 40, loyalty: 65, morality: 65, sensuality: 25, neuroticism: 45 },
-      aspiration: { type: 'wealth', intensity: 0.9 },
+      aspiration: { type: 'power', intensity: 0.9 },
       backstoryMemories: [
         'I\'ve been mayor for twelve years. Some days it feels like thirty. Every decision affects someone\'s life, and I carry that weight whether people see it or not.',
         'My wife Clara passed four years ago. The town rallied around me, but I threw myself into work instead of grieving properly. I\'m not sure I\'ve stopped.',
@@ -171,7 +171,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 6', workplaceName: 'Carlos\' Workshop',
       schedule: { wakeTime: 7, sleepTime: 23, workStart: 9, workEnd: 16, lunchTime: 12, freeTimePreferences: ['tavern', 'town_square', 'park'] },
       personality: { honesty: 50, aggression: 25, warmth: 70, impulsiveness: 60, vanity: 30, curiosity: 40, loyalty: 55, morality: 50, sensuality: 45, neuroticism: 50 },
-      aspiration: { type: 'legacy', intensity: 0.9 },
+      aspiration: { type: 'pleasure', intensity: 0.9 },
       backstoryMemories: [
         'I never planned to be a handyperson. I just started fixing things for neighbors and never stopped. It\'s not a career — it\'s more like a habit that pays.',
         'My ex-wife used to say I\'d fix everyone\'s house but our own. She wasn\'t wrong. I\'m better at taking care of others than myself.',
@@ -189,7 +189,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 7', workplaceName: 'Rosa\'s General Store',
       schedule: { wakeTime: 7, sleepTime: 23, workStart: 8, workEnd: 18, lunchTime: 12, freeTimePreferences: ['park', 'town_square', 'tavern'] },
       personality: { honesty: 55, aggression: 20, warmth: 70, impulsiveness: 55, vanity: 45, curiosity: 65, loyalty: 60, morality: 60, sensuality: 55, neuroticism: 50 },
-      aspiration: { type: 'legacy', intensity: 0.9 },
+      aspiration: { type: 'freedom', intensity: 0.9 },
       backstoryMemories: [
         'I\'ve lived in Little Life my whole life. I love this place, but sometimes the walls feel like they\'re closing in. There has to be more out there.',
         'I redesigned the store\'s window display last month and sales went up fifteen percent. Rosa didn\'t say much, but I caught her smiling at it.',
@@ -223,7 +223,7 @@ export function getDefaultAgents(): AgentConfig[] {
       homeName: 'Home 9', workplaceName: 'Town Jail',
       schedule: { wakeTime: 6, sleepTime: 22, workStart: 7, workEnd: 17, lunchTime: 12, freeTimePreferences: ['tavern', 'town_square', 'park'] },
       personality: { honesty: 35, aggression: 65, warmth: 30, impulsiveness: 45, vanity: 55, curiosity: 70, loyalty: 50, morality: 40, sensuality: 35, neuroticism: 45 },
-      aspiration: { type: 'knowledge', intensity: 0.9 },
+      aspiration: { type: 'justice', intensity: 0.9 },
       backstoryMemories: [
         'Twenty years on the force in the city. Saw too much, drank too much, said the wrong thing to the wrong captain. They offered me early retirement or a transfer to the middle of nowhere. I picked nowhere.',
         'Little Life is quiet but it\'s not innocent. These people have secrets. The bartender knows them all. The mayor pretends they don\'t exist. I just keep things from getting out of hand.',

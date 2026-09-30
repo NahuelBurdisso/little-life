@@ -9,6 +9,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { simEvents } from '../../lib/simEvents';
 import { WORLD_EVENTS, EVENT_WEATHER, type WorldEventDef, type WorldEventType } from '../../data/worldEventCatalog';
 import { dramaMultiplier, getRules, type LiveRules } from '../../lib/worldRules';
+import { strangerLeaves } from '../../lib/strangerDeparture';
 
 /**
  * The hourly chance of a random world event under the world's drama rule.
@@ -75,6 +76,12 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
     }
   }
 
+  // The auto-nudger reaches for the same few events (storm, merchant, market…);
+  // it waits out the type's cooldown like a random roll. The player never does.
+  if (opts.triggeredBy === 'autoplay' && recentlyStartedTypes(gameMinutes(world.time)).has(type)) {
+    return { ok: false, reason: `A "${name}" event happened too recently` };
+  }
+
   const event = db.insert(worldEvents).values({
     type,
     name,
@@ -118,13 +125,24 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
   return { ok: true, event };
 }
 
-/** Event types started within the random-roll cooldown before `nowMinutes`. */
+function cooldownDays(type: string): number {
+  const def = (WORLD_EVENTS as Record<string, WorldEventDef>)[type];
+  return def?.random?.cooldownDays ?? CONFIG.EVENTS.RANDOM_TYPE_COOLDOWN_DAYS;
+}
+
+const LONGEST_COOLDOWN_DAYS = Math.max(
+  CONFIG.EVENTS.RANDOM_TYPE_COOLDOWN_DAYS,
+  ...Object.values(WORLD_EVENTS as Record<string, WorldEventDef>).map((d) => d.random?.cooldownDays ?? 0),
+);
+
+/** Event types started within their own cooldown (WorldEventDef.random.cooldownDays) before `nowMinutes`. */
 function recentlyStartedTypes(nowMinutes: number): Set<string> {
-  const since = nowMinutes - CONFIG.EVENTS.RANDOM_TYPE_COOLDOWN_DAYS * 1440;
+  const since = nowMinutes - LONGEST_COOLDOWN_DAYS * 1440;
   return new Set(
-    db.select({ type: worldEvents.type }).from(worldEvents)
+    db.select({ type: worldEvents.type, started_at: worldEvents.started_at }).from(worldEvents)
       .where(gte(worldEvents.started_at, since))
       .all()
+      .filter((r) => r.started_at >= nowMinutes - cooldownDays(r.type) * 1440)
       .map((r) => r.type),
   );
 }
@@ -148,6 +166,7 @@ export function eventsTick(): void {
     if (nowMinutes >= event.started_at + event.duration * 60) {
       db.update(worldEvents).set({ is_active: false }).where(eq(worldEvents.id, event.id)).run();
       eventsChanged = true;
+      if (event.type === 'mysterious_stranger') strangerLeaves(nowMinutes);
     } else {
       stillActive.push(event);
     }

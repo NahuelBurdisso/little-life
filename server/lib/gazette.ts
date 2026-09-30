@@ -11,9 +11,9 @@
  * The prompt forbids inventing events; the schema caps every field. A quiet
  * day (fewer than MIN_ITEMS newsworthy lines) prints nothing.
  */
-import { desc, gt, eq } from 'drizzle-orm';
+import { desc, gt, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
-import { activityLog, gazetteIssues, worldState, type GazetteArticle } from '../db/schema';
+import { activityLog, gazetteIssues, shared_knowledge, worldState, type GazetteArticle } from '../db/schema';
 import { callOllamaChat } from '../ai/ollama';
 import { CONFIG } from './constants';
 import { TOWN_SETTING } from '../ai/setting';
@@ -67,9 +67,17 @@ export function arcsForPaper(arcs: readonly StoryArc[]): Array<{ title: string; 
   return arcs.filter((a) => !a.secret).slice(0, MAX_ARCS).map((a) => ({ title: a.title, summary: a.summary }));
 }
 
-/** Newsworthy lines logged after `sinceTick`, oldest first, deduplicated. */
-export function gatherMaterial(sinceTick: number): GazetteMaterial {
-  const rows = db
+/**
+ * Newsworthy lines logged after `sinceTick`, oldest first, deduplicated.
+ *
+ * `oldNewsBefore` (wall-clock ms, the last edition's `created_at`): a retelling
+ * of a secret that already existed then is not news. Gossip logs a fresh row
+ * every time someone new hears an old story, so on day 26 a newcomer learning
+ * of a day-6 death made "TRAGEDY AT THE WORKS" the headline. Going public ("The
+ * whole town now knows…") still is news, and carries no fact id.
+ */
+export function gatherMaterial(sinceTick: number, oldNewsBefore?: number): GazetteMaterial {
+  const logged = db
     .select()
     .from(activityLog)
     .where(gt(activityLog.timestamp, sinceTick))
@@ -83,6 +91,7 @@ export function gatherMaterial(sinceTick: number): GazetteMaterial {
       // and would name the hand behind the story; see activityRegistry.ts.
       ACTIVITY_REGISTRY[r.type]?.newsworthy !== false,
     );
+  const rows = oldNewsBefore == null ? logged : withoutOldRetellings(logged, oldNewsBefore);
 
   // One line per story. A rumor spreading logs a row per retelling ("Ray told
   // Lucia that…", "Diego overheard that…", "The whole town now knows that…"),
@@ -116,6 +125,26 @@ export function gatherMaterial(sinceTick: number): GazetteMaterial {
     events: picked.filter((p) => p.event).map((p) => p.text),
     arcs,
   };
+}
+
+function retoldFactId(metadata: unknown): number | null {
+  const m = metadata as { beat?: unknown; factId?: unknown } | null;
+  return m?.beat === 'gossip' && typeof m.factId === 'number' ? m.factId : null;
+}
+
+function withoutOldRetellings<T extends { metadata: unknown }>(rows: T[], before: number): T[] {
+  const ids = [...new Set(rows.map((r) => retoldFactId(r.metadata)).filter((id): id is number => id != null))];
+  if (ids.length === 0) return rows;
+  const old = new Set(
+    db.select({ id: shared_knowledge.id, created_at: shared_knowledge.created_at })
+      .from(shared_knowledge).where(inArray(shared_knowledge.id, ids)).all()
+      .filter((f) => f.created_at < before)
+      .map((f) => f.id),
+  );
+  return rows.filter((r) => {
+    const id = retoldFactId(r.metadata);
+    return id == null || !old.has(id);
+  });
 }
 
 export function buildGazettePrompt(material: GazetteMaterial, day: number, season: string, weather: string, roster = ''): {
@@ -207,12 +236,13 @@ async function doWrite(): Promise<number | null> {
   const world = db.select({ time: worldState.time, weather: worldState.weather }).from(worldState).limit(1).get();
   if (!world) return null;
   const nowTick = world.time.totalTicks;
-  const last = db.select({ covers_to_tick: gazetteIssues.covers_to_tick })
+  const last = db.select({ covers_to_tick: gazetteIssues.covers_to_tick, created_at: gazetteIssues.created_at })
     .from(gazetteIssues).orderBy(desc(gazetteIssues.id)).limit(1).get();
   // A replaced world restarts its clock below the last issue's mark.
-  const sinceTick = last && last.covers_to_tick <= nowTick ? last.covers_to_tick : 0;
+  const sameWorld = last != null && last.covers_to_tick <= nowTick;
+  const sinceTick = sameWorld ? last.covers_to_tick : 0;
 
-  const material = gatherMaterial(sinceTick);
+  const material = gatherMaterial(sinceTick, sameWorld ? last.created_at : undefined);
   if (material.items.length + material.events.length < MIN_ITEMS) return null;
 
   // The edition is dated for the day it reports on: at the day change that is

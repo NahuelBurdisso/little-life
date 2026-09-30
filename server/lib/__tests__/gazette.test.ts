@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { db } from '../../db';
-import { activityLog, worldState } from '../../db/schema';
+import { activityLog, agents, locations, shared_knowledge, worldState } from '../../db/schema';
 import { ACTIVITY_REGISTRY } from '../../data/activityRegistry';
 import { buildGazettePrompt, parseGazette, gatherMaterial, arcsForPaper, GAZETTE_NAME } from '../gazette';
 import { maturityDirective } from '../../ai/contentRating';
@@ -72,6 +72,40 @@ describe('gatherMaterial', () => {
     const m = gatherMaterial(10);
     expect(m.items).toEqual(['Marco stole bread']);
     expect(m.events).toEqual(['A storm rolled in']);
+  });
+
+  it('drops retellings of a secret older than the last edition; going public is still news', () => {
+    const home = db.insert(locations).values({
+      name: 'Gazette Cottage', type: 'home', position: { x: 0, y: 0, width: 4, height: 4 }, entry_point: { x: 0, y: 0 },
+      capacity: 4, current_occupants: [], services: [], description: 'test',
+    }).returning({ id: locations.id }).get().id;
+    const subject = db.insert(agents).values({
+      name: 'Gazette James', bio: 'test', traits: [], age: 59, gender: 'male', personality: null,
+      sprite_sheet: 'x', portrait_sprite: 'x', position: { x: 0, y: 0 },
+      current_action: { type: 'idle' }, action_started: 0, action_queue: [],
+      schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: [] },
+      home, created_at: 0, is_active: false,
+    }).returning({ id: agents.id }).get().id;
+    const fact = (content: string, createdAt: number) => db.insert(shared_knowledge).values({
+      type: 'death', subject_id: subject, target_id: null, content, sensitivity: 3, known_by: [],
+      created_at: createdAt, is_active: true, source: 'event',
+    }).returning({ id: shared_knowledge.id }).get().id;
+    const lastEdition = 1_000_000;
+    const old = fact('James has died.', lastEdition - 5);
+    const fresh = fact('Rosa lost the shop.', lastEdition + 5);
+    const retold = (factId: number, ts: number, description: string) => db.insert(activityLog).values({
+      type: 'drama', category: 'drama', importance: 0.8, agent_ids: [], template_key: 'drama',
+      template_data: { description }, metadata: { beat: 'gossip', factId }, timestamp: ts, real_timestamp: Date.now(),
+    }).run();
+    retold(old, 20, 'Ezra learned that James has died.');
+    retold(fresh, 21, 'Ray told Lucia that Rosa lost the shop.');
+    log('drama', 'drama', 0.9, 22, 'The whole town now knows that Priya loves Thomas.');
+    expect(gatherMaterial(10, lastEdition).items).toEqual([
+      'Ray told Lucia that Rosa lost the shop.',
+      'The whole town now knows that Priya loves Thomas.',
+    ]);
+    // The first edition has no "before": everything is news.
+    expect(gatherMaterial(10).items).toHaveLength(3);
   });
 
   it('collapses retellings of one rumor into the widest one', () => {

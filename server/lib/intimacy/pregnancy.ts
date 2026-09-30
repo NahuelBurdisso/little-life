@@ -15,6 +15,7 @@ import { getEffectivePersonality, type StateType } from '../states';
 import { isAdultContent } from '../worldRules';
 import { isAdultAge } from './eligibility';
 import { onlookersNear } from './witnesses';
+import { firstName as givenName } from '../../ai/names';
 
 // ─── An unwed pregnancy, and the 1900 scandal ────────────────────────────────
 //
@@ -105,7 +106,7 @@ type AgentRow = typeof agents.$inferSelect;
 
 const rowOf = (id: number): AgentRow | undefined => db.select().from(agents).where(eq(agents.id, id)).get();
 
-const firstName = (full: string): string => full.split(' ')[0] ?? full;
+const firstName = (full: string): string => givenName(full);
 
 const remember = (agentId: number, description: string, valence: number, importance: number, related?: number | null): void => {
   simEvents.emit('life:milestone', { agentId, description, valence, importance, relatedAgentId: related ?? undefined });

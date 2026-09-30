@@ -16,6 +16,7 @@ import { itemPhrase, itemCountPhrase } from '../../data/economyData';
 import { endSentence, withSelfAsFirstPerson } from '../factText';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isAdultAge } from '../intimacy/eligibility';
+import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
@@ -159,7 +160,9 @@ export function initMemoryObserver(memoryService: MemoryService): void {
           if (isStaleWorldEpoch(worldEpoch)) return;
           const current = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get()?.name;
           if (current !== me) return;
-          if (!takeaway) {
+          // A takeaway naming someone who doesn't exist would be the seed of
+          // a standing hallucination; the gist quotes what was really said.
+          if (!takeaway || mentionsInventedPerson(takeaway)) {
             recordGist();
             return;
           }

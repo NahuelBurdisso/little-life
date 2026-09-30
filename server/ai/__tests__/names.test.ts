@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addressName, firstName, nameVariants, withoutHonorific } from '../names';
+import { addressName, firstName, inventedPeople, nameVariants, nameWords, withoutHonorific } from '../names';
 import { sanitizeDialogue } from '../sanitizeDialogue';
 import { buildConversationPrompt } from '../prompts';
 import { pickConversationGist } from '../../lib/memory/conversationGist';
@@ -70,5 +70,44 @@ describe('titled townsfolk in dialogue', () => {
       (id) => (id === 2 ? 'Dr. Sofia Petrov' : undefined),
     );
     expect(gist?.quote).toBe('I lied to you about the money, and I am so sorry.');
+  });
+});
+
+describe('names — nobody rolls their own first name', () => {
+  // Playtest #4: "Dr. has made up their mind to learn something new this season."
+  // Thirteen modules took `name.split(' ')[0]`; they all go through firstName now.
+  it('no server module takes the first word of a name by hand', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const root = join(__dirname, '..', '..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          if (entry !== '__tests__' && entry !== 'node_modules') walk(full);
+        } else if (full.endsWith('.ts') && !full.endsWith(join('ai', 'names.ts'))) {
+          if (readFileSync(full, 'utf8').includes(".split(' ')[0]")) offenders.push(full);
+        }
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('names — invented people (playtest #4: "the Miller boy")', () => {
+  const known = nameWords(['Omar Hassan', 'Dr. Sofia Petrov', 'Priya Sharma', 'Green Acres Farm']);
+
+  it('flags people-shaped names nobody in town has', () => {
+    expect(inventedPeople('Check in on the Miller boy to see if his condition has improved.', known)).toEqual(['Miller']);
+    expect(inventedPeople('Old Hobbs said Widow Grange is ill.', known)).toEqual(['Hobbs', 'Grange']);
+    expect(inventedPeople("I worry about Jenkins's daughter.", known)).toEqual(['Jenkins']);
+  });
+
+  it('lets real residents, places and generic references through', () => {
+    expect(inventedPeople('Dr. Petrov and Omar saw the Hassan family at Green Acres Farm.', known)).toEqual([]);
+    expect(inventedPeople("Priya's brother wrote, and a traveler asked about the stranger and the children.", known)).toEqual([]);
+    expect(inventedPeople('Old Man Hassan is tired.', known)).toEqual([]);
   });
 });

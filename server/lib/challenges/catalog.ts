@@ -17,6 +17,8 @@
  * state check just looks again an hour later.
  */
 
+import { firstName as givenName } from '../../ai/names';
+
 export type ChallengeKind =
   | 'matchmaker'
   | 'peacemaker'
@@ -273,7 +275,7 @@ export function agentOf(snap: TownSnapshot, id: number): SnapAgent | undefined {
 /** First name for goal text ("Ada Lovelace" → "Ada"). */
 export function firstName(snap: TownSnapshot, id: number): string {
   const name = agentOf(snap, id)?.name ?? `#${id}`;
-  return name.split(' ')[0];
+  return givenName(name);
 }
 
 /**

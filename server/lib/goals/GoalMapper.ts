@@ -12,6 +12,7 @@ const CATEGORY_MAP: Record<string, CategoryMapping> = {
   economic: { type: 'custom', interactions: ['work'] },
   investigative: { type: 'investigate', interactions: ['eavesdrop', 'interrogate'] },
   protective: { type: 'protect', interactions: ['comfort', 'nurse', 'lend_money'] },
+  personal: { type: 'custom', interactions: ['work'] },
   criminal: { type: 'steal_from', interactions: ['pickpocket', 'burglary', 'fraud', 'blackmail'] },
 };
 

@@ -6,6 +6,7 @@ import { logActivity } from './activityLogger';
 import { computeConversationImpact } from './conversationImpact';
 import { joinForFeed, shortenForFeed, thatSentence } from './factText';
 import { gameMinutesNow } from './worldClock';
+import { firstName as givenName } from '../ai/names';
 
 /**
  * Tells the player what their meddling came to.
@@ -110,7 +111,7 @@ export interface OutcomeFacts {
 
 export function describeOutcome(o: OutcomeFacts): string {
   const template = o.trigger.endsWith('(template)');
-  const who = o.names.map((n) => n.split(' ')[0]).join(' & ');
+  const who = o.names.map((n) => givenName(n)).join(' & ');
   const deltas = (
     [['friendship', o.friendship], ['romance', o.romance], ['trust', o.trust]] as const
   )
@@ -127,7 +128,7 @@ export function describeOutcome(o: OutcomeFacts): string {
 export type DropReason = 'busy' | 'apart';
 
 export function describeExpired(trigger: string, names: string[], reason: DropReason): string {
-  const who = names.map((n) => n.split(' ')[0]).join(' & ');
+  const who = names.map((n) => givenName(n)).join(' & ');
   const lead = trigger.startsWith('player_confront')
     ? 'Your confrontation never happened'
     : trigger.startsWith('player_tell_secret')
@@ -341,8 +342,8 @@ export function onRumorReachedSubject(payload: { factId: number; subjectId: numb
   if (fact?.reliability !== 'unverified' || fact.source !== 'fabricated') return;
   remember(seenRumors, payload.factId);
 
-  const subject = nameOf(payload.subjectId).split(' ')[0];
-  const teller = nameOf(payload.tellerId).split(' ')[0];
+  const subject = givenName(nameOf(payload.subjectId));
+  const teller = givenName(nameOf(payload.tellerId));
   logActivity({
     type: 'player_outcome',
     agents: [payload.subjectId, payload.tellerId],
@@ -456,7 +457,7 @@ export function onWhisperConversation(payload: {
       if (!whisperAired(own.map((m) => m.text), w.stems)) continue;
       // The line that carries the most of it, for the quote.
       const line = own.find((m) => whisperAired([m.text], w.stems)) ?? own[0];
-      const who = nameOf(agentId).split(' ')[0];
+      const who = givenName(nameOf(agentId));
       reportWhisper(
         agentId,
         w,
@@ -472,7 +473,7 @@ export function onPlanReplanned(payload: { agentId: number; description: string;
   // The reason a whisper hands the replanner quotes the sanitized text verbatim.
   const w = open.find((x) => payload.description.includes(`"${x.text}"`));
   if (!w) return;
-  const who = nameOf(payload.agentId).split(' ')[0];
+  const who = givenName(nameOf(payload.agentId));
   // Plan blocks are written as titles ("Purchase fine flour"); mid-sentence
   // they read as "now purchase fine flour". Only the opening verb is lowered —
   // names later in a block keep their capitals.

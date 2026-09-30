@@ -8,7 +8,7 @@ import {
   populationFlowDaily, populationFlowSnapshotStore, populationFlowTick, populationTargets,
   type DepartureSignals,
 } from '../populationFlow';
-import { clearMoodTrackers, moodMomentumSnapshotStore } from '../moodMomentum';
+import { clearMoodTrackers, getMoodMomentum, getMoodStreak, moodMomentumSnapshotStore } from '../moodMomentum';
 import { RuleOverridesSchema, setRuleOverrides } from '../worldRules';
 import { memoryService } from '../memory/instance';
 import { simEvents } from '../simEvents';
@@ -238,6 +238,9 @@ describe('leaving town', () => {
     expect(flow.departing).toHaveLength(0);
     expect(recorded.some((r) => r.agentId === leaver && /I'm staying/.test(r.description) && /Resident/.test(r.description))).toBe(true);
     expect(db.select().from(activityLog).all().some((r) => /decided to stay/.test(String(r.template_data?.description)))).toBe(true);
+    // Staying ends the bad streak (playtest #4: Omar re-thought leaving every fourth day).
+    expect(getMoodStreak(leaver)).toBe(0);
+    expect(getMoodMomentum(leaver)).toBe(-5);
   });
 
   it('stays after the player reaches out', async () => {

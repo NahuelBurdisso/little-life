@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNotNull, or } from 'drizzle-orm';
 import { db } from '../db';
 import { agents, children, relationships } from '../db/schema';
 import { asId, asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
+import { firstName as givenName } from '../ai/names';
 
 // ─── Family state: who is expecting, who has a baby ──────────────────────────
 //
@@ -272,7 +273,7 @@ export function describeChild(c: Pick<ChildRow, 'name' | 'sex' | 'birth_game_min
 }
 
 function firstNameOf(full: string): string {
-  return full.split(' ')[0] ?? full;
+  return givenName(full);
 }
 
 // ─── Children: DB readers ────────────────────────────────────────────────────

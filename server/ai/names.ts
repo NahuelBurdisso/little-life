@@ -49,3 +49,39 @@ export function addressName(fullName: string): string {
   if (/^sir$/i.test(rawTitle)) return `${rawTitle} ${parts[0]}`;
   return `${rawTitle}${/^(dr|mr|mrs|ms|prof|rev)$/i.test(rawTitle) ? '.' : ''} ${parts[parts.length - 1]}`;
 }
+
+// People-shaped phrases around a capitalised word: "the Miller boy", "Old
+// Hobbs", "Widow Grange", "Jenkins's daughter". Generic references ("a
+// traveler", "the stranger", "the children") are lowercase and never match.
+const PERSON_PATTERNS: RegExp[] = [
+  /\bthe ([A-Z][a-z]+) (?:boy|boys|girl|girls|lad|lass|kid|kids|child|children|family|widow|widower|woman|man|twins|brothers|sisters|baby)\b/g,
+  /\b(?:Mr|Mrs|Miss|Ms|Dr|Old|Widow|Young|Granny|Grandpa|Uncle|Aunt|Auntie|Master|Mistress)\.? ([A-Z][a-z]+)\b/g,
+  /\b([A-Z][a-z]+)'s (?:son|daughter|wife|husband|boy|girl|mother|father|widow|baby|kids|children|brother|sister)\b/g,
+];
+// Capitalised words those patterns can catch that are not names ("Old Man Hobbs").
+const NOT_NAMES = new Set(['man', 'woman', 'lady', 'gentleman', 'town', 'mill', 'farm', 'church', 'square']);
+
+/**
+ * Named people in `text` who are not in `known` (lowercase name words of every
+ * resident, past and present, their children, and place names). Playtest #4:
+ * the model made up "the Miller boy" in one conversation and he went on to a
+ * memory, a goal, a daily plan and a reflection — each feeding the next
+ * prompt. Callers drop the text that names one. Pure.
+ */
+export function inventedPeople(text: string, known: ReadonlySet<string>): string[] {
+  const out = new Set<string>();
+  for (const pattern of PERSON_PATTERNS) {
+    for (const m of text.matchAll(pattern)) {
+      const word = m[1].toLowerCase();
+      if (!known.has(word) && !NOT_NAMES.has(word)) out.add(m[1]);
+    }
+  }
+  return [...out];
+}
+
+/** Lowercase words of these names ("Dr. Sofia Petrov" → dr, sofia, petrov) for inventedPeople. Pure. */
+export function nameWords(names: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const n of names) for (const w of n.toLowerCase().match(/[a-z']+/g) ?? []) out.add(w.replace(/'s$/, ''));
+  return out;
+}

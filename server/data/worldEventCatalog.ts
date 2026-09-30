@@ -106,6 +106,12 @@ export interface WorldEventDef {
   random?: {
     weight: number;
     condition: (phase: string, weather: string, season: string) => boolean;
+    /**
+     * Game days before this type rolls again (default CONFIG.EVENTS.RANDOM_TYPE_COOLDOWN_DAYS).
+     * A story event wants a longer gap than weather: playtest #4 had the hooded
+     * stranger 10 times in 27 days, storms 12, the merchant 10.
+     */
+    cooldownDays?: number;
   };
 }
 
@@ -133,7 +139,7 @@ export const WORLD_EVENTS = {
     description: 'A heavy storm is battering the town. Best stay indoors!',
     durationHours: 3,
     effects: { mood_outdoor: -15 },
-    random: { weight: 8, condition: (_phase, weather) => weather === 'cloudy' || weather === 'rainy' },
+    random: { weight: 8, condition: (_phase, weather) => weather === 'cloudy' || weather === 'rainy', cooldownDays: 4 },
   },
   sickness: {
     name: 'Flu Outbreak',
@@ -154,7 +160,7 @@ export const WORLD_EVENTS = {
     description: 'A mysterious merchant has arrived with rare and exotic wares.',
     durationHours: 6,
     effects: { shop_prices: 0.8, fun_boost: 5 },
-    random: { weight: 8, condition: (phase) => phase === 'morning' || phase === 'afternoon' },
+    random: { weight: 8, condition: (phase) => phase === 'morning' || phase === 'afternoon', cooldownDays: 4 },
   },
   town_meeting: {
     name: 'Town Meeting',
@@ -198,7 +204,9 @@ export const WORLD_EVENTS = {
     description: 'A hooded figure has been spotted around town, whispering secrets to those who listen.',
     durationHours: 8,
     effects: { gossip_boost: 2.0 },
-    random: { weight: 5, condition: (phase) => phase === 'evening' || phase === 'night' },
+    // Ten days: one visit is a mystery, a visit every third night is furniture.
+    // Its end is a beat of its own (lib/strangerDeparture.ts).
+    random: { weight: 5, condition: (phase) => phase === 'evening' || phase === 'night', cooldownDays: 10 },
   },
   competition: {
     name: 'Town Competition',

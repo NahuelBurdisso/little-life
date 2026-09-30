@@ -12,6 +12,7 @@ import { emitter } from '../engine/emitter';
 import { shortenForFeed } from './factText';
 import { registerLetter, registerWhisper } from './playerOutcomes';
 import type { PersonalityProfile } from './personality';
+import { firstName as givenName } from '../ai/names';
 
 /**
  * God powers that PLANT something and then leave it alone: a thought in one
@@ -91,7 +92,7 @@ export function sanitizePlayerText(raw: string, max: number): string | null {
  */
 export function rumorPredicate(detail: string, subjectName: string): string {
   let d = detail.trim();
-  const first = subjectName.split(' ')[0];
+  const first = givenName(subjectName);
   for (const lead of [subjectName, first]) {
     if (lead && d.toLowerCase().startsWith(lead.toLowerCase() + ' ')) {
       d = d.slice(lead.length).trim();
@@ -124,7 +125,7 @@ export function isRomanceText(text: string): boolean {
 }
 
 function firstName(name: string): string {
-  return name.split(' ')[0];
+  return givenName(name);
 }
 
 function activeAgent(id: number) {

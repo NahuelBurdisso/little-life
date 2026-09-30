@@ -25,6 +25,7 @@ import {
 } from './familyState';
 import type { PersonalityProfile } from './personality';
 import type { ClockTime } from './gameClock';
+import { firstName as givenName } from '../ai/names';
 
 // ─── Married life and children ───────────────────────────────────────────────
 //
@@ -180,7 +181,7 @@ export function estrangementChance(p: Pick<PersonalityProfile, 'aggression' | 'w
 type AgentRow = typeof agents.$inferSelect;
 
 function firstName(full: string): string {
-  return full.split(' ')[0] ?? full;
+  return givenName(full);
 }
 
 function kinWord(sex: string): string {

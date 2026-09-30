@@ -9,6 +9,7 @@ import type { RetrievalResult } from './types';
 import { buildQuestionPrompt, buildSynthesisPrompt } from './reflectionPrompts';
 import { parseQuestions, parseInsights } from './reflectionParser';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
+import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -206,6 +207,9 @@ export class ReflectionRunner {
 
     // 13. Store each insight with resolved citation IDs
     for (const insight of insights) {
+      // Importance 8 keeps a reflection in retrieval for weeks: one about a
+      // made-up person keeps him alive (knownPeople.ts).
+      if (mentionsInventedPerson(insight.text)) continue;
       const resolvedIds = insight.citations
         .map((lineNum) => lineToMemoryId.get(lineNum))
         .filter((id): id is number => id !== undefined);

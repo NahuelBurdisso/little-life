@@ -43,6 +43,7 @@ import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
 import { makeRng, stringToSeed } from './worldgen/rng';
 import { rollOrientation } from './intimacy/orientation';
+import { firstName as givenName } from '../ai/names';
 
 type AgentRow = typeof agents.$inferSelect;
 type LocationRow = typeof locations.$inferSelect;
@@ -381,7 +382,7 @@ export function createResident(opts: CreateResidentOptions): CreateResidentResul
         last_updated: Date.now(),
       }).run();
       const other = byId.get(otherId);
-      if (other) tieNames.push(other.name.split(' ')[0]);
+      if (other) tieNames.push(givenName(other.name));
     }
 
     // The house is named after who lives there now ("Rosa's cottage" → "the

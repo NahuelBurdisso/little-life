@@ -22,6 +22,7 @@ import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
 import { addMoodModifier } from './dailyLife';
 import { MAX_GOALS_PER_AGENT } from './interactionConstants';
+import { firstName as givenName } from '../ai/names';
 
 export type Rng = () => number;
 
@@ -144,8 +145,8 @@ export function personalEventsHourly(hour: number, nowMinutes: number, rng: Rng 
     const otherId = someoneToRemember(agent.id, activeIds);
     const other = otherId != null ? active.find((a) => a.id === otherId) ?? null : null;
     const event = pickPersonalEvent(other != null, rng);
-    const first = agent.name.split(' ')[0];
-    const otherFirst = event.aboutSomeone && other ? other.name.split(' ')[0] : null;
+    const first = givenName(agent.name);
+    const otherFirst = event.aboutSomeone && other ? givenName(other.name) : null;
 
     addMoodModifier(agent.id, event.mood, `personal:${event.key}`, event.minutes, nowMinutes);
     simEvents.emit('life:milestone', {

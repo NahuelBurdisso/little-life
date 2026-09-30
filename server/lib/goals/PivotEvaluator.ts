@@ -6,18 +6,18 @@ import { CONFIG } from '../constants';
 import { getEffectivePersonality } from '../states';
 import { simEvents } from '../simEvents';
 import { logActivity } from '../activityLogger';
-import { GoalMapper } from './GoalMapper';
 import { parsePivotResult } from './goalParser';
 import { buildPivotPrompt } from './goalPrompts';
-import { PIVOT_THRESHOLD_MINUTES, STALE_ABANDON_MINUTES } from './types';
+import { PIVOT_THRESHOLD_MINUTES, STALE_ABANDON_MINUTES, STALE_ABANDON_UNTARGETED_MINUTES } from './types';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
+import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
 export function shouldPivot(progress: number, pivotCount: number, minutesElapsed: number): boolean {
   return progress === 0 && pivotCount === 0 && minutesElapsed >= PIVOT_THRESHOLD_MINUTES;
 }
 
-export function shouldAbandonStale(progress: number, minutesElapsed: number): boolean {
-  return progress === 0 && minutesElapsed >= STALE_ABANDON_MINUTES;
+export function shouldAbandonStale(progress: number, minutesElapsed: number, targeted = true): boolean {
+  return progress === 0 && minutesElapsed >= (targeted ? STALE_ABANDON_MINUTES : STALE_ABANDON_UNTARGETED_MINUTES);
 }
 
 export function computeEmotionalImportance(
@@ -32,7 +32,6 @@ export function computeEmotionalImportance(
 }
 
 export class PivotEvaluator {
-  private mapper = new GoalMapper();
   private inFlight = new Set<number>(); // goal IDs currently being pivoted
   private lastEvalAt = new Map<number, number>(); // agentId → game minute last evaluated
   private static EVAL_COOLDOWN = 60; // only evaluate once per game hour
@@ -72,7 +71,7 @@ export class PivotEvaluator {
       }
 
       // 3-day stale safety net
-      if (shouldAbandonStale(goal.progress, minutesElapsed)) {
+      if (shouldAbandonStale(goal.progress, minutesElapsed, goal.target_id != null)) {
         this.abandonGoal(goal, agentId, 'no progress after extended time', nowMinutes);
         continue;
       }
@@ -122,13 +121,9 @@ export class PivotEvaluator {
         return;
       }
 
-      const updates: Record<string, unknown> = { strategy: result.new_strategy, pivot_count: 1 };
-      if (result.new_category_hint) {
-        const mapped = this.mapper.mapCategory(result.new_category_hint);
-        updates.mapped_interactions = JSON.stringify(mapped.interactions);
-        updates.type = mapped.type;
-      }
-      db.update(goals).set(updates).where(eq(goals.id, goal.id)).run();
+      // A strategy about a made-up person keeps the old one (knownPeople.ts).
+      const strategy = mentionsInventedPerson(result.new_strategy) ? goal.strategy : result.new_strategy;
+      db.update(goals).set({ strategy, pivot_count: 1 }).where(eq(goals.id, goal.id)).run();
 
       simEvents.emit('goal:pivoted', {
         agentId: agent.id,

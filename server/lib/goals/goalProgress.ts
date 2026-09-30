@@ -28,6 +28,7 @@ import { logActivity } from '../activityLogger';
 import { simEvents } from '../simEvents';
 import { gameMinutesNow } from '../worldClock';
 import { goalClause } from '../goalText';
+import { firstName as givenName } from '../../ai/names';
 
 /** Something that happened between a goal's owner and its target. */
 export type GoalOutcome =
@@ -140,7 +141,7 @@ export function describeGoal(goal: Pick<GoalRow, 'type' | 'description'>, target
 function firstNameOf(agentId: number | null): string | null {
   if (agentId == null) return null;
   const row = db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).get();
-  return row?.name.split(' ')[0] ?? null;
+  return row ? givenName(row.name) : null;
 }
 
 function addMoodModifier(agentId: number, value: number, source: string, minutes: number, now: number): void {
