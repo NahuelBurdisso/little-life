@@ -277,6 +277,21 @@ describe('what a night leaves behind', () => {
       expect(statesOf(cold.a).map((s) => s.type)).not.toContain('guilty');
     });
 
+    it('a partner (not yet engaged or married) who strays betrays them too: sensitivity 3 and guilt for a conscience', () => {
+      const l = lovers({ aMorality: 85 });
+      const c = insertAgent(`Partner ${madeAgents.length}`, l.aHome, { gender: 'male', current_location: null });
+      relate(l.a, c, ['partner']);
+      nightTogether(l.a, l.b, l.aHome);
+      const facts = db.select().from(shared_knowledge).where(eq(shared_knowledge.type, 'affair')).all()
+        .filter((f) => f.subject_id === l.a && f.target_id === l.b);
+      expect(facts).toHaveLength(1);
+      // Only a marriage betrayed goes a step past the usual secret.
+      expect(facts[0].sensitivity).toBe(3);
+      const guilty = statesOf(l.a).filter((s) => s.type === 'guilty');
+      expect(guilty).toHaveLength(1);
+      expect(guilty[0]).toMatchObject({ target_agent_id: c });
+    });
+
     it('two people who are simply together, or both single, make no affair and no guilt', () => {
       const { a, b, aHome } = lovers({ aMorality: 95, bMorality: 95 });
       nightTogether(a, b, aHome);

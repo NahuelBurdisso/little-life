@@ -4,7 +4,8 @@ import { agentStates, agents, relationships } from '../../db/schema';
 import { addMoodModifier } from '../dailyLife';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
-import { affairInvolvesMarriage, affairSensitivity, betrothedTo, isSpokenFor } from '../marriage';
+import { affairInvolvesMarriage, affairSensitivity } from '../marriage';
+import { committedTo } from './committed';
 import { simEvents } from '../simEvents';
 import { getEffectivePersonality, type StateType } from '../states';
 import { isAdultContent } from '../worldRules';
@@ -110,7 +111,7 @@ export function applyTrystAftermath(t: TrystCompletion): void {
     return;
   }
   spendTheNight(t, a, b);
-  if (isSpokenFor(a.id, b.id) || isSpokenFor(b.id, a.id)) betrayal(t, a, b);
+  if (committedTo(a.id, b.id) != null || committedTo(b.id, a.id) != null) betrayal(t, a, b);
   // A night can leave more than a memory: the roll for an unmarried mother (pregnancy.ts).
   rollTrystConception(a, b, t.now);
 }
@@ -157,14 +158,14 @@ function spendTheNight(t: TrystCompletion, a: AgentRow, b: AgentRow): void {
 }
 
 /**
- * Either of them is engaged or married to somebody else: the affair is born from the
+ * Either of them is committed to somebody else (partner, engaged or married: `committedTo`): the affair is born from the
  * act, known only to the two of them (the subject is whoever is spoken for, the
  * lower id when both are, so a repeat from either side lands on the same fact), and
  * whoever has a conscience carries it.
  */
 function betrayal(t: TrystCompletion, a: AgentRow, b: AgentRow): void {
-  const aTaken = isSpokenFor(a.id, b.id);
-  const bTaken = isSpokenFor(b.id, a.id);
+  const aTaken = committedTo(a.id, b.id) != null;
+  const bTaken = committedTo(b.id, a.id) != null;
   const subject = aTaken && bTaken ? Math.min(a.id, b.id) : aTaken ? a.id : b.id;
   const target = subject === a.id ? b.id : a.id;
   learnFact('affair', subject, target, affairSensitivity(3, affairInvolvesMarriage(a.id, b.id)), [a.id, b.id], 'committed');
@@ -173,7 +174,7 @@ function betrayal(t: TrystCompletion, a: AgentRow, b: AgentRow): void {
     if (!taken) continue;
     const morality = (getEffectivePersonality(cheater.id) ?? (cheater.personality as { morality?: number } | null))?.morality ?? 50;
     if (!(morality > GUILT_MORALITY_ABOVE)) continue;
-    const betrayed = betrothedTo(cheater.id, other.id);
+    const betrayed = committedTo(cheater.id, other.id);
     if (betrayed != null) giveState(cheater.id, 'guilty', betrayed, GUILTY_MINUTES, t.now, 'intimacy:tryst');
   }
 }

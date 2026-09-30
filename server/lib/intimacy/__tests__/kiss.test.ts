@@ -532,6 +532,26 @@ describe('the kiss against the DB', () => {
       expect(facts[0].known_by as number[]).not.toContain(spouse);
     });
 
+    it('a kiss with someone who has an (unmarried) partner elsewhere seeds an affair at sensitivity 3', () => {
+      const bold = { honesty: 50, aggression: 30, warmth: 60, impulsiveness: 90, vanity: 40,
+        curiosity: 50, loyalty: 60, morality: 60, sensuality: 50, neuroticism: 40 };
+      const { a, b } = pair({ aOver: { personality: bold } });
+      const partner = insertAgent('Steady Partner', { gender: 'male' });
+      db.update(agents).set({ current_location: null, position: { x: 800, y: 800 } }).where(eq(agents.id, partner)).run();
+      db.insert(relationships).values({
+        agent_a: a, agent_b: partner, friendship_ab: 50, friendship_ba: 50, romance_ab: 60, romance_ba: 60,
+        trust_ab: 50, trust_ba: 50, familiarity: 50, interaction_count: 5, last_interaction: 0,
+        average_interaction_sentiment: 0, tags: ['partner'], status: 'partners', created_at: 0, last_updated: 0,
+      }).run();
+
+      onKissConversationEnded(warm(a, b), rng0);
+
+      const facts = db.select().from(shared_knowledge).where(eq(shared_knowledge.type, 'affair')).all()
+        .filter((f) => f.subject_id === a || f.target_id === a);
+      expect(facts).toHaveLength(1);
+      expect(facts[0]).toMatchObject({ subject_id: a, target_id: b, sensitivity: 3 });
+    });
+
     it('a kiss between two free people seeds no affair', () => {
       const { a, b } = pair();
       onKissConversationEnded(warm(a, b), rng0);

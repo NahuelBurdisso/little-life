@@ -10,7 +10,8 @@ import { CONFIG } from '../constants';
 import { queueMaxWait } from '../conversationPacing';
 import { addMoodModifier } from '../dailyLife';
 import { MINUTES_PER_DAY, gameMinutes, type ClockTime } from '../gameClock';
-import { MILESTONE_TAGS, MARRIED_TAG, isSpokenFor, spouseOf } from '../marriage';
+import { MILESTONE_TAGS, MARRIED_TAG, spouseOf } from '../marriage';
+import { committedTo } from './committed';
 import {
   NO_WORDS, PROPOSAL_QUEUE_PRIORITY, YES_WORDS, canProposeNow, inNoProposalState,
 } from '../milestonesEngine';
@@ -329,7 +330,7 @@ function willingnessOf(self: AgentRow, other: AgentRow, rel: RelRow): number {
       impulsiveness: personality?.impulsiveness ?? 50,
       loyalty: personality?.loyalty ?? 50,
       morality: personality?.morality ?? 50,
-      spokenForElsewhere: isSpokenFor(self.id, other.id),
+      spokenForElsewhere: committedTo(self.id, other.id) != null,
     },
     { marriedElsewhere: spouse != null && spouse !== self.id },
     { together: isTogether(rel) },

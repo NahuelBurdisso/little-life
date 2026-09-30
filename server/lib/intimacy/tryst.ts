@@ -7,7 +7,8 @@ import { logActivity } from '../activityLogger';
 import { learnFact } from '../gossip';
 import { fallbackInteriorTile, findAvailableZone, zoneSlotOffset } from '../interiorGrid';
 import { MINUTES_PER_DAY, gameMinutes, type ClockTime } from '../gameClock';
-import { affairInvolvesMarriage, affairSensitivity, isSpokenFor, spouseOf } from '../marriage';
+import { affairInvolvesMarriage, affairSensitivity, spouseOf } from '../marriage';
+import { committedTo } from './committed';
 import { inNoProposalState } from '../milestonesEngine';
 import { simEvents } from '../simEvents';
 import { applyTrystAftermath, type TrystCompletion } from './aftermath';
@@ -353,7 +354,7 @@ export function beginTryst(
   if (!isIntimacyEligible(a, b)) return false;
   const now = gameMinutes(time);
   const minutes = trystDuration(rng);
-  const secret = isSpokenFor(a.id, b.id) || isSpokenFor(b.id, a.id) || a.gender === b.gender;
+  const secret = committedTo(a.id, b.id) != null || committedTo(b.id, a.id) != null || a.gender === b.gender;
   const married = spouseOf(a.id) === b.id;
   const initiatorId = getPairIntimacy(a.id, b.id)?.pendingRendezvous?.initiatorId ?? a.id;
 

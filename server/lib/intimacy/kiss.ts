@@ -6,7 +6,8 @@ import { logActivity } from '../activityLogger';
 import { addMoodModifier } from '../dailyLife';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
-import { MILESTONE_TAGS, affairInvolvesMarriage, affairSensitivity, isSpokenFor } from '../marriage';
+import { MILESTONE_TAGS, affairInvolvesMarriage, affairSensitivity } from '../marriage';
+import { committedTo } from './committed';
 import { simEvents } from '../simEvents';
 import { getAgentStates, getEffectivePersonality } from '../states';
 import { gameMinutesNow } from '../worldClock';
@@ -306,15 +307,15 @@ function shareKiss(rel: RelRow, initiator: AgentRow, receiver: AgentRow, witness
 }
 
 /**
- * A kiss with someone else's fiancé, wife or husband is the seed of an affair
+ * A kiss with someone else's partner, fiancé, wife or husband is the seed of an affair
  * secret. Known to the two and to whoever saw. Subject is the one who is
  * spoken for (the lower id when both are), so a repeat from the other side
  * lands on the same fact instead of minting a mirror image. `createFact` raises
  * the sensitivity itself when a marriage is betrayed (`affairSensitivity`).
  */
 function seedAffair(a: number, b: number, witnessIds: number[]): void {
-  const aTaken = isSpokenFor(a, b);
-  const bTaken = isSpokenFor(b, a);
+  const aTaken = committedTo(a, b) != null;
+  const bTaken = committedTo(b, a) != null;
   if (!aTaken && !bTaken) return;
   const subject = aTaken && bTaken ? Math.min(a, b) : aTaken ? a : b;
   const target = subject === a ? b : a;
@@ -345,17 +346,17 @@ export function isOpenCouple(a: number, b: number): boolean {
   const rel = pairRelationship(a, b);
   if (!rel) return false;
   const together = rel.status === 'partners' || rel.tags.some((t) => MILESTONE_TAGS.includes(t));
-  return together && !isSpokenFor(a, b) && !isSpokenFor(b, a);
+  return together && committedTo(a, b) == null && committedTo(b, a) == null;
 }
 
 /**
- * Sensitivity of "X was seen kissing Y": 2, 3 when either is engaged or
- * married to somebody else, 4 when a marriage is betrayed (the same step
+ * Sensitivity of "X was seen kissing Y": 2, 3 when either is committed (partnered, engaged or
+ * married) to somebody else, 4 when a marriage is betrayed (the same step
  * `affairSensitivity` gives an affair secret). One more (capped at 4) for a same-sex
  * pair, whose bond the 1900 town condemns (`withHiddenLoveBump`).
  */
 export function kissSeenSensitivity(a: number, b: number): number {
-  const spokenFor = isSpokenFor(a, b) || isSpokenFor(b, a);
+  const spokenFor = committedTo(a, b) != null || committedTo(b, a) != null;
   return withHiddenLoveBump(
     affairSensitivity(spokenFor ? KISS_SEEN_SPOKEN_FOR_SENSITIVITY : KISS_SEEN_SENSITIVITY, affairInvolvesMarriage(a, b)),
     a, b,
