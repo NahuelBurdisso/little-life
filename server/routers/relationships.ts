@@ -5,6 +5,8 @@ import { eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { getCliques } from '../lib/cliques';
 import { getPairDossier } from '../lib/pairDossier';
+import { emitter } from '../engine/emitter';
+import { RELATIONSHIPS_CHANNEL } from '../engine/relationshipsChannel';
 
 export const relationshipsRouter = router({
   getAgentRelationships: publicProcedure
@@ -52,4 +54,15 @@ export const relationshipsRouter = router({
 
   /** Social groups derived from the friendship graph. Memoised server-side. */
   getCliques: publicProcedure.query(() => getCliques()),
+
+  /**
+   * Fires when the relationships table was written (engine/relationshipsChannel.ts).
+   * The graph, the pair dossier and the canvas tension lines refetch on this,
+   * not on every agents.all flush.
+   */
+  onUpdate: publicProcedure.subscription(async function* (opts) {
+    for await (const data of emitter.iterate(RELATIONSHIPS_CHANNEL, opts.signal)) {
+      yield data;
+    }
+  }),
 });

@@ -318,9 +318,9 @@ export function getAgentStatesRowVersion(): number {
 // goals from inside other phases' events). Same ROLLBACK blind spot as above,
 // which is why those snapshots never outlive the phase that built them.
 
-export type CountedTable = 'needs' | 'goals' | 'economy';
-const COUNTED_TABLES: readonly CountedTable[] = ['needs', 'goals', 'economy'];
-const tableWriteVersions: Record<CountedTable, number> = { needs: 0, goals: 0, economy: 0 };
+export type CountedTable = 'needs' | 'goals' | 'economy' | 'relationships';
+const COUNTED_TABLES: readonly CountedTable[] = ['needs', 'goals', 'economy', 'relationships'];
+const tableWriteVersions: Record<CountedTable, number> = { needs: 0, goals: 0, economy: 0, relationships: 0 };
 const tableHooksInstalled = new Set<CountedTable>();
 sqlite.function('ll_table_written', { deterministic: false }, (table: unknown) => {
   tableWriteVersions[table as CountedTable]++;
