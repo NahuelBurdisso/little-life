@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 336 files / 4031 tests passing, `npm run deadcode` 0/0 (playtest #4 fixes on `fix/playtest-findings`, rebased on `feat/loop-features` b53d02a, A/B soaked 12 days on seed `playtest4`; see "Playtest #4 findings" below).
+**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 344 files / 4124 tests passing, `npm run deadcode` 0/0 (drama unblock + legibility on `feat/drama-unblock`, off `feat/loop-features` 1e5e82b, A/B soaked 12 days on seed `playtest4`, live-checked on a demo copy with Gemma; see "Drama unblock" below).
 Branch `fix/playtest-findings` (off `aa6ca8a`, where `feat/loop-features` started; before it `feat/intimacy-realism`, off `feat/living-agents-phase1`, which carried the engine/gameplay fixes and the
 worldgen v2 tracks, `docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
@@ -327,6 +327,41 @@ Player-facing:
 
 Worktree note for agents: vitest excludes `.claude/**`, so inside `.claude/worktrees/*` tests need a
 temporary config without that exclude, plus a `data/` dir. `preview_start` always runs the MAIN repo.
+
+## Drama unblock + legibility (2026-09-30, branch `feat/drama-unblock`)
+
+Why: a fun analysis (real 32-day play save + code audit) found the drama chain *bad event → mood/stress → tension →
+snap → confrontation → feud* leaked at every link, and the good stuff was drowned in gossip noise. One commit each:
+
+- **A1** tension decays 0.08/min (was 0.3 = 18/h, so ripple hits of 10-40 never reached a 55-125 snap threshold);
+  state gains scaled to match; snap cooldown 200 → 720 min (`TensionTracker.ts`).
+- **A2** cascade states use their native duration (`server/lib/stateDurations.ts`), not a flat 120 min: heartbreak
+  2-5 days, cascade anger can now become a grudge.
+- **A3** mood hits go through `addMoodModifier` (own sources, not the ±6 conversation cap); `STATE_MOOD` table
+  (worst negative + best positive state) and stress carry-over (~5/h recovery) in `server/lib/stateMood.ts`.
+  Still vanishing: confession and aging mood writes.
+- **A4** confrontations at avg friendship ≤ −20 or a grudge/rival tag (3% → 15% by hostility), cooldown 60 game h
+  (was wall-clock); cascade `confrontation` events become scenes (now if together, else within 12 game h);
+  minors get at most a shouting match; per-agent cooldown.
+- **A5** the conversation-summary call also returns `feelings` (−3..+3 per side) for 2-person LLM talks
+  (`server/lib/conversationFeelings.ts`): ×3 friendship as a `conversation_feelings` event, ≤ −2 → `quarrel` + feed row.
+  Friendship used to come only from the word-list scorer, so polite 1900 dialogue only ever warmed (+432 vs −21).
+- **B1** gossip retellings (< 0.9) are a quiet toast for favourites only, not a major chime (the Director also stops
+  chasing eavesdroppers); **B2** toasts evicted lowest tier first; **B3** Director on by default, persisted, `D`;
+  **B4** bubbles last clamp(1.5 s + 55 ms/char, 3.5-7 s), text resolution 2×; **B5** feed opens on Highlights;
+  **B6** every random event has a 5-10 day cooldown (full moon 28), hourly roll 0.20 → 0.12.
+
+A/B soak (12 days, seed `playtest4`, 4x, LLM off, before = 1e5e82b, after A): distinct beat types 10 → 15,
+"no new beat for 3 days" warnings 2 → 0, mood 66-73 → 64-72 (sd up), 0 anomalies; tick p95 56 → 86 ms (days 8-10
+up to 138 ms — watch). Live (demo copy, Gemma): 4 `conversation_feelings` + 1 `quarrel` in the first minutes, no errors.
+
+Next (from the same analysis, not done): **C** player hand — `chainId` on god-power events so "✦ your doing"
+groups in the feed (`RippleEngine.ts:407`, `ActivityFeed.tsx:122`), coach marks naming the four god powers,
+Challenges badge, 7 more player events, a real Town Scandal, money that lands, stakes preview in letter/rumor pickers,
+verbs "encourage a proposal" / bless-jinx / stir anger-heartbreak; **D** pacing — idle auto-speed, auto night skip
+with the Director, back to 1x for big scenes. Also: misdeed facts never expire and block new secrets
+(`gossip.ts:350-376,853-977`), social partners limited to same place + friends (`decisions.ts:914-941`),
+relationship status flip-flops (no hysteresis), "lost a good pair of gloves" ×19 (`dailyLife.ts:114`).
 
 ## Playtest #4 findings (2026-09-30, branch `fix/playtest-findings`)
 
