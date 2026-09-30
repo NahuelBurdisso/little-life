@@ -290,6 +290,7 @@ export class PlanDecomposer {
     const agentRow = db
       .select({
         name: agents.name,
+        age: agents.age,
         traits: agents.traits,
         personality: agents.personality,
         home: agents.home,
@@ -344,6 +345,7 @@ export class PlanDecomposer {
 
     const prompt = buildDecompositionPrompt({
       name: agentRow.name,
+      age: agentRow.age,
       personality: personality ?? {
         honesty: 50,
         aggression: 50,

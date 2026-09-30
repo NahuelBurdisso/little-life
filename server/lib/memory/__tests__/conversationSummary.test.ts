@@ -46,8 +46,16 @@ describe('maturity directive in the summary prompt', () => {
 
   it('is the adult line with the rule on, once', () => {
     rules.adult = true;
-    const { system } = buildSummaryPrompt(people, lines);
+    const { system } = buildSummaryPrompt(people, lines, true);
     expect(count(system, maturityDirective(true))).toBe(1);
     expect(system).not.toContain(maturityDirective(false));
+  });
+
+  it('stays chaste with the rule on when anyone in the conversation is a minor, or the ages are unknown', () => {
+    rules.adult = true;
+    for (const { system } of [buildSummaryPrompt(people, lines, false), buildSummaryPrompt(people, lines)]) {
+      expect(system).toContain(maturityDirective(false));
+      expect(system).not.toContain(maturityDirective(true));
+    }
   });
 });

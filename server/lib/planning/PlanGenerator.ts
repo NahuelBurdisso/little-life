@@ -556,6 +556,7 @@ export class PlanGenerator {
     const agentRow = db
       .select({
         name: agents.name,
+        age: agents.age,
         traits: agents.traits,
         personality: agents.personality,
       })
@@ -606,6 +607,7 @@ export class PlanGenerator {
     try {
       prompt = buildReplanPrompt({
         name: agentRow.name,
+        age: agentRow.age,
         personality: personality ?? {
           honesty: 50,
           aggression: 50,

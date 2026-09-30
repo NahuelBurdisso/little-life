@@ -95,7 +95,7 @@ export class PivotEvaluator {
     const daysActive = Math.max(1, Math.floor((nowMinutes - goal.created_at) / 1440));
 
     const prompt = buildPivotPrompt({
-      name: agent.name, personality,
+      name: agent.name, age: agent.age, personality,
       goalDescription: goal.description ?? goal.type,
       strategy: goal.strategy ?? '', progress: goal.progress,
       daysActive, recentMemories: recentMems.map(m => m.description),

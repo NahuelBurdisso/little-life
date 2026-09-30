@@ -15,6 +15,7 @@ import { goalClause } from '../goalText';
 import { itemPhrase, itemCountPhrase } from '../../data/economyData';
 import { endSentence } from '../factText';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
+import { isAdultAge } from '../intimacy/eligibility';
 
 /** One summary call per conversation, shared by its participants' handlers. */
 const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
@@ -137,7 +138,13 @@ export function initMemoryObserver(memoryService: MemoryService): void {
         let pending = pendingSummaries.get(conversationId);
         if (!pending) {
           const participants = [...new Set(spoken.map((l) => l.speaker))];
-          pending = summarizeConversation(participants, spoken, priority);
+          // The adult tone needs every person in the conversation to be an adult (silent ones
+          // and canned-fallback speakers count too), and fails closed on a missing row.
+          const allAdults = [...new Set(speakers)].every((id) => {
+            const row = db.select({ age: agents.age }).from(agents).where(eq(agents.id, id)).get();
+            return isAdultAge(row?.age);
+          });
+          pending = summarizeConversation(participants, spoken, priority, allAdults);
           pendingSummaries.set(conversationId, pending);
           // Every participant's handler runs in this same emit loop, so the
           // entry is only needed until the call settles.

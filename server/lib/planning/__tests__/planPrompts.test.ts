@@ -40,7 +40,7 @@ describe('hunger labels in plan prompts', () => {
 
   it('the replan prompt calls a fed agent well fed', () => {
     const { system, user } = buildReplanPrompt({
-      name: 'A', personality, traits: [], eventDescription: 'x', remainingBlocks: [],
+      name: 'A', age: 30, personality, traits: [], eventDescription: 'x', remainingBlocks: [],
       needs: { hunger: 90, energy: 80, social: 80 }, currentHour: 12, sleepTime: 22, validLocations: ['Home'],
     });
     expect(system + user).toContain('hunger: well fed');
@@ -62,12 +62,12 @@ describe('maturity directive in plan prompts', () => {
     home: 'Home', workplace: null, workStart: 9, workEnd: 17, wakeTime: 7, sleepTime: 22,
     goals: [], reflections: [], yesterdayPlan: null, dayNumber: 1, validLocations: ['Home'],
   }).system;
-  const decomposition = () => buildDecompositionPrompt({
-    name: 'A', personality, traits: [], blockAction: 'work', locationHint: 'Home',
+  const decomposition = (age = 30) => buildDecompositionPrompt({
+    name: 'A', age, personality, traits: [], blockAction: 'work', locationHint: 'Home',
     needs, startHour: 9, endHour: 11, validLocations: ['Home'], validAgents: [],
   }).system;
-  const replan = () => buildReplanPrompt({
-    name: 'A', personality, traits: [], eventDescription: 'x', remainingBlocks: [],
+  const replan = (age = 30) => buildReplanPrompt({
+    name: 'A', age, personality, traits: [], eventDescription: 'x', remainingBlocks: [],
     needs, currentHour: 12, sleepTime: 22, validLocations: ['Home'],
   }).system;
 
@@ -92,5 +92,15 @@ describe('maturity directive in plan prompts', () => {
     rules.adult = true;
     expect(daily(15)).toContain(chasteText);
     expect(daily(15)).not.toContain(adultText);
+  });
+
+  it('decomposition and revise prompts for a minor stay chaste too, and a missing age fails closed', () => {
+    rules.adult = true;
+    for (const system of [decomposition(15), replan(15), decomposition(17), replan(17)]) {
+      expect(system).toContain(chasteText);
+      expect(system).not.toContain(adultText);
+    }
+    for (const system of [decomposition(18), replan(18)]) expect(system).toContain(adultText);
+    expect(decomposition(null as never)).toContain(chasteText);
   });
 });

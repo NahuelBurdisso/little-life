@@ -110,6 +110,8 @@ export interface DailyPlanPromptParams {
 
 export interface DecompositionPromptParams {
   name: string;
+  /** Decides the maturity line: with the rule on, only an adult's prompt gets the adult tone. */
+  age: number;
   personality: PersonalityProfile;
   traits: string[];
   blockAction: string;
@@ -124,6 +126,7 @@ export interface DecompositionPromptParams {
 
 export interface ReplanPromptParams {
   name: string;
+  age: number;
   personality: PersonalityProfile;
   traits: string[];
   eventDescription: string;
@@ -221,6 +224,7 @@ Reply with JSON: {"blocks":[{"start":${wakeTime},"end":${wakeTime + 1},"action":
 export function buildDecompositionPrompt(params: DecompositionPromptParams): PlanPrompt {
   const {
     name,
+    age,
     personality,
     traits,
     blockAction,
@@ -236,7 +240,7 @@ export function buildDecompositionPrompt(params: DecompositionPromptParams): Pla
   const durationMinutes = (endHour - startHour) * 60;
 
   const system = `You are ${name}. ${personalityDesc}
-${TOWN_SETTING} ${maturityDirective(isAdultContent())}
+${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 
 From ${startHour}:00 to ${endHour}:00 (${durationMinutes} minutes) you planned to: ${blockAction}
 Where: ${locationHint}
@@ -277,6 +281,7 @@ Reply with JSON: {"actions":[{"action":"...","location":"...","minutes":30}, ...
 export function buildReplanPrompt(params: ReplanPromptParams): PlanPrompt {
   const {
     name,
+    age,
     personality,
     traits,
     eventDescription,
@@ -296,7 +301,7 @@ export function buildReplanPrompt(params: ReplanPromptParams): PlanPrompt {
     : '- Nothing planned.';
 
   const system = `You are ${name}. ${personalityDesc}
-${TOWN_SETTING} ${maturityDirective(isAdultContent())}
+${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 
 Something just happened: ${eventDescription}
 

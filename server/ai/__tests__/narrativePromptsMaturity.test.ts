@@ -23,14 +23,14 @@ const personality: PersonalityProfile = {
 const prompts = (): Array<[string, string]> => [
   ['gazette', buildGazettePrompt({ items: ['Ada and Bruno wed'], events: [], arcs: [] }, 3, 'spring', 'sunny').system],
   ['goal review', buildGoalReviewPrompt({
-    name: 'Ada', personality, traits: ['kind'], ambition: null, activeGoals: [], recentMemories: ['I kissed Bruno.'],
+    name: 'Ada', age: 30, personality, traits: ['kind'], ambition: null, activeGoals: [], recentMemories: ['I kissed Bruno.'],
     relationshipHighlights: [], money: 10, job: null, dayNumber: 3, openSlots: 1, otherAgents: ['Bruno'],
   } as never).system],
   ['pivot', buildPivotPrompt({
-    name: 'Ada', personality, goalDescription: 'win Bruno over', strategy: 'flirt', progress: 0.4, daysActive: 3, recentMemories: [],
+    name: 'Ada', age: 30, personality, goalDescription: 'win Bruno over', strategy: 'flirt', progress: 0.4, daysActive: 3, recentMemories: [],
   } as never).system],
   ['ambition', buildAmbitionGenerationPrompt({
-    name: 'Ada', personality, traits: ['kind'], recentMemories: [], money: 10, job: null, relationshipHighlights: [],
+    name: 'Ada', age: 30, personality, traits: ['kind'], recentMemories: [], money: 10, job: null, relationshipHighlights: [],
   } as never).system],
   ['reflection questions', buildQuestionPrompt({
     name: 'Ada', age: 30, traits: ['kind'], personality, recentMemories: [{ description: 'I spent the night with Bruno.', importance: 9 }],
@@ -65,6 +65,28 @@ describe('the maturity line reaches every story prompt', () => {
     for (const [name, system] of prompts()) {
       expect(system, name).toContain(maturityDirective(false));
       expect(system, name).not.toContain(maturityDirective(true));
+    }
+  });
+});
+
+describe('a goal prompt for a minor never gets the adult tone', () => {
+  afterEach(() => setRuleOverrides({ adultContent: false }));
+
+  it('review, pivot and ambition fall back to the chaste line under 18 or with no age, whatever the rule says', () => {
+    setRuleOverrides({ adultContent: true });
+    for (const age of [12, 17, undefined as never]) {
+      const systems = [
+        buildGoalReviewPrompt({
+          name: 'Kid', age, personality, traits: [], ambition: null, activeGoals: [], recentMemories: [],
+          relationshipHighlights: [], money: 1, job: null, dayNumber: 3, openSlots: 1, otherAgents: [],
+        }).system,
+        buildPivotPrompt({ name: 'Kid', age, personality, goalDescription: 'g', strategy: 's', progress: 0.1, daysActive: 3, recentMemories: [] }).system,
+        buildAmbitionGenerationPrompt({ name: 'Kid', age, personality, traits: [], recentMemories: [], money: 1, job: null, relationshipHighlights: [] }).system,
+      ];
+      for (const system of systems) {
+        expect(system).toContain(maturityDirective(false));
+        expect(system).not.toContain(maturityDirective(true));
+      }
     }
   });
 });

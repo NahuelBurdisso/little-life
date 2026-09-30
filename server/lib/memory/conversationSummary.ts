@@ -48,7 +48,12 @@ export function summaryPriority(spokenLines: number, watched: boolean): LLMPrior
   return spokenLines >= OFFSCREEN_MIN_SUMMARY_LINES ? 'low' : null;
 }
 
-export function buildSummaryPrompt(participants: string[], lines: SummaryLine[]): {
+/**
+ * `allAdults`: every participant is 18 or over. The summary is one call for both sides, so the
+ * adult tone needs the whole conversation to be adults; a single minor in it keeps the line chaste.
+ * Fails closed: callers that do not know the ages get the chaste line.
+ */
+export function buildSummaryPrompt(participants: string[], lines: SummaryLine[], allAdults = false): {
   system: string;
   user: string;
   format: Record<string, unknown>;
@@ -56,7 +61,7 @@ export function buildSummaryPrompt(participants: string[], lines: SummaryLine[])
   const transcript = lines.map((l) => `${firstName(l.speaker)}: ${l.text}`).join('\n');
   const properties: Record<string, unknown> = {};
   for (const p of participants) properties[p] = { type: 'string', minLength: 10, maxLength: 240 };
-  const system = `You write the private memory each person keeps after a conversation in a small town. ${maturityDirective(isAdultContent())}
+  const system = `You write the private memory each person keeps after a conversation in a small town. ${maturityDirective(isAdultContent() && allAdults)}
 
 Conversation between ${participants.join(' and ')}:
 ${transcript}
@@ -97,9 +102,10 @@ export async function summarizeConversation(
   participants: string[],
   lines: SummaryLine[],
   priority: LLMPriority = 'normal',
+  allAdults = false,
 ): Promise<Map<string, string> | null> {
   if (participants.length < 2 || lines.length < MIN_SUMMARY_LINES) return null;
-  const prompt = buildSummaryPrompt(participants, lines);
+  const prompt = buildSummaryPrompt(participants, lines, allAdults);
   try {
     const res = await callOllamaChat({
       model: CONFIG.AI.LIGHT_MODEL,

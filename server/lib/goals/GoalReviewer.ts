@@ -235,6 +235,7 @@ export class GoalReviewer {
 
       const prompt = buildGoalReviewPrompt({
         name: agent.name,
+        age: agent.age,
         personality,
         traits: agent.traits,
         ambition: ambition ? { description: ambition.description ?? ambition.type, type: ambition.type } : null,
@@ -461,6 +462,7 @@ export class GoalReviewer {
 
     const prompt = buildAmbitionGenerationPrompt({
       name: agent.name,
+      age: agent.age,
       personality,
       traits: agent.traits,
       recentMemories,

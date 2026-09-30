@@ -56,7 +56,7 @@ const cases: Case[] = [
   {
     purpose: 'plan.decompose', numPredict: 360,
     prompt: buildDecompositionPrompt({
-      name: 'Diego Santos', personality, traits, blockAction: 'Hang out at the tavern and watch Marco', locationHint: 'The Rusty Lantern',
+      name: 'Diego Santos', age: 29, personality, traits, blockAction: 'Hang out at the tavern and watch Marco', locationHint: 'The Rusty Lantern',
       needs: { hunger: 30, energy: 70, social: 20 }, money: 12, startHour: 18, endHour: 21, validLocations: locations, validAgents: people,
     }),
     parse: (t) => parseDecomposedActions(t, locations, people),
@@ -64,7 +64,7 @@ const cases: Case[] = [
   {
     purpose: 'plan.revise', numPredict: 600,
     prompt: buildReplanPrompt({
-      name: 'Diego Santos', personality, traits, eventDescription: 'Marco Rivera accused you of theft in the town square.',
+      name: 'Diego Santos', age: 29, personality, traits, eventDescription: 'Marco Rivera accused you of theft in the town square.',
       remainingBlocks: [{ start_hour: 15, end_hour: 17, broad_action: 'Mind the pawnshop', location_hint: 'The Pawnshop' }, { start_hour: 17, end_hour: 23, broad_action: 'Drinks at the tavern', location_hint: 'The Rusty Lantern' }],
       needs: { hunger: 30, energy: 60, social: 20 }, currentHour: 15, sleepTime: 23, validLocations: locations,
     }),
@@ -73,7 +73,7 @@ const cases: Case[] = [
   {
     purpose: 'goal.review', numPredict: 700,
     prompt: buildGoalReviewPrompt({
-      name: 'Diego Santos', personality, traits, ambition: { description: 'Own the biggest shop in town', type: 'wealth' },
+      name: 'Diego Santos', age: 29, personality, traits, ambition: { description: 'Own the biggest shop in town', type: 'wealth' },
       activeGoals: [{ id: 17, description: 'Get back at Marco Rivera', strategy: 'Spread rumors about him', progress: 0.1, daysActive: 2 }],
       recentMemories: memories, relationshipHighlights: ['Marco Rivera: friendship=-45', 'Priya Sharma: friendship=35'],
       money: 12, job: 'pawnbroker', dayNumber: 4, openSlots: 2, otherAgents: people,
@@ -82,12 +82,12 @@ const cases: Case[] = [
   },
   {
     purpose: 'goal.pivot', numPredict: 200,
-    prompt: buildPivotPrompt({ name: 'Diego Santos', personality, goalDescription: 'Win Priya Sharma\'s trust', strategy: 'Buy bread every day', progress: 0, daysActive: 2, recentMemories: memories }),
+    prompt: buildPivotPrompt({ name: 'Diego Santos', age: 29, personality, goalDescription: 'Win Priya Sharma\'s trust', strategy: 'Buy bread every day', progress: 0, daysActive: 2, recentMemories: memories }),
     parse: parsePivotResult,
   },
   {
     purpose: 'goal.ambition', numPredict: 250,
-    prompt: buildAmbitionGenerationPrompt({ name: 'Diego Santos', personality, traits, recentMemories: memories, money: 12, job: 'pawnbroker', relationshipHighlights: ['Marco Rivera: friendship=-45'] }),
+    prompt: buildAmbitionGenerationPrompt({ name: 'Diego Santos', age: 29, personality, traits, recentMemories: memories, money: 12, job: 'pawnbroker', relationshipHighlights: ['Marco Rivera: friendship=-45'] }),
     parse: parseAmbitionGeneration,
   },
   {

@@ -2,9 +2,12 @@ import type { PersonalityProfile } from '../personality';
 import { maturityDirective } from '../../ai/contentRating';
 import { TOWN_SETTING } from '../../ai/setting';
 import { isAdultContent } from '../worldRules';
+import { isAdultAge } from '../intimacy/eligibility';
 
 interface GoalReviewPromptParams {
   name: string;
+  /** Decides the maturity line: with the rule on, only an adult's prompt gets the adult tone. */
+  age: number;
   personality: PersonalityProfile;
   traits: string[];
   ambition: { description: string; type: string } | null;
@@ -22,6 +25,7 @@ interface GoalReviewPromptParams {
 
 interface PivotPromptParams {
   name: string;
+  age: number;
   personality: PersonalityProfile;
   goalDescription: string;
   strategy: string;
@@ -32,6 +36,7 @@ interface PivotPromptParams {
 
 interface AmbitionGenerationParams {
   name: string;
+  age: number;
   personality: PersonalityProfile;
   traits: string[];
   recentMemories: string[];
@@ -133,7 +138,7 @@ function personalitySummary(p: PersonalityProfile): string {
 }
 
 export function buildGoalReviewPrompt(params: GoalReviewPromptParams): JSONPrompt {
-  const { name, personality, traits, ambition, activeGoals, recentMemories, relationshipHighlights, money, job, dayNumber, openSlots, otherAgents } = params;
+  const { name, age, personality, traits, ambition, activeGoals, recentMemories, relationshipHighlights, money, job, dayNumber, openSlots, otherAgents } = params;
   const pSummary = personalitySummary(personality);
   const traitsList = traits.join(', ');
   const ambitionText = ambition ? `Your life ambition: "${ambition.description}" (${ambition.type})` : 'You do not have a life ambition yet.';
@@ -152,7 +157,7 @@ export function buildGoalReviewPrompt(params: GoalReviewPromptParams): JSONPromp
     'Keep every text field to one short sentence.',
   ].filter(Boolean).join(' ');
 
-  const system = `You are ${name}, living in a small town. Day ${dayNumber}. ${TOWN_SETTING} ${maturityDirective(isAdultContent())}
+  const system = `You are ${name}, living in a small town. Day ${dayNumber}. ${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 Personality: ${pSummary}. Traits: ${traitsList}.
 Money: $${Math.round(money)}. Job: ${job ?? 'unemployed'}.
 
@@ -176,11 +181,11 @@ Reply with JSON: {"ambition":"keep" or {"shift":"...","category":"...","reason":
 }
 
 export function buildPivotPrompt(params: PivotPromptParams): JSONPrompt {
-  const { name, personality, goalDescription, strategy, progress, daysActive, recentMemories } = params;
+  const { name, age, personality, goalDescription, strategy, progress, daysActive, recentMemories } = params;
   const pSummary = personalitySummary(personality);
   const memoriesText = recentMemories.length > 0 ? recentMemories.map((m) => `- ${m}`).join('\n') : '- Nothing notable recently.';
 
-  const system = `You are ${name}. Personality: ${pSummary}. ${TOWN_SETTING} ${maturityDirective(isAdultContent())}
+  const system = `You are ${name}. Personality: ${pSummary}. ${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 
 For ${daysActive} days you have pursued this goal with ${Math.round(progress * 100)}% progress:
 Goal: "${goalDescription}"
@@ -206,13 +211,13 @@ Reply with JSON: {"new_strategy":"...","new_category_hint":"${GOAL_CATEGORY_HINT
 }
 
 export function buildAmbitionGenerationPrompt(params: AmbitionGenerationParams): JSONPrompt {
-  const { name, personality, traits, recentMemories, money, job, relationshipHighlights } = params;
+  const { name, age, personality, traits, recentMemories, money, job, relationshipHighlights } = params;
   const pSummary = personalitySummary(personality);
   const traitsList = traits.join(', ');
   const memoriesText = recentMemories.length > 0 ? recentMemories.map((m) => `- ${m}`).join('\n') : '- Starting a new life.';
   const relationshipsText = relationshipHighlights.length > 0 ? relationshipHighlights.map((r) => `- ${r}`).join('\n') : '- No close relationships yet.';
 
-  const system = `You are ${name}, living in a small town. ${TOWN_SETTING} ${maturityDirective(isAdultContent())}
+  const system = `You are ${name}, living in a small town. ${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 Personality: ${pSummary}. Traits: ${traitsList}.
 Money: $${Math.round(money)}. Job: ${job ?? 'unemployed'}.
 
