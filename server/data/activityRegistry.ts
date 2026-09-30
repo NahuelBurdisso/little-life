@@ -38,7 +38,7 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   player_introduce: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
   player_remove: { category: 'player', base_importance: 0.6, retention: 'long', template: '{description}' },
   // God powers that plant something (lib/godPowers.ts). Kept below the Town
-  // Crier's 0.45 news cut (lib/gazette.ts): "Player planted a rumor…" in the
+  // Crier's 0.45 news cut (lib/gazette.ts): "You planted a rumor…" in the
   // paper would give away the hand behind the story. The consequences (the
   // rumor spreading, the jealous scene) make the paper on their own.
   player_whisper: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },

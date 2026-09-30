@@ -224,7 +224,7 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_nudge',
             agents: [agentAId, agentBId],
-            templateData: { description: `Player suggested ${agentA.name} and ${agentB.name} talk${topic ? ` about "${topic}"` : ''}` },
+            templateData: { description: `You suggested ${agentA.name} and ${agentB.name} talk${topic ? ` about "${topic}"` : ''}` },
           });
 
           emitter.markDirty('agents.all');
@@ -268,7 +268,7 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_nudge',
             initiator: agentId,
-            templateData: { description: `Player sent ${agent.name} to ${location.name}` },
+            templateData: { description: `You sent ${agent.name} to ${location.name}` },
           });
 
           emitter.markDirty('agents.all');
@@ -334,7 +334,7 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_gift',
             initiator: agentId,
-            templateData: { description: `Player gave ${agent.name} $${amount}` },
+            templateData: { description: `You gave ${agent.name} $${amount}` },
           });
 
           emitter.markDirty('agents.all');
@@ -440,8 +440,8 @@ export const nudgeRouter = router({
             initiator: agentId,
             templateData: {
               description: created.lodging
-                ? `Player introduced ${name} to the town — every house is full, so they are lodging at ${created.homeName}`
-                : `Player introduced ${name} to the town`,
+                ? `You introduced ${name} to the town — every house is full, so they are lodging at ${created.homeName}`
+                : `You introduced ${name} to the town`,
             },
           });
 
@@ -472,7 +472,7 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_remove',
             initiator: agentId,
-            templateData: { description: `Player removed ${agent.name} from the town` },
+            templateData: { description: `You removed ${agent.name} from the town` },
           });
 
           emitter.markDirty('agents.all');
@@ -519,7 +519,7 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_nudge',
             agents: [agentId, targetId],
-            templateData: { description: `Player made ${agent.name} reveal a secret to ${target.name}` },
+            templateData: { description: `You made ${agent.name} reveal a secret to ${target.name}` },
           });
 
           emitter.markDirty('agents.all');
@@ -577,7 +577,7 @@ export const nudgeRouter = router({
           logActivity({
             type: 'player_nudge',
             agents: [aId, bId],
-            templateData: { description: `Player forced a confrontation between ${agentA.name} and ${agentB.name}` },
+            templateData: { description: `You forced a confrontation between ${agentA.name} and ${agentB.name}` },
           });
 
           emitter.markDirty('agents.all');

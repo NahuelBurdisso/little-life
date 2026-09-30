@@ -150,7 +150,7 @@ export function whisperThought(agentId: number, rawText: string): GodPowerResult
   logActivity({
     type: 'player_whisper',
     initiator: agentId,
-    templateData: { description: `Player whispered a thought to ${agent.name}: "${text}"` },
+    templateData: { description: `You whispered a thought to ${agent.name}: "${text}"` },
   });
   emitter.markDirty('agents.all');
 
@@ -217,7 +217,7 @@ export function startRumor(
     type: 'player_rumor',
     initiator: seederId,
     target: subjectId,
-    templateData: { description: `Player planted a rumor with ${seeder.name}: ${content}` },
+    templateData: { description: `You planted a rumor with ${seeder.name}: ${content}` },
   });
 
   const s = firstName(seeder.name);
@@ -347,8 +347,8 @@ export function stirFeeling(agentId: number, state: StirrableState, targetId: nu
     ...(target ? { target: target.id } : {}),
     templateData: {
       description: target
-        ? `Player stirred ${state === 'infatuated' ? 'infatuation' : 'jealousy'} in ${agent.name} toward ${target.name}`
-        : `Player made ${agent.name} feel ${state}`,
+        ? `You stirred ${state === 'infatuated' ? 'infatuation' : 'jealousy'} in ${agent.name} toward ${target.name}`
+        : `You made ${agent.name} feel ${state}`,
     },
   });
   emitter.markDirty('agents.all');

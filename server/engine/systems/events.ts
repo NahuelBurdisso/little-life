@@ -104,7 +104,8 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
   if (opts.announce ?? true) {
     logActivity({
       type: opts.triggeredBy === 'player' ? 'player_event' : 'world_event',
-      templateData: { description: `${name}: ${description}` },
+      // The player's own events read as theirs in the "✦ You" feed tab.
+      templateData: { description: opts.triggeredBy === 'player' ? `You called a ${name}: ${description}` : `${name}: ${description}` },
     });
     const activeAgents = db.select({ id: agents.id }).from(agents).where(eq(agents.is_active, true)).all();
     for (const agent of activeAgents) {

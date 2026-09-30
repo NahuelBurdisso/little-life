@@ -447,7 +447,10 @@ export function onPlanReplanned(payload: { agentId: number; description: string;
   const w = open.find((x) => payload.description.includes(`"${x.text}"`));
   if (!w) return;
   const who = nameOf(payload.agentId).split(' ')[0];
-  const plan = joinForFeed(payload.blocks, 90);
+  // Plan blocks are written as titles ("Purchase fine flour"); mid-sentence
+  // they read as "now purchase fine flour". Only the opening verb is lowered —
+  // names later in a block keep their capitals.
+  const plan = joinForFeed(payload.blocks.map((b) => b.charAt(0).toLowerCase() + b.slice(1)), 90);
   reportWhisper(
     payload.agentId,
     w,
