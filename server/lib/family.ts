@@ -7,7 +7,7 @@ import {
 import { CONFIG } from './constants';
 import { simEvents } from './simEvents';
 import { logActivity } from './activityLogger';
-import { createFact } from './gossip';
+import { addKnowers, createFact } from './gossip';
 import { getAgentStates, type StateType } from './states';
 import { queueMaxWait } from './conversationPacing';
 import { clamp } from './utils';
@@ -470,13 +470,6 @@ function announce(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: number
     agents: father?.is_active ? [mother.id, father.id] : [mother.id],
     templateData: { description: `${couple} expecting a baby!` },
   });
-}
-
-function addKnowers(factId: number, ids: number[]): void {
-  const f = db.select({ known_by: shared_knowledge.known_by }).from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();
-  if (!f) return;
-  const next = [...new Set([...(f.known_by as number[]), ...ids])];
-  db.update(shared_knowledge).set({ known_by: next }).where(eq(shared_knowledge.id, factId)).run();
 }
 
 // ─── The birth ───────────────────────────────────────────────────────────────

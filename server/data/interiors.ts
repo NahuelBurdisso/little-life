@@ -156,7 +156,10 @@ export const INTERIOR_ZONES: Record<string, ZoneDef[]> = {
       label: 'Bed',
       tiles: [[0, 0], [1, 0]],
       center: [0, 0],
-      maxOccupants: 1,
+      // Two, because a home is a couple's: with 1 the second spouse of a married pair
+      // lay on the floor (findAvailableZone returned null and they were routed to the
+      // doorstep). A third resident still falls back, like a lodger or a child would.
+      maxOccupants: 2,
       color: 0x2E4A7A,
       allowedActions: ['sleep', 'rest'],
       visibility: 0.3,

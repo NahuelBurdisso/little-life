@@ -147,6 +147,27 @@ describe('rippleRules', () => {
     }
   });
 
+  describe('affair_heartbreak', () => {
+    const rule = rippleRules.find((r) => r.id === 'affair_heartbreak')!;
+    const fires = (payload: Record<string, unknown>) => rule.sourceFilter!(payload, {} as never);
+
+    it('fires for an affair fact whatever its wording', () => {
+      // The generated affair sentence is "X and Y are getting suspiciously close": no "affair"
+      // or "cheating" in it, so a content match never saw the town's own affair secrets.
+      expect(fires({ agentId: 1, content: 'Ana and Ben are getting suspiciously close.', factType: 'affair', factId: 9 })).toBe(true);
+    });
+
+    it('does not fire for another fact type, even one that mentions affairs by name', () => {
+      expect(fires({ agentId: 1, content: 'Ana stole bread.', factType: 'theft', factId: 9 })).toBe(false);
+      expect(fires({ agentId: 1, content: 'Ana talks about the affair at the mill.', factType: 'rumor', factId: 9 })).toBe(false);
+    });
+
+    it('falls back to the content match for payloads that carry no fact type', () => {
+      expect(fires({ agentId: 1, content: 'Ben is cheating on Ana' })).toBe(true);
+      expect(fires({ agentId: 1, content: 'Ben bought a hat' })).toBe(false);
+    });
+  });
+
   it('contains exactly 68 rules', () => {
     expect(rippleRules.length).toBe(68);
   });

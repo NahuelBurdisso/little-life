@@ -7,9 +7,14 @@ export const rippleRules: RippleRule[] = [
   {
     id: 'affair_heartbreak',
     source: 'gossip:learned',
+    // The fact's type is authoritative: the generated affair sentence ("are getting suspiciously
+    // close") contains neither keyword, so matching content alone never fired for a real affair.
+    // The keyword match stays for payloads that carry no type (godPowers, smallMisdeeds).
     sourceFilter: (payload) =>
-      typeof payload?.content === 'string' &&
-      (payload.content.includes('affair') || payload.content.includes('cheating')),
+      typeof payload?.factType === 'string'
+        ? payload.factType === 'affair'
+        : typeof payload?.content === 'string' &&
+          (payload.content.includes('affair') || payload.content.includes('cheating')),
     target: 'self',
     probability: 0.9,
     personalityGates: [{ axis: 'neuroticism', direction: '+', weight: 0.1 }],

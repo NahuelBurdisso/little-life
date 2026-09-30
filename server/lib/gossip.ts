@@ -354,6 +354,53 @@ export function createFact(
   return Number(result.lastInsertRowid);
 }
 
+/** Adds `ids` to a fact's `known_by`, once each. A missing row is ignored. */
+export function addKnowers(factId: number, ids: number[]): void {
+  const f = db.select({ known_by: shared_knowledge.known_by }).from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();
+  if (!f) return;
+  const next = [...new Set([...(f.known_by as number[]), ...ids])];
+  db.update(shared_knowledge).set({ known_by: next }).where(eq(shared_knowledge.id, factId)).run();
+}
+
+/**
+ * "Create or add knowers": `createFact`, except that when the fact already exists (createFact
+ * dedupes on type + subject + target among non-public rows and returns null WITHOUT touching
+ * `known_by`) the new `knowerIds` are merged into the existing row. Anything that mints a
+ * secret from an event (a kiss seen, a night spent together, an affair noticed) must use this:
+ * with plain createFact the second witness of a repeated act silently learned nothing.
+ * Returns the fact's id either way (null only if the row vanished between the two reads).
+ */
+export function learnFact(
+  type: string,
+  subjectId: number,
+  targetId: number | null,
+  sensitivity: number,
+  knowerIds: number[],
+  source: string,
+  context?: FactContext,
+): number | null {
+  const created = createFact(type, subjectId, targetId, sensitivity, knowerIds, source, context);
+  if (created != null) return created;
+
+  // Same self-target normalisation as createFact, so the lookup matches the row it deduped on.
+  if (targetId === subjectId) targetId = null;
+  const rows = db
+    .select({ id: shared_knowledge.id, is_public: shared_knowledge.is_public })
+    .from(shared_knowledge)
+    .where(and(
+      eq(shared_knowledge.type, type),
+      eq(shared_knowledge.subject_id, subjectId),
+      eq(shared_knowledge.is_active, true),
+      ...(targetId != null ? [eq(shared_knowledge.target_id, targetId)] : []),
+    ))
+    .all();
+  // A public row is known to the whole town already: nothing to add, but it is still "the" fact.
+  const existing = rows.find((r) => !r.is_public) ?? rows[0];
+  if (!existing) return null;
+  if (!existing.is_public) addKnowers(existing.id, knowerIds);
+  return existing.id;
+}
+
 // ─── getNegativeFactCount / getHiddenSinCount ─────────────────────────────────
 
 const NEGATIVE_FACT_TYPES = [
@@ -591,7 +638,9 @@ export function spreadGossip(
       .run();
 
     const speakerName = getAgentName(_speakerId);
-    simEvents.emit('gossip:learned', { agentId: listenerId, sourceName: speakerName, content: fact.content });
+    // factType / factId are what ripple rules key on (affair_heartbreak). The other two emit
+    // sites (godPowers, smallMisdeeds) have no fact row and leave them out.
+    simEvents.emit('gossip:learned', { agentId: listenerId, sourceName: speakerName, content: fact.content, factType: fact.type, factId: fact.id });
     simEvents.emit('gossip:shared', { agentId: _speakerId, otherName: getAgentName(listenerId), content: fact.content });
     rumorReachedSubject(fact, _speakerId, listenerId);
 

@@ -15,7 +15,7 @@
  */
 import { db } from '../db';
 import { agentStates, needs, relationshipEvents, relationships, shared_knowledge } from '../db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
 import { createFact } from './gossip';
@@ -233,8 +233,15 @@ export function reactToPartnerAffair(discoverer: BeatAgent, partner: BeatAgent, 
   const partnerRel = pairRelationship(discoverer.id, partner.id);
   if (!partnerRel || partnerRel.status !== 'partners') return false;
 
+  // The partner is a party to the affair on either side: the states phase and the ripple rules
+  // store it as (subject: whoever was seen, target: the other), so "Ben and Ana are getting
+  // close" has Ben as subject when Ben strayed and as target when it was Ana. Matching only the
+  // subject missed half of them. A fact the discoverer is themselves part of (their own
+  // courtship with this very partner, or with anyone) is not a betrayal by the partner.
   const affairFacts = db.select().from(shared_knowledge)
-    .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.subject_id, partner.id), eq(shared_knowledge.is_active, true))).all()
+    .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.is_active, true),
+      or(eq(shared_knowledge.subject_id, partner.id), eq(shared_knowledge.target_id, partner.id)))).all()
+    .filter((f) => f.subject_id !== discoverer.id && f.target_id !== discoverer.id)
     .filter((f) => (f.known_by as number[]).includes(discoverer.id));
   if (affairFacts.length === 0) return false;
 
@@ -288,7 +295,9 @@ export function reactToPartnerAffair(discoverer: BeatAgent, partner: BeatAgent, 
       status: 'acquaintances',
       status_since_minute: nowMinutes,
       romance_ab: 0, romance_ba: 0,
-      tags: withoutMilestoneTags(partnerRel.tags as string[]),
+      // `partner` goes in the same write (the rage branch does the same): left behind, the pair
+      // read as partnered until the next updateTags pass.
+      tags: withoutMilestoneTags(partnerRel.tags as string[]).filter((t) => t !== 'partner'),
     }).where(eq(relationships.id, partnerRel.id)).run();
   }
   return true;
