@@ -4,7 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // builder and the conversation helpers — mock all three so the test pins the
 // control flow (retry → validate → fallback → write) without a DB or a model.
 vi.mock('../ollama', () => ({ callOllamaChat: vi.fn() }));
-vi.mock('../prompts', () => ({
+vi.mock('../prompts', async (importOriginal) => ({
+  // Real `firstMeetingOf`: the opener check has to agree with the prompt.
+  ...(await importOriginal<typeof import('../prompts')>()),
   buildConversationPrompt: () => ({ system: 'sys', messages: [{ role: 'user', content: 'hi' }] }),
   hasConcreteTopic: (t: string | null) => !!t && !/greeting/.test(t),
   topicIntent: () => 'Share the news about the mill.',
@@ -177,7 +179,21 @@ describe('generateResponse', () => {
       expect(vi.mocked(addMessage).mock.calls[0][6]).toBe(false);
     });
 
-    it('leaves greetings, first meetings and later turns alone', async () => {
+    it('holds townsfolk who have never talked to the same rule — they know each other by sight', async () => {
+      vi.mocked(getConversationContext).mockResolvedValue({
+        ...(opener('town news') as object), relationship: null, newcomer: null,
+      } as never);
+      vi.mocked(callOllamaChat).mockResolvedValueOnce({
+        text: 'Good morning, Lucia! How are you doing today? Did you hear the mill wheel cracked?',
+      } as never);
+
+      await generateResponse(1, 1);
+
+      // The how-are-you goes; a bare greeting may stay (stripGenericOpener).
+      expect(vi.mocked(addMessage).mock.calls[0][2]).toBe('Good morning, Lucia! Did you hear the mill wheel cracked?');
+    });
+
+    it("leaves greetings, a newcomer's introduction and later turns alone", async () => {
       // A greeting topic: the hello is the conversation.
       vi.mocked(getConversationContext).mockResolvedValue(opener('friendly greeting'));
       vi.mocked(callOllamaChat).mockResolvedValue({ text: 'Good to see you, Lucia!' } as never);
@@ -192,9 +208,9 @@ describe('generateResponse', () => {
       expect(callOllamaChat).toHaveBeenCalledTimes(2);
       expect(vi.mocked(addMessage).mock.calls[1][2]).toBe('How are you doing today? The mill, yes.');
 
-      // A first meeting (no relationship row) keeps its greeting.
+      // Meeting someone new in town (lib/newcomers.ts) keeps its greeting.
       vi.mocked(getConversationContext).mockResolvedValue({
-        ...(opener('town news') as object), relationship: null,
+        ...(opener('town news') as object), relationship: null, newcomer: 'listener',
       } as never);
       vi.mocked(callOllamaChat).mockResolvedValue({ text: "Hello there! I'm Rosa, from the bakery." } as never);
       await generateResponse(1, 1);

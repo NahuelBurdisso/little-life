@@ -16,7 +16,7 @@
  * empty model reply (retry once, then the canned fallback).
  */
 
-import { firstName, nameVariants, withoutHonorific } from './names';
+import { addressName, firstName, nameVariants, withoutHonorific } from './names';
 
 export interface DialogueSanitizeOptions {
   /** Full name of the agent speaking. */
@@ -334,16 +334,8 @@ function trimIncompleteTail(text: string): string {
 function shortenListenerName(text: string, listenerFull: string): string {
   const full = listenerFull.trim();
   const bare = withoutHonorific(full);
-  const parts = bare.split(/\s+/);
-  if (parts.length < 2) return text;
-  const rawTitle = bare !== full ? full.split(/\s+/)[0].replace(/\.$/, '') : '';
-  // "Dr. Petrov", "Mrs. Chen" — but "Miss Doe" has no period, and a knight
-  // is "Sir John", not "Sir Smith".
-  const short = !rawTitle
-    ? parts[0]
-    : /^sir$/i.test(rawTitle)
-      ? `${rawTitle} ${parts[0]}`
-      : `${rawTitle}${/^(dr|mr|mrs|ms|prof|rev)$/i.test(rawTitle) ? '.' : ''} ${parts[parts.length - 1]}`;
+  if (bare.split(/\s+/).length < 2) return text;
+  const short = addressName(full);
   let out = text;
   for (const variant of [...new Set([full, bare])].sort((a, b) => b.length - a.length)) {
     out = out.replace(new RegExp(`\\b${escapeRegExp(variant)}\\b`, 'g'), short);

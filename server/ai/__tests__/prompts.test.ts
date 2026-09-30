@@ -121,11 +121,11 @@ describe('buildConversationPrompt', () => {
   it('turns the topic label into an intent in the first turn instruction', () => {
     const { messages } = buildConversationPrompt(baseParams);
     const userMsg = messages[messages.length - 1].content;
-    expect(userMsg).toContain('Something Carlos Mendez did has been eating at you');
+    expect(userMsg).toContain('Something Carlos did has been eating at you');
     expect(userMsg).not.toContain('discuss confrontation');
   });
 
-  it('bans the stock pleasantries in the opener, except at a first meeting (G6)', () => {
+  it("bans the stock pleasantries in the opener, except in a newcomer's introduction (G6)", () => {
     const acquainted = {
       ...baseParams,
       relationship: { ...baseParams.relationship!, familiarity: 40 },
@@ -134,11 +134,59 @@ describe('buildConversationPrompt', () => {
     expect(opener).toContain('"how are you doing today"');
     expect(opener).toContain('start with the thing itself');
 
-    const strangers = {
+    // Townsfolk who never really talked still know each other: same rule.
+    const neverTalked = {
       ...baseParams,
       relationship: { ...baseParams.relationship!, familiarity: 0 },
     };
-    expect(buildConversationPrompt(strangers).messages.at(-1)!.content).not.toContain('how are you doing today');
+    expect(buildConversationPrompt(neverTalked).messages.at(-1)!.content).toContain('how are you doing today');
+
+    const newcomer = { ...neverTalked, newcomer: 'listener' as const };
+    expect(buildConversationPrompt(newcomer).messages.at(-1)!.content).not.toContain('how are you doing today');
+  });
+
+  describe('first meetings (playtest #3: "Well, I am Thomas Park, the Mayor")', () => {
+    const friendly = {
+      ...baseParams,
+      conversation: { ...baseParams.conversation, topic: 'offering help' },
+      relationship: { ...baseParams.relationship!, friendship_ab: 5, familiarity: 0, interaction_count: 0, tags: [] },
+    };
+
+    it('treats townsfolk who never talked as known by sight, not strangers, and keeps the topic', () => {
+      const last = buildConversationPrompt(friendly).messages.at(-1)!.content;
+      expect(last).toContain('know each other by sight and reputation');
+      expect(last).toContain("Don't introduce yourself");
+      expect(last).not.toMatch(/Introduce yourself/);
+      expect(last).toContain('could use a hand');
+    });
+
+    it('sizes up a disliked face without an introduction', () => {
+      const cold = { ...friendly, relationship: { ...friendly.relationship, friendship_ab: -20 } };
+      const last = buildConversationPrompt(cold).messages.at(-1)!.content;
+      expect(last).toContain("what you've heard doesn't impress you");
+      expect(last).toContain("Don't introduce yourself");
+    });
+
+    it('lets only a newcomer be introduced', () => {
+      const toNewcomer = buildConversationPrompt({ ...friendly, newcomer: 'listener' }).messages;
+      expect(toNewcomer.at(-1)!.content).toContain("Carlos is new in town and you've never met. Introduce yourself");
+      const asNewcomer = buildConversationPrompt({ ...friendly, newcomer: 'speaker', relationship: null }).messages;
+      expect(asNewcomer.at(-1)!.content).toContain("You're new in town and have never met Carlos. Introduce yourself.");
+      expect(asNewcomer[0].content).toContain("You've never met Carlos Mendez.");
+    });
+
+    it('stops framing a pair as a first meeting once they have talked', () => {
+      const talked = { ...friendly, newcomer: 'listener' as const, relationship: { ...friendly.relationship, familiarity: 30 } };
+      const last = buildConversationPrompt(talked).messages.at(-1)!.content;
+      expect(last).not.toContain('new in town');
+      expect(last).not.toContain('by sight');
+    });
+
+    it('names the listener by first name in the instructions', () => {
+      const last = buildConversationPrompt(friendly).messages.at(-1)!.content.split('[Your turn]')[1];
+      expect(last).not.toContain('Carlos Mendez');
+      expect(last).toContain('Carlos');
+    });
   });
 
   it('passes unknown topics through as a subject', () => {
@@ -164,7 +212,7 @@ describe('buildConversationPrompt', () => {
     const params = { ...baseParams, relationship: null };
     const { messages } = buildConversationPrompt(params);
     const userMsg = messages[0].content;
-    expect(userMsg).toContain("You don't know Carlos");
+    expect(userMsg).toContain('You know Carlos Mendez only by sight and reputation.');
     expect(userMsg).not.toContain('grudge');
   });
 
@@ -270,12 +318,12 @@ describe('buildConversationPrompt', () => {
 
     it('has the proposer ask the question on the opening turn', () => {
       const last = proposal([]).at(-1)!.content;
-      expect(last).toContain('ask Carlos Mendez to marry you');
+      expect(last).toContain('ask Carlos to marry you');
     });
 
     it('asks the other for a plain yes or no on the second turn, without the flirt nudge', () => {
       const last = proposal([{ speakerId: 2, text: 'Ray, will you marry me?' }]).at(-1)!.content;
-      expect(last).toContain('Carlos Mendez has just asked you to marry them');
+      expect(last).toContain('Carlos has just asked you to marry them');
       expect(last).toContain('yes or no');
       expect(last).not.toContain('Be flirty');
     });

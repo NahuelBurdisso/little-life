@@ -9,7 +9,7 @@ import { PersonalityProfile } from '../lib/personality';
 import { generateVoiceDirective } from './voiceDirective';
 import { selectConversationContext, ContextItem } from './contextSelector';
 import { BANNED_OPENERS, isFallbackMessage } from './sanitizeDialogue';
-import { firstName } from './names';
+import { addressName, firstName } from './names';
 import { TOWN_SETTING } from './setting';
 
 /**
@@ -181,12 +181,26 @@ function buildSettingLine(world: WorldStateRow, locationName: string): string {
   return `${timeOfDay}, day ${world.time.day}. ${season}, ${world.weather}. At ${locationName}.`;
 }
 
+/**
+ * How the two stand on a first real conversation. `by-sight`: townsfolk who
+ * have never really talked but know each other by sight and reputation — in a
+ * town this small that is everyone. `speaker-new` / `listener-new`: one of them
+ * arrived recently (lib/newcomers.ts), the only case where anyone introduces
+ * themselves. Null once they have properly talked.
+ */
+export type FirstMeeting = 'by-sight' | 'speaker-new' | 'listener-new' | null;
+
 function buildRelationshipTag(
   relationship: RelationshipRow | null,
   speakerId: number,
   otherName: string,
+  meeting: FirstMeeting = null,
 ): string {
-  if (!relationship) return `You don't know ${otherName}.`;
+  if (!relationship) {
+    return meeting === 'speaker-new' || meeting === 'listener-new'
+      ? `You've never met ${otherName}.`
+      : `You know ${otherName} only by sight and reputation.`;
+  }
 
   const isA = relationship.agent_a === speakerId;
   const friendship = isA ? relationship.friendship_ab : relationship.friendship_ba;
@@ -341,7 +355,7 @@ function buildTurnInstruction(
   otherName: string,
   topic: string | null,
   friendship: number,
-  isFirstMeeting: boolean,
+  meeting: FirstMeeting,
   romance?: number,
   lastMessageSentiment?: number,
   goalContext?: string | null,
@@ -362,11 +376,20 @@ function buildTurnInstruction(
     }
   } else if (messageCount === 0) {
     // Opening turn
-    if (isFirstMeeting) {
-      const approach = friendship >= 0
-        ? `Introduce yourself to ${otherName}. You haven't really talked before. Be curious but cautious — first impressions matter.`
-        : `You're meeting ${otherName} for the first time. Size them up. Your personality decides how open you are.`;
-      parts.push(approach);
+    const introducing = meeting === 'speaker-new' || meeting === 'listener-new';
+    if (meeting === 'listener-new') {
+      parts.push(`${otherName} is new in town and you've never met. Introduce yourself and welcome them, in your own way.`);
+    } else if (meeting === 'speaker-new') {
+      parts.push(`You're new in town and have never met ${otherName}. Introduce yourself.`);
+    } else if (meeting === 'by-sight') {
+      // Playtest #3: "Introduce yourself… You haven't really talked before"
+      // on pairs who had lived in the same dozen houses for years gave "Well,
+      // I am Thomas Park, the Mayor" and "I am Yuki Tanaka, though I think you
+      // knew that already". They know each other; they just haven't talked.
+      parts.push(friendship >= 0
+        ? `You and ${otherName} know each other by sight and reputation, as everyone in a small town does, but have never really talked. Don't introduce yourself — they know who you are.`
+        : `You know ${otherName} by sight and reputation but have never really talked, and what you've heard doesn't impress you. Don't introduce yourself — size them up.`);
+      if (topic) parts.push(topicIntent(topic, otherName));
     } else if (topic) {
       parts.push(`Start talking to ${otherName}. ${topicIntent(topic, otherName)}`);
     } else {
@@ -379,8 +402,10 @@ function buildTurnInstruction(
     // Playtest #2 (G6): openers still led with "how are you doing today" even
     // with a concrete topic. Named outright, the model stops reaching for them;
     // generateResponse strips any that slip through (stripGenericOpener).
-    // A first meeting keeps its greeting: introducing yourself IS the topic.
-    if (!isFirstMeeting) {
+    // Only a newcomer's introduction keeps its greeting: introducing yourself
+    // IS the topic there. Townsfolk meeting properly for the first time open
+    // with "Good morning, how are you?" as readily as anyone (playtest #3).
+    if (!introducing) {
       parts.push(`Skip the small talk: don't open with ${BANNED_OPENERS.map((o) => `"${o}"`).join(', ')} or the like — start with the thing itself.`);
     }
   } else if (messageCount >= maxTurns - 2) {
@@ -527,6 +552,23 @@ export interface ConversationPromptParams {
   gossipFacts?: Array<{ content: string; sensitivity: number }>;
   situationalPrompt?: string | null;
   enrichment?: AgentEnrichment | null;
+  /** Which side, if either, arrived in town recently (lib/newcomers.ts). */
+  newcomer?: 'speaker' | 'listener' | null;
+}
+
+/**
+ * The first-meeting framing for this pair (see FirstMeeting). Shared with
+ * generateResponse, whose opener check exempts only a newcomer's introduction.
+ */
+export function firstMeetingOf(
+  relationship: Pick<RelationshipRow, 'familiarity'> | null | undefined,
+  newcomer: 'speaker' | 'listener' | null | undefined,
+): FirstMeeting {
+  const neverTalked = relationship ? relationship.familiarity < 5 : true;
+  if (!neverTalked) return null;
+  if (newcomer === 'speaker') return 'speaker-new';
+  if (newcomer === 'listener') return 'listener-new';
+  return 'by-sight';
 }
 
 export function buildConversationPrompt(
@@ -587,8 +629,10 @@ export function buildConversationPrompt(
   // Setting line
   userParts.push(buildSettingLine(world, location.name));
 
+  const meeting = firstMeetingOf(relationship, params.newcomer);
+
   // Relationship tag
-  userParts.push(buildRelationshipTag(relationship, speaker.id, otherAgent.name));
+  userParts.push(buildRelationshipTag(relationship, speaker.id, otherAgent.name, meeting));
 
   // Context items with prefixes
   const contextPrefixes: Record<ContextItem['type'], string> = {
@@ -604,7 +648,6 @@ export function buildConversationPrompt(
   // Turn instruction with enriched context
   const messageCount = conversation.messages.length;
   const maxTurns = conversation.max_turns ?? 6;
-  const isFirstMeeting = relationship ? relationship.familiarity < 5 : true;
   const romance = relationship
     ? (relationship.agent_a === speaker.id ? relationship.romance_ab : relationship.romance_ba)
     : 0;
@@ -614,9 +657,12 @@ export function buildConversationPrompt(
     : null;
   const lastSentiment = lastMsg?.sentiment as number | undefined;
 
+  // The listener by the name the speaker calls them: the model echoes the form
+  // the instruction uses, and "Start talking to Priya Sharma" came back as
+  // "Good morning, Priya Sharma" (the sanitiser shortens what still slips by).
   const turnInstruction = buildTurnInstruction(
-    messageCount, maxTurns, otherAgent.name, conversation.topic,
-    friendship, isFirstMeeting, romance, lastSentiment,
+    messageCount, maxTurns, addressName(otherAgent.name), conversation.topic,
+    friendship, meeting, romance, lastSentiment,
   );
   const repetitionHint = buildRepetitionHint(
     conversation.messages as Array<{ speakerId: number; text: string; fallback?: boolean }>,

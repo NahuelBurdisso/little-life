@@ -14,6 +14,7 @@ import { getMoodMomentum } from '../lib/moodMomentum';
 import { gameMinutes } from '../lib/gameClock';
 import { goalClause } from '../lib/goalText';
 import { firstName } from '../ai/names';
+import { isNewcomer } from '../lib/newcomers';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -239,6 +240,12 @@ export async function getConversationContext(conversationId: number, speakerId: 
   // greeting the dead by name is just as wrong.
   const townNames = db.select({ name: agents.name }).from(agents).all().map((a) => a.name);
 
+  // Only a recent arrival is met for the first time; everyone else in town is
+  // known by sight and reputation (prompts.ts `firstMeetingOf`).
+  const newcomer: 'speaker' | 'listener' | null = isNewcomer(speaker.created_at, currentTick)
+    ? 'speaker'
+    : isNewcomer(otherAgent.created_at, currentTick) ? 'listener' : null;
+
   return {
     conversation,
     speaker,
@@ -257,6 +264,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     enrichment,
     goalStakes,
     townNames,
+    newcomer,
   };
 }
 
