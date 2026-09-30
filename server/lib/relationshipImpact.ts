@@ -49,6 +49,11 @@ function matchesTopic(topic: string | null, keywords: string[]): boolean {
   return keywords.some(k => topic.includes(k));
 }
 
+/** Share of the romance gap closed per unit of sentiment, per conversation (see Reciprocity). */
+export const RECIPROCITY_RATE = 0.35;
+/** The other side's romance must be past this — a crush, not politeness — to pull. */
+const RECIPROCITY_MIN_ROMANCE = 30;
+
 // --- Engine ---
 
 export function computeRelationshipDeltas(ctx: ConversationImpactContext): RelationshipDeltas {
@@ -123,6 +128,23 @@ export function computeRelationshipDeltas(ctx: ConversationImpactContext): Relat
     // Warmth amplifies romance growth
     if (personalityA.warmth > 60 && romanceAB > 0) romanceAB *= 1.2;
     if (personalityB.warmth > 60 && romanceBA > 0) romanceBA *= 1.2;
+
+    // Reciprocity: being courted by someone plainly in love with you pulls
+    // your own feelings up, in a good conversation. Partners need BOTH sides
+    // past the threshold, and the side with the lower sensuality gains less
+    // per conversation — playtest #3's Lucia/Diego sat at 60/72 after five
+    // days of courting while diminishing returns flattened the lagging side,
+    // so no couple ever became partners and proposals/weddings never ran.
+    // Only a gain that already exists grows (sensuality > 30, positive talk),
+    // so it never manufactures romance, and a cold conversation adds nothing.
+    const gapA = ctx.existingRomanceBA - ctx.existingRomanceAB;
+    if (romanceAB > 0 && gapA > 0 && ctx.existingRomanceBA > RECIPROCITY_MIN_ROMANCE) {
+      romanceAB += gapA * RECIPROCITY_RATE * overallSentiment;
+    }
+    const gapB = ctx.existingRomanceAB - ctx.existingRomanceBA;
+    if (romanceBA > 0 && gapB > 0 && ctx.existingRomanceAB > RECIPROCITY_MIN_ROMANCE) {
+      romanceBA += gapB * RECIPROCITY_RATE * overallSentiment;
+    }
   }
 
   // ── Trust ───────────────────────────────────────────────────────────────
