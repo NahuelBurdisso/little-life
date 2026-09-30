@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import {
-  activityLog, agents, agentStates, locations, needs, relationshipEvents, relationships, shared_knowledge,
+  activityLog, agents, agentStates, conversations, locations, needs, relationshipEvents, relationships, shared_knowledge,
   worldEvents, worldState,
 } from '../../../db/schema';
 import {
@@ -279,6 +279,27 @@ describe('the kiss against the DB', () => {
     onKissConversationEnded(warm(b, a), rng0);
     expect(feed('first_kiss', a)).toHaveLength(1);
     expect(feed('first_kiss', a)[0].initiator_id).toBe(b);
+  });
+
+  it('only two-person conversations: a group chat never ends in a kiss', () => {
+    const { a, b } = pair();
+    const third = insertAgent(`Third ${made.length}`, { gender: 'female' });
+    const row = (participants: number[]) => db.insert(conversations).values({
+      participants, messages: [], trigger_reason: 'test', topic: 'party', status: 'ended', started_at: 0, ended_at: 1,
+      sentiment: 0.8, max_turns: 6,
+    }).returning({ id: conversations.id }).get().id;
+    const group = row([a, b, third]);
+    // The event of every participant of a group chat, whoever "the other" is.
+    onKissConversationEnded(warm(a, b, group), rng0);
+    onKissConversationEnded(warm(b, a, group), rng0);
+    onKissConversationEnded(warm(a, third, group), rng0);
+    expect(feed('first_kiss', a)).toHaveLength(0);
+    expect(getPairIntimacy(a, b)).toBeUndefined();
+
+    // The same pair alone: they kiss.
+    onKissConversationEnded(warm(a, b, row([a, b])), rng0);
+    expect(feed('first_kiss', a)).toHaveLength(1);
+    db.delete(conversations).where(eq(conversations.trigger_reason, 'test')).run();
   });
 
   it('a conversation heard from both sides makes one kiss, not two', () => {

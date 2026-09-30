@@ -258,6 +258,11 @@ export const CONFIG = {
     // Off under vitest: the observer runs inside engine tests, which must not
     // reach a real model.
     CONVERSATION_SUMMARIES: !process.env.VITEST && process.env.LLM_CONVERSATION_SUMMARIES !== '0',
+    // One small structured call reads a rendezvous invitation's answer
+    // (lib/intimacy/rendezvous.ts `decideConsent`). Off under vitest like the
+    // summaries: the tests that exercise it mock the client and turn it on.
+    // LLM_INTIMACY_CONSENT=0 leaves the regex and the character rule to decide.
+    INTIMACY_CONSENT: !process.env.VITEST && process.env.LLM_INTIMACY_CONSENT !== '0',
     // One LLM-written town paper per game day (server/lib/gazette.ts). Off
     // under vitest for the same reason; LLM_GAZETTE=0 disables it.
     GAZETTE: !process.env.VITEST && process.env.LLM_GAZETTE !== '0',

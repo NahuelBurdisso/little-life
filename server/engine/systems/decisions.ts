@@ -63,6 +63,10 @@ import {
   PROPOSAL_SEEK_SCORE, canSeekPartner, inNoProposalState, pendingProposalPartner, queuePendingProposalNow,
   type SeekParty,
 } from '../../lib/milestonesEngine';
+import {
+  RENDEZVOUS_SEEK_SCORE, pendingRendezvousPartner, queuePendingRendezvousNow,
+} from '../../lib/intimacy/rendezvous';
+import { isAdultContent } from '../../lib/worldRules';
 
 // --- Types ---
 
@@ -525,22 +529,50 @@ export function proposalSeekDecision(
   proposerStates: readonly string[],
   partnerStates: readonly string[],
 ): ScoredAction | null {
-  const party = (a: AgentRow, states: readonly string[]): SeekParty => {
-    const personality = getEffectivePersonality(a.id) ?? a.personality as PersonalityProfile | null;
-    return {
-      action: (a.current_action as { type?: string } | null)?.type ?? 'idle',
-      inSleepWindow: inSleepWindow(effectiveSleepWindow(a.schedule, personality, a.workplace != null), hour),
-      onShift: !!a.workplace && hour >= a.schedule.workStart && hour < a.schedule.workEnd,
-      notNow: inNoProposalState(states),
-    };
-  };
-  if (!canSeekPartner(party(proposer, proposerStates), party(partner, partnerStates))) return null;
+  if (!canSeekPartner(seekParty(proposer, hour, proposerStates), seekParty(partner, hour, partnerStates))) return null;
   return {
     action: 'socializing',
     score: PROPOSAL_SEEK_SCORE,
     targetLocationId: partner.current_location ?? nearestLocation(partner.position, allLocations, 'town_square')?.id,
     targetAgentId: partner.id,
     source: 'proposal_seek',
+  };
+}
+
+/** What `canSeekPartner` needs to know about one of the two (shared by the proposal and rendezvous walks). */
+function seekParty(a: AgentRow, hour: number, states: readonly string[]): SeekParty {
+  const personality = getEffectivePersonality(a.id) ?? a.personality as PersonalityProfile | null;
+  return {
+    action: (a.current_action as { type?: string } | null)?.type ?? 'idle',
+    inSleepWindow: inSleepWindow(effectiveSleepWindow(a.schedule, personality, a.workplace != null), hour),
+    onShift: !!a.workplace && hour >= a.schedule.workStart && hour < a.schedule.workEnd,
+    notNow: inNoProposalState(states),
+  };
+}
+
+/**
+ * The walk to the lover a pending rendezvous invitation calls for (adult layer,
+ * score 6300: above the day plan, below a pending proposal), or null while it
+ * should wait: the same guards as a proposal (canSeekPartner: nobody asleep, on
+ * shift, or in a state that rules it out). Always null with the `adultContent`
+ * rule off. Same shape as `proposalSeekDecision`.
+ */
+export function rendezvousSeekDecision(
+  asker: AgentRow,
+  partner: AgentRow,
+  allLocations: LocationRow[],
+  hour: number,
+  askerStates: readonly string[],
+  partnerStates: readonly string[],
+): ScoredAction | null {
+  if (!isAdultContent()) return null;
+  if (!canSeekPartner(seekParty(asker, hour, askerStates), seekParty(partner, hour, partnerStates))) return null;
+  return {
+    action: 'socializing',
+    score: RENDEZVOUS_SEEK_SCORE,
+    targetLocationId: partner.current_location ?? nearestLocation(partner.position, allLocations, 'town_square')?.id,
+    targetAgentId: partner.id,
+    source: 'rendezvous_seek',
   };
 }
 
@@ -1705,6 +1737,22 @@ export function tick(world: WorldRow): void {
       }
     }
 
+    // Phase 1a''': a pending rendezvous invitation (adult layer, score 6300, right
+    // below the proposal block above, same guards). The asker goes to find the one
+    // they want to ask, and the invitation is seated the moment they are together.
+    // The social-queue block below leaves this decision alone (source 'rendezvous_seek').
+    if (!decision && isAdultContent()) {
+      const askedId = pendingRendezvousPartner(agent.id);
+      const asked = askedId != null ? activeAgents.find((a) => a.id === askedId) : undefined;
+      if (asked) {
+        decision = rendezvousSeekDecision(agent, asked, allLocations, world.time.hour, getAgentStates(agent.id), getAgentStates(asked.id));
+        if (decision && queuePendingRendezvousNow(agent.id)) {
+          // Together already: stay put with them while the conversation starts.
+          decision = { ...decision, targetLocationId: agent.current_location ?? decision.targetLocationId };
+        }
+      }
+    }
+
     // Phase 1b: Plan layer (score 6000 — above free-time, below emergency).
     // Not while the commute is due: plan blocks are whole hours and an LLM plan
     // (like the fallback one) puts "work" at `workStart`, so the block before it
@@ -2120,7 +2168,7 @@ export function tick(world: WorldRow): void {
 
     // Social decisions -> conversation queue (only if agents are at same location)
     // Skip if queue is already full
-    if (decision.action === 'socializing' && decision.targetAgentId && decision.source !== 'proposal_seek'
+    if (decision.action === 'socializing' && decision.targetAgentId && decision.source !== 'proposal_seek' && decision.source !== 'rendezvous_seek'
       && allQueuedConvos.length < CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE * 3) {
       const agentId = agent.id;
       const targetId = decision.targetAgentId;

@@ -1,6 +1,7 @@
 import { gameMinutes, type ClockTime } from '../gameClock';
 import { registerKissListener } from './kiss';
 import { longingPass } from './longing';
+import { registerRendezvousListener, rendezvousPass } from './rendezvous';
 
 // ─── Intimacy: the periodic pass ─────────────────────────────────────────────
 //
@@ -12,8 +13,14 @@ import { longingPass } from './longing';
 // A warm conversation can end in a kiss (kiss.ts). The listener registers on import,
 // like milestonesEngine's; later tasks add theirs next to it.
 registerKissListener();
+// A lover's invitation is answered on the asker's conversation:ended (rendezvous.ts, adult layer).
+registerRendezvousListener();
 
-/** One pass. For now only longing; rendezvous, suspicion and pregnancy join it. */
+/**
+ * One pass: longing first (the rendezvous pass reads it), then invitations.
+ * Suspicion and pregnancy join it later.
+ */
 export function intimacyTick(time: ClockTime): void {
   longingPass(gameMinutes(time));
+  rendezvousPass(time);
 }

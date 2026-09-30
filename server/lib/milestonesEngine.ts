@@ -194,8 +194,9 @@ export function deterministicAnswer(romance: number, trust: number): boolean {
   return romance * 0.6 + trust * 0.4 >= 55;
 }
 
-const YES_WORDS = /\b(yes|i will|i'?d love to|i would love to|of course|a thousand times|gladly|nothing would make me happier)\b/i;
-const NO_WORDS = /\b(no|i can(?:'|no)t|i won'?t|not ready|too soon|forgive me|of course not)\b/i;
+/** Shared with lib/intimacy/rendezvous.ts (an invitation's answer is read the same way). */
+export const YES_WORDS = /\b(yes|i will|i'?d love to|i would love to|of course|a thousand times|gladly|nothing would make me happier)\b/i;
+export const NO_WORDS = /\b(no|i can(?:'|no)t|i won'?t|not ready|too soon|forgive me|of course not)\b/i;
 
 export type ProposalOutcomeSource = 'answer' | 'sentiment' | 'relationship';
 

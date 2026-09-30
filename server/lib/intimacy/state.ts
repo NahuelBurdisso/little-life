@@ -21,8 +21,22 @@ export interface PairIntimacy {
   trysts: number;
   firstTrystAt?: number;
   lastTrystAt?: number;
-  /** An invitation waiting for its answer / the evening it was made for. */
-  pendingRendezvous?: { initiatorId: number; since: number; venueId?: number };
+  /**
+   * An invitation waiting for its answer, then the evening it was made for
+   * (lib/intimacy/rendezvous.ts writes it, tryst.ts consumes it).
+   *
+   * Two phases, told apart by `agreed`:
+   * - asked (`agreed` absent): `initiatorId` invited the other at game minute
+   *   `since`; the answer is still to come. Dropped after ~3 game hours.
+   * - agreed (`agreed: true`): both said yes (or, for a married couple who are
+   *   home together, both were willing and nobody had to ask). `agreedAt` is the
+   *   game minute it was settled. `venueId` is set only when the couple are at
+   *   their own home right now; otherwise it is left for Task 9's `pickVenue`.
+   *   Task 9 owns everything after this: it picks the venue, walks the pair
+   *   there and clears the pending when the night begins. An agreed pending
+   *   nobody acts on is dropped ~6 game hours after `agreedAt`.
+   */
+  pendingRendezvous?: { initiatorId: number; since: number; venueId?: number; agreed?: true; agreedAt?: number };
   /** No new invitation for this pair before this game minute (after a refusal). */
   rendezvousRetryAfter?: number;
   /** Nobody in town knows (yet). Flips false when it gets out. */
@@ -101,6 +115,11 @@ export function updateAgentIntimacy(id: number, patch: (a: AgentIntimacy) => voi
   return a;
 }
 
+/** Visit every pair that has state (`key` is the `pairKey`); the passes patch values in place. */
+export function forEachPairIntimacy(fn: (key: string, p: PairIntimacy) => void): void {
+  for (const [k, p] of pairs) fn(k, p);
+}
+
 /** Visit every agent that has state; the passes only patch values, never add or remove entries. */
 export function forEachAgentIntimacy(fn: (id: number, a: AgentIntimacy) => void): void {
   for (const [id, a] of agentsIntimacy) fn(id, a);
@@ -133,7 +152,13 @@ function restorePair(raw: unknown): PairIntimacy | null {
   const since = rv ? asNumber(rv.since) : null;
   if (rv && initiatorId !== null && since !== null) {
     const venueId = asNumber(rv.venueId);
-    p.pendingRendezvous = venueId !== null ? { initiatorId, since, venueId } : { initiatorId, since };
+    const agreedAt = asNumber(rv.agreedAt);
+    p.pendingRendezvous = { initiatorId, since };
+    if (venueId !== null) p.pendingRendezvous.venueId = venueId;
+    if (rv.agreed === true) {
+      p.pendingRendezvous.agreed = true;
+      if (agreedAt !== null) p.pendingRendezvous.agreedAt = agreedAt;
+    }
   }
   return p;
 }

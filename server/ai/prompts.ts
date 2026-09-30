@@ -20,6 +20,15 @@ import { TOWN_SETTING } from './setting';
 export const PROPOSAL_TOPIC = 'proposal';
 
 /**
+ * Conversation topic of a lover's invitation to spend the evening somewhere
+ * private (queued by lib/intimacy/rendezvous.ts, adult layer only, which also
+ * reads the answer back). Like a proposal it has a real answer, so it is
+ * exempted from the "be flirty" push below: the listener has to be free to say
+ * no. The wording stays discreet on purpose: an invitation, never a scene.
+ */
+export const RENDEZVOUS_TOPIC = 'a private evening';
+
+/**
  * Topic of the conversation lib/family.ts queues when a husband learns the
  * baby may be another man's: he opens it, facing the man. Its own label so
  * the opener gets an intent written for that scene (`topicIntent`), not the
@@ -381,6 +390,9 @@ export function topicIntent(topic: string, other: string): string {
     // Queued by lib/milestonesEngine.ts. The proposer always opens; the answer
     // comes from the turn instruction below (PROPOSAL_TOPIC).
     [PROPOSAL_TOPIC]: `You've made up your mind: ask ${other} to marry you, today. Do it your own way, in the manner of the time, and ask the question plainly.`,
+    // Queued by lib/intimacy/rendezvous.ts (adult layer). The lover who feels more opens;
+    // the answer comes from the turn instruction below (RENDEZVOUS_TOPIC).
+    [RENDEZVOUS_TOPIC]: `You would like to spend the evening with ${other} somewhere private, just the two of you. Ask them, warmly and discreetly, in the manner of the time — ${other} may accept or decline.`,
     // Queued by lib/family.ts; the husband opens.
     [PATERNITY_TOPIC]: `You've just learned your wife's baby may be ${other}'s, not yours. Face ${other} with it — demand the truth.`,
   };
@@ -424,6 +436,17 @@ function buildTurnInstruction(
       parts.push(`The question has been asked and answered. Close the moment the way you would.`);
     } else {
       parts.push(`Respond to ${otherName} about the proposal and its answer — stay in the moment, don't change the subject.`);
+    }
+  } else if (topic === RENDEZVOUS_TOPIC && messageCount > 0) {
+    // The invitation: whoever did not open is the one being asked, and the answer
+    // (read back by lib/intimacy/rendezvous.ts) is free to be no. Nothing is
+    // narrated past the door: the reply is only yes, no or something in between.
+    if (messageCount === 1) {
+      parts.push(`${otherName} has just asked you to spend the evening with them somewhere private. Answer in your own words, discreetly: accept or decline plainly, as your heart, your trust in them, your conscience and your situation truly say. You are free to say no.`);
+    } else if (messageCount >= maxTurns - 2) {
+      parts.push(`The invitation has been made and answered. Close the moment the way you would.`);
+    } else {
+      parts.push(`Respond to ${otherName} about the invitation and its answer — stay in the moment, don't change the subject.`);
     }
   } else if (messageCount === 0) {
     // Opening turn
@@ -481,7 +504,7 @@ function buildTurnInstruction(
 
   // Date mode. Not during a proposal: "be flirty" on the answering turn leans
   // the model toward yes, and the answer has to be free to be no.
-  if (romance && romance > 30 && messageCount > 0 && topic !== PROPOSAL_TOPIC) {
+  if (romance && romance > 30 && messageCount > 0 && topic !== PROPOSAL_TOPIC && topic !== RENDEZVOUS_TOPIC) {
     parts.push('This is a romantic moment. Be flirty, vulnerable, or playful — whatever fits you.');
   }
 
@@ -802,7 +825,7 @@ export function buildConversationPrompt(
   // the same openers and questions.
   // What they already said to others today (lib/topicMemory.ts). Not during a
   // proposal: that question has one subject.
-  const subjectsHint = conversation.topic === PROPOSAL_TOPIC ? '' : buildSubjectsHint(params.recentSubjects);
+  const subjectsHint = conversation.topic === PROPOSAL_TOPIC || conversation.topic === RENDEZVOUS_TOPIC ? '' : buildSubjectsHint(params.recentSubjects);
   push("user", `[Your turn] ${[turnInstruction, repetitionHint, subjectsHint].filter(Boolean).join(' ')} Reply with only your spoken words.`);
 
   return { system, messages };

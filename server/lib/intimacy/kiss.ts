@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray } from 'drizzle-orm';
 import { db } from '../../db';
-import { activityLog, agents, relationships, worldEvents } from '../../db/schema';
+import { activityLog, agents, conversations, relationships, worldEvents } from '../../db/schema';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { logActivity } from '../activityLogger';
 import { addMoodModifier } from '../dailyLife';
@@ -178,6 +178,19 @@ function rebuffedRecently(initiatorId: number, targetId: number, now: number): b
 }
 
 /**
+ * Whether the conversation was between exactly these two. A kiss is a private
+ * gesture between two people: a group chat (the event fires for each of its
+ * participants, with the first of the others as `perpetratorId`) is never the
+ * moment. A conversation the DB has no row for (an id from nowhere) is not
+ * blocked: every real conversation, template tier included, has a row.
+ */
+function isTwoPersonConversation(conversationId: number): boolean {
+  const row = db.select({ participants: conversations.participants }).from(conversations)
+    .where(eq(conversations.id, conversationId)).get();
+  return !row || row.participants.length === 2;
+}
+
+/**
  * A warm conversation just ended: maybe they kiss. `rng` is injectable so the
  * tests can force either outcome; a chance of 0 (a minor, a straight same-sex
  * pair) never passes, whatever it returns.
@@ -187,6 +200,7 @@ export function onKissConversationEnded(p: KissConversationEnded, rng: () => num
   if (otherId == null || otherId === p.agentId) return;
   // Cheap exit first: this runs for every conversation in town.
   if (!((p.sentiment ?? 0) > KISS_MIN_SENTIMENT)) return;
+  if (p.conversationId != null && !isTwoPersonConversation(p.conversationId)) return;
 
   const rel = pairRelationship(p.agentId, otherId);
   if (!rel) return;

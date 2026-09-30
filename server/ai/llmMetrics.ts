@@ -22,6 +22,7 @@ export type LLMPurpose =
   | 'conversation.retry'
   | 'conversation.summary'
   | 'gazette'
+  | 'intimacy.consent'
   | 'snap'
   | 'goal.review'
   | 'goal.ambition'

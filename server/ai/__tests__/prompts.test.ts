@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, romanceLevel, ConversationPromptParams, PROPOSAL_TOPIC } from '../prompts';
+import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, romanceLevel, ConversationPromptParams, PROPOSAL_TOPIC, RENDEZVOUS_TOPIC } from '../prompts';
 import { clearVoiceDirectiveCache } from '../voiceDirective';
 
 const mockAgent = {
@@ -356,6 +356,37 @@ describe('buildConversationPrompt', () => {
     expect(last).toContain(`Don't repeat your question "How are you doing, really?"`);
     // Only the speaker's own lines count — Carlos's "Is it?" is not Ray's question.
     expect(last).not.toContain('Is it?"');
+  });
+
+  describe('rendezvous (lib/intimacy/rendezvous.ts)', () => {
+    const invitation = (messages: Array<{ speakerId: number; text: string }>) =>
+      buildConversationPrompt({
+        ...baseParams,
+        relationship: { ...baseParams.relationship!, romance_ab: 85, romance_ba: 80, tags: ['kissed'] },
+        conversation: { ...baseParams.conversation, topic: RENDEZVOUS_TOPIC, messages, max_turns: 6 },
+      }).messages;
+
+    it('has the asker invite discreetly on the opening turn, leaving the other free to decline', () => {
+      const intent = topicIntent(RENDEZVOUS_TOPIC, 'Carlos');
+      expect(intent).toContain('spend the evening with Carlos somewhere private');
+      expect(intent).toContain('accept or decline');
+      expect(intent).not.toMatch(/sex|naked|bed|intercourse/i);
+    });
+
+    it('asks the other for an honest yes or no on the second turn, without the flirt nudge, and says no is allowed', () => {
+      const last = invitation([{ speakerId: 2, text: 'Ray, spend the evening with me?' }]).at(-1)!.content;
+      expect(last).toContain('Carlos has just asked you to spend the evening with them somewhere private');
+      expect(last).toContain('free to say no');
+      expect(last).not.toContain('Be flirty');
+    });
+
+    it('keeps the flirt nudge off later turns too, like a proposal', () => {
+      const msgs = [
+        { speakerId: 2, text: 'Ray, spend the evening with me?' },
+        { speakerId: 1, text: 'Let me think about it.' },
+      ];
+      expect(invitation(msgs).at(-1)!.content).not.toContain('Be flirty');
+    });
   });
 
   describe('proposal (lib/milestonesEngine.ts)', () => {

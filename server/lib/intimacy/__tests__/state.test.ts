@@ -62,6 +62,21 @@ describe('snapshot store', () => {
     expect(getAgentIntimacy(4)).toEqual({ longing: 42, lastTouchedAt: 777, suspicion: { 9: 30 } });
   });
 
+  it('round-trips an agreed rendezvous (agreed flag and agreedAt) and drops a bogus agreed value', () => {
+    updatePairIntimacy(4, 9, (p) => {
+      p.pendingRendezvous = { initiatorId: 4, since: 900, venueId: 12, agreed: true, agreedAt: 950 };
+    });
+    updatePairIntimacy(1, 2, (p) => { p.pendingRendezvous = { initiatorId: 1, since: 10 }; });
+    const blob = JSON.parse(JSON.stringify(intimacySnapshotStore.serialize()));
+    clearIntimacy();
+    intimacySnapshotStore.restore(blob);
+    expect(getPairIntimacy(4, 9)?.pendingRendezvous).toEqual({ initiatorId: 4, since: 900, venueId: 12, agreed: true, agreedAt: 950 });
+    expect(getPairIntimacy(1, 2)?.pendingRendezvous).toEqual({ initiatorId: 1, since: 10 });
+
+    intimacySnapshotStore.restore({ pairs: { '1-2': { pendingRendezvous: { initiatorId: 1, since: 10, agreed: 'yes', agreedAt: 'x' } } } });
+    expect(getPairIntimacy(1, 2)?.pendingRendezvous).toEqual({ initiatorId: 1, since: 10 });
+  });
+
   it('restores tolerantly from junk and replaces prior content', () => {
     ensurePairIntimacy(1, 2);
     for (const junk of [null, undefined, 5, 'x', [], { pairs: 3, agents: 'no' }]) {
