@@ -26,7 +26,8 @@ export type ChallengeKind =
   | 'full_house'
   | 'first_engagement'
   | 'feud'
-  | 'recluse';
+  | 'recluse'
+  | 'first_baby';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -56,6 +57,8 @@ export interface ChallengeBaseline {
   friendPairs?: Array<[number, number]>;
   /** first_engagement: pairs (`lo-hi`) already engaged or married at the start. */
   engagedPairs?: string[];
+  /** first_baby: children already born at the start. */
+  childIds?: number[];
   /**
    * hands_off: the player-action marks at the start (see TownSnapshot). Marks,
    * not game minutes: the player can accept the challenge and then nudge while
@@ -113,6 +116,7 @@ export const CHALLENGE_KINDS: Readonly<Record<ChallengeKind, ChallengeKindDef>> 
   first_engagement: { icon: '💌', name: 'Wedding bells', blurb: 'A new engagement anywhere in town.', survive: false },
   feud: { icon: '⚔', name: 'A feud', blurb: 'Two friends become rivals or worse.', survive: false },
   recluse: { icon: '🫂', name: 'The recluse', blurb: 'Get the loneliest resident a best friend.', survive: false },
+  first_baby: { icon: '👶', name: 'First baby', blurb: 'A baby born anywhere in town.', survive: false },
 };
 
 // ─── Thresholds (the relationship ladder in engine/systems/relationships.ts) ──
@@ -204,6 +208,18 @@ export interface TownSnapshot {
   handsOnCount: number;
   /** The death rule (lib/worldRules.ts): Guardian is a freebie in a town where nobody can die. */
   deathEnabled: boolean;
+  /**
+   * Children in town (lib/family.ts), for First baby. Optional so a snapshot
+   * built by hand (the tests) without a family reads as a town with none.
+   */
+  children?: SnapChild[];
+}
+
+export interface SnapChild {
+  id: number;
+  name: string;
+  motherId: number;
+  fatherId: number | null;
 }
 
 export function pairKey(x: number, y: number): string {

@@ -1,6 +1,6 @@
 import { and, eq, inArray, gte, max, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { activityLog, agents, needs, relationships, shared_knowledge, worldState } from '../../db/schema';
+import { activityLog, agents, children, needs, relationships, shared_knowledge, worldState } from '../../db/schema';
 import { CONFIG } from '../constants';
 import { gameMinutes } from '../gameClock';
 import { isDeathEnabled } from '../worldRules';
@@ -99,5 +99,7 @@ export function readTownSnapshot(handsOnCount: number): TownSnapshot | null {
     lastPlayerActionId: lastAction?.id ?? 0,
     handsOnCount,
     deathEnabled: isDeathEnabled(),
+    children: db.select({ id: children.id, name: children.name, motherId: children.mother_id, fatherId: children.father_id })
+      .from(children).where(eq(children.alive, true)).all(),
   };
 }
