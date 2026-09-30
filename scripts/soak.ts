@@ -10,6 +10,7 @@
  *   npm run soak -- --preset soap         # drama preset for a fresh world (default: the wizard's)
  *   npm run soak -- --trace "Elena Voss"  # print one agent's every action change
  *   npm run soak -- --agents 32 --days 30 --tick-speed 4 --json out.json   # scale / long-run story health
+ *   npm run soak -- --adult --agents 24 --days 6 --tick-speed 4   # adult layer on: per-day intimacy table + minors check
  *
  * `--agents N` (2..32) sizes the cast of a fresh world: the wizard's default residents,
  * trimmed or grown with plausible extras (scripts/soakCast.ts). After the economy tables the
@@ -43,6 +44,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { buildSoakCast } from './soakCast';
+import { createIntimacyTally, findMinorsInIntimacy, formatIntimacyReport } from './soakIntimacy';
 import {
   createHealthTracker, evaluateHealthWarnings, formatHealthTable,
   type DayHealth,
@@ -72,6 +74,9 @@ if (SEASON && !['spring', 'summer', 'autumn', 'winter'].includes(SEASON)) {
   console.error(`--season must be spring, summer, autumn or winter (got "${SEASON}")`);
   process.exit(1);
 }
+// --adult turns the "Adult content (18+)" rule on (fresh world: in the wizard's rules; --db copy: a live
+// override) and adds the intimacy table + the minors check to the report. Off by default, like the game.
+const ADULT = flag('adult');
 const KEEP = flag('keep');
 const VERBOSE = flag('verbose');
 // --trace "Name": print every action change of one agent (time, action, place).
@@ -197,7 +202,7 @@ async function main(): Promise<void> {
       agents: cast ? cast.agents : getDefaultAgents(),
       relationships: cast ? cast.relationships : getDefaultRelationships(),
       world: { ...DEFAULT_WORLD, ...(SEASON ? { season: SEASON } : {}) },
-      rules: DEFAULT_RULES,
+      rules: ADULT ? { ...DEFAULT_RULES, adultContent: true } : DEFAULT_RULES,
       scenario: { ...preset.values, seed: SEED },
       worldgen: { ...DEFAULT_WORLDGEN, seed: SEED },
     } as any);
@@ -207,6 +212,13 @@ async function main(): Promise<void> {
 
   const world0 = db.select().from(worldState).get();
   if (!world0) throw new Error('No world in the database');
+  if (ADULT) {
+    // A fresh world got the rule from the wizard's rules above; a --db copy gets a live override
+    // (merged, so the copy's other overrides survive). Idempotent either way.
+    const { setRuleOverrides, isAdultContent } = await import('../server/lib/worldRules');
+    setRuleOverrides({ adultContent: true });
+    if (!isAdultContent()) throw new Error('--adult: the adultContent rule did not take');
+  }
   db.update(worldState)
     .set({
       is_paused: false,
@@ -321,6 +333,7 @@ async function main(): Promise<void> {
   const health = createHealthTracker({ sqlite, detectStoryArcs, resetChronicleCache });
   setTickTimingObserver((t) => health.recordTick(t));
   const healthDays: DayHealth[] = [];
+  const intimacy = ADULT ? createIntimacyTally(sqlite) : null;
   // Per-day economy and needs numbers kept for --json and the money-drift warning.
   const econDays: Array<Record<string, number>> = [];
   const t0 = performance.now();
@@ -636,6 +649,7 @@ async function main(): Promise<void> {
     }
 
     healthDays.push(health.endDay(dayStart.day));
+    intimacy?.endDay(dayStart.day);
     econDays.push({
       day: dayStart.day, residents: active.length, perCapita, minMoney, ratio, taxPool: world.tax_pool,
       broke, convos, salary: sum(salary), buys: buys.length,
@@ -692,6 +706,11 @@ async function main(): Promise<void> {
   out('');
 
   // ── Story health (scripts/soakHealth.ts) ──────────────────────────────────
+  if (intimacy) {
+    const minorCount = Number((sqlite.prepare('select count(*) c from agents where age < 18').get() as { c: number }).c);
+    for (const r of formatIntimacyReport(intimacy.days, findMinorsInIntimacy(sqlite), minorCount)) out(r);
+    out('');
+  }
   out('Story health per day. beats new/kinds/all = beat types seen for the first time today / distinct today /');
   out('distinct so far; story types = distinct activity types logged at importance >= 0.6; rel chg = net relationship');
   out('status changes; facts/secr/public = new shared facts / of them sensitivity >= 2 / turned common knowledge;');
