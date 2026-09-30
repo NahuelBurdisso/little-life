@@ -363,14 +363,56 @@ describe('the answer, against the DB', () => {
     expect(pending(a, b)?.agreed).toBe(true);
   });
 
-  it('ignores other conversations, template chats, and a rule that is off', async () => {
+  it('ignores other conversations, unrelated template chats, and a rule that is off', async () => {
     const { a, b } = invitation();
     await onRendezvousConversationEnded(ended(a, b, yesTalk, { summary: 'weather' }), { llm: false });
-    await onRendezvousConversationEnded(ended(a, b, yesTalk, { template: true }), { llm: false });
+    // A template chat that was not the queued invitation (small talk, a script topic) is not an answer.
+    await onRendezvousConversationEnded(
+      ended(a, b, yesTalk, { summary: 'the weather', template: true, triggerReason: 'social' }), { llm: false });
     expect(pending(a, b)).toEqual({ initiatorId: a, since: NOW - 10 });
     setRuleOverrides({ adultContent: false });
     await onRendezvousConversationEnded(ended(a, b, yesTalk), { llm: false });
     expect(pending(a, b)).toEqual({ initiatorId: a, since: NOW - 10 });
+  });
+
+  // I1: the invitation that fell to the template tier (no LLM, or a slot busy for an hour) used to be ignored,
+  // expire after 3 h and be asked again 12 h later, forever: 0 trysts in every as-shipped soak. It is
+  // answered now by the answerer's character, as proposals are; the chat's script lines say nothing about it.
+  describe('an invitation that fell to the template tier', () => {
+    const templateChat = (a: number, b: number, texts = ['Lovely evening.', 'No, not at all.']) =>
+      ended(a, b, texts, { template: true, summary: 'the evening sky', triggerReason: 'rendezvous' });
+
+    it('a willing answerer accepts on character, whatever the script lines said', async () => {
+      const { a, b } = invitation();
+      await onRendezvousConversationEnded(templateChat(a, b), { llm: true });
+      expect(pending(a, b)).toEqual({ initiatorId: a, since: NOW - 10, agreed: true, agreedAt: NOW });
+      // No model was asked to read canned script lines.
+      expect(calls()).toHaveLength(0);
+    });
+
+    it('an answerer whose character is under the bar refuses, with the refusal\'s real cost', async () => {
+      // Romance 40, trust 40, longing 20: willingness 0.34, above the veto and under 0.5.
+      const { a, b } = invitation({ romanceB: 40, trustB: 40, longingB: 20 });
+      await onRendezvousConversationEnded(templateChat(a, b, ['Yes, gladly.', 'Yes, of course.']), { llm: true });
+      expect(pending(a, b)).toBeUndefined();
+      expect(getPairIntimacy(a, b)?.rendezvousRetryAfter).toBe(NOW + REFUSAL_RETRY_MINUTES);
+      expect(moods(a)).toHaveLength(1);
+    });
+
+    it('the character veto still applies', async () => {
+      const { a, b } = invitation({ romanceB: 5, trustB: 5, longingB: 0 });
+      await onRendezvousConversationEnded(templateChat(a, b), { llm: false });
+      expect(pending(a, b)).toBeUndefined();
+      expect(getPairIntimacy(a, b)?.rendezvousRetryAfter).toBe(NOW + REFUSAL_RETRY_MINUTES);
+    });
+
+    it('settles once, through the registered listener', async () => {
+      const { a, b } = invitation();
+      simEvents.emit('conversation:ended', templateChat(a, b));
+      simEvents.emit('conversation:ended', templateChat(b, a));
+      await flush();
+      expect(pending(a, b)?.agreed).toBe(true);
+    });
   });
 
   it('does nothing without an invitation of the asker\'s own', async () => {

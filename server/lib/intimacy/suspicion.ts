@@ -118,6 +118,16 @@ function partnersOf(agentId: number): number[] {
     .all().map((r) => (r.a === agentId ? r.b : r.a));
 }
 
+/** The asker's trust in the partner and the traits that colour how a template-tier confrontation goes. */
+function askerTraits(observer: AgentRow, rel: NonNullable<ReturnType<typeof pairRelationship>>): { trust: number; aggression: number; loyalty: number } {
+  const personality = getEffectivePersonality(observer.id) ?? (observer.personality as Partial<Record<string, number>> | null);
+  return {
+    trust: observer.id === rel.agent_a ? rel.trust_ab : rel.trust_ba,
+    aggression: personality?.aggression ?? 30,
+    loyalty: personality?.loyalty ?? 50,
+  };
+}
+
 const rowsOf = (ids: number[]): Map<number, AgentRow> =>
   new Map(db.select().from(agents).where(inArray(agents.id, ids)).all().map((r) => [r.id, r]));
 
@@ -255,11 +265,35 @@ export interface SuspicionConversationEnded {
   agentId: number;
   perpetratorId?: number | null;
   conversationId?: number;
-  /** The template tier's emit sets it; a template chat is not the confrontation. */
+  /** The template tier's emit sets it (the LLM was off, or no slot came free in time). */
   template?: boolean;
+  /** The queue entry's trigger_reason (the template tier's emit carries it: its `summary` is a script topic). */
+  triggerReason?: string;
   /** The conversation's topic. */
   summary?: string;
   sentiment?: number;
+}
+
+/**
+ * How a confrontation that fell to the template tier is settled, as the sentiment the LLM
+ * tier would have produced (compared with FIGHT_SENTIMENT below). A canned script says nothing
+ * about the empty bed, so the asker's own character decides how it went, from three traits:
+ *
+ *   sentiment = 0.3 - 0.7 * doubt - 0.6 * temper + 0.3 * faith
+ *
+ * with doubt = 1 - trust in the partner (0..1), temper = aggression / 100 and faith =
+ * loyalty / 100 (a loyal person gives the benefit of the doubt). A calm asker who trusts
+ * their partner (trust 70, aggression 30, loyalty 50) lands at +0.06: an uneasy talk, trust
+ * -10, suspicion back to 1. A distrustful hot-tempered one (trust 20, aggression 85) lands
+ * near -0.7 and takes the suspicion as proven. The fight line (-0.4) is crossed only by the
+ * distrustful AND quick to anger, so most template confrontations end quietly, as most
+ * of the LLM ones do. Pure.
+ */
+export function templateConfrontationSentiment(asker: { trust: number; aggression: number; loyalty: number }): number {
+  const doubt = 1 - clamp(asker.trust, 0, 100) / 100;
+  const temper = clamp(asker.aggression, 0, 100) / 100;
+  const faith = clamp(asker.loyalty, 0, 100) / 100;
+  return 0.3 - 0.7 * doubt - 0.6 * temper + 0.3 * faith;
 }
 
 /**
@@ -267,11 +301,14 @@ export interface SuspicionConversationEnded {
  * only on the copy of the one who opened it (`participants[0]`, the suspicious one) and
  * only while their `suspicious` state toward the other is still there: settling it
  * removes the state, so the same conversation is settled once (A6; no id set to go
- * stale across a world replace). A template chat (the queue's fallback when the two
- * never met) settles nothing.
+ * stale across a world replace). A template chat that was the queued confrontation (the
+ * queue's fallback: no LLM, or a slot busy past the wait) is settled by the asker's character
+ * (`templateConfrontationSentiment`), as a proposal is; before that it settled nothing, and the
+ * confrontation was queued again every morning without ever ending.
  */
 export function onSuspicionConversationEnded(p: SuspicionConversationEnded): void {
-  if (p.summary !== SUSPICION_TOPIC || p.template === true) return;
+  const isTemplate = p.template === true;
+  if (isTemplate ? p.triggerReason !== SUSPICION_TRIGGER && p.summary !== SUSPICION_TOPIC : p.summary !== SUSPICION_TOPIC) return;
   const partnerId = p.perpetratorId;
   if (partnerId == null || partnerId === p.agentId) return;
   if (!isAdultContent()) return;
@@ -291,10 +328,11 @@ export function onSuspicionConversationEnded(p: SuspicionConversationEnded): voi
     return;
   }
   const now = gameMinutesNow();
+  const sentiment = isTemplate ? templateConfrontationSentiment(askerTraits(observer, rel)) : (p.sentiment ?? 0);
 
   // It went so badly that whatever was suspected is now believed: the same fallout as finding out
   // (the discoverer's memory and the pair's chronicle beat are applyAffairFallout's own).
-  if ((p.sentiment ?? 0) <= FIGHT_SENTIMENT
+  if (sentiment <= FIGHT_SENTIMENT
     && applyAffairFallout(observer, partner, rel, now,
       `${observer.name} confronted ${partner.name} about the nights spent away from home, and broke up!`)) {
     remember(partner.id, `${observer.name} confronted me about my nights away, and it ended between us.`, -0.8, 8, observer.id);

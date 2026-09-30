@@ -1936,6 +1936,8 @@ async function processTimedOutEntry(
       // listener (lib/milestonesEngine.ts) decides a template exchange by the
       // answerer's feelings but waits for the proposal topic on an LLM one.
       template: true,
+      // What was queued ('rendezvous', 'suspicion', 'proposal'...): the script topic in `summary` no longer says.
+      triggerReason: entry.trigger_reason,
       perpetratorId: otherAgent.id,
       otherName: otherAgent.name,
       summary: conversationDoc.topic ?? '',

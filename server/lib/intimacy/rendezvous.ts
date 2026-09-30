@@ -570,8 +570,10 @@ export interface RendezvousConversationEnded {
   agentId: number;
   perpetratorId?: number | null;
   conversationId?: number;
-  /** The template tier's emit sets it; a template chat is never an answer. */
+  /** The template tier's emit sets it (the LLM was off, or no slot came free in time). */
   template?: boolean;
+  /** The queue entry's trigger_reason (the template tier's emit carries it: its `summary` is a script topic). */
+  triggerReason?: string;
   /** The conversation's topic. */
   summary?: string;
   messages?: Array<{ speakerId: number; text: string; fallback?: boolean }>;
@@ -586,12 +588,20 @@ export interface RendezvousConversationEnded {
  * so a remembered id could wrongly swallow a later world's answer. Async
  * because the consent read may be an LLM call; the world epoch is re-checked
  * after it, since ids are reused when a world is replaced.
+ *
+ * A template-tier chat that was the queued invitation (no LLM, or a slot busy past
+ * RENDEZVOUS_QUEUE_WAIT_MINUTES) is answered by the answerer's character alone, as a
+ * proposal is (milestonesEngine.ts `onConversationEnded`): `willingness >= ACCEPT_MIN_WILLINGNESS`
+ * with the same veto under CHARACTER_VETO_BELOW, no LLM call, and the canned script lines are never
+ * read as words. Before, such an invitation was ignored, expired after 3 h and was asked again 12 h
+ * later, forever (0 trysts in every as-shipped soak).
  */
 export async function onRendezvousConversationEnded(
   p: RendezvousConversationEnded,
   opts: { llm?: boolean } = {},
 ): Promise<void> {
-  if (p.summary !== RENDEZVOUS_TOPIC || p.template === true) return;
+  const isTemplate = p.template === true;
+  if (isTemplate ? p.triggerReason !== RENDEZVOUS_TRIGGER && p.summary !== RENDEZVOUS_TOPIC : p.summary !== RENDEZVOUS_TOPIC) return;
   const otherId = p.perpetratorId;
   if (otherId == null || otherId === p.agentId) return;
   if (!isAdultContent()) return;
@@ -612,7 +622,7 @@ export async function onRendezvousConversationEnded(
   }
 
   const nameOf = (id: number) => (id === initiator.id ? initiator.name : answerer.name);
-  const lines: ConsentLine[] = (p.messages ?? [])
+  const lines: ConsentLine[] = isTemplate ? [] : (p.messages ?? [])
     .filter((m) => !isFallbackMessage(m, nameOf(m.speakerId)))
     .map((m) => ({ speakerId: m.speakerId, speaker: nameOf(m.speakerId), text: m.text }));
 
@@ -626,7 +636,7 @@ export async function onRendezvousConversationEnded(
       answererId: answerer.id,
       answererName: answerer.name,
       willingness: willingnessOf(answerer, initiator, rel),
-    }, opts);
+    }, isTemplate ? { llm: false } : opts);
   } finally {
     deciding.delete(key);
   }

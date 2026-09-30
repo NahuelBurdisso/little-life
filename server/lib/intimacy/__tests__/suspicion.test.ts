@@ -6,7 +6,7 @@ import {
 } from '../../../db/schema';
 import { SUSPICION_TOPIC } from '../../../ai/prompts';
 import {
-  SUSPICION_AFTER_TALK, SUSPICION_TRIGGER, SUSPICIOUS_MINUTES, onSuspicionConversationEnded, registerSuspicionListeners,
+  FIGHT_SENTIMENT, SUSPICION_AFTER_TALK, SUSPICION_TRIGGER, SUSPICIOUS_MINUTES, onSuspicionConversationEnded, registerSuspicionListeners, templateConfrontationSentiment,
   suspicionPass,
 } from '../suspicion';
 import { intimacyTick } from '../index';
@@ -458,13 +458,61 @@ describe('suspicion of an empty bed', () => {
       suspicious(p, g);
       ended(g, p, 0.1); // the partner's own conversation:ended
       expect(suspicionOf(p, g)).toBe(2);
-      ended(p, g, 0.1, { template: true });
+      ended(p, g, 0.1, { template: true, summary: 'the weather', triggerReason: 'social' });
       expect(suspicionOf(p, g)).toBe(2);
       ended(p, g, 0.1);
       expect(suspicionOf(p, g)).toBe(SUSPICION_AFTER_TALK);
       ended(p, g, 0.1); // fired again for the same conversation: the state is gone, nothing to settle
       expect(db.select().from(relationshipEvents).where(eq(relationshipEvents.event_type, 'suspicion')).all()
         .filter((e) => [e.agent_a, e.agent_b].includes(p))).toHaveLength(1);
+    });
+
+    // I1: a confrontation that fell to the template tier (the LLM off, or the slot busy) used to settle nothing and
+    // was queued again forever. The canned script says nothing about the affair, so it settles by a rule from
+    // the asker's own character (templateConfrontationSentiment): trust in the partner, aggression, loyalty.
+    describe('a confrontation that fell to the template tier', () => {
+      const templateEnded = (p: number, g: number) =>
+        onSuspicionConversationEnded({
+          agentId: p, perpetratorId: g, summary: 'a quiet word', sentiment: 0.9, template: true, triggerReason: SUSPICION_TRIGGER,
+        });
+      const setTrust = (relId: number, p: number, g: number, trust: number) =>
+        db.update(relationships).set(p < g ? { trust_ab: trust } : { trust_ba: trust }).where(eq(relationships.id, relId)).run();
+
+      it('a trusting, calm asker is put at ease enough: trust falls, the suspicion eases to 1', () => {
+        const { p, g } = household();
+        suspicious(p, g);
+        templateEnded(p, g);
+        expect(suspicionOf(p, g)).toBe(SUSPICION_AFTER_TALK);
+        expect(statesOf(p).map((s) => s.type)).not.toContain('suspicious');
+      });
+
+      it('a distrustful, hot-tempered asker believes the worst: the same fallout as a fight', () => {
+        const { p, g, relId } = household({ pPersonality: { aggression: 85, loyalty: 30 } });
+        setTrust(relId, p, g, 20);
+        suspicious(p, g);
+        templateEnded(p, g);
+        expect(relOf(relId).status).toBe('rivals');
+        expect(suspicionOf(p, g)).toBeUndefined();
+      });
+
+      it('a loyal asker with the same doubt gives the benefit of it', () => {
+        const { p, g, relId } = household({ pPersonality: { aggression: 25, loyalty: 95 } });
+        setTrust(relId, p, g, 30);
+        suspicious(p, g);
+        templateEnded(p, g);
+        expect(relOf(relId).status).toBe('partners');
+        expect(suspicionOf(p, g)).toBe(SUSPICION_AFTER_TALK);
+      });
+
+      it('the rule is pure and monotone in each trait', () => {
+        const base = { trust: 60, aggression: 30, loyalty: 50 };
+        const at = (over: Partial<typeof base>) => templateConfrontationSentiment({ ...base, ...over });
+        expect(at({ trust: 20 })).toBeLessThan(at({ trust: 90 }));
+        expect(at({ aggression: 90 })).toBeLessThan(at({ aggression: 10 }));
+        expect(at({ loyalty: 10 })).toBeLessThan(at({ loyalty: 90 }));
+        expect(at({})).toBeGreaterThan(FIGHT_SENTIMENT);
+        expect(at({ trust: 15, aggression: 90, loyalty: 20 })).toBeLessThanOrEqual(FIGHT_SENTIMENT);
+      });
     });
 
     it('any other conversation is not the confrontation', () => {
