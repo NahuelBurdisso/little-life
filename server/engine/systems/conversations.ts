@@ -33,6 +33,7 @@ import { clearConversationCache, fallbackDetector } from '../../helpers/conversa
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
 import { recordScriptUsage, scriptLastUsed } from '../../ai/templates';
+import { queuedTopic } from '../../ai/prompts';
 import { WRAP_UP_FAREWELLS, farewellText } from '../../data/wrapUpFarewells';
 import { composeTemplateChat } from '../../lib/templateChat';
 import { recordConversationTopics } from '../../lib/topicMemory';
@@ -874,7 +875,7 @@ export async function conversationsTick(): Promise<void> {
           messages: [],
           location: locationId,
           trigger_reason: entry.trigger_reason,
-          topic: entry.topic,
+          topic: queuedTopic(entry),
           status: 'active',
           started_at: now,
           ended_at: null,
@@ -1841,7 +1842,7 @@ async function processTimedOutEntry(
     })),
     location: locationId,
     trigger_reason: entry.trigger_reason + ' (template)',
-    topic: chat?.topic ?? entry.topic,
+    topic: chat?.topic ?? queuedTopic(entry),
     status: 'ended' as const,
     started_at: now,
     ended_at: now,

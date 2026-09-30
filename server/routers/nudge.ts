@@ -31,6 +31,7 @@ import { nightSkip } from '../engine/nightSkip';
 import { perceptionSystem } from '../lib/perception/instance';
 import { createResident, retireResident } from '../lib/residents';
 import { notePlayerCare } from '../lib/populationFlow';
+import { isSimOnlyTopic } from '../ai/prompts';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -137,6 +138,10 @@ export const nudgeRouter = router({
           const agentA = db.select().from(agents).where(eq(agents.id, agentAId)).get();
           const agentB = db.select().from(agents).where(eq(agents.id, agentBId)).get();
 
+          // The intimacy layer's own topics are not the player's to type (see SIM_ONLY_TOPICS).
+          if (isSimOnlyTopic(topic)) {
+            return { success: false, reason: 'That topic is not one you can suggest' };
+          }
           if (!agentA || !agentA.is_active) {
             return { success: false, reason: 'Agent A not found or inactive' };
           }

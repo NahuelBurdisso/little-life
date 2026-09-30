@@ -43,6 +43,37 @@ export const RENDEZVOUS_TOPIC = 'a private evening';
 export const SUSPICION_TOPIC = 'where you were last night';
 
 /**
+ * Topics only the sim may queue, each with the one `conversation_queue.trigger_reason` that
+ * may carry it (lib/intimacy/rendezvous.ts, suspicion.ts). They are plain phrases, so a
+ * player can type one into `suggest_talk`, and the prompt keys its special scene on the
+ * topic text alone: a typed "a private evening" between a minor and an adult would get
+ * the invitation scene (the age gate lives in the rendezvous pass, not in the prompt).
+ * The nudge router rejects them and the conversation scheduler drops them from any queue
+ * entry that did not come from its own producer (`queuedTopic`), so the scene can only
+ * ever be one the eligibility-gated pass asked for.
+ */
+export const SIM_ONLY_TOPICS: Readonly<Record<string, string>> = {
+  [RENDEZVOUS_TOPIC]: 'rendezvous',
+  [SUSPICION_TOPIC]: 'suspicion',
+};
+
+/** Whether a (player-typed or otherwise) topic reads as one of the sim-only topics, ignoring case and spacing. */
+export function isSimOnlyTopic(topic: string | null | undefined): boolean {
+  const t = (topic ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return Object.keys(SIM_ONLY_TOPICS).some((k) => k.toLowerCase() === t);
+}
+
+/**
+ * The topic a queue entry's conversation is held on: the entry's own, except that a
+ * sim-only topic survives only on the trigger reason of the producer that owns it.
+ * Anything else (a player's nudge, autoplay, a future path) talks with no set topic.
+ */
+export function queuedTopic(entry: { topic: string | null; trigger_reason: string }): string | null {
+  if (!isSimOnlyTopic(entry.topic)) return entry.topic;
+  return SIM_ONLY_TOPICS[entry.topic ?? ''] === entry.trigger_reason ? entry.topic : null;
+}
+
+/**
  * Topic of the conversation lib/family.ts queues when a husband learns the
  * baby may be another man's: he opens it, facing the man. Its own label so
  * the opener gets an intent written for that scene (`topicIntent`), not the
