@@ -5,6 +5,7 @@ import { activityLog, agentStates, agents, locations, relationshipEvents, relati
 import { simEvents } from '../simEvents';
 import { reactToPartnerAffair, pairRelationship, type BeatAgent } from '../conversationBeats';
 import { addKnowers, createFact, learnFact } from '../gossip';
+import { clearIntimacy, updatePairIntimacy } from '../intimacy/state';
 
 /**
  * A partner who learns of an affair reacts in conversation (conversationBeats.reactToPartnerAffair),
@@ -206,6 +207,62 @@ describe('what discovering an affair leaves behind', () => {
     db.update(shared_knowledge).set({ created_at: Date.now() + 60_000 }).where(eq(shared_knowledge.id, second!)).run();
     expect(go()).toBe(true);
     expect(storyBeats().length - before).toBe(2);
+  });
+
+  // The fact dedupes per pair (learnFact adds the second witness to the SAME row), so a repeat of
+  // the same affair has no new row and no newer created_at. What is new is the act itself, which the
+  // pair's intimacy state stamps (lastKissAt / lastTrystAt, game minutes).
+  describe('the same affair, acted on again', () => {
+    const forgiving = { aggression: 10, loyalty: 90 };
+    const go = (minute: number) =>
+      reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', forgiving), beat(partner, 'Percival Ashby'), minute);
+    const trust = () => pairRelationship(discoverer, partner)!.trust_ab;
+
+    function forgivenAffair(): number {
+      const fact = createFact('affair', partner, lover, 3, [discoverer], 'observed')!;
+      db.update(shared_knowledge).set({ created_at: 1 }).where(eq(shared_knowledge.id, fact)).run();
+      updatePairIntimacy(partner, lover, (p) => { p.lastTrystAt = 900; p.trysts = 1; });
+      expect(go(1000)).toBe(true);
+      return fact;
+    }
+
+    beforeEach(() => clearIntimacy());
+    afterAll(() => clearIntimacy());
+
+    it('a newer night of the same pair, once the partner knows the affair, is reacted to again', () => {
+      const fact = forgivenAffair();
+      expect(go(1100)).toBe(false); // conversations that merely continue
+      expect(go(1200)).toBe(false);
+      // Another night, and the partner is among those who know (learnFact merges knowers into the same row).
+      updatePairIntimacy(partner, lover, (p) => { p.lastTrystAt = 1500; p.trysts = 2; });
+      learnFact('affair', partner, lover, 3, [discoverer, witness], 'observed');
+      expect(knownBy(fact)).toContain(discoverer);
+      const trustBefore = trust();
+      expect(go(1600)).toBe(true);
+      expect(trust()).toBeLessThan(trustBefore);
+      expect(go(1700)).toBe(false);
+    });
+
+    it('a newer kiss counts as an act too, whichever is later of kiss and night', () => {
+      forgivenAffair();
+      updatePairIntimacy(partner, lover, (p) => { p.lastKissAt = 1400; });
+      expect(go(1500)).toBe(true);
+    });
+
+    it('an act older than the last reaction is not news, and nor is a pair without a record', () => {
+      forgivenAffair();
+      updatePairIntimacy(partner, lover, (p) => { p.lastKissAt = 950; });
+      expect(go(1100)).toBe(false);
+      clearIntimacy();
+      expect(go(1200)).toBe(false);
+    });
+
+    it('a newer act does not matter to someone who does not know the affair', () => {
+      forgivenAffair();
+      db.update(shared_knowledge).set({ known_by: [witness] }).where(eq(shared_knowledge.subject_id, partner)).run();
+      updatePairIntimacy(partner, lover, (p) => { p.lastTrystAt = 1500; });
+      expect(go(1600)).toBe(false);
+    });
   });
 
   it('the other partner discovering their own side is not muted by the first discovery', () => {

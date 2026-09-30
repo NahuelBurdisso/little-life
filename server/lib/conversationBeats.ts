@@ -23,6 +23,7 @@ import { getAgentStates } from './states';
 import { withoutMilestoneTags } from './marriage';
 import type { PersonalityProfile } from './personality';
 import { recordGoalOutcome } from './goals/goalProgress';
+import { getPairIntimacy } from './intimacy/state';
 
 /** The bits of an agent row a beat needs. */
 export interface BeatAgent {
@@ -55,6 +56,8 @@ export function insertPairEvent(
     trustFrom?: number; trustTo?: number;
   },
   sentiment: number,
+  /** Game minute the beat happened, when the caller has it; otherwise the insert trigger stamps the world clock. */
+  gameMinute?: number,
 ): void {
   const fromIsA = fromId < toId;
   const [a, b] = fromIsA ? [fromId, toId] : [toId, fromId];
@@ -68,6 +71,7 @@ export function insertPairEvent(
     romance_delta_ab: rAB, romance_delta_ba: rBA,
     trust_delta_ab: tAB, trust_delta_ba: tBA,
     sentiment, processed: false, timestamp: Date.now(),
+    ...(gameMinute != null ? { game_minute: gameMinute } : {}),
   }).run();
 }
 
@@ -239,24 +243,40 @@ export function reactToPartnerAffair(discoverer: BeatAgent, partner: BeatAgent, 
   // subject missed half of them. A fact the discoverer is themselves part of (their own
   // courtship with this very partner, or with anyone) is not a betrayal by the partner.
   //
-  // Once per betrayal: a partner who forgave stays `partners`, so without this the same fact matched at every
-  // later conversation (a soak logged 96 discoveries for ~25 pairs, 8 for one, each a new memory, a pivotal
-  // beat and another -30 trust). The pair's own `affair_discovered` beat, by this discoverer, marks when they
-  // reacted (events and facts both stamp real ms): only a fact born after it is news. A loyal partner who
-  // forgave one affair still meets the next one as a new betrayal.
-  const lastReaction = db.select({ ts: relationshipEvents.timestamp }).from(relationshipEvents)
+  // Once per betrayal, not per conversation: a partner who forgave stays `partners`, so without this the
+  // same fact matched at every later conversation (a soak logged 96 discoveries for ~25 pairs, 8 for one,
+  // each a new memory, a pivotal beat and another -30 trust). The pair's own `affair_discovered` beat, by
+  // this discoverer, marks when they reacted. News is either
+  //  - a fact born after that beat (events and facts both stamp real ms): a loyal partner who forgave one
+  //    affair meets a different one as a new betrayal; or
+  //  - a newer ACT of the same pair: the fact dedupes per pair (learnFact adds knowers to the one row), so
+  //    a second night has no row and no newer `created_at`; the pair's intimacy state stamps the act
+  //    instead (lastKissAt / lastTrystAt, game minutes, whichever is later) and the beat carries the game
+  //    minute it was written at. Merely talking on changes neither, so nothing re-fires.
+  // `known_by` still gates both: the act only counts for someone who holds the affair fact.
+  const reactions = db.select({ ts: relationshipEvents.timestamp, minute: relationshipEvents.game_minute })
+    .from(relationshipEvents)
     .where(and(
       eq(relationshipEvents.event_type, 'affair_discovered'),
       eq(relationshipEvents.agent_a, Math.min(discoverer.id, partner.id)),
       eq(relationshipEvents.agent_b, Math.max(discoverer.id, partner.id)),
       eq(relationshipEvents.description, `${discoverer.name} found out about ${partner.name}'s affair`),
-    )).all().reduce((latest, e) => Math.max(latest, e.ts), -Infinity);
+    )).all();
+  const lastReaction = reactions.reduce((latest, e) => Math.max(latest, e.ts), -Infinity);
+  const lastReactionMinute = reactions.reduce((latest, e) => Math.max(latest, e.minute ?? nowMinutes), -Infinity);
+  /** Game minute of the newest kiss or night between the partner and the other side of the fact. */
+  const lastActMinute = (f: { subject_id: number; target_id: number | null }): number => {
+    const other = f.subject_id === partner.id ? f.target_id : f.subject_id;
+    if (other == null) return -Infinity;
+    const s = getPairIntimacy(partner.id, other);
+    return Math.max(s?.lastKissAt ?? -Infinity, s?.lastTrystAt ?? -Infinity);
+  };
   const affairFacts = db.select().from(shared_knowledge)
     .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.is_active, true),
       or(eq(shared_knowledge.subject_id, partner.id), eq(shared_knowledge.target_id, partner.id)))).all()
     .filter((f) => f.subject_id !== discoverer.id && f.target_id !== discoverer.id)
     .filter((f) => (f.known_by as number[]).includes(discoverer.id))
-    .filter((f) => f.created_at > lastReaction);
+    .filter((f) => f.created_at > lastReaction || lastActMinute(f) > lastReactionMinute);
   if (affairFacts.length === 0) return false;
   return applyAffairFallout(discoverer, partner, partnerRel, nowMinutes);
 }
@@ -291,7 +311,7 @@ export function applyAffairFallout(
     valence: -0.9, importance: 9, relatedAgentId: otherId,
   });
   insertPairEvent(pid, otherId, 'affair_discovered', `${discoverer.name} found out about ${partner.name}'s affair`,
-    { friendshipFrom: 0, friendshipTo: 0 }, -0.8);
+    { friendshipFrom: 0, friendshipTo: 0 }, -0.8, nowMinutes);
 
   if (personality.aggression > 60) {
     // A real breakup: the engagement or marriage goes with it (the relationship phase keeps a
