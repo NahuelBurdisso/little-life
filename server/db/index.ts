@@ -17,6 +17,7 @@ import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
 import { backfillOrientations, repairOrientationConflicts } from './orientationBackfill';
 import { repairMinorRomance } from './minorRomanceRepair';
+import { repairPartnerExclusivity } from './partnerExclusivityRepair';
 import { CONFIG } from '../lib/constants';
 import { nameHomes } from '../lib/homeNames';
 import path from 'path';
@@ -431,6 +432,10 @@ export function initSchema(): void {
     // Every start and save load: worlds from before the adults-only rule may still
     // hold romance, romantic states or facts naming a minor. Idempotent, no-op for a town of adults.
     () => { repairMinorRomance(sqlite); },
+    // Every start and save load: at most one partner row per living person (married/engaged first,
+    // then the earliest); the tick enforces it from now on but grandfathers what already exists.
+    // Idempotent, so no user_version.
+    () => { repairPartnerExclusivity(sqlite); },
     // Every start and save load; renames only houses still called `Home N`
     // after their residents, so a no-op once a world is named (homeNames.ts).
     () => { nameHomes(sqlite, { onlyGeneric: true }); },

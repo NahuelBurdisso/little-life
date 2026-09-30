@@ -52,6 +52,38 @@ export function romanceIsPartnership(minRomance: number, maxRomance: number): bo
   return minRomance > PARTNERS_MIN_ROMANCE && (minRomance + maxRomance) / 2 > PARTNERS_AVG_ROMANCE;
 }
 
+/**
+ * Whether `id` is already someone's partner, other than `counterpart`'s: a row of theirs whose
+ * status is `partners` (or that carries the `partner` tag, which is how a married or engaged pair
+ * is always marked) with a person who is alive and in town (`activeIds`; a dead or departed partner
+ * no longer holds anyone). A married or engaged pair is a `partners` row too, so a spouse blocks
+ * exactly like any partner.
+ *
+ * Read off the tick's own `relMap`, which is updated row by row as events land: two pairs of one
+ * person that both qualify in the same tick are seen one after the other, and the second finds the
+ * first. Callers only ask when a pair is about to become partners, so the scan is rare.
+ */
+export function holdsPartnerElsewhere(
+  relMap: ReadonlyMap<string, RelRow>,
+  activeIds: ReadonlySet<number>,
+  id: number,
+  counterpart: number,
+): boolean {
+  for (const r of relMap.values()) {
+    if (r.agent_a !== id && r.agent_b !== id) continue;
+    const other = r.agent_a === id ? r.agent_b : r.agent_a;
+    if (other === counterpart || !activeIds.has(other)) continue;
+    if (r.status === 'partners' || r.tags.includes('partner')) return true;
+  }
+  return false;
+}
+
+/**
+ * `partnerBlocked`: the pair would become partners on its numbers but one of them already has a
+ * partner elsewhere (`holdsPartnerElsewhere`), so the label waits at `romantic_interest`. It gates
+ * ONLY the partners-by-thresholds branch: estrangement and a marriage are decided before it, and a
+ * married pair is partners whatever else is going on.
+ */
 export function deriveStatus(
   fAB: number,
   fBA: number,
@@ -61,6 +93,7 @@ export function deriveStatus(
   familiarity: number,
   estranged = false,
   married = false,
+  partnerBlocked = false,
 ): RelationshipStatus {
   const avgFriendship = (fAB + fBA) / 2;
   const maxRomance = Math.max(rAB, rBA);
@@ -75,7 +108,7 @@ export function deriveStatus(
   // the `married` tag and lets the thresholds speak again.
   if (married) return 'partners';
 
-  if (romanceIsPartnership(minRomance, maxRomance) && avgFriendship > 30) return 'partners';
+  if (!partnerBlocked && romanceIsPartnership(minRomance, maxRomance) && avgFriendship > 30) return 'partners';
   if (maxRomance > 30 && avgFriendship < -10) return 'complicated';
   if (maxRomance > 30) return 'romantic_interest';
   if (avgFriendship > 90) return 'best_friends';
@@ -94,6 +127,11 @@ function updateTags(
     maxRomance: number;
     minRomance: number;
     avgTrust: number;
+    /**
+     * False when the pair would be partners on its numbers but one of them is already someone's
+     * partner (exclusivity): they take the crush branch instead, unless married. Default true.
+     */
+    partnerAllowed?: boolean;
   },
 ): string[] {
   // Only the six derived tags below are ever added or removed here, so any
@@ -116,7 +154,8 @@ function updateTags(
   // A married pair stays each other's partner even when romance cools below the
   // courtship line: code that asks "are they together?" reads the `partner` tag
   // (goals, perception), and a marriage only ends by an explicit breakup.
-  if (isMarriedTags(existingTags) || romanceIsPartnership(metrics.minRomance, metrics.maxRomance)) {
+  const partnerAllowed = metrics.partnerAllowed ?? true;
+  if (isMarriedTags(existingTags) || (partnerAllowed && romanceIsPartnership(metrics.minRomance, metrics.maxRomance))) {
     tags.delete('crush');
     tags.add('partner');
   } else if (metrics.maxRomance > 40) {
@@ -270,6 +309,9 @@ export function tick(
       }
     }
   }
+
+  // Who is alive and in town, for partner exclusivity (a departed partner holds nobody).
+  const activeIds = new Set<number>(activeAgents.map((ag) => ag.id));
 
   // Load all relationships into a map for fast lookup
   const allRels = db.select().from(relationships).all();
@@ -466,12 +508,8 @@ export function tick(
     const minRomance = Math.min(newRomanceAB, newRomanceBA);
     const avgTrust = (newTrustAB + newTrustBA) / 2;
 
-    let newTags = updateTags(rel.tags, {
-      avgFriendship,
-      maxRomance,
-      minRomance,
-      avgTrust,
-    });
+    const tagMetrics = { avgFriendship, maxRomance, minRomance, avgTrust };
+    let newTags = updateTags(rel.tags, tagMetrics);
 
     // Two agents who know each other well and have bottomed out mutual
     // friendship are done for good. `updateTags` only deletes the tags it
@@ -485,7 +523,7 @@ export function tick(
     }
 
     const oldStatus = rel.status;
-    const newStatus = deriveStatus(
+    let newStatus = deriveStatus(
       newFriendshipAB,
       newFriendshipBA,
       newRomanceAB,
@@ -495,6 +533,21 @@ export function tick(
       isEstranged,
       isMarriedTags(newTags),
     );
+    // Partner exclusivity. Asked only when this event is about to MAKE them partners (a pair that
+    // already is one, by status or tag, is an incumbent and is never demoted here), and not for a
+    // marriage. Blocked, the pair keeps its feelings but stays a romantic interest with a crush
+    // tag. Lazy on purpose: the scan over the relationship map is rare, not per event.
+    if (
+      newStatus === 'partners' && !isMarriedTags(newTags)
+      && oldStatus !== 'partners' && !rel.tags.includes('partner')
+      && (holdsPartnerElsewhere(relMap, activeIds, a, b) || holdsPartnerElsewhere(relMap, activeIds, b, a))
+    ) {
+      newTags = updateTags(rel.tags, { ...tagMetrics, partnerAllowed: false });
+      newStatus = deriveStatus(
+        newFriendshipAB, newFriendshipBA, newRomanceAB, newRomanceBA,
+        avgTrust, newFamiliarity, isEstranged, false, true,
+      );
+    }
     // The milestone clock: how long the pair has held this status.
     const statusSince = newStatus !== oldStatus ? nowMinutes : rel.status_since_minute;
 
@@ -692,16 +745,21 @@ export function tick(
     }
 
     if (changed) {
-      const newStatus = deriveStatus(
-        newFAB,
-        newFBA,
-        newRAB,
-        newRBA,
-        (rel.trust_ab + rel.trust_ba) / 2,
-        rel.familiarity,
-        false,
-        isMarriedTags(rel.tags),
+      const avgTrust = (rel.trust_ab + rel.trust_ba) / 2;
+      let newStatus = deriveStatus(
+        newFAB, newFBA, newRAB, newRBA, avgTrust, rel.familiarity, false, isMarriedTags(rel.tags),
       );
+      // The same exclusivity guard as the event path: without it a pair the events left blocked at
+      // romantic_interest was promoted here on the next quiet hour (raw thresholds still met) while
+      // the incumbent stood, and the two paths took turns flipping it.
+      if (
+        newStatus === 'partners' && !isMarriedTags(rel.tags)
+        && rel.status !== 'partners' && !rel.tags.includes('partner')
+        && (holdsPartnerElsewhere(relMap, activeIds, rel.agent_a, rel.agent_b)
+          || holdsPartnerElsewhere(relMap, activeIds, rel.agent_b, rel.agent_a))
+      ) {
+        newStatus = deriveStatus(newFAB, newFBA, newRAB, newRBA, avgTrust, rel.familiarity, false, false, true);
+      }
 
       db.update(relationships)
         .set({
