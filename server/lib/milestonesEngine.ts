@@ -426,6 +426,12 @@ export function milestonesTick(time: ClockTime, nowMinutes: number): void {
 function ready(rel: RelRow, a: AgentRow, b: AgentRow, nowMinutes: number): boolean {
   if (rel.status !== 'partners' || rel.tags.includes('estranged')) return false;
   if (a.age < ADULT_AGE || b.age < ADULT_AGE) return false;
+  // 1900: two people of the same sex can be lovers and partners (the adult layer allows
+  // it), but they cannot marry in this era, and their bond is kept hidden. So no
+  // engagement is ever proposed to them: the pair stays `partners`, secret. Gated here,
+  // where every proposal starts, and not in the wedding code, so nobody is left
+  // half-engaged to something that can never happen.
+  if (a.gender === b.gender) return false;
   const since = rel.status_since_minute;
   if (since == null) return false;
   const pa = personalityOf(a), pb = personalityOf(b);

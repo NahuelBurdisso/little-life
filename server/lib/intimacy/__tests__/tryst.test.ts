@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import {
-  activityLog, agentStates, agents, locations, needs, relationships, shared_knowledge, worldState,
+  activityLog, agentStates, agents, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
 } from '../../../db/schema';
 import {
   SNEAK_WATCH_MINUTES, STAY_MAX_MINUTES, TRYST_MAX_MINUTES, TRYST_MIN_MINUTES, TRYST_RETRY_MARRIED_MINUTES,
@@ -174,6 +174,7 @@ describe('the tryst', () => {
     db.delete(shared_knowledge).where(inArray(shared_knowledge.subject_id, madeAgents)).run();
     db.delete(activityLog).where(inArray(activityLog.initiator_id, madeAgents)).run();
     db.delete(agentStates).where(inArray(agentStates.agent_id, madeAgents)).run();
+    db.delete(relationshipEvents).where(or(inArray(relationshipEvents.agent_a, madeAgents), inArray(relationshipEvents.agent_b, madeAgents))).run();
     db.delete(relationships).where(or(inArray(relationships.agent_a, madeAgents), inArray(relationships.agent_b, madeAgents))).run();
     db.delete(needs).where(inArray(needs.agent_id, madeAgents)).run();
     db.delete(agents).where(inArray(agents.id, madeAgents)).run();
@@ -589,6 +590,14 @@ describe('the tryst', () => {
       const spouse = insertAgent(`Spouse ${madeAgents.length}`, bHome, { current_location: bHome });
       marry(b, spouse);
       const neighbourHome = insertLocation('Snoop House', 'home', 700);
+      insertAgent(`Snoop ${madeAgents.length}`, neighbourHome, { current_location: aHome });
+      startSneakHome(b, NOW + 600);
+      expect(factsOf(b)[0]).toMatchObject({ target_id: a, sensitivity: 4 });
+    });
+
+    it('a same-sex pair\'s secret weighs one more (their bond is hidden in 1900), capped at 4', () => {
+      const { a, b, aHome } = morningAfter({ aOver: { gender: 'female', orientation: 'gay' }, bOver: { gender: 'female', orientation: 'gay' } });
+      const neighbourHome = insertLocation('Gossip Cottage', 'home', 700);
       insertAgent(`Snoop ${madeAgents.length}`, neighbourHome, { current_location: aHome });
       startSneakHome(b, NOW + 600);
       expect(factsOf(b)[0]).toMatchObject({ target_id: a, sensitivity: 4 });

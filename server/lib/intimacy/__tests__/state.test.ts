@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  clearIntimacy, ensureAgentIntimacy, ensurePairIntimacy, getAgentIntimacy, getPairIntimacy,
+  clearIntimacy, ensureAgentIntimacy, ensurePairIntimacy, getAgentIntimacy, getPairIntimacy, getSuspicionProcessedDay, setSuspicionProcessedDay,
   intimacySnapshotStore, updatePairIntimacy,
 } from '../state';
 import { clearPerWorldCaches, persistedStoreKeys } from '../../../engine/worldCaches';
@@ -60,6 +60,20 @@ describe('snapshot store', () => {
       pendingRendezvous: { initiatorId: 9, since: 950, venueId: 12 }, rendezvousRetryAfter: 1200, secret: true,
     });
     expect(getAgentIntimacy(4)).toEqual({ longing: 42, lastTouchedAt: 777, suspicion: { 9: 30 } });
+  });
+
+  it('round-trips a night away and the day the suspicion pass last ran, and drops a bogus night', () => {
+    ensureAgentIntimacy(4).awayNight = { since: 1234, hostId: 9 };
+    setSuspicionProcessedDay(41);
+    const blob = JSON.parse(JSON.stringify(intimacySnapshotStore.serialize()));
+    clearIntimacy();
+    expect(getSuspicionProcessedDay()).toBeNull();
+    intimacySnapshotStore.restore(blob);
+    expect(getAgentIntimacy(4)?.awayNight).toEqual({ since: 1234, hostId: 9 });
+    expect(getSuspicionProcessedDay()).toBe(41);
+    intimacySnapshotStore.restore({ agents: { 4: { awayNight: { since: 'late', hostId: 9 } } } });
+    expect(getAgentIntimacy(4)?.awayNight).toBeUndefined();
+    expect(getSuspicionProcessedDay()).toBeNull();
   });
 
   it('round-trips an agreed rendezvous (agreed flag and agreedAt) and drops a bogus agreed value', () => {

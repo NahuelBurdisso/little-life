@@ -58,6 +58,14 @@ export interface AgentIntimacy {
   lastTouchedAt?: number;
   /** partnerId → 0..100, how sure they are their partner strayed. */
   suspicion: Record<number, number>;
+  /**
+   * The last night this person spent as a guest in somebody else's home (tryst.ts
+   * writes it when the evening ends and the guest stays). Kept apart from the
+   * `Stay` because a stay is cleared half an hour after the walk home, long
+   * before the next morning's suspicion pass (suspicion.ts) reads it, and that
+   * pass consumes it: one absence is counted once.
+   */
+  awayNight?: { since: number; hostId: number };
 }
 
 /**
@@ -91,6 +99,20 @@ const stays = new Map<number, Stay>();
  * the new world's clock starts over and a stale stamp would sit in the future.
  */
 let longingProcessedAt: number | null = null;
+
+/**
+ * Game day the morning suspicion pass last ran for (null before the first). Same
+ * rationale as `longingProcessedAt`: it lives here so a world replace resets it.
+ */
+let suspicionProcessedDay: number | null = null;
+
+export function getSuspicionProcessedDay(): number | null {
+  return suspicionProcessedDay;
+}
+
+export function setSuspicionProcessedDay(day: number | null): void {
+  suspicionProcessedDay = day;
+}
 
 export function getLongingProcessedAt(): number | null {
   return longingProcessedAt;
@@ -186,6 +208,7 @@ export function clearIntimacy(): void {
   agentsIntimacy.clear();
   stays.clear();
   longingProcessedAt = null;
+  suspicionProcessedDay = null;
 }
 
 // ─── Checkpoint ──────────────────────────────────────────────────────────────
@@ -258,12 +281,16 @@ function restoreAgent(raw: unknown): AgentIntimacy | null {
     const level = asNumber(v);
     if (partner !== null && level !== null) a.suspicion[partner] = clamp(level, 0, 100);
   }
+  const away = asRecord(r.awayNight);
+  const since = away ? asNumber(away.since) : null;
+  const hostId = away ? asNumber(away.hostId) : null;
+  if (since !== null && hostId !== null) a.awayNight = { since, hostId };
   return a;
 }
 
 /**
  * Checkpoint: { pairs: {[pairKey]: PairIntimacy}, agents: {[id]: AgentIntimacy},
- * stays: {[guestId]: Stay}, longingAt }. `stays` is absent from checkpoints
+ * stays: {[guestId]: Stay}, longingAt, suspicionDay }. `stays` is absent from checkpoints
  * written before the tryst existed (restore reads it as empty). Always an object (never undefined), so an empty town still
  * overwrites an older world's row.
  */
@@ -280,10 +307,15 @@ export const intimacySnapshotStore: SnapshotStore = {
       };
     }
     const outAgents: Record<string, AgentIntimacy> = {};
-    for (const [k, v] of agentsIntimacy) outAgents[String(k)] = { ...v, suspicion: { ...v.suspicion } };
+    for (const [k, v] of agentsIntimacy) {
+      outAgents[String(k)] = { ...v, suspicion: { ...v.suspicion }, ...(v.awayNight ? { awayNight: { ...v.awayNight } } : {}) };
+    }
     const outStays: Record<string, Stay> = {};
     for (const [k, v] of stays) outStays[String(k)] = { ...v, seenBy: [...v.seenBy] };
-    return { pairs: outPairs, agents: outAgents, stays: outStays, longingAt: longingProcessedAt };
+    return {
+      pairs: outPairs, agents: outAgents, stays: outStays,
+      longingAt: longingProcessedAt, suspicionDay: suspicionProcessedDay,
+    };
   },
   restore: (data) => {
     clearIntimacy();
@@ -307,5 +339,6 @@ export const intimacySnapshotStore: SnapshotStore = {
       if (stay) stays.set(id, stay);
     }
     longingProcessedAt = asNumber(root.longingAt);
+    suspicionProcessedDay = asNumber(root.suspicionDay);
   },
 };

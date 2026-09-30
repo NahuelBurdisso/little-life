@@ -67,6 +67,29 @@ export function isSpokenFor(agentId: number, except?: number): boolean {
 }
 
 /**
+ * Whom `agentId` is engaged or married to (living), other than `except`; a
+ * spouse before a fiancé(e) when somehow both exist. The betrayed party of an
+ * affair: `isSpokenFor` says THAT someone is, this says WHO.
+ */
+export function betrothedTo(agentId: number, except?: number): number | null {
+  const rows = db.select({ a: relationships.agent_a, b: relationships.agent_b, tags: relationships.tags })
+    .from(relationships)
+    .where(or(eq(relationships.agent_a, agentId), eq(relationships.agent_b, agentId)))
+    .all();
+  let fiance: number | null = null;
+  for (const r of rows) {
+    const other = r.a === agentId ? r.b : r.a;
+    if (other === except) continue;
+    if (!r.tags?.some((t) => MILESTONE_TAGS.includes(t))) continue;
+    const alive = db.select({ active: agents.is_active }).from(agents).where(eq(agents.id, other)).get();
+    if (!alive?.active) continue;
+    if (isMarriedTags(r.tags)) return other;
+    fiance ??= other;
+  }
+  return fiance;
+}
+
+/**
  * Sensitivity for an affair secret. An affair was always a sensitivity-3
  * secret; one that betrays a marriage is the worst thing the town can learn
  * about someone, so it goes a step past every other secret. Readers compare

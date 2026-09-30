@@ -11,8 +11,8 @@ const SAD_BELOW = 25;
 const HAPPY_ABOVE = 75;
 
 const ANGRY_STATES = new Set(["angry", "jealous"]);
-const SAD_STATES = new Set(["heartbroken", "grieving", "depressed"]);
-const HAPPY_STATES = new Set(["euphoric", "infatuated"]);
+const SAD_STATES = new Set(["heartbroken", "grieving", "depressed", "guilty"]);
+const HAPPY_STATES = new Set(["euphoric", "infatuated", "afterglow"]);
 const SHOCKED_STATES = new Set(["arrested"]);
 
 /**

@@ -339,6 +339,9 @@ export function statesTick() {
 
 // ─── Pass 1a: expiry ──────────────────────────────────────────────────────────
 
+/** Fixed-length states of the intimacy layer that end without a feed row (see `expireTimedStates`). */
+const QUIET_EXPIRY_STATES: ReadonlySet<StateType> = new Set<StateType>(['afterglow', 'guilty', 'suspicious']);
+
 /** Delete the agent's time-bounded states whose duration has run out. */
 function expireTimedStates(
   agent: AgentRow,
@@ -352,7 +355,11 @@ function expireTimedStates(
     if (state.started_at + state.duration > nowMinutes) continue;
 
     // Track sickness recovery for immunity cooldown
-    if (state.type === 'sick') {
+    if (QUIET_EXPIRY_STATES.has(state.type as StateType)) {
+      // A night's afterglow, a guilty conscience and a suspicion are private: the
+      // feed neither announces them (lib/intimacy inserts them directly, no
+      // `state_gained` row) nor says "X is no longer afterglow".
+    } else if (state.type === 'sick') {
       sickRecoveredAt.set(agent.id, nowMinutes);
       logActivity({
         type: 'state_lost',

@@ -1,6 +1,7 @@
-import { and, eq, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { db } from '../../db';
 import { agents } from '../../db/schema';
+import { MARRIED_AFFAIR_SENSITIVITY } from '../marriage';
 
 // ─── Who could see it ────────────────────────────────────────────────────────
 //
@@ -82,4 +83,18 @@ export function onlookersNear(
       return Math.hypot(p.x - origin.x, p.y - origin.y) <= range;
     })
     .map((o) => o.id);
+}
+
+/**
+ * A love the town would condemn is worse to be caught at: in 1900 two people of
+ * the same sex who are lovers keep it hidden (their bond is real, but it has no
+ * public form: it cannot be a wedding), so a secret about them weighs one step
+ * more, capped at the heaviest a secret goes (`MARRIED_AFFAIR_SENSITIVITY`, 4).
+ * Everyone else's sensitivity passes through. Applied where `kiss_seen` and
+ * `tryst_seen` are born, the two facts that are about the pair themselves.
+ */
+export function withHiddenLoveBump(base: number, aId: number, bId: number): number {
+  const rows = db.select({ gender: agents.gender }).from(agents).where(inArray(agents.id, [aId, bId])).all();
+  if (rows.length !== 2 || rows[0].gender !== rows[1].gender) return base;
+  return Math.min(MARRIED_AFFAIR_SENSITIVITY, base + 1);
 }

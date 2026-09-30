@@ -182,8 +182,9 @@ function insertAgent(name: string, over: Partial<typeof agents.$inferInsert> = {
 }
 
 function couple(over: Partial<typeof relationships.$inferInsert> = {}, agentOver: Partial<typeof agents.$inferInsert> = {}) {
-  const a = insertAgent(`Suitor ${made.length}`, agentOver);
-  const b = insertAgent(`Beloved ${made.length}`, agentOver);
+  // A woman and a man by default: 1900 proposals only go to opposite-sex couples (see the same-sex test).
+  const a = insertAgent(`Suitor ${made.length}`, { gender: 'female', ...agentOver });
+  const b = insertAgent(`Beloved ${made.length}`, { gender: 'male', ...agentOver });
   const relId = db.insert(relationships).values({
     agent_a: a, agent_b: b,
     friendship_ab: 70, friendship_ba: 70, romance_ab: 90, romance_ba: 80,
@@ -243,6 +244,18 @@ describe('milestones against the DB', () => {
       tick();
       expect(getPairMilestone(a, b)).toBeUndefined();
       expect(queued(a, b)).toHaveLength(0);
+    });
+
+    it('never proposes to a same-sex couple: in 1900 they can be partners, but they cannot marry', () => {
+      // Everything else says "ready": partners for ten days, keen, together.
+      const same = couple({}, { gender: 'male' });
+      const mixed = couple();
+      tick();
+      expect(getPairMilestone(same.a, same.b)).toBeUndefined();
+      expect(queued(same.a, same.b)).toHaveLength(0);
+      expect(rel(same.relId).status).toBe('partners');
+      // ...and the gate is the pair's sex, nothing else: the mixed couple proposes.
+      expect(getPairMilestone(mixed.a, mixed.b)).toMatchObject({ proposerId: mixed.a });
     });
 
     it('decides who proposes once they have, then queues the proposal when the two are together', () => {

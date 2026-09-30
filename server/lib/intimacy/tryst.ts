@@ -10,6 +10,7 @@ import { MINUTES_PER_DAY, gameMinutes, type ClockTime } from '../gameClock';
 import { affairInvolvesMarriage, affairSensitivity, isSpokenFor, spouseOf } from '../marriage';
 import { inNoProposalState } from '../milestonesEngine';
 import { simEvents } from '../simEvents';
+import { applyTrystAftermath, type TrystCompletion } from './aftermath';
 import { getAgentStates } from '../states';
 import { distance } from '../utils';
 import { isAdultContent } from '../worldRules';
@@ -18,7 +19,7 @@ import { isIntimacyEligible } from './eligibility';
 import {
   clearStay, forEachPairIntimacy, forEachStay, getPairIntimacy, getStay, setStay, updatePairIntimacy, updateStay,
 } from './state';
-import { SNEAK_RANGE_PX, onlookersNear } from './witnesses';
+import { SNEAK_RANGE_PX, onlookersNear, withHiddenLoveBump } from './witnesses';
 
 // ─── The tryst: where, when, and what the morning brings ─────────────────────
 //
@@ -261,7 +262,8 @@ type Scene = 'dawn' | 'found' | 'outdoors';
  * Somebody saw. The secret is born (or gains knowers) as a `tryst_seen` fact
  * (sensitivity 3; 4 when either is married to a third person), one feed row
  * names the first witness, and an `intimacy:caught` per witness lets whatever
- * reacts to it do so. If a witness is the husband or wife of one of the two, the
+ * reacts to it do so (a same-sex pair's secret weighs one more, capped at 4:
+ * `withHiddenLoveBump`). If a witness is the husband or wife of one of the two, the
  * affair is theirs to know too (an `affair` fact), which the existing discovery
  * path (reactToPartnerAffair, on their next talk with the straying spouse) turns
  * into a reckoning.
@@ -270,7 +272,7 @@ type Scene = 'dawn' | 'found' | 'outdoors';
  */
 function reportCaught(subject: AgentRow, other: AgentRow, witnessIds: number[], scene: Scene): void {
   if (witnessIds.length === 0) return;
-  const sensitivity = affairSensitivity(3, affairInvolvesMarriage(subject.id, other.id));
+  const sensitivity = withHiddenLoveBump(affairSensitivity(3, affairInvolvesMarriage(subject.id, other.id)), subject.id, other.id);
   learnFact('tryst_seen', subject.id, other.id, sensitivity, witnessIds, 'observed',
     scene === 'dawn' ? undefined : { detail: scene });
 
@@ -395,36 +397,28 @@ export function beginTryst(
 
 // ─── Ending ──────────────────────────────────────────────────────────────────
 
-export interface TrystCompletion {
-  a: number;
-  b: number;
-  venueId: number;
-  secret: boolean;
-  /** The pair's first night together. */
-  first: boolean;
-  /** Somebody walked in and it ended early. */
-  interrupted: boolean;
-}
-
 /**
- * The evening is over (its time ran out, or somebody walked in): the hook for
- * what a night leaves behind. Fires exactly once per tryst, from `trystPass`,
- * and before any consequence exists. Task 10 fills it: the `lovers` tag, the
- * pivotal `first_tryst` / routine `tryst` relationship events, longing relieved,
- * the afterglow (or guilty) state, memories via `life:milestone`, and the
- * `affair` fact born from the act.
+ * The evening is over (its time ran out, or somebody walked in). Fires exactly
+ * once per tryst, from `trystPass`, after `activeTryst` is cleared. What a night
+ * leaves behind (the `lovers` tag, the relationship events, longing eased, the
+ * afterglow or the guilt, memories, the `affair` fact born from the act) is
+ * aftermath.ts's; a failure there must not stop the pass from ending the others.
  */
-function onTrystCompleted(_tryst: TrystCompletion): void {
-  // Task 10.
+function onTrystCompleted(tryst: TrystCompletion): void {
+  try {
+    applyTrystAftermath(tryst);
+  } catch (err) {
+    console.warn('[intimacy] tryst aftermath failed:', (err as Error).message);
+  }
 }
 
-function completeTryst(x: number, y: number, interrupted: boolean): void {
+function completeTryst(x: number, y: number, interrupted: boolean, now: number): void {
   const p = getPairIntimacy(x, y);
   const t = p?.activeTryst;
   if (!p || !t) return;
   updatePairIntimacy(x, y, (s) => { delete s.activeTryst; });
   onTrystCompleted({
-    a: x, b: y, venueId: t.venueId, secret: t.secret, first: p.firstTrystAt === t.startedAt, interrupted,
+    a: x, b: y, venueId: t.venueId, secret: t.secret, first: p.firstTrystAt === t.startedAt, interrupted, now,
   });
 }
 
@@ -442,7 +436,7 @@ function interrupt(a: AgentRow, b: AgentRow, venue: LocationRow, witnessIds: num
   reportCaught(subject, other, witnessIds, 'found');
   endActions([a.id, b.id], now);
   if (guest) updateStay(guest.id, (s) => { s.leaving = true; });
-  completeTryst(a.id, b.id, true);
+  completeTryst(a.id, b.id, true, now);
 }
 
 // ─── Dawn ────────────────────────────────────────────────────────────────────
@@ -582,14 +576,14 @@ export function trystPass(time: ClockTime, rng: () => number = Math.random): voi
     const a = rows.find((r) => r.id === x);
     const b = rows.find((r) => r.id === y);
     const venue = locationRow(t.venueId);
-    if (!a || !b || !venue || !isIntimacyEligible(a, b)) { completeTryst(x, y, false); dirty = true; continue; }
+    if (!a || !b || !venue || !isIntimacyEligible(a, b)) { completeTryst(x, y, false, now); dirty = true; continue; }
 
     // Somebody awake turned up at a home: the housemate, the spouse.
     if (venue.type === 'home' && isExposed(a, b, venue.id)) {
       const arrivals = onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]);
       if (arrivals.length > 0) { interrupt(a, b, venue, arrivals, now); dirty = true; continue; }
     }
-    if (now >= t.endsAt) { completeTryst(x, y, false); dirty = true; }
+    if (now >= t.endsAt) { completeTryst(x, y, false, now); dirty = true; }
   }
 
   // --- Stays: lapse, or watch the road ---

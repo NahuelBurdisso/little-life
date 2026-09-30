@@ -45,7 +45,12 @@ export type StateType =
   | 'envious'
   | 'alcoholic'
   | 'in_debt'
-  | 'arrested';
+  | 'arrested'
+  // The adult layer's aftermath (lib/intimacy): the warmth of a night together,
+  // the weight of having betrayed someone, and the itch of suspecting it.
+  | 'afterglow'
+  | 'guilty'
+  | 'suspicious';
 
 export interface StateDefinition {
   type: StateType;
@@ -166,6 +171,30 @@ export const STATE_DEFINITIONS: Record<StateType, StateDefinition> = {
     modifiers: { aggression: 15, warmth: -15, neuroticism: 20 },
     prompt:
       "You're locked in a cell. You cannot go anywhere or do anything until your sentence is served. You are humiliated, bored, and stewing on how you ended up here.",
+  },
+  // ~8 game hours after a night with a lover (lib/intimacy/tryst.ts). Fixed length:
+  // it is a mood, not a condition, and it ends quietly (no "is no longer" feed row).
+  afterglow: {
+    type: 'afterglow',
+    modifiers: { warmth: 10, sensuality: 10, neuroticism: -10 },
+    prompt: (targetName) =>
+      `You are still glowing from last night with ${targetName ?? 'them'}; you catch yourself smiling.`,
+  },
+  // 24 game hours for someone with a conscience who betrayed a spouse or partner.
+  // Targets the one betrayed, so kindness from THEM is what stings.
+  guilty: {
+    type: 'guilty',
+    modifiers: { neuroticism: 15, warmth: -5, honesty: 10 },
+    prompt: (targetName) =>
+      `You betrayed ${targetName ?? 'them'}. Every kind word from them cuts.`,
+  },
+  // A partner's nights away from home, noticed (lib/intimacy/suspicion.ts). Targets
+  // the partner. Ends after a while, or when the truth is learnt one way or the other.
+  suspicious: {
+    type: 'suspicious',
+    modifiers: { curiosity: 10, neuroticism: 10, warmth: -10 },
+    prompt: (targetName) =>
+      `You suspect ${targetName ?? 'them'} is hiding something about where they spend their nights.`,
   },
 };
 

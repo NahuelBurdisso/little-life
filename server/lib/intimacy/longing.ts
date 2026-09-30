@@ -49,6 +49,12 @@ export function relieveLonging(agentId: number, amount: number): void {
   updateAgentIntimacy(agentId, (a) => { a.longing = clamp(a.longing - amount, 0, LONGING_MAX); });
 }
 
+/** Spend longing down to `level` (a night together leaves a little behind); never raises it. */
+export function relieveLongingTo(agentId: number, level: number): void {
+  const now = getAgentIntimacy(agentId)?.longing ?? 0;
+  if (now > level) relieveLonging(agentId, now - level);
+}
+
 export interface LongingParty extends LongingAgent {
   id: number;
   infatuated: boolean;

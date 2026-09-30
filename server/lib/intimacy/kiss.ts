@@ -14,7 +14,7 @@ import { MINUTES_PER_DAY } from '../gameClock';
 import { isIntimacyEligible, type IntimacyParty } from './eligibility';
 import { relieveLonging } from './longing';
 import { getPairIntimacy, updatePairIntimacy } from './state';
-import { witnessesOf } from './witnesses';
+import { withHiddenLoveBump, witnessesOf } from './witnesses';
 
 // ─── The kiss ────────────────────────────────────────────────────────────────
 //
@@ -351,13 +351,14 @@ export function isOpenCouple(a: number, b: number): boolean {
 /**
  * Sensitivity of "X was seen kissing Y": 2, 3 when either is engaged or
  * married to somebody else, 4 when a marriage is betrayed (the same step
- * `affairSensitivity` gives an affair secret).
+ * `affairSensitivity` gives an affair secret). One more (capped at 4) for a same-sex
+ * pair, whose bond the 1900 town condemns (`withHiddenLoveBump`).
  */
 export function kissSeenSensitivity(a: number, b: number): number {
   const spokenFor = isSpokenFor(a, b) || isSpokenFor(b, a);
-  return affairSensitivity(
-    spokenFor ? KISS_SEEN_SPOKEN_FOR_SENSITIVITY : KISS_SEEN_SENSITIVITY,
-    affairInvolvesMarriage(a, b),
+  return withHiddenLoveBump(
+    affairSensitivity(spokenFor ? KISS_SEEN_SPOKEN_FOR_SENSITIVITY : KISS_SEEN_SENSITIVITY, affairInvolvesMarriage(a, b)),
+    a, b,
   );
 }
 
