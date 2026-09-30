@@ -71,6 +71,74 @@ export function saveFavorites(seed: string, favorites: ReadonlySet<string>): voi
   }
 }
 
+// --- Watched pairs -------------------------------------------------------------------------------
+//
+// The player can follow the story of two residents instead of starring each. Same
+// per-world keying as the favourites (ids restart at 1 in every world); a pair is
+// stored as a "lo-hi" string so (3,1) and (1,3) are one pair, which is also the
+// key `alertTier` matches on the server.
+
+const PAIRS_KEY_PREFIX = "little-life:watched-pairs:";
+
+export function watchedPairsKey(seed: string): string {
+  return PAIRS_KEY_PREFIX + seed;
+}
+
+/** Order-free key of two resident ids: lower id first. */
+export function pairKey(a: number, b: number): string {
+  return `${Math.min(a, b)}-${Math.max(a, b)}`;
+}
+
+/** The two ids of a stored key, or null when it isn't a pair of distinct positive integers. */
+export function parsePairKey(key: string): [number, number] | null {
+  const m = /^(\d+)-(\d+)$/.exec(key);
+  if (!m) return null;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return a > 0 && b > 0 && a !== b ? [Math.min(a, b), Math.max(a, b)] : null;
+}
+
+/** Tolerant parse: anything that isn't a list of pair keys is "no watched pairs"; keys are re-normalised. */
+export function parseWatchedPairs(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (!Array.isArray(v)) return [];
+    const keys: string[] = [];
+    for (const x of v) {
+      const ids = typeof x === "string" ? parsePairKey(x) : null;
+      if (ids) keys.push(pairKey(ids[0], ids[1]));
+    }
+    return [...new Set(keys)];
+  } catch {
+    return [];
+  }
+}
+
+/** Immutable toggle, so React state can hold the result directly. */
+export function toggleWatchedPair(pairs: ReadonlySet<string>, a: number, b: number): Set<string> {
+  const next = new Set(pairs);
+  const key = pairKey(a, b);
+  if (!next.delete(key)) next.add(key);
+  return next;
+}
+
+export function loadWatchedPairs(seed: string): Set<string> {
+  try {
+    return new Set(parseWatchedPairs(localStorage.getItem(watchedPairsKey(seed))));
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveWatchedPairs(seed: string, pairs: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(watchedPairsKey(seed), JSON.stringify([...pairs]));
+  } catch {
+    // Storage unavailable: the watch lasts for this session only.
+  }
+}
+
 /**
  * Cast order: favourites first, everyone else after, each group keeping the order
  * the server sent (id order), so the bar and Tab cycling never reshuffle when

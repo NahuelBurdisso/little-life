@@ -56,6 +56,53 @@ describe('alertTier', () => {
   });
 });
 
+describe('alertTier: a watched pair', () => {
+  const pair = new Set(['1-2']);
+  const none = new Set<number>();
+
+  it('raises every status change of the pair to major, whatever the status', () => {
+    const status = (s: string) => row({ type: 'relationship_status_change', category: 'relationship', importance: 0.7, template_data: { status: s } });
+    expect(alertTier(status('acquaintances'))).toBeNull();
+    expect(alertTier(status('acquaintances'), none, pair)).toBe('major');
+    expect(alertTier(status('friends'), none, pair)).toBe('major');
+    // Someone else's status change is still judged on its own.
+    expect(alertTier(status('acquaintances'), none, new Set(['1-3']))).toBeNull();
+  });
+
+  it('a night together is a minor toast for the pair, and only when both are in the row', () => {
+    const night = row({ type: 'tryst', category: 'relationship', importance: 0.5, agent_ids: [1, 2] });
+    expect(alertTier(night)).toBeNull();
+    expect(alertTier(night, none, pair)).toBe('minor');
+    expect(alertTier({ ...night, agent_ids: [1, 3] }, none, pair)).toBeNull();
+  });
+
+  it('being caught still outranks the pair rule for a favourite', () => {
+    const seen = row({ type: 'caught', category: 'drama', importance: 0.75, agent_ids: [1, 2] });
+    expect(alertTier(seen, new Set([1]), pair)).toBe('major');
+  });
+
+  it('a social row clears the favourite bar only with both ids present', () => {
+    const social = row({ type: 'gift', category: 'social', importance: 0.5, agent_ids: [1, 2] });
+    expect(alertTier(social, none, pair)).toBe('minor');
+    expect(alertTier({ ...social, agent_ids: [1] }, none, pair)).toBeNull();
+    // Both ids may come from initiator/target instead of agent_ids.
+    expect(alertTier({ ...social, agent_ids: [], initiator_id: 2, target_id: 1 }, none, pair)).toBe('minor');
+    expect(alertTier({ ...social, agent_ids: [3], initiator_id: 2 }, none, pair)).toBeNull();
+  });
+
+  it('does not alert on plans or states, or on rows below the bar', () => {
+    expect(alertTier(row({ type: 'plan_changed', category: 'planning', importance: 0.5, agent_ids: [1, 2] }), none, pair)).toBeNull();
+    expect(alertTier(row({ type: 'gift', category: 'social', importance: 0.4, agent_ids: [1, 2] }), none, pair)).toBeNull();
+  });
+
+  it('changes nothing when no pair is watched', () => {
+    const social = row({ type: 'gift', category: 'social', importance: 0.5, agent_ids: [1, 2] });
+    expect(alertTier(social, none, new Set())).toBeNull();
+    expect(alertTier(social, new Set([1]), new Set())).toBe('minor');
+    expect(alertTier(row({}), none, new Set())).toBe('major');
+  });
+});
+
 describe('alertTier: kisses (lib/intimacy/kiss.ts)', () => {
   const kiss = (type: string, category: string, importance: number) => row({ type, category, importance, agent_ids: [7, 8] });
 
@@ -89,6 +136,17 @@ describe('activity.getAlerts', () => {
       ['player_outcome', 'player'],
     ]);
     expect(plain.latestId).toBeGreaterThan(latestId);
+
+    const watched = await caller().getAlerts({ sinceId: latestId, watchedPairs: [[904, 903]] });
+    expect(watched.alerts.map((a) => [a.type, a.tier])).toEqual([
+      ['relationship_status_change', 'major'],
+      ['player_outcome', 'player'],
+      ['gift', 'minor'],
+    ]);
+    expect((await caller().getAlerts({ sinceId: latestId, watchedPairs: [[903, 905]] })).alerts.map((a) => a.type)).toEqual([
+      'relationship_status_change',
+      'player_outcome',
+    ]);
 
     const starred = await caller().getAlerts({ sinceId: latestId, favoriteIds: [904] });
     expect(starred.alerts.map((a) => [a.type, a.tier])).toEqual([

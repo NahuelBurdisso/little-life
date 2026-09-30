@@ -97,13 +97,15 @@ export const activityRouter = router({
    *  `sinceId` the query returns nothing but the latest id, which is how a fresh
    *  client establishes its watermark instead of replaying the whole backlog as
    *  alerts. `favoriteIds` are the player's starred residents (kept in the
-   *  browser), whose rows alert at a lower bar. */
+   *  browser), whose rows alert at a lower bar; `watchedPairs` are the pairs
+   *  whose story the player follows, as [a, b] id tuples in either order. */
   getAlerts: publicProcedure
     .input(
       z.object({
         sinceId: z.number().optional(),
         limit: z.number().optional().default(8),
         favoriteIds: z.array(z.number()).optional(),
+        watchedPairs: z.array(z.tuple([z.number(), z.number()])).max(20).optional(),
       }).optional(),
     )
     .query(({ input }) => {
@@ -120,6 +122,8 @@ export const activityRouter = router({
       let alerts: Array<typeof activityLog.$inferSelect & { tier: AlertTier }> = [];
       if (input?.sinceId != null) {
         const favorites = new Set(input.favoriteIds ?? []);
+        // Same "lo-hi" key the client stores (src/lib/favorites.ts pairKey).
+        const watchedPairs = new Set((input.watchedPairs ?? []).map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`));
         alerts = db
           .select()
           .from(activityLog)
@@ -136,7 +140,7 @@ export const activityRouter = router({
           .limit(200)
           .all()
           .flatMap((row) => {
-            const tier = alertTier(row, favorites);
+            const tier = alertTier(row, favorites, watchedPairs);
             return tier ? [{ ...row, tier }] : [];
           })
           .slice(0, input.limit ?? 8)

@@ -3,6 +3,7 @@ import { trpc } from '../lib/trpc';
 import type { ActivityEntry } from '../lib/activityMessage';
 import type { AlertTier } from '../../server/lib/alertTiers';
 import { playAlertChime } from '../lib/audio/synth';
+import { parsePairKey } from '../lib/favorites';
 import {
   inboxReducer,
   loadInbox,
@@ -33,9 +34,14 @@ export interface DramaAlert extends ActivityEntry {
  *
  * `seed` scopes the stored inbox to its world (see alertInbox.ts);
  * `favorites` are the cast bar's starred ids, whose rows the server alerts on
- * at a lower bar.
+ * at a lower bar; `watchedPairs` are "lo-hi" keys of the pairs whose story the
+ * player follows (lib/favorites.ts).
  */
-export function useDramaAlerts(seed: string, favorites: ReadonlySet<string>) {
+export function useDramaAlerts(
+  seed: string,
+  favorites: ReadonlySet<string>,
+  watchedPairs: ReadonlySet<string> = new Set(),
+) {
   const utils = trpc.useUtils();
   // `undefined` means "no watermark yet" — the server answers with the current
   // newest id and no alerts, so a page load doesn't replay the whole backlog.
@@ -63,9 +69,19 @@ export function useDramaAlerts(seed: string, favorites: ReadonlySet<string>) {
     () => [...favorites].map(Number).filter(Number.isFinite).sort((a, b) => a - b),
     [favorites],
   );
+  // Same for pairs: sorted tuples, so watching in the other order re-keys nothing.
+  const pairIds = useMemo(
+    () => [...watchedPairs]
+      .map(parsePairKey)
+      .filter((p): p is [number, number] => p != null)
+      .sort((x, y) => x[0] - y[0] || x[1] - y[1]),
+    [watchedPairs],
+  );
   const { data } = trpc.activity.getAlerts.useQuery({
     sinceId,
     favoriteIds: favoriteIds.length > 0 ? favoriteIds : undefined,
+    // The server caps the list at 20; a longer one would fail validation and mute every alert.
+    watchedPairs: pairIds.length > 0 ? pairIds.slice(0, 20) : undefined,
   });
 
   trpc.activity.onUpdate.useSubscription(undefined, {

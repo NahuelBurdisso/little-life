@@ -22,6 +22,9 @@ import { W } from "./warmClasses";
 interface PairDossierProps {
   /** The two residents (numeric ids), or null when closed. */
   pair: { a: number; b: number } | null;
+  /** Whether the player follows this pair's story (alerts on it, see alertTiers.ts). */
+  watched: boolean;
+  onToggleWatch: () => void;
   onClose: () => void;
   /** Jump to a resident on the map. The caller closes the modals stacked over it. */
   onFocusAgent: (agentId: string) => void;
@@ -492,7 +495,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * channel (throttled to one refetch per ~3 s), next to the graph query; the
  * modal itself needs no subscription.
  */
-export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
+export function PairDossier({ pair, watched, onToggleWatch, onClose, onFocusAgent }: PairDossierProps) {
   const nudge = useNudge();
   const { data: agents } = trpc.agents.getActive.useQuery(undefined, { enabled: pair != null });
   const { data: dossier, isLoading } = trpc.relationships.getPair.useQuery(
@@ -568,6 +571,15 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
             </button>
             <button type="button" onClick={() => onFocusAgent(String(pair.b))} className={`px-2.5 py-1 text-xs ${W.btn}`}>
               📍 Go to {second}
+            </button>
+            <button
+              type="button"
+              aria-pressed={watched}
+              onClick={onToggleWatch}
+              title={watched ? `Stop alerts about ${first} and ${second}` : `Get an alert when ${first} and ${second}'s story moves`}
+              className={`px-2.5 py-1 text-xs ${W.btn}`}
+            >
+              👁 {watched ? "Watching" : "Watch"}
             </button>
             <button
               type="button"

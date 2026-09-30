@@ -6,6 +6,10 @@ import {
   toggleFavorite,
   orderCast,
   cycleAgentId,
+  watchedPairsKey,
+  pairKey,
+  parseWatchedPairs,
+  toggleWatchedPair,
 } from "../favorites";
 
 describe("worldSeedOf", () => {
@@ -72,5 +76,41 @@ describe("cycleAgentId", () => {
   });
   it("returns null for an empty cast", () => {
     expect(cycleAgentId([], "a", 1)).toBeNull();
+  });
+});
+
+describe("watched pairs", () => {
+  it("keeps each world's pairs apart, and apart from the favourites", () => {
+    expect(watchedPairsKey("a")).not.toBe(watchedPairsKey("b"));
+    expect(watchedPairsKey("a")).not.toBe(favoritesKey("a"));
+  });
+
+  it("gives (3,1) and (1,3) the same key, lower id first", () => {
+    expect(pairKey(3, 1)).toBe("1-3");
+    expect(pairKey(1, 3)).toBe(pairKey(3, 1));
+  });
+
+  it("toggles a pair on and off from either direction, without mutating the input", () => {
+    const base = new Set<string>();
+    const added = toggleWatchedPair(base, 3, 1);
+    expect([...added]).toEqual(["1-3"]);
+    expect(base.size).toBe(0);
+    expect(toggleWatchedPair(added, 1, 3).size).toBe(0);
+  });
+
+  it("reads stored pairs and drops duplicates", () => {
+    expect(parseWatchedPairs('["1-2","1-2","3-4"]')).toEqual(["1-2", "3-4"]);
+  });
+
+  it("normalises a stored pair written in the wrong order", () => {
+    expect(parseWatchedPairs('["3-1"]')).toEqual(["1-3"]);
+  });
+
+  it("treats a malformed stored value as empty", () => {
+    expect(parseWatchedPairs(null)).toEqual([]);
+    expect(parseWatchedPairs("")).toEqual([]);
+    expect(parseWatchedPairs("{oops")).toEqual([]);
+    expect(parseWatchedPairs('{"a":1}')).toEqual([]);
+    expect(parseWatchedPairs('[1,null,"x","1-","2-2","a-b"]')).toEqual([]);
   });
 });

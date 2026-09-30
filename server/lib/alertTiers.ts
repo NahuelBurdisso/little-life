@@ -14,6 +14,11 @@
  *            complicated, a goal reached — and, for the player's favourite
  *            residents only, anything social that clears a lower bar.
  *
+ * A watched pair (the player follows two people's story, not each of them) adds
+ * to that: every status change of the pair is major, a night together and any
+ * other social moment between exactly those two is minor. A row that has only
+ * one of them in it says nothing about the pair, so it does not count.
+ *
  * Only drama/world_event/aspiration rows at ≥ 0.8 used to alert, so "X and Y
  * are now partners" (0.7) and every goal completion scrolled by unseen.
  */
@@ -67,9 +72,37 @@ function involves(row: AlertCandidate, ids: ReadonlySet<number>): boolean {
   return (row.initiator_id != null && ids.has(row.initiator_id)) || (row.target_id != null && ids.has(row.target_id));
 }
 
-export function alertTier(row: AlertCandidate, favoriteIds: ReadonlySet<number> = new Set()): AlertTier | null {
+/**
+ * True when both ids of one watched pair are in the row. `pairs` holds "lo-hi"
+ * keys (lower id first), so (3,1) and (1,3) are the same pair; the ids are read
+ * from the same fields `involves` reads.
+ */
+export function involvesPair(row: AlertCandidate, pairs: ReadonlySet<string>): boolean {
+  if (pairs.size === 0) return false;
+  const ids = new Set<number>(row.agent_ids ?? []);
+  if (row.initiator_id != null) ids.add(row.initiator_id);
+  if (row.target_id != null) ids.add(row.target_id);
+  for (const key of pairs) {
+    const [lo, hi] = key.split('-').map(Number);
+    if (ids.has(lo) && ids.has(hi)) return true;
+  }
+  return false;
+}
+
+export function alertTier(
+  row: AlertCandidate,
+  favoriteIds: ReadonlySet<number> = new Set(),
+  watchedPairs: ReadonlySet<string> = new Set(),
+): AlertTier | null {
   if (PLAYER_TYPES.has(row.type)) return 'player';
   if (QUIET_TYPES.has(row.type)) return null;
+
+  // The pair the player follows: their status changes are the story, whatever the
+  // status; a night together is a quiet toast. Both come before the favourite
+  // rules below, which would demote the first to a minor and silence the second.
+  const watched = involvesPair(row, watchedPairs);
+  if (watched && row.type === 'relationship_status_change') return 'major';
+  if (watched && row.type === 'tryst') return 'minor';
 
   // The adult layer's rows (lib/intimacy/tryst.ts). A night together is nobody's
   // business but the couple's: quiet, a toast only for the player's favourites.
@@ -95,6 +128,10 @@ export function alertTier(row: AlertCandidate, favoriteIds: ReadonlySet<number> 
     row.importance >= FAVORITE_IMPORTANCE &&
     involves(row, favoriteIds)
   ) return 'minor';
+
+  // Last, so it can only raise a row nothing above wanted (a `caught` row of a
+  // watched pair keeps its major for a favourite, a drama at 0.8 stays major).
+  if (watched && FAVORITE_CATEGORIES.has(row.category) && row.importance >= FAVORITE_IMPORTANCE) return 'minor';
 
   return null;
 }

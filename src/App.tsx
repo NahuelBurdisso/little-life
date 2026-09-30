@@ -35,6 +35,7 @@ import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
 import { useKeyboardControls } from "./hooks/useKeyboardControls";
 import { useFavorites } from "./hooks/useFavorites";
+import { useWatchedPairs } from "./hooks/useWatchedPairs";
 import { worldSeedOf, orderCast, cycleAgentId } from "./lib/favorites";
 import { CastBar } from "./components/ui/CastBar";
 import { HealthBanner } from "./components/ui/HealthBanner";
@@ -155,10 +156,13 @@ export default function App() {
   // bar and in Tab order, so the two never disagree about who is "next".
   const worldSeed = worldSeedOf(world?.setup_config);
   const { favorites, toggleFavorite } = useFavorites(worldSeed);
+  // Pairs the player follows (PairDossier's Watch button): alert on the pair's
+  // story, not on everything each of them does.
+  const { watchedPairs, toggleWatchedPair, isWatched } = useWatchedPairs(worldSeed);
   // Alert toasts + the inbox. Here rather than inside the toast overlay: the
   // TopBar's Journal badge and the Journal's Inbox tab read the same state. Favourites' rows
   // alert at a lower bar (server/lib/alertTiers.ts).
-  const drama = useDramaAlerts(worldSeed, favorites);
+  const drama = useDramaAlerts(worldSeed, favorites, watchedPairs);
   const resetAlerts = drama.reset;
   // Challenge fanfares on the canvas and the cross-world achievements, from the
   // activity rows the canvas already polls (hooks/useChallenges.ts).
@@ -613,6 +617,8 @@ export default function App() {
       <AutoplayPanel isOpen={showAutoplay} onClose={() => setShowAutoplay(false)} />
       <PairDossier
         pair={pairDossier}
+        watched={pairDossier ? isWatched(pairDossier.a, pairDossier.b) : false}
+        onToggleWatch={() => { if (pairDossier) toggleWatchedPair(pairDossier.a, pairDossier.b); }}
         onClose={() => setPairDossier(null)}
         onFocusAgent={(id) => {
           // The dossier and the graph under it cover the map, so the camera move
