@@ -786,6 +786,15 @@ export class AgentSprite {
     this.interiorGlow.visible = inside;
   }
 
+  /**
+   * Hidden while a couple's private evening is under way (discretion.ts): the building keeps its
+   * roof on, and sprites are drawn above buildings, so they would otherwise float over it. A
+   * hidden container is also skipped by hit-testing; the cast bar still selects them.
+   */
+  setVeiled(veiled: boolean): void {
+    this.container.visible = !veiled;
+  }
+
   get x(): number {
     return this.container.x;
   }

@@ -27,9 +27,14 @@ function zoneOf(a: ActionLike): string | undefined {
   return typeof a === 'string' ? undefined : a?.zoneActivity;
 }
 
-/** Whether any occupant is in the private evening (`zoneActivity: 'tryst'`). */
+/** Whether this action is the private evening (`zoneActivity: 'tryst'`). */
+export function isPrivateEvening(a: ActionLike): boolean {
+  return zoneOf(a) === 'tryst';
+}
+
+/** Whether any occupant is in the private evening. */
 export function homeHostsTryst(occupantActions: Iterable<ActionLike>): boolean {
-  for (const a of occupantActions) if (zoneOf(a) === 'tryst') return true;
+  for (const a of occupantActions) if (isPrivateEvening(a)) return true;
   return false;
 }
 
@@ -41,7 +46,7 @@ export function homeHostsTryst(occupantActions: Iterable<ActionLike>): boolean {
 export function homeLightLevel(occupantActions: Iterable<ActionLike>): number {
   let awake = false;
   for (const a of occupantActions) {
-    if (zoneOf(a) === 'tryst') return LAMP_TURNED_DOWN_LEVEL;
+    if (isPrivateEvening(a)) return LAMP_TURNED_DOWN_LEVEL;
     if (typeOf(a) !== 'sleeping') awake = true;
   }
   return awake ? 1 : 0;

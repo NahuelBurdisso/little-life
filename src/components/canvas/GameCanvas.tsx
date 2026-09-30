@@ -9,6 +9,7 @@ import { WeatherEffects } from "./WeatherEffects";
 import { SpritePool, actionTypeOf } from "./SpritePool";
 import { BubbleSystem } from "./BubbleSystem";
 import { InteractionLayer } from "./InteractionLayer";
+import { veiledBuildingIds } from "./discretion";
 import { locationAt, type LocationLike } from "../../lib/locationInfo";
 import { ParticleEngine } from "./particles/ParticleEngine";
 import { SYSTEM_FACTORIES } from "./systems";
@@ -651,7 +652,8 @@ export const GameCanvas = React.memo(function GameCanvas({
       for (const agent of agents) {
         agentLocations.set(agent.id, agent.current_location ?? null);
       }
-      buildingRendererRef.current.update(agentLocations);
+      // A house hosting a couple's private evening keeps its roof on (discretion.ts).
+      buildingRendererRef.current.update(agentLocations, veiledBuildingIds(agents));
     }
 
     const data = systemDataRef.current;

@@ -2,6 +2,7 @@ import * as PIXI from "pixi.js";
 import { TERRAIN_COLORS } from "../../lib/tileMap";
 import { displayPlaceName } from "../../lib/locationInfo";
 import { INTERIOR_ZONES } from "../../../server/data/interiors";
+import { roofCutAway } from "./discretion";
 import { getFurnitureTexture, getFloorTexture, getRoofTexture, getPropTexture } from "./textures";
 import {
   ZONE_PROPS,
@@ -290,6 +291,8 @@ export class BuildingRenderer {
   private hoveredBuildingId: number | null = null;
   // Track which building IDs contain the selected agent (task 3)
   private occupiedBuildingIds: Set<number> = new Set();
+  /** Buildings hosting a private evening: the roof stays on (see discretion.ts). */
+  private veiledBuildingIds: ReadonlySet<number> = new Set();
 
   /** Eases roofs toward their target alpha; registered on the shared ticker. */
   private readonly fadeRoofs = (ticker: PIXI.Ticker): void => {
@@ -502,8 +505,11 @@ export class BuildingRenderer {
    * Called per data-tick. Receives a map of agentId -> locationId (or null).
    * We use this to know which buildings are occupied so we can show their
    * interior zone rects (task 3: show when agent is inside).
+   *
+   * `veiled` are the buildings hosting a couple's private evening: their roofs stay on however
+   * many are inside (the lamp, curtains and roof hearts are all exterior and still show).
    */
-  update(agentLocations: Map<number, number | null>): void {
+  update(agentLocations: Map<number, number | null>, veiled: ReadonlySet<number> = new Set()): void {
     const newOccupied = new Set<number>();
     this.occupantCounts.clear();
     for (const locId of agentLocations.values()) {
@@ -512,6 +518,7 @@ export class BuildingRenderer {
       this.occupantCounts.set(locId, (this.occupantCounts.get(locId) ?? 0) + 1);
     }
     this.occupiedBuildingIds = newOccupied;
+    this.veiledBuildingIds = veiled;
     this.syncInteriorVisibility();
     // The hovered building's headcount changes as agents come and go.
     if (this.hoveredBuildingId !== null) this.showTooltip(this.hoveredBuildingId);
@@ -538,9 +545,9 @@ export class BuildingRenderer {
     }
   }
 
-  /** Interior on show = roof cut away: while hovered, or while anyone is inside. */
+  /** Interior on show = roof cut away: while hovered, or while anyone is inside (never a veiled house). */
   private interiorShown(id: number): boolean {
-    return id === this.hoveredBuildingId || this.occupiedBuildingIds.has(id);
+    return roofCutAway(id === this.hoveredBuildingId, this.occupiedBuildingIds.has(id), this.veiledBuildingIds.has(id));
   }
 
   /**

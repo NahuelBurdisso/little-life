@@ -1,6 +1,7 @@
 import * as PIXI from "pixi.js";
 import { AgentSprite } from "./AgentSprite";
 import { statePoseFor } from "./statePose";
+import { isVeiled, veiledBuildingIds } from "./discretion";
 
 export interface AgentData {
   id: number;
@@ -76,6 +77,8 @@ export class SpritePool {
    */
   update(agents: AgentData[], selectedAgentId: string | null) {
     const activeIds = new Set<string>();
+    // Whoever is in a private evening, or under the roof of the house that hosts one, is off camera.
+    const veiled = veiledBuildingIds(agents);
 
     for (const agent of agents) {
       const id = String(agent.id);
@@ -104,6 +107,7 @@ export class SpritePool {
       sprite.updateMood(agent.needs?.mood ?? 50);
       sprite.setStatePose(statePoseFor(agent));
       sprite.setInsideBuilding(agent.current_location != null);
+      sprite.setVeiled(isVeiled(agent, veiled));
     }
 
     // Remove sprites for agents no longer present
