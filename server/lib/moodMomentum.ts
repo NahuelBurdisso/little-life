@@ -3,7 +3,7 @@ import { agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { asId, asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
-import { moodBaseline } from './moodBaseline';
+import { MOOD_BASELINE_NEUTRAL, moodBaseline } from './moodBaseline';
 import type { PersonalityProfile } from './personality';
 
 // ─── Mood Momentum System ─────────────────────────────────────────────────────
@@ -100,8 +100,14 @@ const MAX_MOMENTUM = 8;
  */
 export function nextMomentum(avgMood: number, baseline: number, streak: number): { momentum: number; streak: number } {
   let next = 0;
+  // The bad-day bar is measured from the baseline, but never from above a
+  // neutral temperament's. Below baseline, mood is ~90% needs and ~10%
+  // temperament (moodBaseline.ts adaptNeedsMood), so a sunny baseline mostly
+  // raised the bar: Omar (baseline 72) had 24 "terrible" days in a row on an
+  // ordinary ~48 average, and thought of leaving every fourth day.
+  const badBar = Math.min(baseline, MOOD_BASELINE_NEUTRAL) - BAD_DAY_MARGIN;
   if (avgMood >= baseline + GOOD_DAY_MARGIN) next = streak > 0 ? streak + 1 : 1;
-  else if (avgMood < BAD_DAY_ABSOLUTE || avgMood <= baseline - BAD_DAY_MARGIN) next = streak < 0 ? streak - 1 : -1;
+  else if (avgMood < BAD_DAY_ABSOLUTE || avgMood <= badBar) next = streak < 0 ? streak - 1 : -1;
   const gain = 0.25 + Math.min(Math.abs(next), 4) * 0.025;
   const momentum = Math.max(-MAX_MOMENTUM, Math.min(MAX_MOMENTUM, (avgMood - baseline) * gain));
   return { momentum, streak: next };
@@ -134,6 +140,19 @@ export function processDayEnd(agentId: number): void {
 
   // Reset samples for next day
   tracker.moodSamples = [];
+}
+
+/**
+ * Deciding to stay is a turning point: the bad streak that made someone think
+ * of leaving ends there, and half its drag goes with it. Without this the
+ * streak was still counting when the three days' grace ran out, and the
+ * resident was thinking of leaving again the next morning (Omar: days 7, 11,
+ * 15, 19, 23).
+ */
+export function freshStart(agentId: number): void {
+  const tracker = getTracker(agentId);
+  if (tracker.streak < 0) tracker.streak = 0;
+  if (tracker.momentum < 0) tracker.momentum /= 2;
 }
 
 /** Get current mood momentum modifier. Applied in needs system. */

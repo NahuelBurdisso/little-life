@@ -53,7 +53,7 @@ import { PERIOD_FAMILY_NAMES, PERIOD_FIRST_NAMES } from '../data/residentNames';
 import {
   createResident, emptyHomes, feelingsToward, livingTiesOf, residentsByHome, retireResident, townEdgePoint,
 } from './residents';
-import { getMoodStreak } from './moodMomentum';
+import { freshStart, getMoodStreak } from './moodMomentum';
 import { getReputation } from './reputationEngine';
 import { spouseOf } from './marriage';
 import { logActivity } from './activityLogger';
@@ -531,6 +531,7 @@ export function populationFlowDaily(time: ClockTime, nowMinutes: number): void {
     if (decidesToStay(t, now)) {
       state.thinking.delete(t.agentId);
       state.stayedAt.set(t.agentId, nowMinutes);
+      freshStart(t.agentId);
       stays(t);
       changed = true;
       continue;

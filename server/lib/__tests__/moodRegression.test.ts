@@ -49,6 +49,17 @@ describe('mood momentum (pure)', () => {
     expect(bad.momentum).toBeLessThan(0);
   });
 
+  it('a sunny temperament does not turn an ordinary day into a bad one (playtest #4: Omar)', () => {
+    // Omar's baseline is ~72; his days averaged ~48. Against 72 - 20 that was
+    // 24 "terrible" days in a row; the bar is now capped at a neutral baseline's.
+    expect(nextMomentum(48, 72, -3).streak).toBe(0);
+    expect(nextMomentum(43, 72, -3).streak).toBe(-4);
+    // A gloomy temperament is still measured from its own baseline.
+    expect(nextMomentum(29, 50, 0).streak).toBe(-1);
+    expect(nextMomentum(34, 50, 0).streak).toBe(-1);
+    expect(nextMomentum(36, 50, 0).streak).toBe(0);
+  });
+
   it('cannot run away: iterating a comfortable town settles near its baseline-adapted mood, not ~90', () => {
     // The old rule: needs ~80, any day > 65 earned up to +15 → 90+ for good.
     const baseline = 64;
