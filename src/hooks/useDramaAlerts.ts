@@ -4,6 +4,7 @@ import type { ActivityEntry } from '../lib/activityMessage';
 import type { AlertTier } from '../../server/lib/alertTiers';
 import { playAlertChime } from '../lib/audio/synth';
 import { parsePairKey } from '../lib/favorites';
+import { evictToasts } from '../lib/alertEviction';
 import {
   inboxReducer,
   loadInbox,
@@ -106,10 +107,12 @@ export function useDramaAlerts(
         // Rate-limited inside: a burst of alerts rings the most important one once.
         playAlertChime(row.tier);
       }
-      setAlerts((prev) => [
+      // Over the cap, the lowest tier goes first (not simply the oldest), so a run of
+      // minor toasts cannot push a major headline or a player outcome off the screen.
+      setAlerts((prev) => evictToasts([
         ...prev,
         ...incoming.map((row) => ({ ...(row as unknown as ActivityEntry), id: row.id, tier: row.tier, shownAt: now })),
-      ].slice(-MAX_VISIBLE));
+      ], MAX_VISIBLE));
       dispatch({
         type: 'add',
         entries: incoming.map((row) => ({
