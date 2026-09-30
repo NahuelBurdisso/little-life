@@ -4,6 +4,7 @@ import { and, eq, or } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
 import { createFact } from './gossip';
+import { isAdultAge, isIntimacyEligible } from './intimacy/eligibility';
 import { memoryService } from './memory/instance';
 import { gameMinutesNow } from './worldClock';
 import { emitter } from '../engine/emitter';
@@ -278,6 +279,13 @@ export function stirFeeling(agentId: number, state: StirrableState, targetId: nu
     return { success: false, reason: state === 'infatuated' ? 'Pick who they fall for' : 'Pick who they are jealous of' };
   }
 
+  // Love is the one feeling with a line: only two adults who could be drawn to each
+  // other (the same gate every intimacy path asks) can be stirred into infatuation.
+  // A refusal here, not a quiet no-op, so the player sees why nothing happened.
+  if (state === 'infatuated' && !isIntimacyEligible(agent, target!)) {
+    return { success: false, reason: 'Only two adults who could be drawn to each other can fall in love' };
+  }
+
   const now = gameMinutesNow();
   const holdUntil = now + STIR_HOLD_MINUTES;
   const a = firstName(agent.name);
@@ -301,6 +309,14 @@ export function stirFeeling(agentId: number, state: StirrableState, targetId: nu
       // Without a love interest there is no triangle for the exit check to
       // read, and states.ts then lets the state run out its duration instead.
       const loveInterestId = loveInterestOf(agentId, target!.id);
+      // Jealousy over a love interest is a romantic triangle: all three must be adults.
+      // (Jealousy with no love interest named is just rivalry, and stays open.)
+      if (loveInterestId != null) {
+        const interest = db.select({ age: agents.age }).from(agents).where(eq(agents.id, loveInterestId)).get();
+        if (!isAdultAge(agent.age) || !isAdultAge(target!.age) || (interest && !isAdultAge(interest.age))) {
+          return { success: false, reason: 'Jealousy over a love interest can only be stirred between adults' };
+        }
+      }
       row = {
         severity: 0.7, started_at: now,
         duration: loveInterestId != null ? 999999 : 1440,

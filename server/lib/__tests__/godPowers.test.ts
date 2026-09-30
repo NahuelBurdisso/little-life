@@ -7,6 +7,7 @@ import {
   agents,
   locations,
   relationshipEvents,
+  relationships,
   shared_knowledge,
   worldState,
 } from '../../db/schema';
@@ -292,6 +293,8 @@ describe('stir_feeling', () => {
     const plaza = insertLocation('stir plaza');
     ana = insertAgent('Stir Ana', plaza, GOSSIP);
     ben = insertAgent('Stir Ben', plaza, GOSSIP);
+    // Love needs two adults who could be drawn to each other (isIntimacyEligible).
+    db.update(agents).set({ gender: 'male' }).where(eq(agents.id, ben)).run();
   });
 
   it('inserts an infatuation toward the target, a crush fact, and fires state:triggered', async () => {
@@ -332,6 +335,45 @@ describe('stir_feeling', () => {
     const r = await caller().execute({ action: { type: 'stir_feeling', agentId: ben, state: 'stressed' } });
     expect(r.success).toBe(true);
     expect(statesOf(ben, 'stressed')[0]).toMatchObject({ duration: 999999, source: 'player:stir' });
+  });
+
+  it('refuses to stir infatuation between a minor and anyone, or a pair who could not be drawn together', async () => {
+    const yard = insertLocation('stir yard');
+    const kid = insertAgent('Stir Kid', yard, GOSSIP);
+    db.update(agents).set({ age: 15 }).where(eq(agents.id, kid)).run();
+    const twin = insertAgent('Stir Twin', yard, GOSSIP); // a woman, like Ana (straight)
+    for (const [who, whom] of [[kid, ana], [ana, kid], [ana, twin]] as const) {
+      const r = await caller().execute({ action: { type: 'stir_feeling', agentId: who, state: 'infatuated', targetId: whom } });
+      expect(r.success).toBe(false);
+      expect((r as { reason?: string }).reason).toMatch(/adults/);
+      expect(statesOf(who, 'infatuated').filter((s) => s.target_agent_id === whom)).toHaveLength(0);
+    }
+    expect(db.select().from(shared_knowledge)
+      .where(and(eq(shared_knowledge.type, 'crush'), eq(shared_knowledge.subject_id, kid))).all()).toHaveLength(0);
+  });
+
+  it('refuses jealousy over a love interest when a minor is in the triangle, but rivalry without one is open', async () => {
+    const yard = insertLocation('stir lane');
+    const teen = insertAgent('Stir Teen', yard, GOSSIP);
+    const rival = insertAgent('Stir Rival', yard, GOSSIP);
+    const suitor = insertAgent('Stir Suitor', yard, GOSSIP);
+    db.update(agents).set({ age: 16 }).where(eq(agents.id, teen)).run();
+    // The teen's strongest romance is the suitor: a triangle with a minor in it.
+    db.insert(relationships).values({
+      agent_a: Math.min(teen, suitor), agent_b: Math.max(teen, suitor),
+      friendship_ab: 50, friendship_ba: 50, romance_ab: 60, romance_ba: 60, trust_ab: 50, trust_ba: 50,
+      familiarity: 50, interaction_count: 3, last_interaction: 0, average_interaction_sentiment: 0,
+      tags: [], status: 'romantic_interest', created_at: 0, last_updated: 0,
+    }).run();
+    const refused = await caller().execute({ action: { type: 'stir_feeling', agentId: teen, state: 'jealous', targetId: rival } });
+    expect(refused.success).toBe(false);
+    expect((refused as { reason?: string }).reason).toMatch(/adults/);
+    expect(statesOf(teen, 'jealous')).toHaveLength(0);
+
+    // No love interest at all (a fresh agent with no romance): plain rivalry, still allowed.
+    const loner = insertAgent('Stir Loner', yard, GOSSIP);
+    const ok = await caller().execute({ action: { type: 'stir_feeling', agentId: loner, state: 'jealous', targetId: rival } });
+    expect(ok.success).toBe(true);
   });
 
   it("holds a stirred feeling's natural exit until holdUntil", () => {
