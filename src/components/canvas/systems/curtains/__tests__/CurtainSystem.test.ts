@@ -94,6 +94,27 @@ describe('CurtainSystem', () => {
     expect(t.shown().length).toBeGreaterThan(0);
   });
 
+  it('drops its curtains at once when the world is replaced and the same ids name other houses', () => {
+    const t = setup();
+    t.sys.onData!(t.data([tryst(1, 1)], [home(1)]));
+    t.step(1.5);
+    expect(t.shown().length).toBeGreaterThan(0);
+
+    // A new world: location 1 is a different house elsewhere, and nobody is in a private evening.
+    const moved = { ...home(1), position: { x: 700, y: 500, width: 96, height: 64 } };
+    t.sys.onData!(t.data([{ id: 9, name: 'n', position: { x: 0, y: 0 }, current_location: 1, current_action: { type: 'idle' } }], [moved]));
+    t.step(DT);
+    expect(t.shown()).toHaveLength(0);
+
+    // ... and a world whose locations are gone altogether.
+    t.sys.onData!(t.data([tryst(1, 1)], [home(1)]));
+    t.step(1.5);
+    expect(t.shown().length).toBeGreaterThan(0);
+    t.sys.onData!(t.data([], []));
+    t.step(DT);
+    expect(t.shown()).toHaveLength(0);
+  });
+
   it('is cleaned up by destroy', () => {
     const t = setup();
     t.sys.onData!(t.data([tryst(1, 1)], [home(1)]));

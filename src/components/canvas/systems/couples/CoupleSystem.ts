@@ -120,8 +120,10 @@ class CoupleSystem implements CanvasSystem {
     let listsChanged = false;
     for (const p of this.scratch) {
       this.pairKeys.add(p.key);
-      const ta = this.track(p.a, gen);
-      const tb = this.track(p.b, gen);
+      if (this.track(p.a, gen)) listsChanged = true;
+      if (this.track(p.b, gen)) listsChanged = true;
+      const ta = this.tracks.get(String(p.a))!;
+      const tb = this.tracks.get(String(p.b))!;
       let st = this.pairs.get(p.key);
       if (!st) {
         st = { ta, tb, arm: false, blend: 0, togetherFor: 0, nextHeart: -1, flip: false, link: null, seen: gen };
@@ -150,8 +152,8 @@ class CoupleSystem implements CanvasSystem {
       }
       g.seen = gen;
       g.targetId = String(targetId);
-      this.track(agent.id, gen);
-      this.track(targetId, gen);
+      if (this.track(agent.id, gen)) listsChanged = true;
+      if (this.track(targetId, gen)) listsChanged = true;
     }
 
     for (const t of this.tracks.values()) {
@@ -186,7 +188,13 @@ class CoupleSystem implements CanvasSystem {
     }
   }
 
-  private track(numId: number, gen: number): Track {
+  /**
+   * Marks `numId`'s track as seen this poll, creating it when new. Returns whether it was created:
+   * `trackList` (what every frame walks) is only rebuilt when a list changed, and a crush moving on
+   * to somebody new creates a track without any pair or glancer being new, so the caller must count
+   * it or the newcomer is never sampled.
+   */
+  private track(numId: number, gen: number): boolean {
     const id = String(numId);
     let t = this.tracks.get(id);
     if (!t) {
@@ -195,9 +203,11 @@ class CoupleSystem implements CanvasSystem {
         wantX: 0, wantY: 0, hushed: false, sprite: null, seen: gen,
       };
       this.tracks.set(id, t);
+      t.seen = gen;
+      return true;
     }
     t.seen = gen;
-    return t;
+    return false;
   }
 
   // -- Every frame -----------------------------------------------------------------------------

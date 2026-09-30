@@ -60,7 +60,18 @@ class CurtainSystem implements CanvasSystem {
     this.homes.clear();
     for (const loc of data.locations) if (loc?.type === "home") this.homes.set(loc.id, loc);
 
+    // A world replace (or a save load) reuses location ids for different houses: a curtain kept from
+    // the old world would keep drawing cloth over a window that is no longer there, at the old
+    // coordinates, until its evening ended (which it never does when the agents are gone too). An
+    // entry survives only while its id still names a home in the same place.
     let changed = false;
+    for (const [id, c] of this.curtains) {
+      const loc = this.homes.get(id);
+      if (loc && sameHome(c, loc)) continue;
+      this.release(c);
+      this.curtains.delete(id);
+      changed = true;
+    }
     for (const a of data.agents) {
       const act = a.current_action;
       if (typeof act !== "object" || !act || act.zoneActivity !== "tryst" || a.current_location == null) continue;
@@ -181,6 +192,12 @@ class CurtainSystem implements CanvasSystem {
     this.curtains.clear();
     this.list = [];
   }
+}
+
+/** Whether a curtain was laid out for this very house (same footprint), not another that reused its id. */
+function sameHome(c: Curtain, loc: any): boolean {
+  const { x, y, width, height } = loc.position ?? {};
+  return c.southY === y + height && c.cx === x + width / 2 && c.halfW === width / 2;
 }
 
 function place(sp: PIXI.Sprite, x: number, y: number, w: number, h: number): void {

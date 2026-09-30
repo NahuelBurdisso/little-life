@@ -145,6 +145,33 @@ describe('CoupleSystem', () => {
     expect(a.setFacing.mock.calls.filter(c => c[0] === 1).length).toBeLessThanOrEqual(3);
   });
 
+  it('samples the new target when an existing crush moves on to somebody else', () => {
+    const t = setup();
+    const a = t.add(1, 100, 100);
+    t.add(2, 900, 900); // the old crush, far away
+    t.add(3, 140, 100); // the new one, close
+    a.facingDir = -1;
+    // Agent 4 keeps crushing on 2, so 2's track survives and nothing else changes the frame lists.
+    const crushOn = (target: number) => t.data(
+      [
+        t.agent(1, 25, { activeStates: [{ type: 'infatuated', target_agent_id: target }] }),
+        t.agent(2, 27), t.agent(3, 27),
+        t.agent(4, 25, { activeStates: [{ type: 'infatuated', target_agent_id: 2 }] }),
+      ],
+      [],
+    );
+    t.sys.onData!(crushOn(2));
+    t.step(20);
+    expect(a.setFacing).not.toHaveBeenCalled();
+
+    // Same glancer, new target: agent 3's track is created without any glancer or pair being new, so
+    // the frame lists must still be rebuilt or 3 is never sampled and the glance never happens.
+    t.sys.onData!(crushOn(3));
+    let sawGlance = false;
+    t.step(12 / DT, () => { if (a.facingDir === 1) sawGlance = true; });
+    expect(sawGlance).toBe(true);
+  });
+
   it('never glances when either is a minor or the crush is far', () => {
     for (const [ageA, ageB, far] of [[17, 27, false], [25, 17, false], [25, undefined, false], [25, 27, true]] as const) {
       const t = setup();
