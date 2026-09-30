@@ -323,6 +323,34 @@ Player-facing:
 Worktree note for agents: vitest excludes `.claude/**`, so inside `.claude/worktrees/*` tests need a
 temporary config without that exclude, plus a `data/` dir. `preview_start` always runs the MAIN repo.
 
+## Intimacy — narrative integration (2026-09-30)
+
+Task 25 of `docs/superpowers/plans/2026-09-30-intimacy-realism.md`: every intimacy event audited through every
+story channel, gaps fixed with tests. `✅` = already wired, `fixed-in-<sha>` = a gap found and closed by the audit,
+`n/a` = does not apply (reason given). Pinned end to end on the real DB by
+`server/lib/intimacy/__tests__/narrativeEndToEnd.test.ts` (one affair, from the night to the discovery, read through
+the chronicle, the paper, the recap, memory and goals).
+
+| Event | Feed row + alert tier | Chronicle arc | Gazette | Recap | Memory + reflection | Goals | Gossip / cascade | Pair dossier |
+|---|---|---|---|---|---|---|---|---|
+| first kiss / rebuff | ✅ `first_kiss` 0.65 (minor toast for a favourite only), `kiss` 0.3 and `kiss_rebuffed` 0.5 quiet; second person n/a (no player action makes a kiss) | ✅ `first_kiss` pivotal (routine `kiss` deliberately not, amendment A4); rebuff now pivotal: fixed-in-c5fb380 | ✅ `newsworthy:false`; a kiss somebody saw reaches the paper only as gossip about the `kiss_seen` secret | fixed-in-c5fb380 (a first kiss makes the card, two a card; routine kiss and rebuff stay below the bar) | ✅ first kiss 7 each (>= 7 is never pruned), rebuff 6 for the asker; the refuser's memory (4) and every witness's: fixed-in-94ac612 | fixed-in-02d0729 (a kiss moves a `seduce` goal +0.6, a rebuff moves nothing) | ✅ `kiss_seen` spreads (adults only, participants never gossip it); partner witness heartbroken, crush witness jealous: fixed-in-94ac612 | ✅ events, kissed tag, arrange button |
+| tryst (secret / open) | ✅ `tryst` 0.5, `newsworthy:false` (minor toast for a favourite); the player's own "You arranged..." row is second person, and how it went (`player_outcome`, gold toast, never the paper): fixed-in-94ac612 | ✅ `first_tryst` pivotal; lovers plus a spouse or partner are a `love_triangle` even at low romance, marked `secret`; a hidden couple's own romance arc marked `secret`: fixed-in-c5fb380 | ✅ row is private; `secret` arcs never handed to the paper and the prompt carries the maturity line and the paper's own discretion: fixed-in-c5fb380 | ✅ 0.5 is under the bar | ✅ first night 9, later evenings 4, walked-in-on 5 (memory weights >= 7 are permanent, 4-6 pruned after 15 game days) | fixed-in-02d0729 (a night completes `seduce`; an interrupted evening does not) | n/a while secret: the pair are the only knowers of the act-born `affair` fact and neither gossips it; a walker-by makes it `caught` (next row) | ✅ first night, lovers tag, secret flag |
+| caught at dawn | ✅ `caught` 0.75, major for a favourite, minor toast for anyone; scene wording (dawn / found / outdoors) | ✅ `tryst_seen` / `affair` secrets become a scandal arc at 3 holders; the triangle stops being `secret` once two people beyond the pair hold it: fixed-in-c5fb380 | ✅ prints (a sighting is no longer private), period-discreet; prompt directive: fixed-in-c5fb380 | fixed-in-c5fb380 (a beat with the hush icon; nothing of the night itself) | witness 6 (9 for a spouse), the two remember being seen 7 / 6: fixed-in-94ac612 | ✅ spouse who knows (`known_by`, no gossip event needed) gets `revenge`; now aimed at the cheater, never at the lover: fixed-in-02d0729 | ✅ `tryst_seen` spreads; a spouse witness is heartbroken on the spot, a crush jealous (`intimacy:caught` carries `scene`): fixed-in-94ac612 | ✅ "Seen together", ledger scandal |
+| affair from act -> discovery | ✅ rage: `drama` breakup row (major); a quiet parting: the status-change row; forgiveness writes no row on purpose (private) | discovery is a pivotal `affair_discovered` beat for every branch: fixed-in-94ac612; the affair is a scandal arc at 3 holders | ✅ a breakup prints (public by nature), a forgiven affair does not | ✅ breakup is a beat | the discoverer's "I found out..." weight 9 in every branch (forgiveness left nothing): fixed-in-94ac612 | ✅ `revenge` trigger reads `known_by`, so act-born facts and merged knowers count; fired for a fact naming the lover first and no longer for a party to it: fixed-in-02d0729 | ✅ `affair_heartbreak` on `gossip:learned`; witnesses via `known_by` merge: fixed-in-94ac612 | ✅ "Found out about an affair" label: fixed-in-94ac612 |
+| suspicion -> confrontation | `suspicion` row 0.6 (minor toast for a favourite, never the paper); a bad ending is the breakup row: fixed-in-94ac612 | ✅ `suspicion` event (-0.3); a bad ending adds `affair_discovered`: fixed-in-94ac612 | n/a never: a suspicion is not a fact, `newsworthy:false` | n/a below the bar | asker 6, asked 6 (bad ending: 9 and 8): fixed-in-94ac612 | n/a no goal for a doubt; `revenge` needs a fact (row above) | n/a private, no fact until the truth is learned (which clears the doubt) | ✅ "Asked where they had been": fixed-in-94ac612 |
+| unwed pregnancy -> shotgun wedding / scandal | ✅ `scandal` 0.85 (major); the shotgun wedding is an ordinary `wedding` row | scandal arc from the first holder, "Whispers follow X": fixed-in-c5fb380; the wedding turns the pair's arc into `Married` (and the fact is retired) | ✅ the scandal row and the wedding print; an ordinary wedding reads as one, nothing about the child's father is added | ✅ scandal is a beat, wedding a named kind | ✅ mother 8 / father 6-9 (told, turned away, showing) | n/a | ✅ `illegitimate_pregnancy` spreads, strict adults think less of her (-10 friendship) | ✅ ledger "unwed pregnancy" scandal |
+
+Other integration fixes from the audit: the Town Crier, the goal review / pivot / ambition prompts and both
+reflection prompts now carry the maturity line (a child's reflection is age-gated to the chaste line):
+fixed-in-c5fb380 and fixed-in-683f712; the boredom nudger counts a first kiss and an evening together as drama
+(`engagementCollector.ts`): fixed-in-c5fb380.
+
+Left as is, on purpose: `kiss` and `tryst` are NOT in `ROMANTIC_EVENTS` (plan amendment A4 wins over the Task 25
+text: every goodnight kiss would be pinned forever; the first of each is); there are no `win_back` / `end_affair`
+goals in the registry, and none were invented; the pre-existing graph-based love triangle ("X still wants Y")
+still reaches the paper as before, it comes from romance numbers and not from any intimacy event.
+The plan's "one live verify run" was replaced by the end-to-end test above (Task 24 owns the soak).
+
 ## Fixed (2026-09-28 → 29)
 
 Work done with parallel agents in worktrees, each branch reviewed by a separate reviewer agent
