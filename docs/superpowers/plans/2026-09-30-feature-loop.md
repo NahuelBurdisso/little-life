@@ -27,6 +27,39 @@ Status legend: ☐ todo · ▶ in progress · ✔ done (commit) · ✗ dropped
   to outcomes per day (pending / fizzled / came to something); `templateData.kind` on `player_nudge`
   rows; `activity.getPlayerLedger`; `YourHandView.tsx`, invalidated from `useActivityFeed`.
 
+## Drama / emergence
+
+Rule for every new beat: add to `DramaBeat` + `DRAMA_BEAT_KIND` (`server/data/dramaBeats.ts`), `BEAT_ICONS`
+(`recap.ts`), `BEAT_CUE` (`src/lib/audio/soundscape.ts`); hostile relationship events that feed the chronicle go
+in `HOSTILE_EVENTS` (`storyBeats.ts`).
+
+- ☐ **D1a Town roster in prompts (S)** — `server/lib/townRoster.ts` `rosterLine(excludeIds)` ("First Last (job)",
+  ≤32, "never make up names"); `AgentEnrichment.roster` in dialogue system prompt, "People in town" in plan and
+  gazette prompts. Stops invented townsfolk ("Silas").
+- ☐ **D1b Snaps, beat tags, ousted mayor, mood cap (S/M)** — SnapResolver culprit from tension sources (confront
+  carries perpetrator/victim, plot's `angry` gets a target → revenge fires), beat `snap`; tag untagged drama rows
+  (states/tavern/economy/loneliness/gift/conversations) with new beats release/drunk/outburst/blackmail/lonely;
+  ousted mayor takes the winner's old trade; cap stacked `conversation` mood modifiers at ±6.
+- ☐ **D2a Observer goal triggers (S)** — `goals.ts:199` skip → friends (≥40) / family get `comfort_grieving` /
+  `protect` toward a sufferer; cap 3 per sufferer; `'sick'` in DISTRESS.
+- ☐ **D2b Grave illness (M)** — pure `server/lib/illness.ts` hazards; `sick` → grave (metadata, 5 days, public
+  fact, beat `grave_illness`), treatment clears (beat `recovered`); death check in `lifeEventsEngine.ts:115` that
+  can actually fire; gravely ill stay home. Soak: 0-2 illness deaths / 30 days.
+- ☐ **D3 Funeral + contested will (M)** — `server/lib/mourning.ts` side-effect module: `life:death` schedules a
+  daytime funeral at the square (venue), gathering pull, memories/closure/eulogy; heir contest → `will_contested`.
+- ☐ **D4a Feud engine (M)** — `feuds` table (schema + CREATE + ALL_TABLES), `server/lib/feuds.ts` staged
+  slight → slander → sabotage → brawl, kin join, reconciliation/mediation/death end it; chronicle "The X–Y feud".
+- ☐ **D4b Feed feuds (S)** — kindle from grudge tag, holdGrudge, plot snap, will contest, repeat confrontations; cap 3.
+- ☐ **D5 Trial at the town hall (M)** — arrest schedules a trial (town_meeting event at the hall), pure
+  `trialVerdict.ts`, witnesses testify, guilty/acquitted outcomes.
+
+Found: funerals have no location and no one attends (`lifeEventsEngine.ts:341`, `decisions.ts:1865`); blackmail
+and letters from home already exist.
+
+## Order
+
+B1 → B6 → D1a → V1 → P2 → D1b → B3 → D2a → V2 → P3 → B2 → D2b → D3 → V3 → P4 → D4a → D4b → V4 → V5 → P5 → B4 → B5 → D5
+
 ## Bugs / balance
 
 - ☐ **B1 G11 gossip memory text (S)** — `gossip.ts:686` emits `otherName` but `MemoryObserver.ts:277` reads
