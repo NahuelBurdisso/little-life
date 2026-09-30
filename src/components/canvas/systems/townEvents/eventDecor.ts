@@ -416,6 +416,25 @@ const wedding: Recipe = l => {
   l.falling(DECOR_FRAMES.petalFall, 4, l.ax - 70, l.ax + 70, l.nFoot - 34, { dy: 64, dx: 8, period: 7 });
 };
 
+/**
+ * A christening (server/lib/family.ts): the wedding's white bunting and guests'
+ * benches reused, with lanterns and a few slow gold motes instead of the arch
+ * and petals — softer, and still unmistakably a gathering for someone.
+ */
+const christening: Recipe = l => {
+  l.bunting(l.r.y + 46, DECOR_FRAMES.buntingWhite, DECOR_FRAMES.post, 'ground', 1);
+  for (const dx of [-56, 56]) l.add(DECOR_FRAMES.bench, l.ax + dx, l.nFoot);
+  for (const s of ['nw', 'ne'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.bench, x, y);
+  }
+  for (const s of ['w', 'e'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 13 });
+  }
+  l.falling(DECOR_FRAMES.moteFall, 3, l.ax - 60, l.ax + 60, l.nFoot - 30, { dy: 60, dx: -6, period: 9 });
+};
+
 const funeral: Recipe = l => {
   l.bunting(l.r.y + 38, DECOR_FRAMES.buntingDark, DECOR_FRAMES.post, 'ground', 1);
   l.add(DECOR_FRAMES.wreath, l.ax, l.nFoot);
@@ -538,6 +557,7 @@ const RECIPES: Record<string, { prefer: readonly string[]; recipe: Recipe }> = {
   traveling_merchant: { prefer: MARKET_FIRST, recipe: stalls(['e'], ['e'], merchantCart) },
   wedding: { prefer: SQUARE_FIRST, recipe: wedding },
   funeral: { prefer: SQUARE_FIRST, recipe: funeral },
+  christening: { prefer: SQUARE_FIRST, recipe: christening },
   harvest: { prefer: SQUARE_FIRST, recipe: harvest },
   competition: { prefer: SQUARE_FIRST, recipe: competition },
   town_meeting: { prefer: SQUARE_FIRST, recipe: townMeeting },

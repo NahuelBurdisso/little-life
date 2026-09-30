@@ -322,6 +322,8 @@ describe('storyCueOf', () => {
     expect(storyCueOf(row({ metadata: { beat: 'death' } }))).toBe('knell');
     expect(storyCueOf(row({ metadata: { beat: 'birthday' } }))).toBe('cheer');
     expect(storyCueOf(row({ metadata: { beat: 'confession' } }))).toBe('whisper');
+    expect(storyCueOf(row({ metadata: { beat: 'birth' } }))).toBe('lullaby');
+    expect(storyCueOf(row({ metadata: { beat: 'paternity' } }))).toBe('sad');
   });
 
   it('leaves gossip, untagged and unknown rows silent', () => {
@@ -341,6 +343,7 @@ describe('storyCueOf', () => {
 describe('eventCueOf / godCueOf', () => {
   it('announces some events as they start', () => {
     expect(eventCueOf('funeral')).toBe('knell');
+    expect(eventCueOf('christening')).toBe('lullaby');
     expect(eventCueOf('fire_outbreak')).toBe('alarm');
     expect(eventCueOf('town_meeting')).toBe('tolls');
     expect(eventCueOf('sickness')).toBeNull();
