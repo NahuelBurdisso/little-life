@@ -7,7 +7,7 @@
 -- of 16x16 cells. Cells are packed back to back in the order below — keep in sync with SPEC in
 -- src/components/canvas/emoteFrames.ts (a vitest test parses this line):
 --
--- ORDER: heart:3 anger:3 laugh:2 wave:2 question:2 exclaim:2 zzz:4 cry:3 sparkle:3 fish:2 flower:2 music:3 sweat:3 money:2 skull:2 fire:3 star:3 drink:2 sick:2 think:3 work:3 gift:2 handcuffs:2 whisper:3 levelup:4 candle:3 cake:2 broken_heart:3 dizzy:3 blush:3 kiss:3 wink:3
+-- ORDER: heart:3 anger:3 laugh:2 wave:2 question:2 exclaim:2 zzz:4 cry:3 sparkle:3 fish:2 flower:2 music:3 sweat:3 money:2 skull:2 fire:3 star:3 drink:2 sick:2 think:3 work:3 gift:2 handcuffs:2 whisper:3 levelup:4 candle:3 cake:2 broken_heart:3 dizzy:3 blush:3 kiss:3 wink:3 envy:3
 --
 -- Emotes are the foreground: brighter and more saturated than terrain, but they share the agents'
 -- universal 1px #1a1510 outline. Only the fills are authored (ASCII grids below, one char per
@@ -925,6 +925,33 @@ emote("wink", {
   function(c) c:spr(EYE_OPEN, -4, 2); c:spr(EYE_OPEN, 4, 2) end,
   function(c) c:spr(EYE_OPEN, -4, 2); c:spr(EYE_SHUT, 4, 3); c:spr(STAR_TINY, 5, -4) end,
   function(c) c:spr(EYE_OPEN, -4, 2); c:spr(EYE_SHUT, 4, 3); c:spr(STAR_SMALL, 5, -4) end,
+})
+
+-- envy: a green-tinted face giving a side-eye. The pupils hug one edge of the whites, the brows sink
+-- and the mouth pinches; the last frame flicks the glance the other way as if checking who noticed.
+-- Appended after `wink` so no existing cell index moves.
+local function envyFace(c, look, lid, mouth)
+  face(c, 8, "N", "n")
+  local browY = lid and 6 or 5
+  local eyeY = lid and 7 or 6
+  local eyeH = lid and 1 or 2
+  for _, x0 in ipairs({ 4, 9 }) do
+    c:rect(x0, browY, 3, 1, "K")
+    c:rect(x0, eyeY, 3, eyeH, "W")
+    c:rect(x0 + look, eyeY, 1, eyeH, "K")
+  end
+  if mouth == "flat" then
+    c:rect(5, 10, 6, 1, "K")
+  elseif mouth == "dip" then
+    c:rect(6, 10, 5, 1, "K"); c:px(5, 11, "K")
+  else
+    c:rect(5, 10, 5, 1, "K"); c:px(10, 9, "K")
+  end
+end
+emote("envy", {
+  function(c) envyFace(c, 2, false, "flat") end,
+  function(c) envyFace(c, 2, true, "dip") end,
+  function(c) envyFace(c, 0, false, "smirk") end,
 })
 
 -- ── Output ──────────────────────────────────────────────────────────────────────────────────

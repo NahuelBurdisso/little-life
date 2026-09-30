@@ -52,7 +52,7 @@ interface PoseInput {
  *   sick/hungover -> shiver
  *   angry      -> stomp
  *   heartbroken/depressed/grieving or mood < 20 -> slump
- *   stressed   -> fidget
+ *   stressed/envious -> fidget
  *   euphoric or mood > 85 -> bounce (the weakest: any trouble outranks good cheer)
  *
  * Anything else stands normally. Independent of the order the states are listed in.
@@ -69,7 +69,7 @@ export function statePoseFor(agent: PoseInput): StatePose {
       else if (SICK_STATES.has(t)) sick = true;
       else if (t === 'angry') angry = true;
       else if (SAD_STATES.has(t)) sad = true;
-      else if (t === 'stressed') stressed = true;
+      else if (t === 'stressed' || t === 'envious') stressed = true; // envy chafes: the same restless shifting
       else if (t === 'euphoric') happy = true;
     }
   }

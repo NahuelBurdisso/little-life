@@ -22,6 +22,7 @@ describe('statePoseFor: single states', () => {
     ['angry', 'stomp'],
     ['euphoric', 'bounce'],
     ['stressed', 'fidget'],
+    ['envious', 'fidget'],
     ['arrested', 'hunch'],
   ])('%s -> %s', (state, kind) => {
     expect(kindOf(states(state))).toBe(kind);
@@ -96,6 +97,12 @@ describe('statePoseFor: priority', () => {
   it('stress beats a high mood', () => {
     expect(kindOf({ ...states('stressed'), needs: { mood: 95 } })).toBe('fidget');
     expect(kindOf(states('euphoric', 'stressed'))).toBe('fidget');
+  });
+
+  it('envy fidgets like stress: a sad or angry envier shows the heavier pose, a cheerful one still fidgets', () => {
+    expect(kindOf(states('envious', 'angry'))).toBe('stomp');
+    expect(kindOf(states('envious', 'depressed'))).toBe('slump');
+    expect(kindOf({ ...states('envious'), needs: { mood: 95 } })).toBe('fidget');
   });
 
   it('does not depend on the order states are listed in', () => {

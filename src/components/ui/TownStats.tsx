@@ -4,6 +4,7 @@ import { COLORS } from "../../lib/constants";
 import { describeAction } from "../../lib/actionText";
 import { EmptyState } from "./EmptyState";
 import { Skeleton } from "./Skeleton";
+import { stateCss, stateLabel } from "../../lib/stateStyle";
 
 interface TownStatsProps {
   isOpen: boolean;
@@ -125,6 +126,7 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
   const inDebtCount = agentData.filter(a => a.states.includes('in_debt')).length;
   const alcoholicCount = agentData.filter(a => a.states.includes('alcoholic')).length;
   const jealousCount = agentData.filter(a => a.states.includes('jealous')).length;
+  const enviousCount = agentData.filter(a => a.states.includes('envious')).length;
   const depressedCount = agentData.filter(a => a.states.includes('depressed')).length;
 
   const ACTION_EMOJIS: Record<string, string> = {
@@ -144,13 +146,6 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
     .slice()
     .sort((a, b) => b.knownByCount - a.knownByCount || b.sensitivity - a.sensitivity)
     .slice(0, 10);
-
-  const STATE_COLORS: Record<string, string> = {
-    angry: '#ef4444', jealous: '#f43f5e', heartbroken: '#fb7185', infatuated: '#ec4899',
-    drunk: '#f59e0b', alcoholic: '#d97706', stressed: '#f97316', in_debt: '#ea580c',
-    depressed: '#6366f1', lonely: '#8b5cf6', sick: '#a3e635', hungover: '#84cc16',
-    euphoric: '#10b981', confident: '#14b8a6', grieving: '#6b7280',
-  };
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -221,12 +216,12 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
                   key={state}
                   className="text-[10px] px-2 py-0.5 rounded-full border font-medium"
                   style={{
-                    color: STATE_COLORS[state] ?? '#9ca3af',
-                    borderColor: STATE_COLORS[state] ?? '#9ca3af',
-                    backgroundColor: (STATE_COLORS[state] ?? '#9ca3af') + '20',
+                    color: stateCss(state, '#9ca3af'),
+                    borderColor: stateCss(state, '#9ca3af'),
+                    backgroundColor: stateCss(state, '#9ca3af') + '20',
                   }}
                 >
-                  {state.replace(/_/g, ' ')} × {count}
+                  {stateLabel(state)} × {count}
                 </span>
               ))}
             </div>
@@ -234,7 +229,7 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
         )}
 
         {/* Trouble Alerts */}
-        {(sickCount > 0 || drunkCount > 0 || inDebtCount > 0 || alcoholicCount > 0 || jealousCount > 0 || depressedCount > 0) && (
+        {(sickCount > 0 || drunkCount > 0 || inDebtCount > 0 || alcoholicCount > 0 || jealousCount > 0 || enviousCount > 0 || depressedCount > 0) && (
           <div className="px-5 py-3 border-b border-ui-line">
             <div className="text-[10px] text-ui-dim uppercase tracking-wider mb-2 font-medium">
               ⚠️ Trouble Alerts
@@ -254,6 +249,9 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
               )}
               {jealousCount > 0 && (
                 <div className="text-xs text-pink-400">😒 {jealousCount} jealous</div>
+              )}
+              {enviousCount > 0 && (
+                <div className="text-xs text-yellow-300">😑 {enviousCount} envious</div>
               )}
               {depressedCount > 0 && (
                 <div className="text-xs text-indigo-400">😞 {depressedCount} depressed</div>
@@ -398,7 +396,7 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
                         <span
                           key={s}
                           className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: STATE_COLORS[s] ?? '#6b7280' }}
+                          style={{ backgroundColor: stateCss(s, '#6b7280') }}
                           title={s}
                         />
                       ))}

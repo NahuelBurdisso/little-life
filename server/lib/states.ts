@@ -28,29 +28,9 @@ export function clearEffectivePersonalities() {
 
 // ─── State Types ──────────────────────────────────────────────────────────────
 
-export type StateType =
-  | 'drunk'
-  | 'hungover'
-  | 'sick'
-  | 'heartbroken'
-  | 'angry'
-  | 'stressed'
-  | 'euphoric'
-  | 'grieving'
-  | 'infatuated'
-  | 'lonely'
-  | 'depressed'
-  | 'confident'
-  | 'jealous'
-  | 'envious'
-  | 'alcoholic'
-  | 'in_debt'
-  | 'arrested'
-  // The adult layer's aftermath (lib/intimacy): the warmth of a night together,
-  // the weight of having betrayed someone, and the itch of suspecting it.
-  | 'afterglow'
-  | 'guilty'
-  | 'suspicious';
+// The list lives in server/data so the client can share it without importing this module's DB.
+import type { StateType } from '../data/stateTypes';
+export type { StateType };
 
 export interface StateDefinition {
   type: StateType;

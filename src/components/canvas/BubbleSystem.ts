@@ -3,6 +3,7 @@ import { bubbleText } from '../../lib/bubbleText';
 import type { SpritePool } from "./SpritePool";
 import { loadStrip } from "./stripAtlas";
 import { idString } from "./idString";
+import { styleOf } from "../../lib/stateStyle";
 import {
   EMOTES_URL, EMOTE_FRAME_COUNT, EMOTE_CELL, EMOTE_EMOJI_FALLBACK, emoteFrameAt,
 } from "./emoteFrames";
@@ -16,13 +17,7 @@ const EMOTE_DURATION_MS = 1500;
 /** px per second — `update` is handed `ticker.deltaTime / 60`, not raw ticks. */
 const EMOTE_FLOAT_SPEED = 18;
 
-/** Module scope: `update` runs per frame, so these must not be rebuilt per agent. */
-const STATE_EMOTES: Record<string, string> = {
-  drunk: 'dizzy', hungover: 'dizzy', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
-  confident: 'star', jealous: 'fire', sick: 'sick', stressed: 'sweat',
-  infatuated: 'heart', lonely: 'think', depressed: 'cry', in_debt: 'money',
-  afterglow: 'blush', guilty: 'sweat', suspicious: 'question',
-};
+// The emote a new state pops over its owner's head lives in STATE_STYLE (src/lib/stateStyle.ts).
 // Emote when a zone verb (`current_action.zoneActivity`) begins. Plan-driven verbs (speech, scheme,
 // cook...) arrive here since decisions.ts keeps them; ActivityFxSystem adds the repeats and the
 // particles. Every value must be an atlas name (emoteFrames.test.ts checks).
@@ -555,8 +550,9 @@ export class BubbleSystem {
       }
       for (let s = 0; s < curStates.length; s++) {
         const state: string = curStates[s].type;
-        if (!prevStates.includes(state) && STATE_EMOTES[state]) {
-          this.showEmote(aid, STATE_EMOTES[state], pos);
+        const stateEmote = styleOf(state)?.emote;
+        if (stateEmote && !prevStates.includes(state)) {
+          this.showEmote(aid, stateEmote, pos);
           break; // one emote per tick
         }
       }

@@ -1,5 +1,6 @@
 import * as PIXI from "pixi.js";
 import { getMoodColor, AGENT_RADIUS } from "../../lib/spriteConfig";
+import { STATE_STYLE, topState } from "../../lib/stateStyle";
 import { facingFromStep, pickAgentFrame, type SheetFacing } from "./agentFrames";
 import { loadAgentSheet } from "./agentSheet";
 import { generatedAgentSheet } from "./generatedSheet";
@@ -77,32 +78,6 @@ const BLINK_LENGTH = 7;              // frames the eyes stay shut
 // pauses between them. Turning to the camera on every pause made northbound walkers flip
 // between back and face each tile; only a real stop (this long) turns them around.
 const TURN_TO_CAMERA_AFTER = 90;     // idle frames (~1.5s at 60fps)
-
-/** Priority-ordered state ring colors. First match wins. */
-const STATE_RING_COLORS: Record<string, number> = {
-  angry: 0xef4444,
-  jealous: 0xf43f5e,
-  heartbroken: 0xfb7185,
-  infatuated: 0xec4899,
-  drunk: 0xf59e0b,
-  alcoholic: 0xd97706,
-  stressed: 0xf97316,
-  in_debt: 0xea580c,
-  depressed: 0x6366f1,
-  lonely: 0x8b5cf6,
-  sick: 0xa3e635,
-  hungover: 0x84cc16,
-  euphoric: 0x10b981,
-  confident: 0x14b8a6,
-  grieving: 0x6b7280,
-};
-
-const STATE_PRIORITY: string[] = [
-  'angry', 'jealous', 'heartbroken', 'infatuated',
-  'drunk', 'alcoholic', 'stressed', 'in_debt',
-  'depressed', 'lonely', 'sick', 'hungover',
-  'euphoric', 'confident', 'grieving',
-];
 
 /**
  * Where a held item sits relative to the rig origin (the feet), for an agent facing
@@ -738,10 +713,10 @@ export class AgentSprite {
 
   /** Update state ring color based on active states. */
   updateStates(activeStates: Array<{ type: string; metadata?: any }>) {
-    const topState = STATE_PRIORITY.find(s => activeStates.some(as => as.type === s));
+    const top = topState(activeStates.map(s => s.type));
 
-    if (topState) {
-      const color = STATE_RING_COLORS[topState] ?? 0x6b7280;
+    if (top) {
+      const color = STATE_STYLE[top].ring ?? 0x6b7280;
       this.stateRing.clear();
       this.stateRing.ellipse(0, AGENT_RADIUS, 12, 4);
       this.stateRing.stroke({ width: 2, color, alpha: 0.85 });

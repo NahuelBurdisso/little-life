@@ -16,6 +16,13 @@ describe("portraitMood", () => {
     expect(portraitMood(50, s("jealous"))).toBe("angry");
   });
 
+  it("envy reads as angry too: it beats sad and happy like jealousy does, but not shock", () => {
+    expect(portraitMood(50, s("envious"))).toBe("angry");
+    expect(portraitMood(90, s("envious", "euphoric"))).toBe("angry");
+    expect(portraitMood(50, s("envious", "heartbroken"))).toBe("angry");
+    expect(portraitMood(50, s("envious", "arrested"))).toBe("shocked");
+  });
+
   it("heartbreak, grief, depression and a low mood read as sad", () => {
     expect(portraitMood(50, s("heartbroken"))).toBe("sad");
     expect(portraitMood(50, s("grieving"))).toBe("sad");

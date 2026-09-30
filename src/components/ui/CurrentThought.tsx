@@ -1,4 +1,5 @@
 import { describeAction } from "../../lib/actionText";
+import { styleOf, stateLabel } from "../../lib/stateStyle";
 
 interface CurrentThoughtProps {
   agent: {
@@ -116,17 +117,6 @@ function assembleThought(
   return `${agent.name} feels a bit off and can't quite put their finger on why.`;
 }
 
-const STATE_COLORS: Record<string, string> = {
-  in_love: "bg-pink-900/40 text-pink-300 border-pink-800/40",
-  heartbroken: "bg-rose-900/40 text-rose-300 border-rose-800/40",
-  sick: "bg-yellow-900/40 text-yellow-300 border-yellow-800/40",
-  injured: "bg-orange-900/40 text-orange-300 border-orange-800/40",
-  euphoric: "bg-purple-900/40 text-purple-300 border-purple-800/40",
-  grieving: "bg-ui-raised/60 text-ui-text border-ui-line/40",
-  enraged: "bg-red-900/40 text-red-300 border-red-800/40",
-  jealous: "bg-amber-900/40 text-amber-300 border-amber-800/40",
-};
-
 export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
   const mood = needs?.mood ?? 50;
   const thought = assembleThought(agent, needs, states);
@@ -156,10 +146,10 @@ export function CurrentThought({ agent, needs, states }: CurrentThoughtProps) {
             <span
               key={s.id}
               className={`text-[10px] px-1.5 py-0.5 rounded border capitalize ${
-                STATE_COLORS[s.type] ?? "bg-ui-raised/60 text-ui-text border-ui-line/40"
+                styleOf(s.type)?.chip ?? "bg-ui-raised/60 text-ui-text border-ui-line/40"
               }`}
             >
-              {s.type.replace(/_/g, " ")}
+              {stateLabel(s.type)}
               {s.severity < 1 && (
                 <span className="ml-0.5 opacity-60">
                   {(s.severity * 100).toFixed(0)}%

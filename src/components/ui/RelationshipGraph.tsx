@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { trpc } from "../../lib/trpc";
 import { useAgents } from "../../hooks/useAgents";
 import { EmptyState } from "./EmptyState";
+import { topState, stateCss } from "../../lib/stateStyle";
 
 interface RelationshipGraphProps {
   isOpen: boolean;
@@ -52,19 +53,6 @@ function agentColorHex(name: string): string {
   const s = 60, l = 50;
   return `hsl(${hue}, ${s}%, ${l}%)`;
 }
-
-const STATE_RING_COLORS: Record<string, string> = {
-  angry: '#ef4444', jealous: '#f43f5e', heartbroken: '#fb7185', infatuated: '#ec4899',
-  drunk: '#f59e0b', alcoholic: '#d97706', stressed: '#f97316', in_debt: '#ea580c',
-  depressed: '#6366f1', lonely: '#8b5cf6', sick: '#a3e635', hungover: '#84cc16',
-  euphoric: '#10b981', confident: '#14b8a6', grieving: '#8a7f65',
-};
-
-const STATE_PRIORITY = [
-  'angry', 'jealous', 'heartbroken', 'infatuated', 'drunk', 'alcoholic',
-  'stressed', 'in_debt', 'depressed', 'lonely', 'sick', 'hungover',
-  'euphoric', 'confident', 'grieving',
-];
 
 /** One table for the canvas and the legend below it, so they can't drift apart. */
 const EDGE_COLORS = {
@@ -547,11 +535,11 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent, onViewPair }
         ctx.globalAlpha = isDimmed ? 0.3 : 1;
 
         // State ring
-        const topState = STATE_PRIORITY.find(s => node.states.includes(s));
-        if (topState) {
+        const ringState = topState(node.states);
+        if (ringState) {
           ctx.beginPath();
           ctx.arc(node.x, node.y, 19, 0, 2 * Math.PI);
-          ctx.strokeStyle = STATE_RING_COLORS[topState] ?? '#6a6250';
+          ctx.strokeStyle = stateCss(ringState, '#6a6250');
           ctx.lineWidth = 2.5;
           ctx.stroke();
         }

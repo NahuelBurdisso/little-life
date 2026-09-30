@@ -43,6 +43,8 @@ const SPEC = [
   ['blush', 3, 4],
   ['kiss', 3, 5],
   ['wink', 3, 4],
+  // Appended for the `envious` state (the green side-eye); last so no earlier cell index moves.
+  ['envy', 3, 4],
 ] as const;
 
 export type EmoteName = (typeof SPEC)[number][0];
@@ -122,4 +124,5 @@ export const EMOTE_EMOJI_FALLBACK: Record<string, string> = {
   blush: '😊',
   kiss: '💋',
   wink: '😉',
+  envy: '😒',
 };
