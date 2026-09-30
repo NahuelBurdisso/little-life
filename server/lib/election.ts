@@ -154,8 +154,8 @@ export function voteScore(voterId: number, voterPersonality: Profile | null, c: 
     if (s.subjectId === c.id && s.sensitivity >= SCANDAL_SENSITIVITY) {
       // Out in the open it costs everyone's vote; kept quiet, only the
       // voters who know. The worse the secret, the worse the cost.
-      if (s.isPublic) score -= 6 * s.sensitivity;
-      else if (s.knownBy.includes(voterId)) score -= 4 * s.sensitivity;
+      if (s.isPublic) score -= 8 * s.sensitivity;
+      else if (s.knownBy.includes(voterId)) score -= 5 * s.sensitivity;
     } else if (!s.isPublic && s.subjectId !== voterId && s.subjectId !== c.id
       && s.knownBy.includes(voterId) && s.knownBy.includes(c.id)) {
       // Keeping someone else's secret together: a quiet bond.
