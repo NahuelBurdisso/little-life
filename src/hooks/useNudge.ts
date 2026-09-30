@@ -154,6 +154,12 @@ export function useNudge() {
         kind: 'whisper_thought', agentIds: [agentId], icon: '💭',
         success: `${nameOf(agentId)} had a thought`,
       }),
+    /** A real secret put in one head, no teller: the recipient learns it from an unsigned letter. */
+    sendLetter: (recipientId: Id, factId: number) =>
+      run({ action: { type: 'send_letter', agentId: Number(recipientId), factId } }, {
+        kind: 'send_letter', agentIds: [recipientId], icon: '✉',
+        success: `${nameOf(recipientId)} got an unsigned letter`,
+      }),
     /** `seederId` hears the rumor first; it is about `subjectId`, optionally involving `targetId`. */
     startRumor: (seederId: Id, subjectId: Id, detail: string, targetId?: Id) =>
       run({

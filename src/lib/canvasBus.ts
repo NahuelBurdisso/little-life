@@ -22,6 +22,7 @@ export type InterventionKind =
   | 'introduce_agent'
   | 'remove_agent'
   | 'whisper_thought'
+  | 'send_letter'
   | 'start_rumor'
   | 'stir_feeling'
   | 'event'

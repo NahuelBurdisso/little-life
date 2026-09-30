@@ -19,8 +19,8 @@ interface NudgeMenuProps {
 
 type SubMenu =
   | "talk" | "goto" | "money" | "pair" | "topic" | "secret"
-  // God powers that plant something: a thought, a rumor, a feeling.
-  | "whisper" | "rumor" | "rumorText" | "feeling" | "feelingTarget"
+  // God powers that plant something: a thought, a rumor, a feeling, a letter.
+  | "whisper" | "rumor" | "rumorText" | "feeling" | "feelingTarget" | "letter"
   | null;
 
 /** Same caps as server/lib/godPowers.ts (WHISPER_MAX, RUMOR_MAX). */
@@ -143,7 +143,7 @@ export function NudgeMenu({
 }: NudgeMenuProps) {
   const {
     suggestTalk, suggestGoTo, giveMoney, removeAgent, tellSecret, forceConfront,
-    whisperThought, startRumor, stirFeeling,
+    whisperThought, startRumor, stirFeeling, sendLetter,
   } = useNudge();
   const [subMenu, setSubMenu] = useState<SubMenu>(null);
   const [topicText, setTopicText] = useState("");
@@ -268,6 +268,14 @@ export function NudgeMenu({
     { enabled: subMenu === "secret" },
   );
 
+  // The letter picker: what the server would let a letter carry to this resident, best stakes first
+  // (knowledge.getLetterable). Only while the picker shows, and never cached: what a resident
+  // already knows changes by the minute, and a stale row is a refused letter.
+  const { data: letterFacts, isLoading: letterLoading } = trpc.knowledge.getLetterable.useQuery(
+    { recipientId: Number(agentId) },
+    { enabled: subMenu === "letter", gcTime: 0 },
+  );
+
   // A secret the listener already knows is not a reveal, so drop those.
   const tellableSecrets = (knownFacts ?? [])
     .filter(
@@ -278,8 +286,8 @@ export function NudgeMenu({
 
   // Clamp position to viewport
   const left = Math.max(4, Math.min(position.x, window.innerWidth - 250));
-  // The single-agent menu is ~10 rows now that the planting powers are in it.
-  const top = Math.max(4, Math.min(position.y, window.innerHeight - 400));
+  // The single-agent menu is ~11 rows now that the planting powers are in it.
+  const top = Math.max(4, Math.min(position.y, window.innerHeight - 420));
 
   const menuLabel = isPairMode
     ? `Nudge ${currentAgent?.name ?? "resident"} and ${partner?.name ?? "another resident"}`
@@ -581,6 +589,33 @@ export function NudgeMenu({
 
       {subMenu === "rumorText" && rumorTextMenu(() => setSubMenu("rumor"))}
 
+      {subMenu === "letter" && (
+        <div className="max-h-56 overflow-y-auto">
+          {back(() => setSubMenu(null))}
+          <p className="px-3 pb-1 text-[10px] text-[var(--ui-text-secondary)]">
+            {firstOf(currentAgent)} learns it from an unsigned letter. Nobody is blamed.
+          </p>
+          {letterLoading ? (
+            <p className="px-3 py-2 text-[11px] text-[var(--ui-text-secondary)]">Looking through the town's secrets...</p>
+          ) : (letterFacts ?? []).length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-[var(--ui-text-secondary)]">
+              They already know everything worth writing about.
+            </p>
+          ) : (
+            (letterFacts ?? []).map((f) => (
+              <Item
+                key={f.factId}
+                icon="✉"
+                title={f.content}
+                onClick={() => fire(() => sendLetter(agentId, f.factId))}
+              >
+                <span className="truncate">{f.content}</span>
+              </Item>
+            ))
+          )}
+        </div>
+      )}
+
       {subMenu === "feeling" && (
         <div>
           {back(() => setSubMenu(null))}
@@ -665,6 +700,9 @@ export function NudgeMenu({
           </Item>
           <Item icon="🗣" title="They hear a made-up story about someone" onClick={() => setSubMenu("rumor")}>
             Start a rumor...
+          </Item>
+          <Item icon="✉" title="A real secret, put in their hands with no name on it" onClick={() => setSubMenu("letter")}>
+            Send an anonymous letter...
           </Item>
           <Item icon="💗" title="Stir a feeling in their heart" onClick={() => setSubMenu("feeling")}>
             Stir a feeling...

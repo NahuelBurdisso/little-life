@@ -5,6 +5,7 @@ import { simEvents } from './simEvents';
 import { logActivity } from './activityLogger';
 import { computeConversationImpact } from './conversationImpact';
 import { joinForFeed, shortenForFeed, thatSentence } from './factText';
+import { gameMinutesNow } from './worldClock';
 
 /**
  * Tells the player what their meddling came to.
@@ -35,7 +36,9 @@ import { joinForFeed, shortenForFeed, thatSentence } from './factText';
  *   - the first time a whispered thought shows: the agent voices it in a
  *     conversation (`conversation:ended`, keywords in their own lines) or it
  *     makes them rework their day (`plan:replanned`, whose reason is the
- *     whisper itself). Whichever comes first, once per whisper.
+ *     whisper itself). Whichever comes first, once per whisper;
+ *   - an anonymous letter landing: the first finished conversation between its
+ *     recipient and the one it was about (`registerLetter`), once per letter.
  *
  * Side-effect module: registers its listeners on import (server/index.ts), like
  * giftEngine. State is per world and cleared by `clearPlayerOutcomes`.
@@ -66,6 +69,7 @@ export function statusClause(status: string): string {
 function actionLabel(trigger: string): string {
   if (trigger.startsWith('player_confront')) return 'Your confrontation';
   if (trigger.startsWith('player_tell_secret')) return 'The secret you had told';
+  if (trigger.startsWith('player_letter')) return 'Your letter';
   return 'Your nudge';
 }
 
@@ -152,6 +156,8 @@ const pendingByEvent = new Map<number, number>();
 const seenRumors = new Set<number>();
 /** Whispered thoughts not yet reported, per agent (see `registerWhisper`). */
 const openWhispers = new Map<number, Whisper[]>();
+/** Anonymous letters not yet reported, per recipient (see `registerLetter`). */
+const openLetters = new Map<number, Letter[]>();
 
 /**
  * Bounds. The waits are short (events are applied on the next relationships
@@ -161,6 +167,9 @@ const openWhispers = new Map<number, Whisper[]>();
  */
 const MAX_SEEN = 500;
 const MAX_PENDING = 50;
+/** A letter nobody talked about within this many game minutes (three days) is forgotten, not reported late. */
+const LETTER_OUTCOME_WINDOW_MINUTES = 3 * 1440;
+const MAX_LETTERS_PER_AGENT = 3;
 
 function remember(set: Set<number>, id: number): void {
   set.add(id);
@@ -174,6 +183,7 @@ export function clearPlayerOutcomes(): void {
   pendingByEvent.clear();
   seenRumors.clear();
   openWhispers.clear();
+  openLetters.clear();
 }
 
 function nameOf(id: number): string {
@@ -224,15 +234,13 @@ function finalize(p: PendingOutcome): void {
   });
 }
 
-/** Exported for tests; the listener below is the only production caller. */
-export function onConversationEnded(payload: { conversationId?: number | null }): void {
-  const conversationId = payload.conversationId;
-  if (conversationId == null || seenConversations.has(conversationId)) return;
-  const convo = db.select({ trigger: conversations.trigger_reason }).from(conversations)
-    .where(eq(conversations.id, conversationId)).get();
-  if (!convo?.trigger?.startsWith('player_')) return;
-  remember(seenConversations, conversationId);
-
+/**
+ * Start waiting on a conversation the player is answerable for (one they forced, or
+ * the one a letter of theirs led to): once its relationship events are applied,
+ * `finalize` writes the report, worded after `trigger`. The caller has already
+ * decided the conversation counts and marked it seen.
+ */
+function trackOutcome(conversationId: number, trigger: string): void {
   const impact = computeConversationImpact(conversationId);
   if (!impact) return;
   const eventIds = impact.relationshipEvents.map((e) => e.id);
@@ -248,7 +256,7 @@ export function onConversationEnded(payload: { conversationId?: number | null })
 
   const pending: PendingOutcome = {
     conversationId,
-    trigger: convo.trigger,
+    trigger,
     waiting: new Set(waiting),
     statusChanges: new Map(),
   };
@@ -262,6 +270,24 @@ export function onConversationEnded(payload: { conversationId?: number | null })
   }
   pendingByConversation.set(conversationId, pending);
   for (const id of pending.waiting) pendingByEvent.set(id, conversationId);
+}
+
+/** Exported for tests; the listener below is the only production caller. */
+export function onConversationEnded(payload: { conversationId?: number | null }): void {
+  const conversationId = payload.conversationId;
+  if (conversationId == null || seenConversations.has(conversationId)) return;
+  const convo = db.select({ trigger: conversations.trigger_reason, participants: conversations.participants })
+    .from(conversations).where(eq(conversations.id, conversationId)).get();
+  if (!convo) return;
+  if (convo.trigger?.startsWith('player_')) {
+    remember(seenConversations, conversationId);
+    trackOutcome(conversationId, convo.trigger);
+    return;
+  }
+  // Not one the player forced, but it may be the scene a letter was waiting for.
+  if (!takeLetterFor(convo.participants as number[])) return;
+  remember(seenConversations, conversationId);
+  trackOutcome(conversationId, 'player_letter');
 }
 
 export function onRelationshipEventApplied(payload: {
@@ -456,6 +482,56 @@ export function onPlanReplanned(payload: { agentId: number; description: string;
     w,
     `Your whispered thought changed ${who}'s day${plan ? `: now ${plan}` : ''}.`,
   );
+}
+
+// ─── Anonymous letters ────────────────────────────────────────────────────────
+
+/**
+ * A letter is a fact put in one head (godPowers.ts `sendAnonymousLetter`), and its
+ * payoff is a scene, not a line of text: the recipient and the one the secret is
+ * about (or its named partner) finally talking. So there is no keyword to watch
+ * for, unlike a whisper; the report keys off the conversation itself. Any finished
+ * conversation between the recipient and the subject (or target) counts, whoever
+ * started it, and each letter is reported once. A conversation the player forced
+ * (a confrontation, a secret told) keeps its own label and leaves the letter open.
+ */
+export interface Letter {
+  subjectId: number;
+  targetId: number | null;
+  factId: number;
+  /** Game minute it was sent, for the report window. */
+  at: number;
+}
+
+/** Called by sendAnonymousLetter once the fact is in the recipient's head. */
+export function registerLetter(recipientId: number, subjectId: number, targetId: number | null, factId: number): void {
+  const list = openLetters.get(recipientId) ?? [];
+  list.push({ subjectId, targetId, factId, at: gameMinutesNow() });
+  while (list.length > MAX_LETTERS_PER_AGENT) list.shift();
+  openLetters.set(recipientId, list);
+}
+
+/**
+ * The open letter a conversation among `participants` fulfils, taken off the open
+ * list; null when none. Letters past their window are dropped on the way.
+ */
+function takeLetterFor(participants: number[]): Letter | null {
+  if (openLetters.size === 0) return null;
+  const now = gameMinutesNow();
+  for (const recipientId of participants) {
+    const open = openLetters.get(recipientId);
+    if (!open) continue;
+    // `now < at` (a clock that went back) keeps the letter: only a real gap expires it.
+    const live = open.filter((l) => !(now - l.at >= LETTER_OUTCOME_WINDOW_MINUTES));
+    const hit = live.find((l) => participants.some(
+      (p) => p !== recipientId && (p === l.subjectId || (l.targetId != null && p === l.targetId)),
+    ));
+    const rest = hit ? live.filter((l) => l !== hit) : live;
+    if (rest.length > 0) openLetters.set(recipientId, rest);
+    else openLetters.delete(recipientId);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────

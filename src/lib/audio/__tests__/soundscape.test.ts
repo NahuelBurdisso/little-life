@@ -357,6 +357,7 @@ describe('eventCueOf / godCueOf', () => {
   it('gives every intervention kind a sound, unknown ones the plain nudge', () => {
     expect(godCueOf('whisper_thought')).toBe('sparkle');
     expect(godCueOf('stir_feeling')).toBe('sparkle');
+    expect(godCueOf('send_letter')).toBe('sparkle');
     expect(godCueOf('suggest_go_to')).toBe('whoosh');
     expect(godCueOf('weather')).toBe('whoosh');
     expect(godCueOf('give_money')).toBe('coins');

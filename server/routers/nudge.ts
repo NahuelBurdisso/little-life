@@ -22,6 +22,7 @@ import {
   RUMOR_MAX,
   STIRRABLE_STATES,
   WHISPER_MAX,
+  sendAnonymousLetter,
   startRumor,
   stirFeeling,
   whisperThought,
@@ -117,6 +118,8 @@ const nudgeInput = z.object({
       state: z.enum(STIRRABLE_STATES),
       targetId: z.number().optional(),
     }),
+    // A real secret put in exactly one head, no teller (lib/godPowers.ts sendAnonymousLetter).
+    z.object({ type: z.literal('send_letter'), agentId: z.number(), factId: z.number() }),
   ]),
 });
 
@@ -621,9 +624,15 @@ export const nudgeRouter = router({
           return queuedResult(initiator, other);
         }
 
-        // ─── whisper_thought / start_rumor / stir_feeling ──────────────────
+        // ─── whisper_thought / send_letter / start_rumor / stir_feeling ────
         case 'whisper_thought': {
           const result = whisperThought(action.agentId, action.text);
+          if (result.success) notePlayerCare([action.agentId]);
+          emitter.flush();
+          return result;
+        }
+        case 'send_letter': {
+          const result = sendAnonymousLetter(action.agentId, action.factId);
           if (result.success) notePlayerCare([action.agentId]);
           emitter.flush();
           return result;

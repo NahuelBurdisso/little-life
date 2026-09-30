@@ -1,5 +1,7 @@
 import { thatSentence, endSentence } from '../factText';
 
+const capitalizeFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
 type TemplateContext = Record<string, string | number>;
 
 type TemplateFn = (ctx: TemplateContext) => string;
@@ -62,7 +64,8 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
   // thatSentence: "I told X about <clause>" was ungrammatical and the raw
   // splice doubled the period in the memory the LLM later reads back.
   gossip_learned: [
-    (ctx) => thatSentence(`${ctx.source} told me`, String(ctx.content)),
+    // Capitalised: a source that isn't a name ("someone passing through", startRumor) opens the line.
+    (ctx) => thatSentence(`${capitalizeFirst(String(ctx.source))} told me`, String(ctx.content)),
     (ctx) => thatSentence(`I heard from ${ctx.source}`, String(ctx.content)),
   ],
   // A witness of a small misdeed was not told anything: "their own eyes told me that ..." read as
@@ -70,6 +73,12 @@ const TEMPLATES: Record<string, TemplateFn[]> = {
   gossip_witnessed: [
     (ctx) => thatSentence('I saw with my own eyes', String(ctx.content)),
     (ctx) => thatSentence('I saw for myself', String(ctx.content)),
+  ],
+  // The player's anonymous letter (godPowers.ts sendAnonymousLetter): no teller, and its source
+  // name is lower case ("an unsigned letter"), so it cannot open a "<source> told me" line.
+  gossip_letter: [
+    (ctx) => thatSentence('An unsigned letter came for me, and it said', String(ctx.content)),
+    (ctx) => thatSentence('I found an unsigned letter saying', String(ctx.content)),
   ],
   gossip_shared: [
     (ctx) => thatSentence(`I told ${ctx.other}`, String(ctx.content)),

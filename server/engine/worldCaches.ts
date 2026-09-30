@@ -44,6 +44,7 @@ import { clearReputationCache } from '../lib/reputationEngine';
 import { clearFavorLedger } from '../lib/favorEngine';
 import { clearSharedSecrets } from '../lib/secretSharing';
 import { clearPlayerOutcomes } from '../lib/playerOutcomes';
+import { clearLetterCooldowns } from '../lib/godPowers';
 import { clearMoodTrackers } from '../lib/moodMomentum';
 import { clearAllConversationCaches } from '../helpers/conversationHelpers';
 import { clearConfrontationCooldowns } from '../lib/confrontationEngine';
@@ -198,6 +199,9 @@ export function clearPerWorldCaches(): void {
   // Conversation / fact / relationship-event ids the outcome reporter is
   // waiting on or has reported: rowids restart with a new world.
   clearPlayerOutcomes();
+  // Per-recipient game-minute stamps of the player's anonymous letters (lib/godPowers.ts): the
+  // clock restarts and rowids are reused, so a stale stamp would block a new resident's mailbox.
+  clearLetterCooldowns();
   clearMoodTrackers();
   clearCriticalNeedFired();
   clearConsecutiveWorkMinutes();

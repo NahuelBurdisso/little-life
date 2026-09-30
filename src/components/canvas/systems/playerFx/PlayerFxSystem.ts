@@ -8,7 +8,7 @@ import {
   DIGITS_FRAME_COUNT, DIGITS_FRAME_SIZE, DIGITS_URL, PFX_FRAME_COUNT, PFX_FRAME_SIZE, PFX_URL,
 } from "./playerFxFrames";
 import {
-  CoinFx, ConfrontFx, EventBurstFx, FarewellFx, FeelingFx, FlashFx, IntroFx, PinFx, PingFx, RumorFx,
+  CoinFx, ConfrontFx, EventBurstFx, FarewellFx, FeelingFx, FlashFx, IntroFx, LetterFx, PinFx, PingFx, RumorFx,
   SecretFx, TalkFx, ThoughtFx, fxKey,
   type Env, type Fx,
 } from "./effects";
@@ -143,6 +143,9 @@ class PlayerFxSystem implements CanvasSystem {
         return this.add(fxKey.flash, () => new FlashFx(env));
       case "whisper_thought":
         if (a != null) return this.add(fxKey.thought(a), () => new ThoughtFx(env, a));
+        break;
+      case "send_letter":
+        if (a != null) return this.add(fxKey.letter(a), () => new LetterFx(env, a));
         break;
       case "start_rumor":
         // agentIds = [seeder, subject]; only the seeder shows anything (see RumorFx).

@@ -3,13 +3,14 @@ import { agents, agentStates, relationships, shared_knowledge } from '../db/sche
 import { and, eq, or } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { simEvents } from './simEvents';
-import { createFact } from './gossip';
-import { isAdultAge } from './intimacy/eligibility';
+import { addKnowers, createFact, isOwnSecret } from './gossip';
+import { isAdultAge, isAdultsOnlyFact } from './intimacy/eligibility';
 import { mayRomanceGrow } from './intimacy/attraction';
 import { memoryService } from './memory/instance';
 import { gameMinutesNow } from './worldClock';
 import { emitter } from '../engine/emitter';
-import { registerWhisper } from './playerOutcomes';
+import { shortenForFeed } from './factText';
+import { registerLetter, registerWhisper } from './playerOutcomes';
 import type { PersonalityProfile } from './personality';
 
 /**
@@ -261,6 +262,99 @@ export function startRumor(
     ? `${s} heard that ${content} — let's see who ${s} tells`
     : `${s} heard it, but may be too upright to repeat it`;
   return { success: true, message };
+}
+
+// ─── send_letter ──────────────────────────────────────────────────────────────
+
+/**
+ * Game minutes before the same mailbox takes another letter. Without it the power was a
+ * machine gun: every secret in town could be fed to one resident in a minute, and a single
+ * head holding the whole secret network is the opposite of "one secret, one head".
+ */
+export const LETTER_COOLDOWN_MINUTES = 720;
+
+/** How the recipient's memory names the sender (MemoryObserver picks the `gossip_letter` wording off `letter: true`). */
+const LETTER_SOURCE = 'an unsigned letter';
+
+/** Game minute each recipient was last sent a letter. Per world: cleared through worldCaches. */
+const lastLetterAt = new Map<number, number>();
+
+/** Drop every letter stamp; called by worldCaches on a world replace (agent ids and the game clock restart). */
+export function clearLetterCooldowns(): void {
+  lastLetterAt.clear();
+}
+
+/**
+ * An unsigned letter: a real secret put in exactly one head, with nobody to blame for it. Unlike
+ * `tell_secret` (a teller, a queued conversation, a listener who knows who talked) and
+ * `start_rumor` (a made-up story that can be traced to its seeder), this is the true fact
+ * handed over through the same two doors the gossip engine uses, `known_by` and
+ * `gossip:learned` (with the fact's type and id, exactly as `spreadGossip` emits it). Everything
+ * downstream is the town's own machinery: `affair_heartbreak` keys on that event, the
+ * intimacy suspicion reset listens for it, a `revenge` goal reads `known_by`, and the spouse's
+ * next talk with their partner finds the affair (`reactToPartnerAffair`).
+ *
+ * The refusals are the ones a hand-delivered secret would hit anyway, stated up front so the
+ * player sees why nothing happened: a fact a letter could not carry (dead, public, too small
+ * to matter), news to nobody (already known) or a confession (it is about the recipient), the
+ * adults-only line `tell_secret` holds (a minor is never told a romance fact), and the mailbox
+ * cooldown.
+ */
+export function sendAnonymousLetter(recipientId: number, factId: number): GodPowerResult {
+  const recipient = activeAgent(recipientId);
+  if (!recipient) return { success: false, reason: 'Agent not found or inactive' };
+  const fact = db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();
+  if (!fact || !fact.is_active) return { success: false, reason: 'That secret is no longer going around' };
+  if (fact.is_public) return { success: false, reason: 'That is public knowledge already' };
+  if (fact.sensitivity < 2) return { success: false, reason: 'That is too small a matter to put in a letter' };
+  const r = firstName(recipient.name);
+  if (isOwnSecret(fact, recipientId)) {
+    return { success: false, reason: `A letter can't tell ${r} their own secret` };
+  }
+  if ((fact.known_by as number[]).includes(recipientId)) {
+    return { success: false, reason: `${r} already knows that` };
+  }
+  // Same line as tell_secret (nudge.ts): a romance fact never reaches a minor.
+  if (isAdultsOnlyFact(fact) && !isAdultAge(recipient.age)) {
+    return { success: false, reason: 'That secret is only for adults to hear' };
+  }
+  const now = gameMinutesNow();
+  const last = lastLetterAt.get(recipientId);
+  // `elapsed < 0` (a clock that went back, e.g. a loaded save) counts as long ago.
+  if (last != null && now - last >= 0 && now - last < LETTER_COOLDOWN_MINUTES) {
+    return { success: false, reason: `${r} only just got a letter — give it a day` };
+  }
+  lastLetterAt.set(recipientId, now);
+
+  addKnowers(factId, [recipientId]);
+  // Nobody told them: `letter` picks "an unsigned letter came for me…" over "<source> told me…".
+  simEvents.emit('gossip:learned', {
+    agentId: recipientId,
+    sourceName: LETTER_SOURCE,
+    letter: true,
+    content: fact.content,
+    factType: fact.type,
+    factId,
+  });
+  // The player hears back when the recipient next talks to the one it was about (playerOutcomes.ts).
+  registerLetter(recipientId, fact.subject_id, fact.target_id, factId);
+
+  simEvents.emit('plan:evaluate-replan', {
+    agentId: recipientId,
+    type: 'state',
+    description: `found an unsigned letter under their door: "${shortenForFeed(fact.content, 100)}"`,
+    sentiment: -0.3,
+    isDramatic: true,
+  });
+
+  logActivity({
+    type: 'player_letter',
+    initiator: recipientId,
+    templateData: { description: `You sent ${recipient.name} an unsigned letter: ${fact.content}` },
+  });
+  emitter.markDirty('agents.all');
+
+  return { success: true, message: `A letter is on its way to ${r}` };
 }
 
 // ─── stir_feeling ─────────────────────────────────────────────────────────────

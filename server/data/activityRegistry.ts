@@ -44,6 +44,10 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   player_whisper: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
   player_rumor: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
   player_stir: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}' },
+  // The unsigned letter (godPowers.ts sendAnonymousLetter). Explicitly not news, whatever its
+  // importance: it names the secret it carried, and the paper printing "You sent Mara a letter about
+  // Jonas' affair" would be the hand behind the story in the town's own voice.
+  player_letter: { category: 'player', base_importance: 0.4, retention: 'medium', template: '{description}', newsworthy: false },
   // What a nudge / confrontation / revealed secret / planted rumor came to, and
   // nudges that never happened (lib/playerOutcomes.ts). Importance ≥ 0.8 so they
   // alert like drama does — the player asked for this scene and should hear how

@@ -17,7 +17,19 @@ import { nudgeRouter } from '../../routers/nudge';
 import { gossipTick } from '../../engine/systems/gossipEngine';
 import { onPlanReplanned } from '../playerOutcomes';
 import { isHeld } from '../../engine/systems/states';
-import { isRomanceText, rumorPredicate, sanitizePlayerText, STIR_HOLD_MINUTES } from '../godPowers';
+import {
+  clearLetterCooldowns,
+  isRomanceText,
+  LETTER_COOLDOWN_MINUTES,
+  rumorPredicate,
+  sanitizePlayerText,
+  sendAnonymousLetter,
+  STIR_HOLD_MINUTES,
+} from '../godPowers';
+import { RippleEngine } from '../cascade/RippleEngine';
+import { rippleRules } from '../cascade/rippleRules';
+import { ACTIVITY_REGISTRY } from '../../data/activityRegistry';
+import { PLAYER_ACTION_TYPES } from '../challenges/snapshot';
 import { gameMinutesNow } from '../worldClock';
 import type { PersonalityProfile } from '../personality';
 
@@ -492,5 +504,151 @@ describe('stir_feeling', () => {
     expect(isHeld({ holdUntil: 1000 }, 1000)).toBe(false);
     expect(isHeld(null, 5)).toBe(false);
     expect(isHeld({ rivalId: 3 }, 5)).toBe(false);
+  });
+});
+
+/**
+ * The anonymous letter: a real secret put in exactly one head, with no teller to blame. It goes
+ * through the same doors a whispered-about secret would (`known_by`, `gossip:learned`), so the
+ * town's own machinery does the rest; the affair_heartbreak ripple is the one worth proving.
+ * Kept last in the file: the ripple engine built below stays subscribed for the rest of the run.
+ */
+describe('send_letter', () => {
+  let yard: number;
+  let cheat: number;
+  let lover: number;
+  let spouse: number;
+  let friend: number;
+  let kid: number;
+  beforeAll(() => {
+    yard = insertLocation('letter yard');
+    cheat = insertAgent('Letter Cheat', yard, QUIET);
+    lover = insertAgent('Letter Lover', yard, QUIET);
+    spouse = insertAgent('Letter Spouse', yard, QUIET);
+    friend = insertAgent('Letter Friend', yard, QUIET);
+    kid = insertAgent('Letter Kid', yard, QUIET);
+    db.update(agents).set({ age: 16 }).where(eq(agents.id, kid)).run();
+  });
+  beforeEach(() => {
+    clearLetterCooldowns();
+  });
+
+  const factRow = (
+    type: string,
+    sensitivity: number,
+    knownBy: number[],
+    extra: Partial<typeof shared_knowledge.$inferInsert> = {},
+  ) => db.insert(shared_knowledge).values({
+    type, subject_id: cheat, target_id: lover, content: `letter test ${type} ${Math.random()}`, sensitivity,
+    known_by: knownBy, created_at: 0, source: 'test', ...extra,
+  }).returning({ id: shared_knowledge.id }).get().id;
+
+  const send = (agentId: number, factId: number) =>
+    caller().execute({ action: { type: 'send_letter', agentId, factId } });
+  const knownBy = (factId: number) =>
+    db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get()!.known_by as number[];
+
+  it('puts the recipient in known_by and announces it like any gossip the listener learned', async () => {
+    const factId = factRow('financial', 2, [cheat]);
+    const r = await send(friend, factId);
+    expect(r).toMatchObject({ success: true, message: expect.stringContaining('Letter') });
+
+    expect(knownBy(factId)).toEqual([cheat, friend]);
+    // factType / factId are what ripple rules and the suspicion reset key on; `letter` picks the
+    // memory wording (nobody "told" them anything).
+    expect(emit).toHaveBeenCalledWith('gossip:learned', expect.objectContaining({
+      agentId: friend, sourceName: 'an unsigned letter', letter: true,
+      factType: 'financial', factId, content: expect.stringContaining('letter test financial'),
+    }));
+    expect(emit).toHaveBeenCalledWith('plan:evaluate-replan', expect.objectContaining({ agentId: friend, isDramatic: true }));
+    // The letter has no sender: the town cannot trace it to anyone.
+    expect(emit).not.toHaveBeenCalledWith('rumor:reached_subject', expect.anything());
+  });
+
+  it('an affair sent to the spouse breaks their heart through the existing ripple', async () => {
+    // The real rule, at certain odds, on the real event bus.
+    new RippleEngine({ rules: rippleRules.filter((r) => r.id === 'affair_heartbreak') });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    const factId = factRow('affair', 3, [cheat, lover]);
+    const r = await send(spouse, factId);
+    expect(r.success).toBe(true);
+
+    expect(statesOf(spouse, 'heartbroken')).toHaveLength(1);
+    // Nobody else in the yard was told anything.
+    expect(statesOf(friend, 'heartbroken')).toHaveLength(0);
+    expect(knownBy(factId)).toEqual([cheat, lover, spouse]);
+  });
+
+  it('logs player_letter, which is a player action but never town news', async () => {
+    const factId = factRow('debt', 2, [cheat]);
+    await send(friend, factId);
+    const row = lastActivity('player_letter')!;
+    expect(row.initiator_id).toBe(friend);
+    expect(String((row.template_data as any).description)).toContain('Letter Friend');
+    expect(row.category).toBe('player');
+    expect(ACTIVITY_REGISTRY.player_letter).toMatchObject({ category: 'player', base_importance: 0.4, retention: 'medium', newsworthy: false });
+    expect(PLAYER_ACTION_TYPES).toContain('player_letter');
+  });
+
+  it('refuses a public fact, a small one, and one that is no longer going around', async () => {
+    const pub = factRow('financial', 3, [cheat], { is_public: true });
+    const small = factRow('crush', 1, [cheat]);
+    const gone = factRow('theft', 3, [cheat], { is_active: false });
+    for (const factId of [pub, small, gone]) {
+      const r = await send(friend, factId);
+      expect(r, String(factId)).toMatchObject({ success: false, reason: expect.any(String) });
+      expect(knownBy(factId)).toEqual([cheat]);
+    }
+    expect(emit).not.toHaveBeenCalledWith('gossip:learned', expect.objectContaining({ letter: true }));
+  });
+
+  it('refuses a secret the recipient already knows, or one that is their own', async () => {
+    const known = factRow('financial', 3, [cheat, friend]);
+    expect(await send(friend, known)).toMatchObject({ success: false, reason: expect.stringContaining('already') });
+
+    // The subject is the one in the letter; an affair's target is as much a party as its subject.
+    const about = factRow('financial', 3, [cheat]);
+    expect(await send(cheat, about)).toMatchObject({ success: false, reason: expect.stringContaining('own') });
+    const affair = factRow('affair', 3, [cheat]);
+    expect(await send(lover, affair)).toMatchObject({ success: false, reason: expect.stringContaining('own') });
+    expect(knownBy(affair)).toEqual([cheat]);
+  });
+
+  it('refuses an adults-only fact for a 16-year-old, but an ordinary secret still goes to them', async () => {
+    const affair = factRow('affair', 3, [cheat, lover]);
+    expect(await send(kid, affair)).toMatchObject({ success: false, reason: expect.stringContaining('adults') });
+    expect(knownBy(affair)).toEqual([cheat, lover]);
+
+    const plain = factRow('financial', 2, [cheat]);
+    expect((await send(kid, plain)).success).toBe(true);
+  });
+
+  it('refuses a second letter within the cooldown, and allows one after it', async () => {
+    const a = factRow('financial', 2, [cheat]);
+    const b = factRow('theft', 2, [cheat]);
+    expect((await send(friend, a)).success).toBe(true);
+    const again = await send(friend, b);
+    expect(again).toMatchObject({ success: false, reason: expect.stringContaining('letter') });
+    expect(knownBy(b)).toEqual([cheat]);
+    // Someone else's mailbox is a different matter.
+    expect((await send(spouse, b)).success).toBe(true);
+
+    const world = db.select().from(worldState).get()!;
+    try {
+      const later = { ...world.time, day: world.time.day + Math.ceil(LETTER_COOLDOWN_MINUTES / 1440) + 1 };
+      db.update(worldState).set({ time: later }).where(eq(worldState.id, world.id)).run();
+      const c = factRow('debt', 2, [cheat]);
+      expect((await send(friend, c)).success).toBe(true);
+    } finally {
+      db.update(worldState).set({ time: world.time }).where(eq(worldState.id, world.id)).run();
+    }
+  });
+
+  it('refuses an unknown or inactive recipient and a fact that does not exist', async () => {
+    const factId = factRow('financial', 2, [cheat]);
+    expect(sendAnonymousLetter(987654, factId)).toMatchObject({ success: false });
+    expect(sendAnonymousLetter(friend, 987654)).toMatchObject({ success: false });
+    expect(knownBy(factId)).toEqual([cheat]);
   });
 });

@@ -269,9 +269,14 @@ export function initMemoryObserver(memoryService: MemoryService): void {
 
   simEvents.on(
     'gossip:learned',
-    ({ agentId, sourceName, content, witnessed }: { agentId: number; sourceName: string; content: string; witnessed?: boolean }) => {
+    ({ agentId, sourceName, content, witnessed, letter }: {
+      agentId: number; sourceName: string; content: string; witnessed?: boolean; letter?: boolean;
+    }) => {
       // `witnessed`: nobody told them (smallMisdeeds), "their own eyes told me that" is not a sentence.
-      const description = describeEvent(witnessed ? 'gossip_witnessed' : 'gossip_learned', {
+      // `letter`: the player's anonymous letter (godPowers.ts), whose source name is lower case and
+      // is not a speaker: "an unsigned letter told me that" opened the memory in lower case.
+      const template = witnessed ? 'gossip_witnessed' : letter ? 'gossip_letter' : 'gossip_learned';
+      const description = describeEvent(template, {
         source: sourceName,
         content: ownFactText(agentId, content),
       });

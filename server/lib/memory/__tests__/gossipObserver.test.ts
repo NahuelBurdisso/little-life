@@ -74,6 +74,12 @@ describe('MemoryObserver — gossip memories', () => {
     expect(line()).toMatch(/^I saw (with my own eyes|for myself) that Tom Park stole a loaf\.$/);
   });
 
+  it('says an unsigned letter arrived, never that a letter "told" them or that it starts lower case', () => {
+    currentAgent.id = 2;
+    simEvents.emit('gossip:learned', { agentId: 2, sourceName: 'an unsigned letter', letter: true, content: 'Tom Park stole a loaf.' });
+    expect(line()).toMatch(/^(An unsigned letter came for me, and it said|I found an unsigned letter saying) that Tom Park stole a loaf\.$/);
+  });
+
   it('still says who told a listener when the fact was not witnessed', () => {
     currentAgent.id = 2;
     simEvents.emit('gossip:learned', { agentId: 2, sourceName: 'Ray Ortiz', content: 'Tom Park stole a loaf.' });

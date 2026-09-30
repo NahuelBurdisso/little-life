@@ -56,6 +56,7 @@ export const fxKey = {
   farewell: (agent: number) => `farewell:${agent}`,
   event: (location: number) => `event:${location}`,
   thought: (agent: number) => `thought:${agent}`,
+  letter: (agent: number) => `letter:${agent}`,
   rumor: (seeder: number) => `rumor:${seeder}`,
   feeling: (agent: number) => `feeling:${agent}`,
   flash: "flash",
@@ -746,25 +747,39 @@ const THOUGHT_FALL_S = 1.1;
 const THOUGHT_HEIGHT = 90;
 const THOUGHT_TRAIL = 4;
 
+/** What sets a falling wisp apart: its dedupe key, tint and the bubble it lands in. */
+interface ThoughtStyle {
+  key: string;
+  /** Tint of the head and trail (the pool resets it to white on the next acquire). */
+  tint?: number;
+  emote: string;
+}
+
 /**
  * A lavender wisp drops out of the sky and curls down into the agent's head, then a "think"
  * bubble: the idea arrived from nowhere. Same swirl cell as the secret, since both are words
- * nobody said out loud.
+ * nobody said out loud. LetterFx reuses the fall with its own look.
  */
 export class ThoughtFx implements Fx {
   readonly key: string;
   private t = 0;
   private landed = false;
   private readonly idStr: string;
+  private readonly emote: string;
   private readonly head: PIXI.Sprite | null;
   private readonly trail: Array<PIXI.Sprite | null> = [];
 
-  constructor(env: Env, agentId: number) {
-    this.key = fxKey.thought(agentId);
+  constructor(env: Env, agentId: number, style?: ThoughtStyle) {
+    this.key = style?.key ?? fxKey.thought(agentId);
+    this.emote = style?.emote ?? "think";
     this.idStr = String(agentId);
     const cell = cellOf("swirl");
     this.head = grab(env, env.tex[cell]);
     for (let i = 0; i < THOUGHT_TRAIL; i++) this.trail.push(grab(env, env.tex[cell]));
+    if (style?.tint != null) {
+      if (this.head) this.head.tint = style.tint;
+      for (const s of this.trail) if (s) s.tint = style.tint;
+    }
   }
 
   update(env: Env, f: FrameContext): boolean {
@@ -795,7 +810,7 @@ export class ThoughtFx implements Fx {
 
     if (!this.landed) {
       this.landed = true;
-      env.bubbles.showEmote(this.idStr, "think", { x: sp.x, y: sp.y });
+      env.bubbles.showEmote(this.idStr, this.emote, { x: sp.x, y: sp.y });
       for (let i = 0; i < this.trail.length; i++) hide(this.trail[i]);
     }
     const at = t - THOUGHT_FALL_S;
@@ -808,6 +823,19 @@ export class ThoughtFx implements Fx {
   dispose(env: Env): void {
     env.pool.release(this.head);
     releaseAll(env, this.trail);
+  }
+}
+
+// ── send_letter ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The anonymous letter: the thought's fall in parchment gold, landing as a "question" bubble
+ * (who sent this?) instead of a "think" one. Cheap on purpose: the recipient is the only one
+ * who shows anything, since there is no sender to picture.
+ */
+export class LetterFx extends ThoughtFx {
+  constructor(env: Env, recipientId: number) {
+    super(env, recipientId, { key: fxKey.letter(recipientId), tint: 0xf2d98a, emote: "question" });
   }
 }
 

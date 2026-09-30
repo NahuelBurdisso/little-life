@@ -276,6 +276,34 @@ describe('PlayerFxSystem', () => {
     sys.destroy();
   });
 
+  it('send_letter: a tinted wisp falls into the head, then a "question" bubble (who sent it?)', async () => {
+    const { sys, overAgents, showEmote, run, visible } = setup();
+    await flush();
+    emit('send_letter', [2]);
+    run(0.3);
+    expect(visible()).toBeGreaterThan(0);
+    // A parchment tint apart from the whisper's plain wisp, so the two powers read differently.
+    expect(overAgents.children.some(c => c.visible && (c as any).tint === 0xf2d98a)).toBe(true);
+    expect(showEmote).not.toHaveBeenCalled();
+    run(1);
+    expect(showEmote).toHaveBeenCalledWith('2', 'question', { x: 200, y: 300 });
+    run(0.5);
+    expect(visible()).toBe(0);
+    sys.destroy();
+  });
+
+  it('send_letter: a repeat on the same agent replaces the effect instead of stacking', async () => {
+    const { sys, run, visible } = setup();
+    await flush();
+    emit('send_letter', [2]);
+    run(0.3);
+    const one = visible();
+    for (let i = 0; i < 4; i++) emit('send_letter', [2]);
+    run(0.3);
+    expect(visible()).toBeLessThanOrEqual(one);
+    sys.destroy();
+  });
+
   it('start_rumor: "shh" on the seeder and wisps drifting off them; nothing on the subject', async () => {
     const { sys, overAgents, showEmote, run, visible } = setup();
     await flush();

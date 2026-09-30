@@ -22,7 +22,7 @@ import { MINUTES_PER_DAY, type SnapPair, type TownSnapshot } from './catalog';
  */
 export const PLAYER_ACTION_TYPES: readonly string[] = [
   'player_nudge', 'player_event', 'player_gift', 'player_introduce', 'player_remove',
-  'player_whisper', 'player_rumor', 'player_stir',
+  'player_whisper', 'player_rumor', 'player_stir', 'player_letter',
 ];
 
 export function readTownSnapshot(handsOnCount: number): TownSnapshot | null {

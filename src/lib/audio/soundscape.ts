@@ -430,6 +430,7 @@ export type GodCue = 'sparkle' | 'whoosh' | 'coins' | 'nudge' | 'fanfare';
 
 const GOD_CUE: Readonly<Record<string, GodCue>> = {
   whisper_thought: 'sparkle', stir_feeling: 'sparkle', tell_secret: 'sparkle', start_rumor: 'sparkle', arrange_rendezvous: 'sparkle',
+  send_letter: 'sparkle',
   suggest_go_to: 'whoosh', remove_agent: 'whoosh', weather: 'whoosh',
   give_money: 'coins',
   suggest_talk: 'nudge', force_confront: 'nudge', introduce_agent: 'nudge', event: 'nudge',

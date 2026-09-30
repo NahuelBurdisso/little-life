@@ -16,6 +16,7 @@ import {
   clearPlayerOutcomes,
   describeExpired,
   describeOutcome,
+  registerLetter,
   registerWhisper,
   statusClause,
   whisperAired,
@@ -357,5 +358,85 @@ describe('whispered thoughts', () => {
       messages: [{ speakerId: agent, text: 'I should leave this town', sentiment: 0, topics: [], timestamp: 0 }],
     });
     expect(whisperRows(agent)).toHaveLength(1);
+  });
+});
+
+describe('anonymous letters', () => {
+  const letterRows = (ids: number[]) => rowsOf('player_outcome', ids)
+    .filter((r) => String((r.template_data as Record<string, unknown>).description).startsWith('Your letter'));
+
+  it('words the report as the letter', () => {
+    expect(describeOutcome({
+      trigger: 'player_letter', names: ['Ana Ruiz', 'Tom Hale'],
+      friendship: -9, romance: 0, trust: -4, sentiment: -0.3,
+    })).toBe('Your letter: Ana & Tom — it got tense (friendship −9, trust −4).');
+  });
+
+  it('reports once when the recipient next talks to the one the letter was about', () => {
+    const recipient = insertAgent('Lettie Recipient');
+    const subject = insertAgent('Sam Subject');
+    insertRelationship(recipient, subject, 20, 'friends');
+    registerLetter(recipient, subject, null, 1);
+    // Not a player-caused conversation: the letter is what makes it worth a report.
+    const id = stageConversation(recipient, subject, 'proximity', -0.4, -12);
+
+    endConversation(id, recipient, subject);
+    relationshipsTick(WORLD);
+    const rows = letterRows([recipient, subject]);
+    expect(rows).toHaveLength(1);
+    expect(String((rows[0].template_data as Record<string, unknown>).description))
+      .toMatch(/^Your letter: Lettie & Sam — it got tense \(friendship −\d+, trust −\d+\)/);
+    expect((rows[0].template_data as Record<string, unknown>).trigger).toBe('player_letter');
+    expect(rows[0].importance).toBeGreaterThanOrEqual(0.8);
+
+    // The letter is spent: a duplicate emit and their next chat say nothing more.
+    endConversation(id, recipient, subject);
+    const next = stageConversation(recipient, subject, 'proximity', -0.4, -12);
+    endConversation(next, recipient, subject);
+    relationshipsTick(WORLD);
+    expect(letterRows([recipient, subject])).toHaveLength(1);
+  });
+
+  it('also counts the fact target, and says nothing for a conversation with a third party', () => {
+    const recipient = insertAgent('Rita Recipient');
+    const subject = insertAgent('Sid Subject');
+    const target = insertAgent('Tess Target');
+    const bystander = insertAgent('Bea Bystander');
+    registerLetter(recipient, subject, target, 2);
+
+    const third = stageConversation(recipient, bystander, 'proximity', 0.2, 3);
+    endConversation(third, recipient, bystander);
+    relationshipsTick(WORLD);
+    expect(letterRows([recipient, bystander])).toHaveLength(0);
+
+    // Two people who are not the recipient talking is not the letter landing either.
+    const apart = stageConversation(subject, target, 'proximity', 0.2, 3);
+    endConversation(apart, subject, target);
+    relationshipsTick(WORLD);
+    expect(letterRows([subject, target])).toHaveLength(0);
+
+    const withTarget = stageConversation(recipient, target, 'proximity', 0.6, 8);
+    endConversation(withTarget, recipient, target);
+    relationshipsTick(WORLD);
+    expect(letterRows([recipient, target])).toHaveLength(1);
+  });
+
+  it('forgets letters on a world replace, and leaves a forced confrontation with its own label', () => {
+    const recipient = insertAgent('Ivy Recipient');
+    const subject = insertAgent('Ike Subject');
+    registerLetter(recipient, subject, null, 3);
+    clearPlayerOutcomes();
+    const id = stageConversation(recipient, subject, 'proximity', 0.6, 8);
+    endConversation(id, recipient, subject);
+    relationshipsTick(WORLD);
+    expect(letterRows([recipient, subject])).toHaveLength(0);
+
+    registerLetter(recipient, subject, null, 3);
+    const confront = stageConversation(recipient, subject, 'player_confront', -0.7, -30);
+    endConversation(confront, recipient, subject);
+    relationshipsTick(WORLD);
+    const rows = rowsOf('player_outcome', [recipient, subject]);
+    expect(rows).toHaveLength(1);
+    expect(String((rows[0].template_data as Record<string, unknown>).description)).toMatch(/^Your confrontation/);
   });
 });

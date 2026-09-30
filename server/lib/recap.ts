@@ -93,7 +93,7 @@ const NEVER_BEATS = new Set([
   'relationship_status_change', 'proposal', 'plan_generated', 'plan_changed', 'system', 'error',
   'state_gained', 'state_lost', 'conversation_ended', 'salary_paid', 'purchase', 'goal_created',
   'goal_abandoned', 'player_nudge', 'player_event', 'player_gift', 'player_whisper', 'player_rumor',
-  'player_stir', 'player_introduce', 'player_remove',
+  'player_stir', 'player_letter', 'player_introduce', 'player_remove',
 ]);
 
 const BEAT_ICONS: Record<string, string> = {
