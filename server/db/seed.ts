@@ -26,6 +26,8 @@ import { eq, and } from 'drizzle-orm';
 import { logActivity } from '../lib/activityLogger';
 import { ALL_TABLES } from './worldTables';
 import { nameHomes } from '../lib/homeNames';
+import { assignOrientations } from '../lib/intimacy/orientation';
+import { forkRng } from '../lib/worldgen/rng';
 
 // Shared with the world-replace and save-load paths so a table added there is
 // wiped here too (this copy used to miss goals, aspirations and interactions).
@@ -345,6 +347,18 @@ function seed() {
     db.insert(relationships).values({ ...rel, last_interaction_minute: seedStartMinute }).run();
   }
   console.log(`[seed] Inserted ${relSeeds.length} relationships (${structural} from housemate/coworker/neighbour ties).`);
+
+  // Orientation, now that the romance seeds exist (Diego's crush on Lucia and the
+  // rest): a free roll must not contradict a seeded same-gender crush. Fixed seed
+  // string, so the default town is the same every time it is seeded.
+  const orientations = assignOrientations(
+    AGENT_SEEDS.map((s) => ({ id: agentMap.get(s.name)!, gender: s.gender })),
+    relSeeds,
+    forkRng('default-town', 'orientation'),
+  );
+  for (const [agentId, orientation] of orientations) {
+    db.update(agents).set({ orientation }).where(eq(agents.id, agentId)).run();
+  }
 
   // 6. Insert memories
   console.log('[seed] Inserting memories...');

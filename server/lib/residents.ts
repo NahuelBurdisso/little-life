@@ -42,6 +42,7 @@ import { memoryService } from './memory/instance';
 import { simEvents } from './simEvents';
 import { emitter } from '../engine/emitter';
 import { makeRng, stringToSeed } from './worldgen/rng';
+import { rollOrientation } from './intimacy/orientation';
 
 type AgentRow = typeof agents.$inferSelect;
 type LocationRow = typeof locations.$inferSelect;
@@ -265,6 +266,9 @@ export function createResident(opts: CreateResidentOptions): CreateResidentResul
       // Just arrived: "new in town" in their own prompt facts (lib/selfFacts.ts),
       // for good — the years count from the game's start, not the calendar.
       years_in_town: 0,
+      // Nothing seeded to respect for a newcomer: one free 88/7/5 roll, seeded
+      // like their aspiration below so a replayed world gives the same person.
+      orientation: rollOrientation(makeRng(stringToSeed(`orientation|${worldSeed}|${name.toLowerCase()}`))),
     }).run().lastInsertRowid);
 
     // A reused rowid (SQLite hands the highest id out again once its row is

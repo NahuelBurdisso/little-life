@@ -4,6 +4,7 @@ import { generateFromSliders } from '../lib/setupGenerator';
 import { forkRng } from '../lib/worldgen/rng';
 import { clamp } from '../lib/utils';
 import { AGENT_SEEDS } from '../data/agents';
+import { assignOrientations } from '../lib/intimacy/orientation';
 import {
   agents,
   needs,
@@ -717,6 +718,19 @@ function seedWorld(
       created_at: now,
       last_updated: now,
     }).run();
+  }
+
+  // 6b. Orientation, now that the romance threads exist: a scenario that pairs
+  //     two men has made them each other's crush, and a free roll must not turn
+  //     one of them straight afterwards (lib/intimacy/orientation.ts). Seeded from
+  //     the world seed so Preview, Start and a later restart give the same town.
+  const orientations = assignOrientations(
+    config.agents.map((a) => ({ id: agentMap.get(a.name)!, gender: a.gender })),
+    [...staged.values()],
+    forkRng(genResult.seed, 'orientation'),
+  );
+  for (const [agentId, orientation] of orientations) {
+    db.update(agents).set({ orientation }).where(eq(agents.id, agentId)).run();
   }
 
   // 7. Insert backstory memories from each agent's backstoryMemories

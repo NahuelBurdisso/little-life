@@ -15,6 +15,7 @@ import { backfillActivityLogGameMinutes } from './activityLogClock';
 import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
+import { backfillOrientations } from './orientationBackfill';
 import { CONFIG } from '../lib/constants';
 import { nameHomes } from '../lib/homeNames';
 import path from 'path';
@@ -137,6 +138,8 @@ function migrateSchema() {
   // Stable self facts for dialogue (lib/selfFacts.ts), derived lazily.
   addColumnIfMissing('agents', 'years_in_town', 'INTEGER');
   addColumnIfMissing('agents', 'job_years', 'INTEGER');
+  // Sexual orientation (lib/intimacy/eligibility.ts); backfilled at startup.
+  addColumnIfMissing('agents', 'orientation', 'TEXT');
   addColumnIfMissing('goals', 'description', 'TEXT');
   addColumnIfMissing('goals', 'strategy', 'TEXT');
   addColumnIfMissing('goals', 'mapped_interactions', 'TEXT');
@@ -418,6 +421,9 @@ export function initSchema(): void {
     () => backfillActivityLogGameMinutes(sqlite),
     // Every start; matches only old-orientation rows, so a no-op once healed.
     () => repairLegacySightingFacts(sqlite),
+    // After migrateSchema, which adds the column; fills only NULL rows, so a
+    // no-op once every resident has one (also runs on save load via initSchema).
+    () => { backfillOrientations(sqlite); },
     // Every start and save load; renames only houses still called `Home N`
     // after their residents, so a no-op once a world is named (homeNames.ts).
     () => { nameHomes(sqlite, { onlyGeneric: true }); },

@@ -94,6 +94,10 @@ export const agents = sqliteTable(
     // mayor in office twelve years in one breath and five in the next.
     years_in_town: integer('years_in_town'),
     job_years: integer('job_years'),
+    // 'straight' | 'gay' | 'bi' (lib/intimacy/eligibility.ts). Nullable: rows from
+    // before the intimacy layer are filled at startup (db/orientationBackfill.ts),
+    // and until then NULL reads as straight.
+    orientation: text('orientation'),
   },
   (table) => [index('idx_agents_is_active').on(table.is_active)]
 );
