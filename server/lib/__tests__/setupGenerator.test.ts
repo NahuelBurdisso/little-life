@@ -202,3 +202,33 @@ describe('witness secrets', () => {
     }
   });
 });
+
+describe('generateFromSliders and the adults-only rule', () => {
+  it('never casts a minor in a romance thread or names one in a romantic secret', () => {
+    const cast = [
+      ...mockAgents,
+      { name: 'Kid One', age: 16, personality: mockAgents[0].personality, salary: 0, job: 'student' },
+      { name: 'Kid Two', age: 17, personality: mockAgents[1].personality, salary: 0, job: 'student' },
+    ];
+    const minors = new Set([cast.length - 2, cast.length - 1]);
+    for (let seed = 1; seed <= 40; seed++) {
+      let s = seed;
+      const rand = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+      const r = generateFromSliders({ drama: 10, romance: 10, crime: 0, trust: 5 }, cast, rand);
+      for (const t of r.romanceThreads) {
+        for (const i of t.agent_indices) expect(minors.has(i)).toBe(false);
+        if (t.secret) {
+          expect(minors.has(t.secret.subject_index)).toBe(false);
+          expect(t.secret.target_index == null || !minors.has(t.secret.target_index)).toBe(true);
+        }
+      }
+      for (const sec of r.secrets) {
+        const romantic = sec.type === 'romantic' || sec.template_id === 'witness_affair'
+          || sec.template_id === 'witness_secret_meeting';
+        if (!romantic) continue;
+        expect(minors.has(sec.subject_index)).toBe(false);
+        expect(sec.target_index == null || !minors.has(sec.target_index)).toBe(true);
+      }
+    }
+  });
+});

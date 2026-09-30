@@ -13,6 +13,7 @@ import { logActivity } from '../activityLogger';
 import { gameMinutesNow } from '../worldClock';
 import { getRules, type LiveRules } from '../worldRules';
 import { rippleProbabilityScale } from './ruleTone';
+import { mayRomanceGrow } from '../intimacy/attraction';
 import crypto from 'crypto';
 
 interface QueueItem {
@@ -733,6 +734,18 @@ export class RippleEngine {
     return (row?.personality as PersonalityProfile | null) ?? null;
   }
 
+  /** `mayRomanceGrow(feeler, target)` from the two agent rows; false if either is missing. */
+  private mayRomanceGrowBetween(feelerId: number, targetId: number): boolean {
+    const load = (id: number) => db
+      .select({ age: agents.age, gender: agents.gender, orientation: agents.orientation })
+      .from(agents)
+      .where(eq(agents.id, id))
+      .get();
+    const feeler = load(feelerId);
+    const target = load(targetId);
+    return !!feeler && !!target && mayRomanceGrow(feeler, target);
+  }
+
   private getAgentLocation(id: number): number | null {
     const row = db.select({ current_location: agents.current_location })
       .from(agents)
@@ -914,7 +927,15 @@ export class RippleEngine {
           } else if (field === 'romance') {
             const col = isA ? 'romance_ab' : 'romance_ba';
             const current = isA ? rel.romance_ab : rel.romance_ba;
-            updateData[col] = Math.max(-100, Math.min(100, current + delta));
+            // The romance choke point (engine/systems/relationships.ts) covers
+            // queued relationship events, but this rule writes the column
+            // directly, so the adults-only rule is asked here too: a rise is
+            // dropped unless the feeler may grow romance toward the target.
+            // A drop always lands (a bad turn still cools a crush), and a
+            // missing agent row fails closed.
+            if (delta <= 0 || this.mayRomanceGrowBetween(agentId, targetId)) {
+              updateData[col] = Math.max(-100, Math.min(100, current + delta));
+            }
           } else if (field === 'trust') {
             const col = isA ? 'trust_ab' : 'trust_ba';
             const current = isA ? rel.trust_ab : rel.trust_ba;

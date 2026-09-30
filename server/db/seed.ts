@@ -27,6 +27,7 @@ import { logActivity } from '../lib/activityLogger';
 import { ALL_TABLES } from './worldTables';
 import { nameHomes } from '../lib/homeNames';
 import { assignOrientations } from '../lib/intimacy/orientation';
+import { sanitizeSeedRomance } from '../lib/intimacy/seedRomance';
 import { forkRng } from '../lib/worldgen/rng';
 
 // Shared with the world-replace and save-load paths so a table added there is
@@ -679,6 +680,23 @@ function seed() {
     db.update(relationships).set(
       luciaIsA ? { trust_ab: 35 } : { trust_ba: 35 }
     ).where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).run();
+  }
+
+  // The adults-only rule at seed time (lib/intimacy/seedRomance.ts). The shipped
+  // cast is all adults, so this is a no-op today; it runs last, over the rows as
+  // they now stand (adjustments above included), so a future minor added to
+  // AGENT_SEEDS cannot start with a crush.
+  {
+    const ages = db.select({ id: agents.id, age: agents.age }).from(agents).all();
+    const rows = db.select().from(relationships).all();
+    const cleaned = sanitizeSeedRomance(ages, rows);
+    cleaned.forEach((row, i) => {
+      if (row === rows[i]) return;
+      db.update(relationships)
+        .set({ romance_ab: row.romance_ab, romance_ba: row.romance_ba, tags: row.tags, status: row.status })
+        .where(eq(relationships.id, row.id))
+        .run();
+    });
   }
 
   // Houses after their residents, once everyone has moved in (lib/homeNames.ts).

@@ -1,5 +1,7 @@
 import { SECRETS_POOL } from '../data/secretsPool';
 import { ROMANCE_POOL } from '../data/romancePool';
+import { isAdultAge } from './intimacy/eligibility';
+import { isRomanticSecret } from './intimacy/seedRomance';
 
 // ─── Inline types (no cross-boundary imports from src/) ───────────────────────
 
@@ -126,11 +128,16 @@ export function generateFromSliders(
       if (secrets.length >= targetSecrets) break;
 
       const usedInThis = new Set<number>();
+      // A romantic secret (crush, affair, a sighting of one) only ever names
+      // adults: the adults-only rule holds for what a town is seeded with, not
+      // just for what it does later (lib/intimacy/seedRomance.ts).
+      const romantic = isRomanticSecret({ type: template.category, template_id: template.id });
+      const mayName = (i: number) => !romantic || isAdultAge(agents[i].age);
 
       // Pick subject (agent_a)
       const validSubjects = agents
         .map((_, i) => i)
-        .filter(i => !usedInThis.has(i));
+        .filter(i => !usedInThis.has(i) && mayName(i));
       if (validSubjects.length === 0) continue;
       const subjectIdx = validSubjects[Math.floor(rand() * validSubjects.length)];
       usedInThis.add(subjectIdx);
@@ -140,7 +147,7 @@ export function generateFromSliders(
       if (template.template.includes('{target}')) {
         const validTargets = agents
           .map((_, i) => i)
-          .filter(i => !usedInThis.has(i));
+          .filter(i => !usedInThis.has(i) && mayName(i));
         if (validTargets.length === 0) continue;
         targetIdx = validTargets[Math.floor(rand() * validTargets.length)];
         usedInThis.add(targetIdx);
@@ -187,7 +194,9 @@ export function generateFromSliders(
 
     const available = agents
       .map((a, i) => ({ agent: a, index: i }))
-      .filter(({ index }) => !usedRomanceAgents.has(index));
+      // Adults only: a romance thread never casts a minor, whatever the ages the
+      // wizard gave the cast.
+      .filter(({ agent, index }) => !usedRomanceAgents.has(index) && isAdultAge(agent.age));
 
     if (available.length < template.agent_count) continue;
 

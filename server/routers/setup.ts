@@ -5,6 +5,7 @@ import { forkRng } from '../lib/worldgen/rng';
 import { clamp } from '../lib/utils';
 import { AGENT_SEEDS } from '../data/agents';
 import { assignOrientations } from '../lib/intimacy/orientation';
+import { adultIdSet, mayKeepSeedSecret, sanitizeSeedRomance } from '../lib/intimacy/seedRomance';
 import {
   agents,
   needs,
@@ -706,7 +707,16 @@ function seedWorld(
     }
   }
 
-  for (const row of staged.values()) {
+  // The adults-only rule at seed time: whatever fed the staged rows (the wizard's
+  // typed romance, the generator's threads, a scenario secret's companion tag) a
+  // pair with a minor in it starts with no romance and no romantic tags/status.
+  // Runs on the staged rows, before insert, so orientation assignment below reads
+  // the sanitised values too (a minor's crush must not fix anyone's orientation).
+  const seedAgents = config.agents.map((a) => ({ id: agentMap.get(a.name)!, age: a.age }));
+  const stagedRows = sanitizeSeedRomance(seedAgents, [...staged.values()]);
+  const adultIds = adultIdSet(seedAgents);
+
+  for (const row of stagedRows) {
     db.insert(relationships).values({
       ...row,
       interaction_count: 0,
@@ -726,7 +736,7 @@ function seedWorld(
   //     the world seed so Preview, Start and a later restart give the same town.
   const orientations = assignOrientations(
     config.agents.map((a) => ({ id: agentMap.get(a.name)!, gender: a.gender })),
-    [...staged.values()],
+    stagedRows,
     forkRng(genResult.seed, 'orientation'),
   );
   for (const [agentId, orientation] of orientations) {
@@ -763,7 +773,9 @@ function seedWorld(
   const carlosId = agentMap.get('Carlos Mendez');
   const rayId = agentMap.get('Ray Kowalski');
 
-  if (diegoId && luciaId && marcoId && rosaId) {
+  // The two crushes name Diego and Lucia; a renamed-in minor of either name keeps neither.
+  if (diegoId && luciaId && marcoId && rosaId
+    && mayKeepSeedSecret(adultIds, { type: 'crush', subjectId: diegoId, targetId: luciaId })) {
     db.insert(shared_knowledge).values({
       type: 'crush', subject_id: diegoId, target_id: luciaId,
       content: 'Diego Santos has a crush on Lucia Fernandez',
@@ -812,6 +824,10 @@ function seedWorld(
       const subjectId = idOfAgent(secret.subject_index);
       if (subjectId === undefined) continue;
       const targetId = idOfAgent(secret.target_index) ?? null;
+      // A romantic secret (crush, affair, a sighting of one) never names a minor.
+      // The generator already picks adults for these; this is the backstop for a
+      // scenario built any other way.
+      if (!mayKeepSeedSecret(adultIds, { ...secret, subjectId, targetId })) continue;
 
       const knownBy = [
         ...new Set(
