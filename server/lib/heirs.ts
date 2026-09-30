@@ -9,8 +9,13 @@
  * this one list:
  *
  *   1. the living spouse (lib/marriage.ts `spouseOf`);
- *   2. children — the town has no parent/child ties yet; when it does, they
- *      go here, eldest first, and nothing else has to change;
+ *   2. children (lib/family.ts), eldest first. A child is not a resident and
+ *      can't hold money, so their share is held in trust: the heir row names
+ *      the guardian who receives it (the surviving parent, else a grown-up of
+ *      the child's household, else the parent's closest friend —
+ *      familyState.ts `guardianFor`) and the child it is for. A guardian who
+ *      is already in the list (the widow is also the other parent) is not
+ *      listed twice: the money already reached that household;
  *   3. friends, closest first (their friendship toward the deceased above
  *      HEIR_MIN_FRIENDSHIP — someone who barely liked them inherits nothing).
  *
@@ -22,6 +27,7 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../db';
 import { agents, relationships } from '../db/schema';
 import { spouseOf } from './marriage';
+import { childrenOf, guardianFor } from './familyState';
 
 /** A friend must feel at least this warmly toward the deceased to be left anything. */
 export const HEIR_MIN_FRIENDSHIP = 30;
@@ -29,8 +35,11 @@ export const HEIR_MIN_FRIENDSHIP = 30;
 export type HeirKind = 'spouse' | 'child' | 'friend';
 
 export interface Heir {
+  /** Who receives the estate: for a `child` heir, the guardian holding it in trust. */
   agentId: number;
   kind: HeirKind;
+  /** `child` heirs only: the child the estate is held for. */
+  child?: { id: number; name: string; sex: string };
 }
 
 /** Living heirs of `agentId`, first in line first. Works for someone already retired (dead or gone). */
@@ -39,7 +48,11 @@ export function heirsOf(agentId: number): Heir[] {
   const spouse = spouseOf(agentId);
   if (spouse != null) out.push({ agentId: spouse, kind: 'spouse' });
 
-  // (children: none yet — see the header.)
+  for (const child of childrenOf(agentId)) {
+    const guardian = guardianFor(child, agentId);
+    if (guardian == null || guardian === agentId || out.some((h) => h.agentId === guardian)) continue;
+    out.push({ agentId: guardian, kind: 'child', child: { id: child.id, name: child.name, sex: child.sex } });
+  }
 
   const rels = db.select().from(relationships)
     .where(or(eq(relationships.agent_a, agentId), eq(relationships.agent_b, agentId))).all();

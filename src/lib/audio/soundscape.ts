@@ -148,7 +148,7 @@ const CRICKET_SEASON: Readonly<Record<string, number>> = { summer: 1, spring: 0.
 /** Events that fill the square with people, and how much. */
 const CROWD_EVENTS: Readonly<Record<string, number>> = {
   festival: 0.4, market_day: 0.35, wedding: 0.3, competition: 0.3, fire_outbreak: 0.35, town_meeting: 0.15,
-  traveling_merchant: 0.15,
+  traveling_merchant: 0.15, christening: 0.2,
 };
 /** Events with music in the streets (the square gets plucks even with no tavern in view). */
 const MUSIC_EVENTS: Readonly<Record<string, number>> = { festival: 0.5, wedding: 0.35, harvest: 0.2 };
@@ -308,12 +308,13 @@ export function tollsBetween(prev: number | null, next: number): number {
  * - clang: a cell door (arrest)
  * - knell: a slow, low, distant bell (death, funeral)
  * - cheer: a quick bright arpeggio (birthday)
+ * - lullaby: a soft high chime, rocking between two notes (a birth, a christening)
  * - alarm: fast bell (fire)
  * - tolls: a few plain town-hall tolls (town meeting)
  */
 export type StoryCue =
   | 'scuffle' | 'romance' | 'engaged' | 'peal' | 'sad' | 'whisper' | 'sneak'
-  | 'clang' | 'knell' | 'cheer' | 'alarm' | 'tolls';
+  | 'clang' | 'knell' | 'cheer' | 'alarm' | 'tolls' | 'lullaby';
 
 /** Beat subtype → cue. Gossip is left silent on purpose: it is the most common row by far. */
 const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
@@ -323,6 +324,9 @@ const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
   breakup: 'sad', estrangement: 'sad',
   arrest: 'clang', death: 'knell', birthday: 'cheer',
   theft: 'sneak',
+  // Family (server/lib/family.ts): a newborn gets its own soft chime, not the
+  // birthday's bright arpeggio; a father learning it isn't his is heartbreak.
+  birth: 'lullaby', paternity: 'sad',
 };
 
 /** Row types that carry their own cue regardless of `metadata.beat`. */
@@ -354,7 +358,7 @@ export function storyCueOf(row: StoryRow): StoryCue | null {
 
 /** World events that announce themselves when they start. */
 const EVENT_CUE: Readonly<Record<string, StoryCue>> = {
-  funeral: 'knell', town_meeting: 'tolls', fire_outbreak: 'alarm', festival: 'cheer',
+  funeral: 'knell', town_meeting: 'tolls', fire_outbreak: 'alarm', festival: 'cheer', christening: 'lullaby',
 };
 
 export function eventCueOf(type: string | undefined): StoryCue | null {

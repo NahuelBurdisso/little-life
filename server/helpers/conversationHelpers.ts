@@ -14,6 +14,7 @@ import { getMoodMomentum } from '../lib/moodMomentum';
 import { gameMinutes } from '../lib/gameClock';
 import { goalClause } from '../lib/goalText';
 import { firstName } from '../ai/names';
+import { familyPromptLine } from '../lib/familyState';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -118,6 +119,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
       hobbies: getAgentHobbies(speakerId),
       moodMomentum: getMoodMomentum(speakerId),
       drinkCount: getDrinkCount(speakerId),
+      family: familyPromptLine(speakerId, gameMinutes(world.time)),
     };
 
     cached = { speaker, otherAgent, relationship, location, effectivePersonality, enrichment, speakerEcon };

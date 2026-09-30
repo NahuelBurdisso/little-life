@@ -115,6 +115,24 @@ function migrateSchema() {
     saved_at INTEGER NOT NULL
   )`);
 
+  // Babies of married residents (server/lib/family.ts). One world's rows, like
+  // sim_snapshots: in ALL_TABLES, wiped on a replace, swapped on a save load.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS children (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    sex TEXT NOT NULL,
+    birth_game_minute INTEGER NOT NULL,
+    mother_id INTEGER NOT NULL REFERENCES agents(id),
+    father_id INTEGER REFERENCES agents(id),
+    true_father_id INTEGER REFERENCES agents(id),
+    home INTEGER REFERENCES locations(id),
+    alive INTEGER NOT NULL DEFAULT 1,
+    paternity_fact_id INTEGER,
+    paternity_revealed INTEGER NOT NULL DEFAULT 0
+  )`);
+  sqlite.exec('CREATE INDEX IF NOT EXISTS idx_children_mother ON children(mother_id)');
+  sqlite.exec('CREATE INDEX IF NOT EXISTS idx_children_father ON children(father_id)');
+
   // Goals table extensions
   addColumnIfMissing('goals', 'description', 'TEXT');
   addColumnIfMissing('goals', 'strategy', 'TEXT');

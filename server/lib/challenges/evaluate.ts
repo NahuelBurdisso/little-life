@@ -240,6 +240,28 @@ const recluse: Check = (c, snap) => {
   return { status: 'active', progress };
 };
 
+/**
+ * First baby: a child born anywhere in town since the challenge began (born
+ * state, like everything here: a child in the table who wasn't at the start).
+ * Progress counts the couples on the way — expecting is a secret the player
+ * can't always see, so the bar shows the married couples who could.
+ */
+const firstBaby: Check = (c, snap) => {
+  const before = new Set(c.baseline?.childIds ?? []);
+  const born = (snap.children ?? []).find((k) => !before.has(k.id));
+  if (born) {
+    const parents = [born.motherId, born.fatherId].filter((id): id is number => id != null).map((id) => firstName(snap, id)).join(' and ');
+    return {
+      status: 'completed',
+      progress: { value: 1, target: 1, label: 'a baby!' },
+      outcome: `${parents} welcomed little ${born.name}.`,
+    };
+  }
+  const couples = snap.pairs.filter((p) => p.tags.includes(MARRIED_TAG) && agentOf(snap, p.a)?.active && agentOf(snap, p.b)?.active).length;
+  const label = couples === 0 ? 'no married couple in town yet' : couples === 1 ? '1 married couple' : `${couples} married couples`;
+  return { status: 'active', progress: { value: 0, target: 1, label } };
+};
+
 const CHECKS: Record<Challenge['kind'], Check> = {
   matchmaker,
   peacemaker,
@@ -250,6 +272,7 @@ const CHECKS: Record<Challenge['kind'], Check> = {
   first_engagement: firstEngagement,
   feud,
   recluse,
+  first_baby: firstBaby,
 };
 
 /** What running out the clock means for the kinds where that is the win. */
@@ -297,6 +320,9 @@ export function beginChallenge(offer: Challenge, snap: TownSnapshot): Challenge 
       break;
     case 'first_engagement':
       baseline.engagedPairs = snap.pairs.filter((p) => isEngagedOrMarried(p.tags)).map((p) => pairKey(p.a, p.b));
+      break;
+    case 'first_baby':
+      baseline.childIds = (snap.children ?? []).map((k) => k.id);
       break;
     case 'feud':
       baseline.friendPairs = snap.pairs

@@ -48,6 +48,8 @@ export const DURATION_DAYS: Readonly<Record<Exclude<ChallengeKind, 'guardian'>, 
   first_engagement: 10,
   feud: 6,
   recluse: 7,
+  // Married ≥ 3 days, a modest daily roll, then a week's pregnancy (lib/family.ts).
+  first_baby: 16,
 };
 
 function pick<T>(items: readonly T[], rng: Rng): T | undefined {
@@ -143,6 +145,14 @@ export function candidateOffers(snap: TownSnapshot, rng: Rng): OfferDraft[] {
     out.push({
       kind: 'first_engagement', difficulty: 'medium', goal: 'A new engagement anywhere in town',
       agentIds: [], durationDays: DURATION_DAYS.first_engagement,
+    });
+  }
+
+  // Only once a couple is married: the baby needs parents to be on the way.
+  if (snap.pairs.some((p) => bothActive(snap, p) && p.tags.includes(MARRIED_TAG))) {
+    out.push({
+      kind: 'first_baby', difficulty: 'hard', goal: 'A baby born anywhere in town',
+      agentIds: [], durationDays: DURATION_DAYS.first_baby,
     });
   }
 

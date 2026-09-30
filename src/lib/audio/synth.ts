@@ -801,6 +801,12 @@ export class Synth {
       case 'tolls':
         for (let i = 0; i < 3; i++) this.bellStrike(t + i * 2.2, 0.75, 0.13 * gain, pan, true, fx);
         break;
+      case 'lullaby':
+        // Small hand-bells rocking between two high notes, like a cradle, then
+        // a soft pluck under the last: quieter than every other story cue.
+        [3.0, 2.67, 3.0, 2.67].forEach((r, k) => this.bellStrike(t + k * 0.42, r, 0.07 * gain, pan, false, fx));
+        this.pluck(PENTA[8], t + 1.7, 0.1 * gain, pan, fx);
+        break;
     }
   }
 

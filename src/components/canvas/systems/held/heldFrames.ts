@@ -8,16 +8,16 @@
  *   5 mug      6 quill             7 keys          8 hoe         9 plate
  *   10 basket  11 fishing rod      12 watering can 13 lute       14 book
  *   15 tea cup 16 shopping bag     17 gruel bowl   18 frying pan 19 protest sign
- *   20 megaphone
+ *   20 megaphone     21 baby bundle
  */
 export const HELD_URL = '/sprites/fx/held.png';
 export const HELD_FRAME_SIZE = 16;
-export const HELD_FRAME_COUNT = 21;
+export const HELD_FRAME_COUNT = 22;
 
 export type HeldItemId =
   | 'hammer' | 'rolling_pin' | 'clipboard' | 'ledger' | 'mug' | 'quill' | 'keys' | 'hoe'
   | 'plate' | 'basket' | 'rod' | 'watering_can' | 'lute' | 'book'
-  | 'cup' | 'bag' | 'bowl' | 'pan' | 'sign' | 'megaphone';
+  | 'cup' | 'bag' | 'bowl' | 'pan' | 'sign' | 'megaphone' | 'baby';
 
 /**
  * How an item moves in the hand:
@@ -72,5 +72,7 @@ export const HELD_ITEMS: Record<HeldItemId, HeldItemDef> = {
   sign:         { frame: 19, altFrame: null, grip: { x: 8,  y: 12 }, motion: 'bob',   baseRot: 0.05, amp: 0.07, rate: 3, visibleFromBehind: true },
   // The loudhailer rests low and is lifted (negative amp = bell up) to the mouth every few seconds.
   megaphone:    { frame: 20, altFrame: null, grip: { x: 5,  y: 11 }, motion: 'sip',   baseRot: -0.2, amp: -0.45, rate: 6, visibleFromBehind: true },
+  // Rocked gently in the arms; held at the chest, so hidden from behind like a plate.
+  baby:         { frame: 21, altFrame: null, grip: { x: 8,  y: 10 }, motion: 'bob',   baseRot: -0.1, amp: 0.1, rate: 1.6, visibleFromBehind: false },
 };
 // The hammer's raised variant is frame 1 (see `altFrame` above).

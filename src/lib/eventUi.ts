@@ -18,6 +18,7 @@ export const EVENT_UI: Record<WorldEventType, { icon: string; blurb: string }> =
   traveling_merchant: { icon: '🧳', blurb: 'Rare wares, slightly cheaper prices.' },
   town_meeting: { icon: '📣', blurb: 'The town gathers to talk.' },
   wedding: { icon: '💒', blurb: 'A celebration, and romance in the air.' },
+  christening: { icon: '👶', blurb: 'The town welcomes its newest little one.' },
   fire_outbreak: { icon: '🔥', blurb: 'Neighbours rush to help.' },
   mysterious_stranger: { icon: '🕵️', blurb: 'Gossip travels twice as fast.' },
   competition: { icon: '🏆', blurb: 'A friendly contest lifts spirits.' },

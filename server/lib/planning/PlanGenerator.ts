@@ -14,6 +14,8 @@ import { simEvents } from '../simEvents';
 import { getAgentHobbies } from '../hobbyEngine';
 import { getReputation, getReputationLabel } from '../reputationEngine';
 import { getMoodMomentum } from '../moodMomentum';
+import { familyPlanLine } from '../familyState';
+import { gameMinutesNow } from '../worldClock';
 import { describeEvent } from '../memory/descriptionTemplates';
 import {
   reportPlanningBug,
@@ -472,6 +474,7 @@ export class PlanGenerator {
       hobbies: getAgentHobbies(agentId),
       reputationLabel: getReputationLabel(getReputation(agentId)),
       moodMomentum: getMoodMomentum(agentId),
+      family: familyPlanLine(agentId, gameMinutesNow()),
     });
   }
 

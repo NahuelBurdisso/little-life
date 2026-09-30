@@ -6,6 +6,41 @@ import { z } from 'zod';
 import { emitter } from '../engine/emitter';
 import { getReputation, getReputationLabel } from '../lib/reputationEngine';
 import { getAgentHobbies } from '../lib/hobbyEngine';
+import { spouseOf } from '../lib/marriage';
+import {
+  MINUTES_PER_DAY, PREGNANCY_MINUTES, babyCarriers, childAgeDays, childStage, childrenOf, pregnancyInvolving,
+} from '../lib/familyState';
+import { gameMinutesNow } from '../lib/worldClock';
+
+/**
+ * The family block of the agent panel ("Family: married to Tom · daughter Ana
+ * (2 days)"). The player is the town's god, so a pregnancy shows even while it
+ * is still a secret — flagged, like the secrets list flags who knows what. The
+ * true father of a child shows only once the town has learned it.
+ */
+function familyOf(agentId: number, nowMinute: number) {
+  const spouseId = spouseOf(agentId);
+  const spouse = spouseId != null
+    ? db.select({ id: agents.id, name: agents.name }).from(agents).where(eq(agents.id, spouseId)).get() ?? null
+    : null;
+  const kids = childrenOf(agentId).map((c) => {
+    const ageDays = childAgeDays(c.birth_game_minute, nowMinute);
+    return {
+      id: c.id,
+      name: c.name,
+      sex: c.sex,
+      ageDays,
+      stage: childStage(ageDays),
+      /** Another man's, and the town knows it (lib/family.ts paternity). */
+      rumouredFatherId: c.paternity_revealed ? c.true_father_id : null,
+    };
+  });
+  const p = pregnancyInvolving(agentId);
+  const expecting = p && (p.motherId === agentId || p.spouseTold)
+    ? { secret: !p.announced, dueInDays: Math.max(0, Math.ceil((p.conceivedAt + PREGNANCY_MINUTES - nowMinute) / MINUTES_PER_DAY)) }
+    : null;
+  return { spouse, children: kids, expecting };
+}
 
 export const agentsRouter = router({
   getActive: publicProcedure.query(() => {
@@ -34,6 +69,8 @@ export const agentsRouter = router({
       .all();
 
     const needsMap = new Map(allNeeds.map(n => [n.agent_id, n]));
+    // Who has a baby in their arms (the canvas's held bundle, lib/familyState.ts).
+    const carriers = babyCarriers(gameMinutesNow());
     const statesMap = new Map<number, typeof allStates>();
     for (const s of allStates) {
       const arr = statesMap.get(s.agent_id) ?? [];
@@ -50,6 +87,7 @@ export const agentsRouter = router({
         activeStates: statesMap.get(agent.id) ?? [],
         reputation: { score: rep, label: getReputationLabel(rep) },
         hobbies: getAgentHobbies(agent.id),
+        carries_baby: carriers.has(agent.id),
       };
     });
   }),
@@ -152,6 +190,7 @@ export const agentsRouter = router({
         economy: agentEcon ?? null,
         reputation: { score: rep, label: getReputationLabel(rep) },
         hobbies: getAgentHobbies(input.agentId),
+        family: familyOf(input.agentId, gameMinutesNow()),
         states,
         relationships: relationshipRows,
         memories: recentMemories,

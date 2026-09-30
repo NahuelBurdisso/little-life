@@ -19,7 +19,8 @@ export type DramaBeat =
   | 'arrest' | 'death' | 'birthday'
   | 'theft'                                     // tagged so it is not mistaken for a beat; no canvas FX
   | 'arrival' | 'departure'                     // the town's population changing (lib/populationFlow.ts); no canvas FX yet
-  | 'new_job' | 'help_wanted' | 'inheritance';  // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
+  | 'new_job' | 'help_wanted' | 'inheritance'   // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
+  | 'birth' | 'paternity';                      // family life (lib/family.ts): a baby born, a father learning it isn't his
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday';
 
@@ -48,6 +49,13 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   new_job: null,
   help_wanted: null,
   inheritance: null,
+  // A birth is the town's happiest scene after a wedding: the birthday's
+  // confetti over the new mother (the row's initiator) says it without a new
+  // effect. The sound is its own (a soft lullaby chime, soundscape.ts).
+  birth: 'birthday',
+  // The believed father's heart, not a fight: the confrontation with the lover
+  // is its own conversation later, with its own beat if it turns to blows.
+  paternity: 'heartbreak',
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

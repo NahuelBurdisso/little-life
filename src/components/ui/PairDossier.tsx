@@ -528,6 +528,16 @@ export function PairDossier({ pair, onClose, onFocusAgent }: PairDossierProps) {
                       {rel.interactionCount} interaction{rel.interactionCount === 1 ? "" : "s"} · familiarity {Math.round(rel.familiarity)}
                       {rel.tags.length > 0 && <> · {rel.tags.join(", ")}</>}
                     </p>
+                    {/* Children they share (server/lib/family.ts). */}
+                    {dossier.children.length > 0 && (
+                      <p className="text-[11px] text-ui-dim mt-1">
+                        👶 {dossier.children.map((c) => {
+                          const kin = c.sex === "female" ? "daughter" : "son";
+                          const age = c.ageDays <= 0 ? "newborn" : `${c.ageDays} day${c.ageDays === 1 ? "" : "s"}`;
+                          return `${c.rumoured ? "rumoured " : ""}${kin} ${c.name} (${age})`;
+                        }).join(" · ")}
+                      </p>
+                    )}
                   </>
                 ) : (
                   <EmptyState

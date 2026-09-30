@@ -213,3 +213,17 @@ describe('heldPose', () => {
     expect(a.dy).toBe(b.dy);
   });
 });
+
+describe('heldItemFor — a baby in arms', () => {
+  it('carries the baby at home and on a stroll', () => {
+    expect(heldItemFor(ctx({ baby: true, locationType: 'home' }))).toBe('baby');
+    expect(heldItemFor(ctx({ baby: true, zoneActivity: 'stroll' }))).toBe('baby');
+    expect(heldItemFor(ctx({ actionType: 'comfort', baby: true, locationType: 'home' }))).toBe('baby');
+  });
+
+  it('leaves the baby minded elsewhere, and never without one', () => {
+    expect(heldItemFor(ctx({ baby: true, locationType: 'tavern' }))).toBeNull();
+    expect(heldItemFor(ctx({ actionType: 'working', baby: true, atWorkplace: true, workplaceType: 'bakery' }))).toBe('rolling_pin');
+    expect(heldItemFor(ctx({ locationType: 'home' }))).toBeNull();
+  });
+});

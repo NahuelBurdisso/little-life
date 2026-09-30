@@ -47,6 +47,8 @@ import { foodCount, isFood } from '../../lib/economyEngine';
 import { shopliftFrom } from '../../lib/economyTransfers';
 import { TRADE_RULES, ITEM_REGISTRY } from '../../data/economyData';
 import { parseWeddingTrigger } from '../../lib/marriage';
+import { newbornOf, parentsOfChild, parseChristeningTrigger } from '../../lib/familyState';
+import { congratsTopic } from '../../ai/prompts';
 import { chooseTier, conversationBacklog, hasDramaticState } from '../../lib/conversationTier';
 import { isAnyWatched } from '../../lib/spotlight';
 import { getLLMBacklog } from '../../ai/llmSemaphore';
@@ -1657,6 +1659,23 @@ export function tick(world: WorldRow): void {
       }
     }
 
+    // Phase 1a' (family): their own child's christening, same score and for the
+    // same reason as their wedding — the town gathering to welcome a baby whose
+    // parents stayed at work would be welcoming nobody (lib/family.ts).
+    if (!decision) {
+      const ownChristening = activeWorldEvents.find((e) => {
+        if (e.type !== 'christening') return false;
+        const childId = parseChristeningTrigger(e.triggered_by);
+        return childId !== null && parentsOfChild(childId).includes(agent.id);
+      });
+      const venue = ownChristening
+        ? (ownChristening.location_id ?? nearestLocation(agent.position, allLocations, 'town_square')?.id)
+        : undefined;
+      if (venue != null) {
+        decision = { action: 'socializing', score: 6500, targetLocationId: venue };
+      }
+    }
+
     // Phase 1a'': a pending proposal (score 6400 — above the day plan, below their
     // own wedding). The proposer used to wait for the partner to wander into range;
     // now they go and find them when both are free to be found (proposalSeekDecision
@@ -1702,8 +1721,10 @@ export function tick(world: WorldRow): void {
       // Festival/wedding/competition: head to town square to join the fun.
       // A couple's wedding names its venue; go there rather than to whichever
       // square is nearest (a town can have more than one open area).
-      if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')) {
-        const weddingVenue = activeWorldEvents.find((e) => e.type === 'wedding' && e.location_id != null)?.location_id;
+      // A christening (lib/family.ts) gathers the town the same way.
+      if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')
+        || activeEventTypes.has('christening')) {
+        const weddingVenue = activeWorldEvents.find((e) => (e.type === 'wedding' || e.type === 'christening') && e.location_id != null)?.location_id;
         const venue = weddingVenue != null
           ? allLocations.find((l) => l.id === weddingVenue)
           : nearestLocation(agent.position, allLocations, 'town_square');
@@ -2121,6 +2142,13 @@ export function tick(world: WorldRow): void {
       // Topic selection: use plan-provided topic if available, else personality-driven
       const agentPersonality = agent.personality as PersonalityProfile | null;
       let topic: string | null = decision.topic ?? null;
+      // A friend meeting new parents congratulates them (lib/family.ts): the
+      // baby is the news for a couple of days. Half the time, so the friends
+      // still have other things to say to each other in that window.
+      if (!topic && friendship > 20 && Math.random() < 0.5) {
+        const baby = newbornOf(targetId, gameMinutes(world.time));
+        if (baby) topic = congratsTopic(baby.name);
+      }
       if (!topic && agentPersonality) {
         // Generate drama topic from current states
         const agentStatesForTopic = getAgentStates(agentId);

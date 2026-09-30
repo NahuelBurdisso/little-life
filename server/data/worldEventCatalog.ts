@@ -171,6 +171,17 @@ export const WORLD_EVENTS = {
     // condition stay documented next to the other celebrations.
     random: { weight: 0, condition: (phase) => phase === 'afternoon' || phase === 'evening' },
   },
+  christening: {
+    name: 'Christening',
+    description: 'The town gathers on the square to welcome a newborn.',
+    durationHours: 3,
+    effects: { social_boost: 15, mood_boost: 4 },
+    // Weight 0, like the wedding: only ever started by lib/family.ts for a real
+    // baby, a game day after the birth, with `triggered_by: 'christening:<childId>'`
+    // so the decisions phase can send the parents to it. The town has no
+    // chapel, so it is held where the weddings are.
+    random: { weight: 0, condition: (phase) => phase === 'morning' || phase === 'afternoon' },
+  },
   fire_outbreak: {
     name: 'Building Fire',
     description: 'A fire has broken out! Townspeople rush to help contain the blaze.',

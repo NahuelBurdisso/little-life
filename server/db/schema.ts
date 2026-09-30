@@ -709,3 +709,38 @@ export const simSnapshots = sqliteTable('sim_snapshots', {
   /** Real ms. */
   saved_at: integer('saved_at').notNull(),
 });
+
+// ─── 26. children ─────────────────────────────────────────────────────────────
+// Babies born to married residents (server/lib/family.ts). A child is a
+// lightweight household member, NOT an agent: no needs, no plan, no LLM, no
+// sprite of their own. They exist so parents can talk and plan around them,
+// the feed and the Crier can celebrate them, and an estate has someone to be
+// held in trust for (server/lib/heirs.ts). Created at runtime by CREATE TABLE
+// IF NOT EXISTS in server/db/index.ts; the rows belong to one world
+// (db/worldTables.ts ALL_TABLES).
+
+export const children = sqliteTable('children', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** First name only ("Ada"); the family is named by the parents' rows. */
+  name: text('name').notNull(),
+  /** 'female' | 'male', the same vocabulary as `agents.gender`. */
+  sex: text('sex').notNull(),
+  /** Game minute (`gameMinutes`) of the birth: the child's age is read off the clock. */
+  birth_game_minute: integer('birth_game_minute').notNull(),
+  mother_id: integer('mother_id').notNull().references(() => agents.id),
+  /** The father as the town (and he) believes. */
+  father_id: integer('father_id').references(() => agents.id),
+  /** Set only when the real father is someone else (an affair): the paternity drama. */
+  true_father_id: integer('true_father_id').references(() => agents.id),
+  /** The house the child lives in; null once they left town with their parent. */
+  home: integer('home').references(() => locations.id),
+  /** Always true: no child ever dies in Little Life, whatever the death rule says. */
+  alive: integer('alive', { mode: 'boolean' }).notNull().default(true),
+  /** The `paternity` secret about this child (shared_knowledge id), if there is one. */
+  paternity_fact_id: integer('paternity_fact_id'),
+  /** The believed father (or the whole town) has learned the truth: the drama has played. */
+  paternity_revealed: integer('paternity_revealed', { mode: 'boolean' }).notNull().default(false),
+}, (table) => [
+  index('idx_children_mother').on(table.mother_id),
+  index('idx_children_father').on(table.father_id),
+]);

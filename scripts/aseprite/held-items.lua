@@ -12,7 +12,7 @@
 --   8 hoe (8,12)               9 plate (8,10)            10 basket (8,3)       11 fishing rod (4,13)
 --  12 watering can (2,8)      13 lute (10,6)             14 book (8,12)
 --  15 tea cup (7,11)          16 shopping bag (8,3)      17 gruel bowl (8,10)  18 frying pan (3,9)
---  19 protest sign (8,12)     20 megaphone (5,11)
+--  19 protest sign (8,12)     20 megaphone (5,11)       21 baby bundle (8,10)
 --
 -- Every item is a chunky silhouette meant to read at ~10 px on screen: flat 2-3 tone fills lit from
 -- the upper left, a 1px #1a1510 outline generated from the fill (like the furniture), no drop
@@ -348,6 +348,21 @@ D.megaphone = function()
   vline(14, 3, 11, P.GOLD)                                        -- flared rim
 end
 
+-- A swaddled baby held in the crook of the arm (a parent at home or on a stroll, server/lib/family.ts):
+-- a linen bundle with a pale blanket fold, the little face peeking out of the upper end.
+D.baby = function()
+  ellipse(8, 9.5, 5.5, 3.4, function(dx, dy)
+    if dy > 0.45 then return P.TAN end                             -- shadowed underside
+    return dy < -0.4 and P.WHITE_LT or P.LINEN
+  end)
+  line(5, 11, 11, 8, P.CREAM)                                      -- the blanket's fold
+  ellipse(11.5, 7.5, 2.2, 2.0, function(dx, dy)                    -- the face
+    return (dx < 0 and dy < 0) and 0xf0c8a0 or 0xe0b088
+  end)
+  px(12, 5, P.CREAM); px(13, 6, P.CREAM)                           -- bonnet edge
+  px(11, 8, P.RED_MD)                                              -- a tiny mouth
+end
+
 -- ── Frames ─────────────────────────────────────────────────────────────────────────────────
 
 -- Order is the atlas layout; `raised` marks the hammer's second frame.
@@ -355,7 +370,7 @@ local ORDER = {
   { "hammer" }, { "hammer", raised = true }, { "rolling_pin" }, { "clipboard" }, { "ledger" },
   { "mug" }, { "quill" }, { "keys" }, { "hoe" }, { "plate" }, { "basket" }, { "rod" },
   { "watering_can" }, { "lute" }, { "book" },
-  { "cup" }, { "bag" }, { "bowl" }, { "pan" }, { "sign" }, { "megaphone" },
+  { "cup" }, { "bag" }, { "bowl" }, { "pan" }, { "sign" }, { "megaphone" }, { "baby" },
 }
 
 local cells = {}

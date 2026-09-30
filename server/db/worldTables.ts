@@ -24,6 +24,7 @@ import {
   interactionCooldowns,
   gazetteIssues,
   simSnapshots,
+  children,
 } from './schema';
 
 /**
@@ -39,6 +40,8 @@ import {
  * reseed script (`db/seed.ts`) wipes with this list too.
  */
 export const ALL_TABLES = [
+  // References agents and locations: gone before either.
+  children,
   simSnapshots,
   gazetteIssues,
   interactionCooldowns,

@@ -26,7 +26,7 @@ const inside = (p: DecorPlacement, r: { x: number; y: number; width: number; hei
   p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
 
 const ALL_TYPES = [
-  'festival', 'market_day', 'traveling_merchant', 'wedding', 'funeral', 'harvest', 'competition',
+  'festival', 'market_day', 'traveling_merchant', 'wedding', 'funeral', 'christening', 'harvest', 'competition',
   'town_meeting', 'scandal', 'blessing', 'starry_night', 'full_moon', 'heatwave', 'sickness', 'fire_outbreak',
 ];
 /** Events anchored to something other than an open area, each with its own describe below. */
@@ -135,6 +135,12 @@ describe('planEvent', () => {
     expect(f).toContain(DECOR_FRAMES.candle);
     expect(f).toContain(DECOR_FRAMES.buntingDark);
     expect(f).not.toContain(DECOR_FRAMES.bunting);
+    // A christening: white bunting and lanterns, no arch, no wreath.
+    const c = planEvent(ev(1, 'christening'), [square], MAP).map(p => p.frame);
+    expect(c).toContain(DECOR_FRAMES.buntingWhite);
+    expect(c).toContain(DECOR_FRAMES.lantern);
+    expect(c).not.toContain(DECOR_FRAMES.arch);
+    expect(c).not.toContain(DECOR_FRAMES.wreath);
   });
 
   it('falls back to the market square, then to the map centre', () => {

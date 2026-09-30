@@ -26,6 +26,8 @@ export interface AgentData {
   gender?: string;
   /** Hobbies with level > 0. Kept in server memory, so levels reset on a server restart. */
   hobbies?: Array<{ hobby: string; level: number }>;
+  /** Holds a baby at home or on a stroll (server/lib/familyState.ts `babyCarriers`). */
+  carries_baby?: boolean;
 }
 
 /** An agent whose sprite was dropped by the last `update` (died, removed, world reset). */

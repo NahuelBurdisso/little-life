@@ -17,6 +17,11 @@ export interface HeldContext {
   workplaceType: string | null;
   /** Just finished a shopping trip and is still carrying the goods home. */
   bag?: boolean;
+  /**
+   * Carries a baby (server `agents.getActive` `carries_baby`: the mother of a
+   * baby-stage child, or its guardian — one carrier per baby).
+   */
+  baby?: boolean;
 }
 
 const WORK_TOOL: Record<string, HeldItemId> = {
@@ -69,6 +74,9 @@ export function heldItemFor(c: HeldContext): HeldItemId | null {
       return c.locationType && DRINKING_PLACES.has(c.locationType) ? 'mug' : null;
     case 'idle':
     case 'comfort': {
+      // The baby comes along at home and on a stroll; anywhere else (the
+      // counter, the tavern) the child is being minded and the hands are free.
+      if (c.baby && (c.locationType === 'home' || c.zoneActivity === 'stroll')) return 'baby';
       const tool = c.zoneActivity ? ZONE_TOOL[c.zoneActivity] ?? null : c.actionType === 'comfort' ? 'cup' : null;
       return tool ?? (c.bag ? 'bag' : null);
     }
