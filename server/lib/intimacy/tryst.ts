@@ -16,7 +16,7 @@ import { getAgentStates } from '../states';
 import { distance } from '../utils';
 import { isAdultContent } from '../worldRules';
 import { gameMinutesNow } from '../worldClock';
-import { isIntimacyEligible } from './eligibility';
+import { isAdultAge, isIntimacyEligible } from './eligibility';
 import {
   clearStay, forEachPairIntimacy, forEachStay, getPairIntimacy, getStay, setStay, updatePairIntimacy, updateStay,
 } from './state';
@@ -34,7 +34,8 @@ import { SNEAK_RANGE_PX, onlookersNear, someoneNear, withHiddenLoveBump } from '
 //
 //   rendezvous.ts agrees an evening ({pendingRendezvous.agreed})
 //        │  pickVenue: the asker's home if nobody else lives or is at it, else
-//        │  the other's, else a barn or grove after dark and only in fair weather
+//        │  the other's, else a barn (any weather) or a grove (fair weather) after
+//        │  dark, else, late at night, a home where every other resident is asleep
 //        ▼
 //   both walk to the venue (decisions.ts, tier 6350: `trystStepFor` 'meet')
 //        │  the pass sees them both there ─▶ beginTryst: both start
@@ -86,8 +87,32 @@ export const DARK_FROM_HOUR = 20;
 export const DARK_UNTIL_HOUR = 6;
 /** Weather nobody spends an evening in a field in (`world_state.weather`). */
 const FOUL_WEATHER: readonly string[] = ['rainy', 'stormy', 'snowy'];
-/** Outdoor venues: the barn (a `farm`) and the groves (a `park`), see INTERIOR_ZONES. */
+/** Open venues: the barn (a `farm`) and the groves (a `park`), see INTERIOR_ZONES. */
 const OUTDOOR_VENUE_TYPES: readonly string[] = ['farm', 'park'];
+/**
+ * ...of which only the groves are truly outdoors. The barn is a building with a roof: foul weather closes
+ * the groves and nothing else (it used to close the barn too, and evenings lapsed on every rainy night).
+ */
+const WEATHERPROOF_VENUE_TYPES: readonly string[] = ['farm'];
+
+/**
+ * A home whose other residents are all asleep can host from this hour to `DARK_UNTIL_HOUR` (the household
+ * is in bed; `homeIsAsleep` still requires that they really are).
+ */
+export const SLEEPING_HOUSE_FROM_HOUR = 21;
+/**
+ * The risk model of a house with sleepers: sneaking in beside somebody's sleeping family is riskier than a quiet
+ * house. While the evening lasts (60-90 game min = 6-9 passes of 10 min) every pass, each sleeping ADULT of the
+ * house stirs with this chance (4%, so about a quarter of such evenings are walked in on with one sleeper) and is
+ * then simply somebody awake at the house: the evening ends, they are the witness (`interrupt`, scene 'found').
+ * Children are never venue-mates (`homeIsAsleep`) and never roll.
+ */
+export const SLEEPER_WAKES_PER_PASS = 0.04;
+/**
+ * ...and once, as the guest slips out at dawn, each sleeping adult of the house stirs with this chance (25%) and
+ * sees them go (scene 'dawn'); awake people already see as before. A quiet house has no sleepers, so no risk.
+ */
+export const DAWN_HOUSEMATE_STIRS = 0.25;
 
 // ─── Pure rules (exported for tests) ─────────────────────────────────────────
 
@@ -135,36 +160,75 @@ function homeIsQuiet(homeId: number, pair: readonly number[]): boolean {
     .some((a) => !pair.includes(a.id) && (a.home === homeId || a.current_location === homeId));
 }
 
+/** Whether the household is in bed late enough for `homeIsAsleep` to count (from 21 h to before 6 h). */
+export function isSleepingHouseHour(hour: number): boolean {
+  return hour >= SLEEPING_HOUSE_FROM_HOUR || hour < DARK_UNTIL_HOUR;
+}
+
+/**
+ * A home with somebody else in it that is still private enough: everyone who lives there or is inside
+ * (besides the pair) is an adult resident who is asleep in it right now. False for an empty house (that is
+ * `homeIsQuiet`'s), for anyone awake, out, or visiting (a sleeping visitor is somebody else's evening or a
+ * sleepover), and ALWAYS false while a minor lives there or is inside, asleep or awake: nobody is private in
+ * front of a child, sleeping or not (the same rule as `someoneNear`, which counts every age).
+ */
+function homeIsAsleep(homeId: number, pair: readonly number[]): boolean {
+  const others = db.select({
+    id: agents.id, home: agents.home, current_location: agents.current_location, current_action: agents.current_action, age: agents.age,
+  }).from(agents).where(eq(agents.is_active, true)).all()
+    .filter((a) => !pair.includes(a.id) && (a.home === homeId || a.current_location === homeId));
+  if (others.length === 0) return false;
+  return others.every((a) => isAdultAge(a.age)
+    && a.home === homeId && a.current_location === homeId
+    && (a.current_action as { type?: string } | null)?.type === 'sleeping');
+}
+
 /**
  * Where two people can be alone, best first:
  *  1. the asker's own home, if nobody else lives or is in it;
  *  2. the other's home, the same test;
- *  3. outdoors, a barn or grove (whichever is nearest them), only in fair
- *     weather and only in the dark. Before dark that is `'wait'`: the evening
- *     is not lost (the agreed pending lapses on its own after six hours);
- *  4. otherwise `null`: nowhere. The caller drops the evening and the pair
+ *  3. a barn or grove (whichever is nearest them), only in the dark. Foul weather
+ *     closes the groves but not the barn (it has a roof). Before dark that is `'wait'`:
+ *     the evening is not lost (the agreed pending lapses on its own after six hours);
+ *  4. late at night (`isSleepingHouseHour`), a home where every other resident is
+ *     asleep in it, the asker's first (see `homeIsAsleep`, and `SLEEPER_WAKES_PER_PASS`
+ *     for what it risks; never with a child in the house);
+ *  5. otherwise `null`: nowhere. The caller drops the evening and the pair
  *     tries again tomorrow.
  * `initiator` first is what makes the asker's house the first choice.
  */
 export function pickVenue(initiator: AgentRow, other: AgentRow, ctx: VenueCtx): VenueChoice | 'wait' | null {
   const pair = [initiator.id, other.id];
-  for (const host of [initiator, other]) {
-    const home = locationRow(host.home);
-    if (home?.type === 'home' && homeIsQuiet(home.id, pair)) return { locationId: home.id, outdoors: false };
+  const homes = [initiator, other].map((host) => locationRow(host.home)).filter((h): h is LocationRow => h?.type === 'home');
+  for (const home of homes) if (homeIsQuiet(home.id, pair)) return { locationId: home.id, outdoors: false };
+
+  const candidates = db.select().from(locations).all()
+    .filter((l) => OUTDOOR_VENUE_TYPES.includes(l.type)
+      && (!ctx.foulWeather || WEATHERPROOF_VENUE_TYPES.includes(l.type))
+      && findAvailableZone(l.type, 'tryst', l.id) != null);
+  if (candidates.length > 0 && isDarkHour(ctx.hour)) {
+    const mid = {
+      x: ((initiator.position as { x: number }).x + (other.position as { x: number }).x) / 2,
+      y: ((initiator.position as { y: number }).y + (other.position as { y: number }).y) / 2,
+    };
+    candidates.sort((p, q) => distance(mid, p.entry_point) - distance(mid, q.entry_point) || p.id - q.id);
+    return { locationId: candidates[0].id, outdoors: true };
   }
 
-  if (ctx.foulWeather) return null;
-  const candidates = db.select().from(locations).all()
-    .filter((l) => OUTDOOR_VENUE_TYPES.includes(l.type) && findAvailableZone(l.type, 'tryst', l.id) != null);
-  if (candidates.length === 0) return null;
-  if (!isDarkHour(ctx.hour)) return 'wait';
+  if (isSleepingHouseHour(ctx.hour)) {
+    for (const home of homes) if (homeIsAsleep(home.id, pair)) return { locationId: home.id, outdoors: false };
+  }
+  return candidates.length > 0 ? 'wait' : null;
+}
 
-  const mid = {
-    x: ((initiator.position as { x: number }).x + (other.position as { x: number }).x) / 2,
-    y: ((initiator.position as { y: number }).y + (other.position as { y: number }).y) / 2,
-  };
-  candidates.sort((p, q) => distance(mid, p.entry_point) - distance(mid, q.entry_point) || p.id - q.id);
-  return { locationId: candidates[0].id, outdoors: true };
+/** The sleeping ADULT residents of a home other than `exclude` (who could stir; minors never do). */
+function sleepersOf(homeId: number, exclude: readonly number[]): number[] {
+  return db.select({
+    id: agents.id, home: agents.home, current_location: agents.current_location, current_action: agents.current_action, age: agents.age,
+  }).from(agents).where(eq(agents.is_active, true)).all()
+    .filter((a) => !exclude.includes(a.id) && a.home === homeId && a.current_location === homeId
+      && (a.current_action as { type?: string } | null)?.type === 'sleeping' && isAdultAge(a.age))
+    .map((a) => a.id);
 }
 
 // ─── The night after: where a guest sleeps ───────────────────────────────────
@@ -477,7 +541,7 @@ function interrupt(a: AgentRow, b: AgentRow, venue: LocationRow, witnessIds: num
  * `sleepTargetFor` is their own home again, anyone awake at the house sees them
  * go, and `trystPass` watches the road for the first half hour.
  */
-export function startSneakHome(guestId: number, now: number): void {
+export function startSneakHome(guestId: number, now: number, rng: () => number = Math.random): void {
   const stay = getStay(guestId);
   if (!stay || stay.leftAt != null) return;
   updateStay(guestId, (s) => { s.leftAt = now; });
@@ -486,15 +550,20 @@ export function startSneakHome(guestId: number, now: number): void {
   const guest = rows.find((r) => r.id === guestId);
   const host = rows.find((r) => r.id === stay.hostId);
   if (!guest || !host) return;
-  witnessLeaving(guest, host);
+  // Once, as they leave: a sleeping adult of the house may stir (DAWN_HOUSEMATE_STIRS) and see them go.
+  const stirred = guest.current_location === stay.locationId && locationRow(stay.locationId)?.type === 'home'
+    ? sleepersOf(stay.locationId, [guest.id, host.id]).filter(() => rng() < DAWN_HOUSEMATE_STIRS)
+    : [];
+  witnessLeaving(guest, host, stirred);
 }
 
-/** Report whoever, awake at `spot`, has not yet seen the guest leave. */
-function witnessLeaving(guest: AgentRow, host: AgentRow): void {
+/** Report whoever, awake at `spot`, has not yet seen the guest leave (plus `stirred`: sleepers who woke as they left). */
+function witnessLeaving(guest: AgentRow, host: AgentRow, stirred: readonly number[] = []): void {
   const stay = getStay(guest.id);
   if (!stay) return;
   const spot = { current_location: guest.current_location, position: guest.position };
-  const fresh = onlookersNear(spot, [guest.id, host.id], SNEAK_RANGE_PX).filter((id) => !stay.seenBy.includes(id));
+  const fresh = [...new Set([...onlookersNear(spot, [guest.id, host.id], SNEAK_RANGE_PX), ...stirred])]
+    .filter((id) => !stay.seenBy.includes(id));
   if (fresh.length === 0) return;
   updateStay(guest.id, (s) => { s.seenBy.push(...fresh); });
   reportCaught(guest, host, fresh, 'dawn');
@@ -615,6 +684,11 @@ export function trystPass(time: ClockTime, rng: () => number = Math.random): voi
     // the evening (`someoneNear`), but only the adults among them are witnesses (`onlookersNear`):
     // a child who walked in is never named in a feed row, never a knower of the fact and never
     // the subject of an `intimacy:caught` event, so a child alone ends it with nothing said.
+    // A house with sleepers is a risk (SLEEPER_WAKES_PER_PASS): whoever stirs is up, and then the check below sees them.
+    if (venue.type === 'home' && isExposed(a, b, venue.id)) {
+      const stirred = sleepersOf(venue.id, [a.id, b.id]).filter(() => rng() < SLEEPER_WAKES_PER_PASS);
+      if (stirred.length > 0) endActions(stirred, now);
+    }
     if (venue.type === 'home' && isExposed(a, b, venue.id)
       && someoneNear({ id: a.id, current_location: venue.id, position: a.position }, b)) {
       const witnesses = onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]);

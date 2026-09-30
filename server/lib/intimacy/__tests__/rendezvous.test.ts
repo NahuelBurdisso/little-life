@@ -7,7 +7,7 @@ import {
 import {
   ACCEPT_MIN_WILLINGNESS, INVITE_MIN_WILLINGNESS, RENDEZVOUS_AGREED_MINUTES, RENDEZVOUS_EXPIRED_RETRY_MINUTES,
   RENDEZVOUS_MIN_LONGING, RENDEZVOUS_MIN_LONGING_COUPLE, RENDEZVOUS_PENDING_MINUTES, RENDEZVOUS_QUEUE_PRIORITY,
-  RENDEZVOUS_SEEK_SCORE, isRendezvousHour, longingThreshold, pendingRendezvousPartner, pickRendezvousInitiator,
+  RENDEZVOUS_SEEK_SCORE, isRendezvousHour, isRendezvousHourFor, worksEveningShift, longingThreshold, pendingRendezvousPartner, pickRendezvousInitiator,
   queuePendingRendezvousNow, rendezvousPass, willingness, type WillingnessSelf,
 } from '../rendezvous';
 import { clearIntimacy, ensureAgentIntimacy, getPairIntimacy, updatePairIntimacy } from '../state';
@@ -95,6 +95,25 @@ describe('the small rules', () => {
 
   it('invitations are made from 19 to 23 h', () => {
     expect([18, 19, 22, 23, 0].map(isRendezvousHour)).toEqual([false, true, true, false, false]);
+  });
+
+  // I4c: a partner on the evening shift (the bartender and the musician work until 23 h) used to
+  // make the 19-23 window close the moment they were free.
+  it('a partner on the evening shift moves the window to when they are off, up to 01:00', () => {
+    const at = (shiftEnd: number | null) => [18, 19, 20, 21, 22, 23, 0, 1, 2].map((h) => isRendezvousHourFor(h, shiftEnd));
+    expect(at(null)).toEqual([false, true, true, true, true, false, false, false, false]);
+    expect(at(23)).toEqual([false, false, false, false, false, true, true, false, false]);
+    expect(at(21)).toEqual([false, false, false, true, true, true, true, false, false]);
+    // A shift that ends before the evening starts moves nothing but the late edge (still 19 h to 01:00).
+    expect(at(17)).toEqual([false, true, true, true, true, true, true, false, false]);
+  });
+
+  it('what counts as an evening shift: a workplace and a workEnd of 21 h or later', () => {
+    expect(worksEveningShift({ workplace: 3, schedule: { workEnd: 23 } })).toBe(true);
+    expect(worksEveningShift({ workplace: 3, schedule: { workEnd: 21 } })).toBe(true);
+    expect(worksEveningShift({ workplace: 3, schedule: { workEnd: 20 } })).toBe(false);
+    expect(worksEveningShift({ workplace: null, schedule: { workEnd: 23 } })).toBe(false);
+    expect(worksEveningShift({ workplace: 3, schedule: null })).toBe(false);
   });
 
   it('queues at the proposal\'s protected priority and walks below a pending proposal', () => {
@@ -250,6 +269,31 @@ describe('the rendezvous pass', () => {
       const { a, b } = lovers();
       for (const hour of [12, 18, 23, 2]) pass(hour);
       expect(pending(a, b)).toBeUndefined();
+    });
+
+    it('an evening-shift partner: not while on shift, from the shift\'s end until 01:00, and not after', () => {
+      const evening = { workplace: squareId, schedule: { wakeTime: 10, sleepTime: 1, workStart: 17, workEnd: 23, lunchTime: 14, freeTimePreferences: [] } };
+      const { a, b } = lovers({ bOver: evening });
+      const reset = () => { clearIntimacy(); ensureAgentIntimacy(a).longing = 70; ensureAgentIntimacy(b).longing = 30; };
+      pass(21);
+      expect(pending(a, b)).toBeUndefined();
+      pass(23);
+      expect(pending(a, b)).toMatchObject({ initiatorId: a });
+      reset();
+      pass(0);
+      expect(pending(a, b)).toMatchObject({ initiatorId: a });
+      reset();
+      pass(1);
+      expect(pending(a, b)).toBeUndefined();
+    });
+
+    it('two ordinary workers keep the 19-23 window (nothing else moved)', () => {
+      const { a, b } = lovers();
+      pass(23);
+      pass(0);
+      expect(pending(a, b)).toBeUndefined();
+      pass(22);
+      expect(pending(a, b)).toMatchObject({ initiatorId: a });
     });
 
     it('needs the `kissed` tag', () => {

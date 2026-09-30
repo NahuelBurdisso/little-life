@@ -5,7 +5,7 @@ import {
   activityLog, agentStates, agents, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
 } from '../../../db/schema';
 import {
-  SNEAK_WATCH_MINUTES, STAY_MAX_MINUTES, STAY_SEND_HOME_GRACE_MINUTES, TRYST_MAX_MINUTES, TRYST_MIN_MINUTES, TRYST_RETRY_MARRIED_MINUTES,
+  DAWN_HOUSEMATE_STIRS, SLEEPER_WAKES_PER_PASS, SNEAK_WATCH_MINUTES, STAY_MAX_MINUTES, STAY_SEND_HOME_GRACE_MINUTES, TRYST_MAX_MINUTES, TRYST_MIN_MINUTES, TRYST_RETRY_MARRIED_MINUTES,
   TRYST_RETRY_MINUTES, VENUE_RETRY_MINUTES, beginTryst, isDarkHour, isFoulWeather, pickVenue, sleepTargetFor,
   startSneakHome, trystDuration, trystPass, trystStepFor,
 } from '../tryst';
@@ -241,10 +241,25 @@ describe('the tryst', () => {
         expect(choice).not.toMatchObject({ locationId: far });
       });
 
-      it('rain, snow or a storm: nowhere (the evening is dropped)', () => {
+      it('rain, snow or a storm: nobody goes to a grove (the evening is dropped)', () => {
         const { a, b } = bothBlocked();
-        insertLocation('Rainy Farm', 'farm', 500);
+        insertLocation('Rainy Grove', 'park', 500);
         expect(pickVenue(load(a), load(b), { hour: 21, foulWeather: true })).toBeNull();
+      });
+
+      // I4a: the barn is a building. Foul weather only ever blocked the groves, but the barn was blocked with them
+      // and half the evenings in the soak's traces lapsed on a rainy night.
+      it('rain, snow or a storm do not block the barn: it has a roof', () => {
+        const { a, b } = bothBlocked();
+        const barn = insertLocation('Rainy Farm', 'farm', 500);
+        expect(pickVenue(load(a), load(b), { hour: 21, foulWeather: true })).toEqual({ locationId: barn, outdoors: true });
+      });
+
+      it('in foul weather the barn wins even when a grove is nearer', () => {
+        const { a, b } = bothBlocked();
+        insertLocation('Wet Grove', 'park', 250);
+        const barn = insertLocation('Dry Farm', 'farm', 5000);
+        expect(pickVenue(load(a), load(b), { hour: 21, foulWeather: true })).toEqual({ locationId: barn, outdoors: true });
       });
 
       it('before dark it waits instead of failing', () => {
@@ -262,6 +277,78 @@ describe('the tryst', () => {
         db.update(locations).set({ type: 'shed' }).where(inArray(locations.id, stray.map((l) => l.id))).run();
         expect(pickVenue(load(a), load(b), fair)).toBeNull();
       });
+    });
+  });
+
+  // I4b: everybody lives with somebody, so a couple's only quiet house is one where everyone else is asleep.
+  describe('a home where everybody else is asleep', () => {
+    const asleep = { current_action: { type: 'sleeping' } };
+    /** Both homes taken; `aHome` by sleepers (added by the test), `bHome` by an awake resident who is out. */
+    function bothHomesShared() {
+      const l = lovers();
+      insertAgent(`Away ${madeAgents.length}`, l.bHome, { current_location: null, gender: 'male' });
+      return l;
+    }
+
+    it('is a venue late in the evening when every other resident is asleep in it', () => {
+      const { a, b, aHome } = bothHomesShared();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toEqual({ locationId: aHome, outdoors: false });
+      // ... in the small hours as well (an evening that ran past midnight).
+      expect(pickVenue(load(a), load(b), { hour: 0, foulWeather: true })).toEqual({ locationId: aHome, outdoors: false });
+    });
+
+    it('not before the household is in bed', () => {
+      const { a, b, aHome } = bothHomesShared();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 19, foulWeather: false })).toBeNull();
+    });
+
+    it('a resident who is awake (or out, on the evening shift) keeps it closed', () => {
+      const { a, b, aHome } = bothHomesShared();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      insertAgent(`Reader ${madeAgents.length}`, aHome, { current_action: { type: 'idle' }, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toBeNull();
+    });
+
+    it('a resident who is asleep somewhere else does not count as home', () => {
+      const { a, b, aHome } = bothHomesShared();
+      const elsewhere = insertLocation('Inn', 'home', 900);
+      insertAgent(`Traveller ${madeAgents.length}`, aHome, { ...asleep, current_location: elsewhere, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toBeNull();
+    });
+
+    it('never while a child is home, asleep or not (nobody is private in front of a child)', () => {
+      const { a, b, aHome } = bothHomesShared();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      const child = insertAgent(`Sleeping Child ${madeAgents.length}`, aHome, { ...asleep, age: 6, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toBeNull();
+      // Awake, or a child living there who is away: the same.
+      db.update(agents).set({ current_action: { type: 'idle' } }).where(eq(agents.id, child)).run();
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toBeNull();
+      db.update(agents).set({ current_location: null }).where(eq(agents.id, child)).run();
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toBeNull();
+    });
+
+    it('a sleeping visitor (a guest of somebody else) keeps it closed, and a child visiting asleep too', () => {
+      const { a, b, aHome } = bothHomesShared();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      const neighbour = insertLocation('Neighbour Home', 'home', 700);
+      insertAgent(`Sleepover ${madeAgents.length}`, neighbour, { ...asleep, current_location: aHome, age: 9, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toBeNull();
+    });
+
+    it('the barn or the grove in fair weather is still preferred over a house with sleepers', () => {
+      const { a, b, aHome } = bothHomesShared();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      const barn = insertLocation('Quiet Farm', 'farm', 500);
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toEqual({ locationId: barn, outdoors: true });
+    });
+
+    it('a quiet house still beats one with sleepers', () => {
+      const { a, b, aHome, bHome } = lovers();
+      insertAgent(`Sleeper ${madeAgents.length}`, aHome, { ...asleep, gender: 'male' });
+      expect(pickVenue(load(a), load(b), { hour: 22, foulWeather: false })).toEqual({ locationId: bHome, outdoors: false });
     });
   });
 
@@ -451,13 +538,24 @@ describe('the tryst', () => {
       insertAgent(`Mother ${madeAgents.length}`, aHome, { current_location: null });
       insertAgent(`Father ${madeAgents.length}`, bHome, { current_location: null });
       setClock(21, 'rainy');
-      insertLocation('Rained-on Farm', 'farm', 500);
+      insertLocation('Rained-on Grove', 'park', 500);
       agree(a, b);
       trystPass(at(60), () => 0);
       const pair = getPairIntimacy(a, b)!;
       expect(pair.pendingRendezvous).toBeUndefined();
       expect(pair.rendezvousRetryAfter).toBe(NOW + 60 + VENUE_RETRY_MINUTES);
       expect(pair.trysts).toBe(0);
+    });
+
+    it('a rainy night is no obstacle to the barn: it is agreed as the venue (I4a)', () => {
+      const { a, b, aHome, bHome } = lovers();
+      insertAgent(`Mother ${madeAgents.length}`, aHome, { current_location: null });
+      insertAgent(`Father ${madeAgents.length}`, bHome, { current_location: null });
+      setClock(21, 'rainy');
+      const barn = insertLocation('Rained-on Farm', 'farm', 500);
+      agree(a, b);
+      trystPass(at(60), () => 0);
+      expect(getPairIntimacy(a, b)!.pendingRendezvous).toMatchObject({ agreed: true, venueId: barn });
     });
 
     it('a barn in the dark and fair weather: both walk there (decisions tier) and it starts when both are in it', () => {
@@ -623,6 +721,39 @@ describe('the tryst', () => {
       expect(sleepTargetFor(load(b), NOW + 600)).toBe(bHome);
       // It is not a second dawn: they are already on their way.
       expect(trystStepFor(load(b), { awake: true })).toBeNull();
+    });
+
+    it('a housemate still asleep may stir as the guest slips out (the dawn exit is seen more often, once)', () => {
+      const { a, b, aHome } = morningAfter();
+      const roommate = insertAgent(`Stirring ${madeAgents.length}`, aHome, { current_action: { type: 'sleeping' }, gender: 'male' });
+      const caught = captureEvents<{ a: number; b: number; witnessId: number; scene: string }>('intimacy:caught');
+      try {
+        startSneakHome(b, NOW + 600, () => 0);
+      } finally { caught.stop(); }
+      expect(caught.seen).toEqual([{ a: b, b: a, witnessId: roommate, scene: 'dawn' }]);
+      expect(factsOf(b)[0]).toMatchObject({ target_id: a, known_by: [roommate] });
+      expect(DAWN_HOUSEMATE_STIRS).toBeCloseTo(0.25);
+    });
+
+    it('... or sleeps through it, and a sleeping child never counts', () => {
+      const { b, aHome } = morningAfter();
+      insertAgent(`Sound Sleeper ${madeAgents.length}`, aHome, { current_action: { type: 'sleeping' }, gender: 'male' });
+      insertAgent(`Small Sleeper ${madeAgents.length}`, aHome, { current_action: { type: 'sleeping' }, age: 5, gender: 'male' });
+      const caught = captureEvents<{ witnessId: number }>('intimacy:caught');
+      try {
+        startSneakHome(b, NOW + 600, () => 0.99);
+      } finally { caught.stop(); }
+      expect(caught.seen).toEqual([]);
+      expect(factsOf(b)).toHaveLength(0);
+
+      // A child asleep is not a witness even on the unluckiest roll.
+      const other = morningAfter();
+      insertAgent(`Small Sleeper ${madeAgents.length}`, other.aHome, { current_action: { type: 'sleeping' }, age: 5, gender: 'male' });
+      const again = captureEvents<{ witnessId: number }>('intimacy:caught');
+      try {
+        startSneakHome(other.b, NOW + 600, () => 0);
+      } finally { again.stop(); }
+      expect(again.seen).toEqual([]);
     });
 
     it('somebody awake at the house sees them go: a tryst_seen secret, a caught row and event', () => {
@@ -834,6 +965,61 @@ describe('the tryst', () => {
       const knownByChild = db.select().from(shared_knowledge).all()
         .filter((f) => ((f.known_by as number[] | null) ?? []).includes(child));
       expect(knownByChild).toEqual([]);
+    });
+
+    // I4b, the price of a house with sleepers: each pass a sleeping housemate may stir, and then they are
+    // simply somebody awake at the house (the same walk-in as above).
+    describe('a housemate asleep down the hall', () => {
+      const sleeper = (aHome: number) => insertAgent(`Light Sleeper ${madeAgents.length}`, aHome, {
+        current_action: { type: 'sleeping' }, gender: 'male',
+      });
+
+      it('may wake and walk in: caught, the evening ends, the sleeper is up', () => {
+        const { a, b, aHome } = eveningAtHome();
+        const roommate = sleeper(aHome);
+        const caught = captureEvents<{ a: number; b: number; witnessId: number; scene: string }>('intimacy:caught');
+        try {
+          trystPass(at(20), () => 0);
+        } finally { caught.stop(); }
+        expect(getPairIntimacy(a, b)!.activeTryst).toBeUndefined();
+        expect(caught.seen).toEqual([{ a: b, b: a, witnessId: roommate, scene: 'found' }]);
+        expect(load(roommate).current_action).toEqual({ type: 'idle' });
+      });
+
+      it('usually sleeps on: the evening goes its course', () => {
+        const { a, b, aHome } = eveningAtHome();
+        const roommate = sleeper(aHome);
+        trystPass(at(20), () => 0.99);
+        expect(getPairIntimacy(a, b)!.activeTryst).toBeDefined();
+        expect(load(roommate).current_action).toEqual({ type: 'sleeping' });
+        // A pass costs the couple about a 1-in-25 chance of being caught: over the 6-9 passes of an evening,
+        // roughly a quarter of these evenings are walked in on.
+        expect(SLEEPER_WAKES_PER_PASS).toBeCloseTo(0.04);
+      });
+
+      it('a child asleep at the house neither wakes on this roll nor is ever named (only adults are witnesses)', () => {
+        const { a, b, aHome } = eveningAtHome();
+        insertAgent(`Sleeping Child ${madeAgents.length}`, aHome, { current_action: { type: 'sleeping' }, age: 6, gender: 'male' });
+        const caught = captureEvents<{ witnessId: number }>('intimacy:caught');
+        try {
+          trystPass(at(20), () => 0);
+        } finally { caught.stop(); }
+        expect(caught.seen).toEqual([]);
+        expect(factsOf(b)).toHaveLength(0);
+        // The risk model is for the adults of the house: a sleeping child does not stir on its roll.
+        expect(getPairIntimacy(a, b)!.activeTryst).toBeDefined();
+      });
+
+      it('a couple who both live at the house (married, at home) are not at risk from anyone', () => {
+        const l = lovers();
+        marry(l.a, l.b);
+        db.update(agents).set({ home: l.aHome, current_location: l.aHome }).where(inArray(agents.id, [l.a, l.b])).run();
+        beginTryst(load(l.a), load(l.b), locOf(l.aHome), TIME, () => 0);
+        const roommate = sleeper(l.aHome);
+        trystPass(at(20), () => 0);
+        expect(getPairIntimacy(l.a, l.b)!.activeTryst).toBeDefined();
+        expect(load(roommate).current_action).toEqual({ type: 'sleeping' });
+      });
     });
 
     it('a child arriving with an adult interrupts, and only the adult is named', () => {

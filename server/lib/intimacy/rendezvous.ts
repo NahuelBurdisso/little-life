@@ -63,6 +63,13 @@ import {
 /** Invitations are made in the evening: from this hour to (not including) the last. */
 export const RENDEZVOUS_FIRST_HOUR = 19;
 export const RENDEZVOUS_LAST_HOUR = 23;
+/**
+ * A pair with somebody on the evening shift (a workplace and `workEnd` from this hour on: the bartender and the
+ * musician work until 23 h) asks from when the shift ends, and the window closes later, at 01:00 (25 on the
+ * clock that runs past midnight), instead of at 23 h, when the shift ended and the window with it.
+ */
+export const EVENING_SHIFT_FROM_HOUR = 21;
+export const RENDEZVOUS_SHIFT_LAST_HOUR = 25;
 /** Both must feel at least this much toward the other, and trust them this much. */
 export const RENDEZVOUS_MIN_ROMANCE = 60;
 export const RENDEZVOUS_MIN_TRUST = 25;
@@ -160,9 +167,27 @@ export function longingThreshold(together: boolean): number {
   return together ? RENDEZVOUS_MIN_LONGING_COUPLE : RENDEZVOUS_MIN_LONGING;
 }
 
-/** Whether invitations are made at this hour of the day. */
+/** Whether invitations are made at this hour of the day (a pair with nobody on the evening shift). */
 export function isRendezvousHour(hour: number): boolean {
   return hour >= RENDEZVOUS_FIRST_HOUR && hour < RENDEZVOUS_LAST_HOUR;
+}
+
+/** Whether somebody works the evening: a workplace, and a shift that ends at `EVENING_SHIFT_FROM_HOUR` or later. */
+export function worksEveningShift(a: { workplace: number | null; schedule: { workEnd?: number } | null }): boolean {
+  return a.workplace != null && (a.schedule?.workEnd ?? 0) >= EVENING_SHIFT_FROM_HOUR;
+}
+
+/**
+ * Whether a pair asks at this hour. `shiftEndsAt` is when the later evening shift of the two ends, or null
+ * when neither works one: then it is the usual 19-23 h window. With a shift, the window opens when it ends (never
+ * before 19 h: they cannot be asked, and cannot walk over, while on shift) and runs to 01:00. Hours 0 and
+ * after are read as 24 and after so the window can cross midnight.
+ */
+export function isRendezvousHourFor(hour: number, shiftEndsAt: number | null): boolean {
+  if (shiftEndsAt == null) return isRendezvousHour(hour);
+  const from = Math.max(RENDEZVOUS_FIRST_HOUR, shiftEndsAt);
+  const h = hour < RENDEZVOUS_FIRST_HOUR ? hour + 24 : hour;
+  return h >= from && h < RENDEZVOUS_SHIFT_LAST_HOUR;
 }
 
 // ─── Reading the answer ──────────────────────────────────────────────────────
@@ -363,14 +388,15 @@ export function rendezvousPass(time: ClockTime): void {
   }
 
   // --- New invitations ---
-  if (adult && isRendezvousHour(time.hour)) {
-    if (startEveningRendezvous(now, busyAgents)) dirty = true;
+  // The widest window (an evening-shift pair's, 19 h to 01:00): each pair checks its own in startEveningRendezvous.
+  if (adult && isRendezvousHourFor(time.hour, RENDEZVOUS_FIRST_HOUR)) {
+    if (startEveningRendezvous(now, time.hour, busyAgents)) dirty = true;
   }
   if (dirty) emitter.markDirty('agents.all');
 }
 
 /** Candidate pairs, best first: who asks whom this evening. True when anything changed. */
-function startEveningRendezvous(now: number, busyAgents: Set<number>): boolean {
+function startEveningRendezvous(now: number, hour: number, busyAgents: Set<number>): boolean {
   const kissed = db.select().from(relationships).all().filter((r) => r.tags.includes(KISSED_TAG));
   if (kissed.length === 0) return false;
   const byId = new Map(db.select().from(agents).all().map((a) => [a.id, a]));
@@ -384,6 +410,9 @@ function startEveningRendezvous(now: number, busyAgents: Set<number>): boolean {
     // The one age gate: minors are never candidates, whatever their romance or longing.
     if (!isIntimacyEligible(a, b)) continue;
     if (busyAgents.has(a.id) || busyAgents.has(b.id)) continue;
+    // The pair's own window: 19-23 h, or from the end of an evening shift to 01:00 (I4c).
+    const shiftEnds = [a, b].filter(worksEveningShift).map((x) => (x.schedule as { workEnd: number }).workEnd);
+    if (!isRendezvousHourFor(hour, shiftEnds.length > 0 ? Math.max(...shiftEnds) : null)) continue;
 
     const fa = feelings(rel, a.id);
     const fb = feelings(rel, b.id);
