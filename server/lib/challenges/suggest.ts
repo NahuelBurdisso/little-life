@@ -1,4 +1,5 @@
 import { ENGAGED_TAG, MARRIED_TAG } from '../marriage';
+import { ELECTION, nextElectionDay } from '../../data/calendar';
 import {
   BEST_FRIEND_AT, ENEMIES_AT, FRIENDS_AT, FULL_HOUSE_EXTRA, MATCH_ROMANCE_MAX, MATCH_ROMANCE_MIN, MINUTES_PER_DAY,
   OFFER_COUNT, RIVALS_AT, SCANDAL_SECRETS,
@@ -38,8 +39,8 @@ export interface OfferDraft {
 
 const ADULT_AGE = 18;
 
-/** Game days per kind (Guardian runs to the season's end instead). */
-export const DURATION_DAYS: Readonly<Record<Exclude<ChallengeKind, 'guardian'>, number>> = {
+/** Game days per kind (Guardian runs to the season's end, Kingmaker to its election). */
+export const DURATION_DAYS: Readonly<Record<Exclude<ChallengeKind, 'guardian' | 'kingmaker'>, number>> = {
   matchmaker: 14,
   peacemaker: 8,
   scandal: 5,
@@ -153,6 +154,9 @@ export function candidateOffers(snap: TownSnapshot, rng: Rng): OfferDraft[] {
     });
   }
 
+  const king = kingmakerDraft(snap, rng);
+  if (king) out.push(king);
+
   const recluse = loneliest(snap);
   if (recluse) {
     out.push({
@@ -162,6 +166,38 @@ export function candidateOffers(snap: TownSnapshot, rng: Rng): OfferDraft[] {
   }
 
   return out;
+}
+
+/** Candidates must be this old (lib/townCalendar.ts MIN_CANDIDATE_AGE). */
+const CANDIDATE_AGE = 21;
+
+/**
+ * Kingmaker: a resident who isn't mayor, for the next election that can still
+ * take them. Once a campaign is open its ballot is fixed, so the pick is one of
+ * its challengers; before that, anyone grown — the campaign drafts the player's
+ * pick onto the ballot (townCalendar `openCampaign`). An election already
+ * counted, or one too close to campaign for, gives way to the next season's.
+ */
+export function kingmakerDraft(snap: TownSnapshot, rng: Rng): OfferDraft | null {
+  const campaign = snap.candidates ?? [];
+  let electionDay = nextElectionDay(snap.day);
+  let pool: number[];
+  if (campaign.length > 0 && snap.lastElection?.electionDay !== electionDay) {
+    pool = campaign.filter((id) => id !== snap.mayorId && isActive(snap, id));
+  } else {
+    // No campaign running: this season's vote if its campaign is still to
+    // open, else the next one.
+    if (snap.lastElection?.electionDay === electionDay || electionDay - snap.day < ELECTION.campaignDays) {
+      electionDay = nextElectionDay(electionDay + 1);
+    }
+    pool = snap.agents.filter((a) => a.active && a.age >= CANDIDATE_AGE && a.id !== snap.mayorId).map((a) => a.id);
+  }
+  const id = pick(pool, rng);
+  if (id == null) return null;
+  return {
+    kind: 'kingmaker', difficulty: 'hard', goal: `Get ${firstName(snap, id)} elected mayor on day ${electionDay}`,
+    agentIds: [id], target: electionDay, durationDays: Math.max(1, electionDay - snap.day + 1),
+  };
 }
 
 /**

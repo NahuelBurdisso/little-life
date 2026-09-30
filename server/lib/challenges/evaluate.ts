@@ -240,6 +240,30 @@ const recluse: Check = (c, snap) => {
   return { status: 'active', progress };
 };
 
+/**
+ * Kingmaker: the resident is mayor. Judged on the chair (economy.job), not on
+ * the count's feed row, like every other check. Fails the moment the election
+ * it was set for (`target`, a game day) goes to someone else.
+ */
+const kingmaker: Check = (c, snap) => {
+  const [x] = c.agentIds;
+  const electionDay = c.target ?? 0;
+  const name = firstName(snap, x);
+  if (snap.mayorId === x) {
+    return { status: 'completed', progress: { value: 2, target: 2, label: 'mayor' }, outcome: `${name} is the mayor.` };
+  }
+  const onBallot = (snap.candidates ?? []).includes(x);
+  const progress: ChallengeProgress = onBallot
+    ? { value: 1, target: 2, label: `on the ballot — the town votes on day ${electionDay}` }
+    : { value: 0, target: 2, label: `not on the ballot yet — the vote is on day ${electionDay}` };
+  if (firstGone(snap, [x]) != null) return { status: 'failed', progress, outcome: goneText(agentOf(snap, x), snap, x) };
+  const last = snap.lastElection;
+  if (last && last.electionDay >= electionDay && last.winnerId !== x) {
+    return { status: 'failed', progress, outcome: `${firstName(snap, last.winnerId)} won the election.` };
+  }
+  return { status: 'active', progress };
+};
+
 const CHECKS: Record<Challenge['kind'], Check> = {
   matchmaker,
   peacemaker,
@@ -250,6 +274,7 @@ const CHECKS: Record<Challenge['kind'], Check> = {
   first_engagement: firstEngagement,
   feud,
   recluse,
+  kingmaker,
 };
 
 /** What running out the clock means for the kinds where that is the win. */
@@ -282,7 +307,12 @@ export function evaluateChallenge(c: Challenge, snap: TownSnapshot): Verdict {
  */
 export function beginChallenge(offer: Challenge, snap: TownSnapshot): Challenge {
   const startedAt = snap.nowMinute;
-  const deadline = offer.kind === 'guardian' ? guardianDeadline(snap) : startedAt + offer.durationDays * MINUTES_PER_DAY;
+  // Kingmaker runs to the end of its election day (the count is at 18:00).
+  const deadline = offer.kind === 'guardian'
+    ? guardianDeadline(snap)
+    : offer.kind === 'kingmaker' && offer.target != null
+      ? (offer.target + 1) * MINUTES_PER_DAY
+      : startedAt + offer.durationDays * MINUTES_PER_DAY;
   const baseline: ChallengeBaseline = {};
   switch (offer.kind) {
     case 'guardian':
