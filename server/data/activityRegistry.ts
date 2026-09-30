@@ -115,10 +115,13 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
 
   // ─── Kisses (lib/intimacy/kiss.ts) ─────────────────────────────────────────
   // Their own types rather than `drama` rows (drama is base 0.8, gazette-worthy):
-  // a first kiss is a small-town headline, a routine one is texture for the feed
-  // that expires quickly, a refusal is a private embarrassment the paper leaves
-  // alone. Each row still carries `metadata.beat` for the canvas and the sound.
-  first_kiss:    { category: 'relationship', base_importance: 0.65, retention: 'long', template: '{agent1} and {agent2} shared a first kiss' },
+  // a first kiss is kept for the feed for a long time but is private by default (a
+  // secret first kiss must not reach the Gazette: a kiss somebody SAW spreads as a
+  // `kiss_seen` fact through gossip, and that is how the town learns of it), a routine
+  // one is texture for the feed that expires quickly, a refusal is a private
+  // embarrassment the paper leaves alone. Each row still carries `metadata.beat` for
+  // the canvas and the sound.
+  first_kiss:    { category: 'relationship', base_importance: 0.65, retention: 'long', template: '{agent1} and {agent2} shared a first kiss', newsworthy: false },
   kiss:          { category: 'relationship', base_importance: 0.3, retention: 'short', template: '{agent1} and {agent2} kissed', newsworthy: false },
   kiss_rebuffed: { category: 'drama', base_importance: 0.5, retention: 'medium', template: "{agent2} turned away from {agent1}'s kiss", newsworthy: false },
 

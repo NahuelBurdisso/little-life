@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../db';
 import { activityLog } from '../../db/schema';
+import { ACTIVITY_REGISTRY } from '../../data/activityRegistry';
 import { buildGazettePrompt, parseGazette, gatherMaterial, GAZETTE_NAME } from '../gazette';
 
 describe('gazette prompt and parser', () => {
@@ -70,5 +71,30 @@ describe('gatherMaterial', () => {
     log('drama', 'drama', 0.8, 41, 'Diego overheard that Marco loves Carlos.');
     log('drama', 'drama', 0.9, 42, 'The whole town now knows that Marco loves Carlos.');
     expect(gatherMaterial(10).items).toEqual(['The whole town now knows that Marco loves Carlos.']);
+  });
+
+  it('keeps the private side of romance out of the paper: kisses and evenings stay private, being caught is news', () => {
+    const row = (type: string, data: Record<string, string>) => {
+      const e = ACTIVITY_REGISTRY[type];
+      db.insert(activityLog).values({
+        type, category: e.category, importance: e.base_importance, agent_ids: [], template_key: type,
+        template_data: data, timestamp: 50, real_timestamp: Date.now(),
+      }).run();
+    };
+    const names = { agent1: 'Ada', agent2: 'Bruno' };
+    row('first_kiss', names);
+    row('kiss', names);
+    row('kiss_rebuffed', names);
+    row('tryst', { ...names, venue: 'Ada Cottage' });
+    row('caught', { ...names, witness: 'Cora', scene: 'dawn' });
+    row('scandal', { agent1: 'Ada' });
+    const { items } = gatherMaterial(10);
+    expect(items).toHaveLength(2);
+    expect(items.join(' ')).toContain('Cora saw Ada slipping out');
+    expect(items.join(' ')).toContain('Whispers follow Ada');
+    expect(items.join(' ')).not.toMatch(/kiss|slipped away together/);
+    // The registry says so too: private by default, the leak and the scandal are not.
+    for (const t of ['first_kiss', 'kiss', 'kiss_rebuffed', 'tryst']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).toBe(false);
+    for (const t of ['caught', 'scandal']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).not.toBe(false);
   });
 });
