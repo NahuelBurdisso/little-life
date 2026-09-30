@@ -2,7 +2,7 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 327 files / 3843 tests passing, `npm run deadcode` 0/0 (playtest #4 fixes on `fix/playtest-findings`, A/B soaked 12 days on seed `playtest4`; see "Playtest #4 findings" below).
+**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 336 files / 4031 tests passing, `npm run deadcode` 0/0 (playtest #4 fixes on `fix/playtest-findings`, rebased on `feat/loop-features` b53d02a, A/B soaked 12 days on seed `playtest4`; see "Playtest #4 findings" below).
 Branch `fix/playtest-findings` (off `aa6ca8a`, where `feat/loop-features` started; before it `feat/intimacy-realism`, off `feat/living-agents-phase1`, which carried the engine/gameplay fixes and the
 worldgen v2 tracks, `docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
