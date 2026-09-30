@@ -19,6 +19,9 @@ import { simEvents } from '../../lib/simEvents';
 import { goalReviewer, pivotEvaluator } from '../../lib/goals/instance';
 import { compareOp, getRelationship, getRelField } from '../../lib/goals/relationshipConditions';
 import { gameMinutes } from '../../lib/gameClock';
+import {
+  completeGoal, describeGoal, recordGoalOutcome, HOSTILE_CHAT, WARM_CHAT, type GoalOutcome,
+} from '../../lib/goals/goalProgress';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -297,27 +300,47 @@ function evaluateAbandonment(
     }
 
     if (shouldAbandon) {
-      const newStatus = rule.becomes ?? 'abandoned';
+      let newStatus = rule.becomes ?? 'abandoned';
+      // A protect / comfort goal whose target got better after the owner had already been
+      // there for them (a comfort, a gift, a few kind talks) is a job done, not a goal given
+      // up: "target_recovered" used to abandon it whatever the owner had put in.
+      if (rule.condition === 'target_recovered' && (goal.progress ?? 0) >= RECOVERED_COUNTS_AS_DONE) {
+        newStatus = 'completed';
+      }
+
+      if (newStatus === 'completed') {
+        // The one completion path (lib/goals/goalProgress.ts): status, feed row, memory, mood lift.
+        completeGoal(goal, nowMinutes);
+        goal.status = 'completed';
+        break;
+      }
+
       db.update(goals)
         .set({ status: newStatus, completed_at: nowMinutes })
         .where(eq(goals.id, goal.id))
         .run();
       goal.status = newStatus;
 
-      if (newStatus === 'completed') {
-        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
-      } else {
-        simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
-      }
+      // MemoryObserver turns this into "I gave up on my goal: ...", so the owner remembers it.
+      const description = describeGoal(goal, targetFirstName(goal.target_id));
+      simEvents.emit('goal:abandoned', { agentId: agent.id, goalType: goal.type, description, ...goalEventCast(goal) });
 
       logActivity({
-        type: newStatus === 'completed' ? 'goal_completed' : 'goal_abandoned',
+        type: 'goal_abandoned',
         initiator: agent.id,
-        templateData: { agent: agent.name, goal_description: goal.type },
+        templateData: { agent: agent.name, goal_description: description },
       });
       break;
     }
   }
+}
+
+/** Progress a protect / comfort goal needs for its target's recovery to count as done. */
+const RECOVERED_COUNTS_AS_DONE = 0.3;
+
+function targetFirstName(targetId: number | null): string | null {
+  if (targetId == null) return null;
+  return db.select({ name: agents.name }).from(agents).where(eq(agents.id, targetId)).get()?.name.split(' ')[0] ?? null;
 }
 
 /**
@@ -357,62 +380,85 @@ function evaluatePassiveProgress(agent: any, goal: any, nowMinutes: number, stat
     if (conditionMet) {
       const newProgress = Math.min(def.completion_at, goal.progress + pe.progress);
       if (newProgress >= def.completion_at) {
-        db.update(goals)
-          .set({ progress: newProgress, status: 'completed', completed_at: nowMinutes })
-          .where(eq(goals.id, goal.id))
-          .run();
-        simEvents.emit('goal:completed', { agentId: agent.id, goalType: goal.type, ...goalEventCast(goal) });
-        logActivity({
-          type: 'goal_completed',
-          initiator: agent.id,
-          templateData: { agent: agent.name, goal_description: goal.type },
-        });
-      } else {
-        db.update(goals).set({ progress: newProgress }).where(eq(goals.id, goal.id)).run();
+        completeGoal(goal, nowMinutes, newProgress);
+        goal.status = 'completed';
+        return;
       }
+      db.update(goals).set({ progress: newProgress }).where(eq(goals.id, goal.id)).run();
+      goal.progress = newProgress;
     }
   }
 }
 
-// ─── Conversation-driven goal progress ────────────────────────────────────────
+// ─── Outcome-driven goal progress ─────────────────────────────────────────────
 
-let goalConvoListenerInitialized = false;
+let goalProgressListenersInitialized = false;
 
-function initGoalConversationListener(): void {
-  if (goalConvoListenerInitialized) return;
-  goalConvoListenerInitialized = true;
+/**
+ * Feed goal progress from what happens between people (lib/goals/goalProgress.ts decides
+ * which outcome serves which goal type). The old single listener advanced every goal aimed at
+ * a chat partner on any non-hostile chat — a revenge included — and never completed anything.
+ *
+ * Sources that are events already are wired here; the gossip engine, confrontations and the
+ * drama beats of both conversation tiers call `recordGoalOutcome` directly where they know
+ * who did what to whom.
+ */
+function initGoalProgressListeners(): void {
+  if (goalProgressListenersInitialized) return;
+  goalProgressListenersInitialized = true;
 
   simEvents.on('conversation:ended', (payload: {
     agentId: number;
     perpetratorId?: number | null;
     sentiment?: number;
-    turns?: number;
+    partnerState?: string | null;
   }) => {
     const otherId = payload.perpetratorId;
-    if (!otherId || otherId === payload.agentId) return;
+    if (otherId == null || otherId === payload.agentId) return;
     const sentiment = payload.sentiment ?? 0;
-    if (sentiment < -0.5) return; // negative conversations don't help goals
+    // Intensity: a glowing chat (0.6) counts 1.5x a merely pleasant one (0.2), and the
+    // same for a bitter one. goalProgressGain clamps it. A kind word to someone who is
+    // down (both tiers pass the partner's distress state) is comfort — what a protect or
+    // comfort goal is waiting for.
+    if (sentiment > WARM_CHAT) {
+      const outcome = payload.partnerState && DISTRESS.has(payload.partnerState) ? 'comforted' : 'warm_chat';
+      recordGoalOutcome(payload.agentId, otherId, outcome, sentiment / 0.4);
+    } else if (sentiment < HOSTILE_CHAT) recordGoalOutcome(payload.agentId, otherId, 'hostile_chat', -sentiment / 0.4);
+  });
 
-    // Find active goals targeting this conversation partner
-    const agentGoals = db.select().from(goals)
-      .where(and(eq(goals.agent_id, payload.agentId), eq(goals.status, 'active')))
-      .all();
+  // The drama beats: `insult` / `confrontation` / `flirt` carry the doer as perpetrator.
+  simEvents.on('interaction:completed', (payload: { perpetratorId?: number; victimId?: number; action?: string }) => {
+    if (payload.perpetratorId == null || payload.victimId == null) return;
+    const outcome = INTERACTION_OUTCOMES[payload.action ?? ''];
+    if (outcome) recordGoalOutcome(payload.perpetratorId, payload.victimId, outcome);
+  });
 
-    for (const goal of agentGoals) {
-      if (goal.target_id !== otherId) continue;
-      // Social goals advance through positive conversations
-      const progressGain = Math.max(0.02, sentiment * 0.05);
-      const newProgress = Math.min(1.0, (goal.progress ?? 0) + progressGain);
-      db.update(goals).set({ progress: newProgress }).where(eq(goals.id, goal.id)).run();
-    }
+  simEvents.on('gift:given', (payload: { giverId: number; receiverId: number }) => {
+    recordGoalOutcome(payload.giverId, payload.receiverId, 'gift_given');
+  });
+
+  simEvents.on('economy:theft_success', (payload: { thief?: number; victim?: number }) => {
+    if (payload.thief != null && payload.victim != null) recordGoalOutcome(payload.thief, payload.victim, 'stole_from_target');
   });
 }
+
+/** Exported for tests: register the listeners without running a whole goals tick. */
+export const initGoalProgressListenersForTest = initGoalProgressListeners;
+
+/** The partner states conversations.ts reports as `partnerState`. */
+const DISTRESS = new Set(['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt']);
+
+const INTERACTION_OUTCOMES: Record<string, GoalOutcome> = {
+  insult: 'insulted_target',
+  confrontation: 'fought_target',
+  flirt: 'flirt',
+};
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 export function goalsTick(): void {
-  // Initialize conversation listener on first tick
-  initGoalConversationListener();
+  // Register the outcome listeners on the first tick
+  initGoalProgressListeners();
   const activeAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const world = db.select().from(worldState).limit(1).all()[0];
   const nowMinutes = world?.time ? gameMinutes(world.time) : 0;

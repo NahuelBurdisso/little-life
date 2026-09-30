@@ -8,6 +8,7 @@ import { cliqueIdOf } from './cliques';
 import { thatSentence, type FactSelf } from './factText';
 import { gameMinutesNow } from './worldClock';
 import { affairInvolvesMarriage, affairSensitivity } from './marriage';
+import { recordGoalOutcome } from './goals/goalProgress';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -117,6 +118,19 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   // read "Marco Rivera: fight".
   fight: (s, t) =>
     `${s} got into a fight with ${t ?? 'someone'}`,
+  // Small misdeeds of a calm town (lib/smallMisdeeds.ts).
+  debt: (s, t, ctx) =>
+    t ? `${s} owes ${t} money and has been avoiding them${ctx?.detail ? ` — ${ctx.detail}` : ''}` :
+    `${s} is running up debts around town`,
+  lie: (s, t, ctx) =>
+    ctx?.detail ? `${s} lied to ${t ?? 'everyone'} to cover up ${ctx.detail}` :
+    `${s} lied to ${t ?? 'everyone'} to cover up a mistake`,
+  white_lie: (s, t, ctx) =>
+    ctx?.detail ? `${s} fibbed to ${t ?? 'someone'} about ${ctx.detail}` :
+    `${s} told ${t ?? 'someone'} a white lie`,
+  broken_promise: (s, t, ctx) =>
+    ctx?.detail ? `${s} broke a promise to ${t ?? 'someone'} — ${ctx.detail}` :
+    `${s} broke a promise to ${t ?? 'someone'}`,
   // Life milestones (lib/milestonesEngine.ts): subject is the one who proposed.
   engagement: (s, t) =>
     `${s} and ${t ?? 'someone'} are engaged to be married`,
@@ -273,8 +287,8 @@ export function createFact(
   // For low-churn types (sickness, financial, work_issue), also check inactive shared_knowledge
   // created recently to prevent duplicate spam
   const checkInactiveToo = ['sickness', 'financial', 'work_issue'].includes(type);
-  const existing = db
-    .select({ id: shared_knowledge.id })
+  const duplicates = db
+    .select({ id: shared_knowledge.id, is_public: shared_knowledge.is_public, content: shared_knowledge.content })
     .from(shared_knowledge)
     .where(
       and(
@@ -286,7 +300,15 @@ export function createFact(
           : [])
       )
     )
-    .get();
+    .all();
+  // A duplicate that has gone PUBLIC (the whole town knows it) no longer blocks a new fact of
+  // the same kind about the same person, as long as the new one says something new: Marco's
+  // second white lie, about something else, is fresh gossip. Without this every subject could
+  // hold one secret per type for the life of the world, and a calm town ran out of material
+  // after two weeks (a 30-day soak: no new secrets after day 14).
+  const existing = checkInactiveToo
+    ? duplicates[0]
+    : duplicates.find((d) => !d.is_public || d.content === content);
 
   if (existing) {
     // If there's an inactive duplicate, reactivate it instead of creating new
@@ -574,6 +596,9 @@ export function spreadGossip(
     rumorReachedSubject(fact, _speakerId, listenerId);
 
     if (fact.sensitivity >= 2) {
+      // Same goal outcomes as the gossip phase's sharing (gossipEngine.ts).
+      recordGoalOutcome(_speakerId, fact.subject_id, 'rumor_spread');
+      recordGoalOutcome(listenerId, fact.subject_id, 'rumor_heard');
       const listener = getAgentSelf(listenerId);
       logActivity({
         type: 'drama',

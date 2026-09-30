@@ -1079,6 +1079,56 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
     ],
   },
 
+  // ===== a crush, not (yet) a couple =====
+  // Someone sweet on the listener tries their luck. Before this, a crush only showed in
+  // template small talk once the pair was already at `sweethearts` level, so the courtship
+  // itself — the part worth watching — had no voice, and template chats could never flirt
+  // (lib/templateBeats.ts reads the flirt beat off this script).
+  {
+    id: 'flirting',
+    cooldownHours: 10,
+    when: (c) =>
+      civil(c) && c.romance >= 20 && c.people[0].friendship >= 0
+      && c.status !== 'partners' && c.dayPhase !== 'night',
+    weight: () => 4,
+    topic: () => 'a bit of flirting',
+    anchors: () => ['smile', 'look', 'dance', 'company'],
+    openers: [
+      {
+        kind: 'ask', text: 'Has anyone told you what a lovely smile you have, {you}?', s: 0.6,
+        replies: [
+          { text: "Not lately. You've made me smile twice now.", s: 0.6, stance: 'agree', tone: ['warm', 'neutral'] },
+          { text: "Flattery won't get you far, but I'll keep the smile.", s: 0.3, stance: 'neutral', tone: ['warm', 'neutral'] },
+          { text: 'Save that smile talk for someone who wants it.', s: -0.3, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'tell', text: 'You look well today, {you}. Very well indeed.', s: 0.5,
+        replies: [
+          { text: "You don't look so bad yourself.", s: 0.5, stance: 'agree', tone: ['warm', 'neutral'] },
+          { text: "I'll pretend I didn't see that look on your face.", s: 0.2, stance: 'neutral', tone: ['warm', 'neutral'] },
+          { text: "I'd rather you didn't look at me like that.", s: -0.3, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'ask', text: 'Will you save me a dance at the next gathering, {you}?', s: 0.5,
+        replies: [
+          { text: "One dance, if you promise not to tread on my toes.", s: 0.5, stance: 'agree', tone: ['warm', 'neutral'] },
+          { text: "One dance. We'll see about a second.", s: 0.3, stance: 'neutral', tone: ['warm', 'neutral'] },
+          { text: "I don't dance. Certainly not with you.", s: -0.4, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+    ],
+    follow: [
+      { text: 'I always did enjoy your company.', s: 0.5 },
+      { text: "I'll be thinking about that smile all day.", s: 0.5 },
+    ],
+    close: [
+      { text: 'Until next time. Save that smile for me, {you}.', s: 0.4 },
+      { text: "I'll let you go, but I'll miss the company.", s: 0.4 },
+    ],
+  },
+
   // ===== hosting or visiting at home =====
   {
     id: 'visit',

@@ -61,6 +61,14 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // Reason in parentheses: it may end in "…" (shortenForFeed), and "{reason}." rendered "…." there.
   plan_changed: { category: 'planning', base_importance: 0.5, retention: 'medium', template: '{agentName} changed plans ({reason}). Now: {summary}' },
 
+  // The small ups and downs of a day (lib/dailyLife.ts): a burnt loaf, a soaking, a coin in
+  // the street. Low importance: texture for the feed and the resident's panel, not news.
+  daily_moment: { category: 'state', base_importance: 0.25, retention: 'short', template: '{description}', newsworthy: false },
+
+  // Something that happened to one resident on a day the story passed them by
+  // (lib/personalEvents.ts): a letter from home, a keepsake, a resolution. Their own beat.
+  personal_event: { category: 'social', base_importance: 0.6, retention: 'medium', template: '{description}' },
+
   // ─── Zone Actions ───────────────────────────────────────────────────────────
   cook:        { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} cooked a meal' },
   rest:        { category: 'state', base_importance: 0.1, retention: 'short', template: '{agent} rested' },

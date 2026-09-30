@@ -14,7 +14,7 @@
 export type DramaBeat =
   | 'fight' | 'insult' | 'snap'                 // → fight
   | 'date' | 'flirt' | 'reconciliation'         // → romance
-  | 'confession' | 'gossip'                     // → secret
+  | 'confession' | 'gossip' | 'misdeed'         // → secret
   | 'breakup' | 'estrangement'                  // → heartbreak
   | 'arrest' | 'death' | 'birthday'
   | 'theft'                                     // tagged so it is not mistaken for a beat; no canvas FX
@@ -35,6 +35,8 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   reconciliation: 'romance',
   confession: 'secret',
   gossip: 'secret',
+  // Someone noticed a small misdeed (lib/smallMisdeeds.ts): a secret being born.
+  misdeed: 'secret',
   breakup: 'heartbreak',
   estrangement: 'heartbreak',
   arrest: 'arrest',

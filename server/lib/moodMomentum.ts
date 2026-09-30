@@ -3,14 +3,17 @@ import { agents } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { asId, asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
+import { moodBaseline } from './moodBaseline';
+import type { PersonalityProfile } from './personality';
 
 // ─── Mood Momentum System ─────────────────────────────────────────────────────
 // Tracks running mood average per agent. At day change, converts average mood
 // into a momentum modifier that affects next day's mood calculation.
 //
-// Good days (avg mood > 65) → positive momentum → mood bonus next day
-// Bad days (avg mood < 35) → negative momentum → mood penalty next day
-// Creates realistic emotional inertia: happiness breeds happiness, misery spirals.
+// A day above the resident's baseline (moodBaseline.ts) lifts the next a little,
+// a day below weighs on it: emotional inertia, a run of good or bad days deepening
+// it — but always a fraction of the deviation (`nextMomentum`), so it fades back to
+// temperament instead of spiralling.
 
 interface MoodTracker {
   moodSamples: number[];      // mood readings throughout the day
@@ -77,29 +80,44 @@ export function sampleMood(agentId: number, mood: number): void {
   }
 }
 
+/** A day this far above the resident's baseline counts as a good one (streaks, the feed). */
+const GOOD_DAY_MARGIN = 12;
+/** ... and this far below as a bad one. Under 35 is a bad day for anyone (populationFlow). */
+const BAD_DAY_MARGIN = 20;
+const BAD_DAY_ABSOLUTE = 35;
+/** Momentum never exceeds this either way. */
+const MAX_MOMENTUM = 8;
+
+/**
+ * Tomorrow's momentum from today's average, measured against the resident's baseline.
+ *
+ * It used to be absolute: any day averaging over 65 — almost every day in a fed, rested town
+ * — earned +3..+15 on the next, which kept the next one over 65: the loop that parked the
+ * whole town near 91 (see moodBaseline.ts). Now momentum carries a share of how far the day
+ * strayed from the resident's usual self, 25% rising to 35% on a streak. The share is under 1,
+ * so a good day still colours the next one but the town drifts back to temperament instead
+ * of running away. Pure (exported for tests).
+ */
+export function nextMomentum(avgMood: number, baseline: number, streak: number): { momentum: number; streak: number } {
+  let next = 0;
+  if (avgMood >= baseline + GOOD_DAY_MARGIN) next = streak > 0 ? streak + 1 : 1;
+  else if (avgMood < BAD_DAY_ABSOLUTE || avgMood <= baseline - BAD_DAY_MARGIN) next = streak < 0 ? streak - 1 : -1;
+  const gain = 0.25 + Math.min(Math.abs(next), 4) * 0.025;
+  const momentum = Math.max(-MAX_MOMENTUM, Math.min(MAX_MOMENTUM, (avgMood - baseline) * gain));
+  return { momentum, streak: next };
+}
+
 /** Called on day change. Computes momentum for next day. */
 export function processDayEnd(agentId: number): void {
   const tracker = getTracker(agentId);
   if (tracker.moodSamples.length === 0) return;
 
   const avgMood = tracker.moodSamples.reduce((a, b) => a + b, 0) / tracker.moodSamples.length;
-
-  // Determine streak direction
-  if (avgMood > 65) {
-    // Good day
-    tracker.streak = tracker.streak > 0 ? tracker.streak + 1 : 1;
-    const streakBonus = Math.min(tracker.streak, 5) * 1.5;
-    tracker.momentum = Math.min(15, 3 + streakBonus);
-  } else if (avgMood < 35) {
-    // Bad day
-    tracker.streak = tracker.streak < 0 ? tracker.streak - 1 : -1;
-    const streakPenalty = Math.min(Math.abs(tracker.streak), 5) * 1.5;
-    tracker.momentum = Math.max(-15, -3 - streakPenalty);
-  } else {
-    // Neutral day — momentum decays toward 0
-    tracker.momentum *= 0.5;
-    tracker.streak = 0;
-  }
+  const row = db.select({ personality: agents.personality }).from(agents).where(eq(agents.id, agentId)).get();
+  const baseline = moodBaseline((row?.personality as PersonalityProfile | null | undefined) ?? null);
+  const next = nextMomentum(avgMood, baseline, tracker.streak);
+  tracker.momentum = next.momentum;
+  tracker.streak = next.streak;
 
   // Log notable mood streaks
   if (Math.abs(tracker.streak) >= 3) {

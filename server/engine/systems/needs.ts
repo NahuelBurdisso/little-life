@@ -8,6 +8,8 @@ import { getAgentStates } from '../../lib/states';
 import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 import { simEvents } from '../../lib/simEvents';
 import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
+import { adaptNeedsMood, moodBaseline } from '../../lib/moodBaseline';
+import type { PersonalityProfile } from '../../lib/personality';
 import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
 import { aggregateEventEffects, EVENT_WEATHER, type WorldEventType } from '../../data/worldEventCatalog';
 import { gameMinutes, hourChanged } from '../../lib/gameClock';
@@ -547,12 +549,19 @@ export function needsTick(): void {
     // Mood momentum: yesterday's average mood affects today's baseline
     const moodMomentum = getMoodMomentum(agent.id);
 
-    let baseMood =
+    // The needs, adapted around this resident's temperament (lib/moodBaseline.ts): comfort
+    // counts at half strength above their usual self, want nearly in full below it. Taken
+    // raw, a well-fed, well-rested town read as ~90 for weeks.
+    const needsComposite =
       updatedNeeds.hunger * 0.2 +
       updatedNeeds.energy * 0.2 +
       updatedNeeds.social * 0.25 +
       updatedNeeds.comfort * 0.15 +
-      updatedNeeds.fun * 0.2 +
+      updatedNeeds.fun * 0.2;
+    const baseline = moodBaseline(agent.personality as PersonalityProfile | null);
+
+    let baseMood =
+      adaptNeedsMood(needsComposite, baseline) +
       moodModifierSum +
       weatherModifier +
       eventMoodEffect +

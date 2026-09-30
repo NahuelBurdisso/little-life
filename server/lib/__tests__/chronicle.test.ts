@@ -217,7 +217,7 @@ describe('buildArcs', () => {
       reliability: 'confirmed',
       source: 'backstory',
       is_public: false,
-      revealed_at: null,
+      revealed_at: null, paid_at: null,
     };
     const arcs = buildArcs(input({ secrets: [secret] }), NOW);
     expect(arcs).toHaveLength(1);
@@ -241,7 +241,7 @@ describe('buildArcs', () => {
       reliability: 'confirmed',
       source: 'backstory',
       is_public: false,
-      revealed_at: null,
+      revealed_at: null, paid_at: null,
     };
     expect(buildArcs(input({ secrets: [base] }), NOW)).toEqual([]);
     expect(
@@ -365,7 +365,7 @@ describe('buildArcs on the game clock', () => {
         secrets: [{
           id: 1, type: 'secret_told', subject_id: 3, target_id: null, content: 'x', sensitivity: 5,
           known_by: [1, 2, 3], created_at: 0, is_active: true, reliability: 'confirmed',
-          source: 'backstory', is_public: false, revealed_at: null,
+          source: 'backstory', is_public: false, revealed_at: null, paid_at: null,
         }],
       }),
       NOW,

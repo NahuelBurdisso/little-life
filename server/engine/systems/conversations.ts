@@ -57,7 +57,11 @@ import { llmSocialGain, templateSocialGain } from '../../lib/socialGain';
 import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
 import { extractConfidedQuote } from '../../lib/factText';
-import { withoutMilestoneTags } from '../../lib/marriage';
+import {
+  emitFightBeat, emitFlirtBeat, emitInsultBeat, findConfessableSin, GRAVE_SINS,
+  performConfession, performReconciliation, reactToPartnerAffair,
+} from '../../lib/conversationBeats';
+import { applyTemplateBeats } from '../../lib/templateBeats';
 import { evaluateConversation } from '../../lib/conversationEvaluator';
 
 // ---------------------------------------------------------------------------
@@ -1201,45 +1205,15 @@ async function finishCompletedConversation(
     const targetAgent = participants.find(p => p.id === targetId);
     const aggressorPersonality = aggressorAgent?.personality as PersonalityProfile | null;
 
-    if (aggressorPersonality) {
+    if (aggressorPersonality && aggressorAgent && targetAgent) {
       // High aggression + very negative → insult
       if (aggressorPersonality.aggression > 45 && overallSentiment < -0.6 && Math.random() < 0.3) {
-        simEvents.emit('interaction:completed', {
-          agentId: aggressorId,
-          perpetratorId: aggressorId,
-          victimId: targetId,
-          action: 'insult',
-          locationId: aggressorAgent?.current_location,
-        });
-        logActivity({
-          type: 'drama',
-          initiator: aggressorId,
-          target: targetId,
-          templateData: {
-            description: `${aggressorAgent?.name} insulted ${targetAgent?.name} during a heated argument`,
-          },
-          metadata: { beat: 'insult' },
-        });
+        emitInsultBeat(aggressorAgent, targetAgent);
       }
       // Low morality + very negative + drunk → confrontation
       if (aggressorPersonality.morality < 40 && overallSentiment < -0.7 &&
           getAgentStates(aggressorId).includes('drunk') && Math.random() < 0.4) {
-        simEvents.emit('interaction:completed', {
-          agentId: aggressorId,
-          perpetratorId: aggressorId,
-          victimId: targetId,
-          action: 'confrontation',
-          locationId: aggressorAgent?.current_location,
-        });
-        logActivity({
-          type: 'drama',
-          initiator: aggressorId,
-          target: targetId,
-          templateData: {
-            description: `${aggressorAgent?.name} started a fight with ${targetAgent?.name}`,
-          },
-          metadata: { beat: 'fight' },
-        });
+        emitFightBeat(aggressorAgent, targetAgent);
       }
     }
   }
@@ -1251,22 +1225,7 @@ async function finishCompletedConversation(
     const p1Personality = p1.personality as PersonalityProfile | null;
 
     if (p1Personality && p1Personality.sensuality > 50 && totalRomanceDelta > 3 && Math.random() < 0.25) {
-      simEvents.emit('interaction:completed', {
-        agentId: p1.id,
-        perpetratorId: p1.id,
-        victimId: p2.id,
-        action: 'flirt',
-        locationId: p1.current_location,
-      });
-      logActivity({
-        type: 'drama',
-        initiator: p1.id,
-        target: p2.id,
-        templateData: {
-          description: `${p1.name} flirted with ${p2.name} after their conversation`,
-        },
-        metadata: { beat: 'flirt' },
-      });
+      emitFlirtBeat(p1, p2);
     }
   }
 
@@ -1580,60 +1539,11 @@ async function finishCompletedConversation(
     if (trust <= 50) continue;
 
     // Find a hidden sin to reveal
-    const hiddenSin = db.select().from(shared_knowledge)
-      .where(and(eq(shared_knowledge.subject_id, pid), eq(shared_knowledge.is_active, true))).all()
-      .find(f => ['theft', 'affair', 'blackmail'].includes(f.type) && (f.known_by as number[]).length <= 2);
+    const hiddenSin = findConfessableSin(pid, GRAVE_SINS);
     if (!hiddenSin) continue;
-
-    // Share the sin with the friend
-    const knownBy = [...new Set([...(hiddenSin.known_by as number[]), otherId])];
-    db.update(shared_knowledge).set({ known_by: knownBy }).where(eq(shared_knowledge.id, hiddenSin.id)).run();
-    createFact('confession', pid, otherId, 2, [pid, otherId], 'confided', {
-      relatedFact: hiddenSin.content,
-    });
-
-    // Friend reaction based on personality
-    const otherPersonality = participants.find(p => p.id === otherId)?.personality as PersonalityProfile | null;
-    let friendshipDelta = 0;
-    let trustDelta = 5;
-    if (otherPersonality) {
-      if (otherPersonality.morality > 60) {
-        friendshipDelta = -5;
-        trustDelta = 8;
-      } else if (otherPersonality.warmth > 60) {
-        friendshipDelta = 2;
-      }
-    }
-
-    const [ordA, ordB] = [Math.min(pid, otherId), Math.max(pid, otherId)];
-    db.insert(relationshipEvents).values({
-      agent_a: ordA, agent_b: ordB,
-      event_type: 'confession',
-      description: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}`,
-      friendship_delta_ab: friendshipDelta,
-      friendship_delta_ba: friendshipDelta,
-      romance_delta_ab: 0, romance_delta_ba: 0,
-      trust_delta_ab: pid === ordA ? trustDelta : 0,
-      trust_delta_ba: pid === ordA ? 0 : trustDelta,
-      sentiment: 0.3, processed: false, timestamp: now,
-    }).run();
-
-    // Confessor mood boost + stress reduction
-    const confessorNeeds = db.select().from(needs).where(eq(needs.agent_id, pid)).get();
-    if (confessorNeeds) {
-      db.update(needs).set({
-        mood: Math.min(100, confessorNeeds.mood + 15),
-        stress: Math.max(0, confessorNeeds.stress - 10),
-      }).where(eq(needs.agent_id, pid)).run();
-    }
-
-    logActivity({
-      type: 'drama',
-      initiator: pid,
-      target: otherId,
-      templateData: { description: `${pidAgent?.name} confessed a secret to ${participants.find(p => p.id === otherId)?.name}.` },
-      metadata: { beat: 'confession' },
-    });
+    const listener = participants.find(p => p.id === otherId);
+    if (!pidAgent || !listener) continue;
+    performConfession(pidAgent, listener, hiddenSin);
   }
 
   // Reconciliation outcome: loyal agent forgives transgressor who has cleaned up
@@ -1661,27 +1571,9 @@ async function finishCompletedConversation(
 
       if (getNegativeFactCount(otherId) >= 3) continue;
 
-      // Remove grudge, boost friendship
-      const newTags = tags.filter(t => t !== 'grudge');
-      db.update(relationships).set({ tags: newTags }).where(eq(relationships.id, rel.id)).run();
-
-      db.insert(relationshipEvents).values({
-        agent_a: rel.agent_a, agent_b: rel.agent_b,
-        event_type: 'reconciliation',
-        description: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} reconciled`,
-        friendship_delta_ab: 15, friendship_delta_ba: 15,
-        romance_delta_ab: 0, romance_delta_ba: 0,
-        trust_delta_ab: 5, trust_delta_ba: 5,
-        sentiment: 0.7, processed: false, timestamp: now,
-      }).run();
-
-      logActivity({
-        type: 'drama',
-        initiator: pid,
-        target: otherId,
-        templateData: { description: `${participants.find(p => p.id === pid)?.name} and ${participants.find(p => p.id === otherId)?.name} have reconciled.` },
-        metadata: { beat: 'reconciliation' },
-      });
+      const forgiver = participants.find(p => p.id === pid);
+      const forgiven = participants.find(p => p.id === otherId);
+      if (forgiver && forgiven) performReconciliation(rel, forgiver, forgiven);
     }
   }
 
@@ -1720,76 +1612,9 @@ async function finishCompletedConversation(
   for (const pid of participantIds) {
     const otherId = participantIds.find(p => p !== pid);
     if (!otherId) continue;
-
-    // Check if pid has a partner relationship with otherId
-    const partnerRel = db.select().from(relationships).where(
-      and(
-        eq(relationships.agent_a, Math.min(pid, otherId)),
-        eq(relationships.agent_b, Math.max(pid, otherId)),
-      )
-    ).get();
-    if (!partnerRel || partnerRel.status !== 'partners') continue;
-
-    // Check if pid knows about an affair involving their partner (otherId)
-    const affairFacts = db.select().from(shared_knowledge)
-      .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.subject_id, otherId), eq(shared_knowledge.is_active, true))).all()
-      .filter(f => (f.known_by as number[]).includes(pid));
-    if (affairFacts.length === 0) continue;
-
-    const pidPersonality = participants.find(p => p.id === pid)?.personality as PersonalityProfile | null;
-    if (!pidPersonality) continue;
-
-    // Partner reaction based on personality
-    if (pidPersonality.aggression > 60) {
-      // Aggressive breakup: partnership → rivals, grudge
-      // A real breakup: the engagement or marriage goes with it (the
-      // relationship phase keeps a `married` pair at `partners` otherwise).
-      db.update(relationships).set({
-        status: 'rivals',
-        status_since_minute: gameMinutes(time),
-        romance_ab: 0, romance_ba: 0,
-        tags: [...withoutMilestoneTags(partnerRel.tags as string[]).filter(t => t !== 'partner'), 'grudge'],
-      }).where(eq(relationships.id, partnerRel.id)).run();
-
-      // Heartbroken + angry
-      if (!getAgentStates(pid).includes('heartbroken')) {
-        db.insert(agentStates).values({
-          agent_id: pid, type: 'heartbroken', severity: 0.8,
-          started_at: gameMinutes(time), duration: Math.floor(2880 + Math.random() * 4320),
-          target_agent_id: otherId, source: 'event:affair_discovery', metadata: null,
-        }).run();
-      }
-      if (!getAgentStates(pid).includes('angry')) {
-        db.insert(agentStates).values({
-          agent_id: pid, type: 'angry', severity: 0.9,
-          started_at: gameMinutes(time), duration: Math.floor(480 + Math.random() * 720),
-          target_agent_id: otherId, source: 'event:affair_discovery', metadata: null,
-        }).run();
-      }
-
-      logActivity({
-        type: 'drama',
-        initiator: pid,
-        target: otherId,
-        templateData: { description: `${participants.find(p => p.id === pid)?.name} discovered ${participants.find(p => p.id === otherId)?.name}'s affair and broke up!` },
-        metadata: { beat: 'breakup' },
-      });
-    } else if (pidPersonality.loyalty > 60) {
-      // Forgiveness path: trust drop but keep partnership
-      const trustField = pid < otherId ? 'trust_ab' : 'trust_ba';
-      const currentTrust = pid < otherId ? partnerRel.trust_ab : partnerRel.trust_ba;
-      db.update(relationships).set({
-        [trustField]: Math.max(0, currentTrust - 30),
-      }).where(eq(relationships.id, partnerRel.id)).run();
-    } else {
-      // Default: quiet breakup
-      db.update(relationships).set({
-        status: 'acquaintances',
-        status_since_minute: gameMinutes(time),
-        romance_ab: 0, romance_ba: 0,
-        tags: withoutMilestoneTags(partnerRel.tags as string[]),
-      }).where(eq(relationships.id, partnerRel.id)).run();
-    }
+    const discoverer = participants.find(p => p.id === pid);
+    const partner = participants.find(p => p.id === otherId);
+    if (discoverer && partner) reactToPartnerAffair(discoverer, partner, gameMinutes(time));
   }
 
   // Blackmail report: if victim talks to constable with positive sentiment, share blackmail knowledge
@@ -2041,6 +1866,13 @@ async function processTimedOutEntry(
       timestamp: now,
     })
     .run();
+
+  // What the exchange came to: an insult or a fight between enemies, a flirt, a confession,
+  // making up (lib/templateBeats.ts). The LLM tier reads these off its transcript above; a
+  // template chat's lines were chosen FROM the pair's state, so the same state decides here.
+  // Before the conversation:ended emit, the same order as the LLM tier, so the goal and
+  // memory listeners see the beat and the chat together.
+  if (chat) applyTemplateBeats([agentList[0], agentList[1]], chat.scriptId, messageSentiment, nowGameMin);
 
   // Lighter memory for each participant
   for (const agent of agentList) {

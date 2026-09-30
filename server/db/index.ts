@@ -169,6 +169,8 @@ function migrateSchema() {
   // Shared knowledge extensions
   addColumnIfMissing('shared_knowledge', 'is_public', 'INTEGER', '0');
   addColumnIfMissing('shared_knowledge', 'revealed_at', 'INTEGER');
+  // Sentence served for this fact (game minute it ends; lib/arrests.ts).
+  addColumnIfMissing('shared_knowledge', 'paid_at', 'INTEGER');
 
   // World state extensions
   addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
