@@ -26,6 +26,7 @@ import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
 import { currentWorldEpoch, isStaleWorldEpoch } from './worldEpoch';
 import { comingUpLines } from './townCalendar';
+import { rosterLine } from './townRoster';
 
 export const GAZETTE_NAME = 'The Town Crier';
 
@@ -117,7 +118,7 @@ export function gatherMaterial(sinceTick: number): GazetteMaterial {
   };
 }
 
-export function buildGazettePrompt(material: GazetteMaterial, day: number, season: string, weather: string): {
+export function buildGazettePrompt(material: GazetteMaterial, day: number, season: string, weather: string, roster = ''): {
   system: string;
   user: string;
   format: Record<string, unknown>;
@@ -131,7 +132,7 @@ export function buildGazettePrompt(material: GazetteMaterial, day: number, seaso
 A respectable paper of the time never prints what happens behind a closed door. Report romance and scandal only by hint and euphemism ("keeping company", "was seen leaving a certain house", "the whole town is talking"), as rumour rather than proof, and never describe intimacy or write about anyone under 18 in such a story.
 
 Write the edition for day ${day} (${season}, ${weather}) from these reports — they are the ONLY facts you may use. Do not invent events, people or places; you may add period colour, opinion and wit.
-${section('What residents did', material.items)}${section('Ongoing stories', material.arcs.map((a) => `${a.title}: ${a.summary}`))}${section('Town happenings', material.events)}${section('Coming up (end the paper with a short notice of these)', material.upcoming ?? [])}
+${roster ? `${roster}\n` : ''}${section('What residents did', material.items)}${section('Ongoing stories', material.arcs.map((a) => `${a.title}: ${a.summary}`))}${section('Town happenings', material.events)}${section('Coming up (end the paper with a short notice of these)', material.upcoming ?? [])}
 Write like a small-town paper of the time: a punchy headline, 2-4 short articles (2-4 sentences each) and a gossip column of 3-4 sentences hinting at rumours, naming names. The headline and the first article are about residents — who did what to whom (scandal, romance, crime, feuds, loss). Town happenings and weather share one short article at most. Use residents' full names the first time.
 
 Reply with JSON: {"headline":"...","articles":[{"headline":"...","body":"..."}],"gossip":"..."}`;
@@ -223,7 +224,7 @@ async function doWrite(): Promise<number | null> {
   } catch (err) {
     console.warn('[gazette] calendar notices failed:', (err as Error).message);
   }
-  const prompt = buildGazettePrompt(material, day, world.time.season, world.weather);
+  const prompt = buildGazettePrompt(material, day, world.time.season, world.weather, rosterLine());
 
   let parsed: ParsedIssue | null = null;
   try {

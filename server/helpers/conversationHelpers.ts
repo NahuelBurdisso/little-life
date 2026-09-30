@@ -18,6 +18,7 @@ import { familyPromptLine } from '../lib/familyState';
 import { isNewcomer } from '../lib/newcomers';
 import { selfFactsFor } from './selfFactsStore';
 import { repeatedSubjects } from '../lib/topicMemory';
+import { rosterLine } from '../lib/townRoster';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -126,6 +127,8 @@ export async function getConversationContext(conversationId: number, speakerId: 
       family: familyPromptLine(speakerId, gameMinutes(world.time)),
       // Tenure, years in town, household — stable numbers the model must not reinvent.
       selfFacts: selfFactsFor(speaker, speakerEcon?.job_title ?? null, world.time?.totalTicks ?? 0),
+      // Everyone else in town, so the model names real neighbours instead of inventing "Silas".
+      roster: rosterLine([speakerId, otherId]),
     };
 
     const otherJobTitle = db.select({ t: economy.job_title }).from(economy).where(eq(economy.agent_id, otherId)).get()?.t ?? null;

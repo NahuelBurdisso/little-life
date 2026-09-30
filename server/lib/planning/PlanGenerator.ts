@@ -25,6 +25,7 @@ import {
 import { joinForFeed, shortenForFeed } from '../factText';
 import { gameMinutes, type ClockTime } from '../gameClock';
 import { planCalendarNote } from '../townCalendar';
+import { rosterLine } from '../townRoster';
 
 /** Run an optional context lookup; on failure log it and plan without it. */
 async function bestEffort<T>(what: string, fn: () => Promise<T[]>): Promise<T[]> {
@@ -490,6 +491,7 @@ export class PlanGenerator {
       reputationLabel: getReputationLabel(getReputation(agentId)),
       moodMomentum: getMoodMomentum(agentId),
       family: familyPlanLine(agentId, gameMinutesNow()),
+      roster: rosterLine([agentId]),
     });
   }
 
@@ -632,6 +634,7 @@ export class PlanGenerator {
         currentHour,
         sleepTime,
         validLocations,
+        roster: rosterLine([agentId]),
       });
     } catch (err) {
       console.error(`[PlanGenerator] replan prompt for ${agentRow.name} failed, keeping existing plan:`, err);

@@ -104,3 +104,30 @@ describe('maturity directive in plan prompts', () => {
     expect(decomposition(null as never)).toContain(chasteText);
   });
 });
+
+describe('town roster in plan prompts', () => {
+  const needs = { hunger: 50, energy: 80, social: 80, mood: 50, stress: 20 };
+  const ROSTER = 'People in town: Rosa Chen (Shopkeeper). Anyone not on this list is a stranger to town; never make up names for townsfolk.';
+  const daily = (roster?: string) => buildDailyPlanPrompt({
+    name: 'A', age: 30, traits: [], personality, needs,
+    home: 'Home', workplace: null, workStart: 9, workEnd: 17, wakeTime: 7, sleepTime: 22,
+    goals: [], reflections: [], yesterdayPlan: null, dayNumber: 1, validLocations: ['Home'], roster,
+  }).system;
+  const replan = (roster?: string) => buildReplanPrompt({
+    name: 'A', age: 30, personality, traits: [], eventDescription: 'x', remainingBlocks: [],
+    needs, currentHour: 12, sleepTime: 22, validLocations: ['Home'], roster,
+  }).system;
+
+  it('puts the roster line right above the places, in the daily plan and the revise', () => {
+    for (const system of [daily(ROSTER), replan(ROSTER)]) {
+      expect(system).toContain(`${ROSTER}\nPlaces in town: Home`);
+    }
+  });
+
+  it('adds nothing without a roster', () => {
+    for (const system of [daily(), replan()]) {
+      expect(system).not.toContain('People in town');
+      expect(system).toContain('\nPlaces in town: Home');
+    }
+  });
+});

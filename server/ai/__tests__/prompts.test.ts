@@ -219,6 +219,33 @@ describe('buildConversationPrompt', () => {
     expect(system).not.toContain('consider you neutral');
   });
 
+  describe('town roster (no invented townsfolk)', () => {
+    const enrich = (roster?: string) => ({
+      reputationLabel: 'neutral', reputationScore: 0, hobbies: [], moodMomentum: 0, drinkCount: 0, roster,
+    });
+    const ROSTER = 'People in town: Rosa Chen (Shopkeeper), Omar Haddad (Baker). Anyone not on this list is a stranger to town; never make up names for townsfolk.';
+
+    it('puts the roster in the system prompt, after the header and before the volatile lines', () => {
+      const system = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], enrich(ROSTER));
+      expect(system).toContain(ROSTER);
+      // Stable prefix: header, then roster, then the mood/needs lines that change per turn.
+      expect(system.indexOf(ROSTER)).toBeGreaterThan(system.indexOf(TOWN_SETTING));
+      expect(system.indexOf(ROSTER)).toBeLessThan(system.indexOf('Your financial situation'));
+    });
+
+    it('is not in the per-turn user message', () => {
+      const user = buildConversationPrompt({ ...baseParams, enrichment: enrich(ROSTER) }).messages[0].content;
+      expect(user).not.toContain('People in town');
+    });
+
+    it('changes nothing without a roster', () => {
+      const without = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], enrich());
+      const empty = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], enrich(''));
+      expect(without).not.toContain('People in town');
+      expect(empty).toBe(without);
+    });
+  });
+
   describe('romance grounding (playtest #3: "my love" at romance 26)', () => {
     const withRomance = (romance_ab: number, romance_ba: number, tags: string[] = [], topic = 'catching up') =>
       buildConversationPrompt({

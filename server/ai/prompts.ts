@@ -189,6 +189,12 @@ export interface AgentEnrichment {
   family?: string;
   /** "Facts about you (keep them straight): …" — helpers/selfFactsStore.ts. */
   selfFacts?: string | null;
+  /**
+   * "People in town: …" plus the no-inventing sentence (lib/townRoster.ts
+   * `rosterLine`), the speaker and listener left out. In the system prompt, so
+   * it stays in the cached prefix; '' or absent leaves the prompt unchanged.
+   */
+  roster?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -654,7 +660,11 @@ export function buildAgentSystemPrompt(
   // by buildConversationPrompt), so a child never reads "desire and temptation".
   const adultTone = isAdultContent() && isAdultAge(agent.age) && (otherAge === undefined || isAdultAge(otherAge));
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING} ${maturityDirective(adultTone)}`;
-  const middle = [descriptionLine, factsLine, familyLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
+  // The roster leads the middle: it is fixed for the whole conversation, so the
+  // stable prefix (header + roster) stays intact while the mood, needs and
+  // state lines after it change turn to turn.
+  const rosterText = enrichment?.roster ?? '';
+  const middle = [rosterText, descriptionLine, factsLine, familyLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
   let toneHint = '';

@@ -106,6 +106,12 @@ export interface DailyPlanPromptParams {
    * ordinary day and walked past the fair.
    */
   calendar?: string[];
+  /**
+   * "People in town: …" (lib/townRoster.ts `rosterLine`, the planner left out):
+   * without it the plan named invented neighbours ("Lunch with Silas"). Optional
+   * so a caller without a DB can leave it out; absent means no line.
+   */
+  roster?: string;
 }
 
 export interface DecompositionPromptParams {
@@ -140,6 +146,12 @@ export interface ReplanPromptParams {
   currentHour: number;
   sleepTime: number;
   validLocations: string[];
+  /**
+   * "People in town: …" (lib/townRoster.ts `rosterLine`, the planner left out):
+   * without it the plan named invented neighbours ("Lunch with Silas"). Optional
+   * so a caller without a DB can leave it out; absent means no line.
+   */
+  roster?: string;
 }
 
 export function buildDailyPlanPrompt(params: DailyPlanPromptParams): PlanPrompt {
@@ -184,6 +196,8 @@ export function buildDailyPlanPrompt(params: DailyPlanPromptParams): PlanPrompt 
     ? `\nIn town: ${params.calendar.join(' ')}\n`
     : '';
 
+  const rosterSection = params.roster ? `\n${params.roster}` : '';
+
   const extras = [
     params.economy
       ? `Money: $${Math.round(params.economy.money)} (${describeMoneyLevel(params.economy.money)})${params.economy.jobTitle ? `; ${params.economy.jobTitle}, $${params.economy.salary}/day` : '; unemployed'}.`
@@ -207,7 +221,7 @@ ${extras}
 
 Your goals:
 ${goalsList}
-${reflectionsList}${yesterdaySection}${calendarSection}
+${reflectionsList}${yesterdaySection}${calendarSection}${rosterSection}
 Places in town: ${validLocations.join(', ')}
 
 Plan your day from ${wakeTime}:00 to ${sleepTime}:00 in 5-8 back-to-back blocks of whole hours. Include your work hours if you work, meals, and time for what you need or want today, true to your personality. ${ACTION_STYLE}
@@ -300,6 +314,8 @@ export function buildReplanPrompt(params: ReplanPromptParams): PlanPrompt {
         .join('\n')
     : '- Nothing planned.';
 
+  const rosterSection = params.roster ? `\n${params.roster}` : '';
+
   const system = `You are ${name}. ${personalityDesc}
 ${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 
@@ -308,7 +324,7 @@ Something just happened: ${eventDescription}
 It is ${currentHour}:00. The rest of your day was going to be:
 ${originalPlan}
 
-Right now — ${describeNeeds(needs)}. You need to sleep by ${sleepTime}:00.
+Right now — ${describeNeeds(needs)}. You need to sleep by ${sleepTime}:00.${rosterSection}
 Places in town: ${validLocations.join(', ')}
 
 Revise the rest of your day, ${currentHour}:00 to ${sleepTime}:00, in 1-6 back-to-back blocks of whole hours. Keep what still makes sense and change what this event changes for someone like you. ${ACTION_STYLE}

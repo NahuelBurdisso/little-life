@@ -23,6 +23,12 @@ describe('gazette prompt and parser', () => {
     expect(p.format).toMatchObject({ required: ['headline', 'articles', 'gossip'] });
   });
 
+  it('hands the model the roster so the paper does not invent names', () => {
+    const roster = 'People in town: Rosa Chen (Shopkeeper). Anyone not on this list is a stranger to town; never make up names for townsfolk.';
+    expect(buildGazettePrompt(material, 4, 'spring', 'stormy', roster).system).toContain(roster);
+    expect(buildGazettePrompt(material, 4, 'spring', 'stormy').system).not.toContain('People in town');
+  });
+
   it('parses an edition and drops empty articles', () => {
     const raw = JSON.stringify({
       headline: 'THIEF IN THE BAKERY!',

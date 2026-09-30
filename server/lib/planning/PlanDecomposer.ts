@@ -329,10 +329,13 @@ export class PlanDecomposer {
       locationRows.map((l) => [l.name.toLowerCase(), l.id]),
     );
 
-    // 6. Get all agent names + id map for resolution later
+    // 6. Living residents' names + id map for resolution later. Only active ones:
+    // this list is the prompt's "People in town", and a step aimed at someone who
+    // died or left town can never be carried out.
     const agentRows = db
       .select({ id: agents.id, name: agents.name })
       .from(agents)
+      .where(eq(agents.is_active, true))
       .all();
     const validAgentNames = agentRows.map((a) => a.name);
     const agentIdMap = new Map<string, number>(
