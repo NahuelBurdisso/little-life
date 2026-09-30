@@ -55,6 +55,23 @@ describe('alertTier', () => {
   });
 });
 
+describe('alertTier: kisses (lib/intimacy/kiss.ts)', () => {
+  const kiss = (type: string, category: string, importance: number) => row({ type, category, importance, agent_ids: [7, 8] });
+
+  it('a first kiss is a quiet toast for a favourite and nothing for everyone else', () => {
+    const first = kiss('first_kiss', 'relationship', 0.65);
+    expect(alertTier(first)).toBeNull();
+    expect(alertTier(first, new Set([8]))).toBe('minor');
+  });
+
+  it('routine kisses and refusals never toast, favourite or not', () => {
+    for (const r of [kiss('kiss', 'relationship', 0.3), kiss('kiss_rebuffed', 'drama', 0.5)]) {
+      expect(alertTier(r)).toBeNull();
+      expect(alertTier(r, new Set([7, 8]))).toBeNull();
+    }
+  });
+});
+
 describe('activity.getAlerts', () => {
   const caller = () => activityRouter.createCaller({} as any);
 

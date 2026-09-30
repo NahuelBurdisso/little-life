@@ -111,7 +111,7 @@ class BeatSystem implements CanvasSystem {
     let ax: number, ay: number;
     const a = pts[0], b = pts[1];
     if (beat.at) { ax = beat.at.x; ay = beat.at.y; }
-    else if (a && b && (kind === "fight" || kind === "romance" || kind === "heartbreak" || kind === "secret")) {
+    else if (a && b && (kind === "fight" || kind === "romance" || kind === "heartbreak" || kind === "secret" || kind === "kiss")) {
       ax = (a.x + b.x) / 2; ay = (a.y + b.y) / 2;
     } else if (kind === "gift") {
       const to = b ?? a;

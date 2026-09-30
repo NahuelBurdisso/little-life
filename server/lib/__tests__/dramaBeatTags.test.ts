@@ -34,6 +34,17 @@ describe('drama beat tag storage', () => {
   });
 });
 
+describe('drama beat vocabulary: intimacy beats', () => {
+  it('maps the kiss beats to their canvas family (contract table)', () => {
+    expect(DRAMA_BEAT_KIND.kiss).toBe('kiss');
+    expect(DRAMA_BEAT_KIND.kiss_rebuffed).toBe('heartbreak');
+    expect(DRAMA_BEAT_KIND.tryst).toBe('romance');
+    expect(DRAMA_BEAT_KIND.caught).toBe('secret');
+    expect(DRAMA_BEAT_KIND.scandal).toBe('secret');
+    for (const b of ['kiss', 'kiss_rebuffed', 'tryst', 'caught', 'scandal']) expect(isDramaBeat(b)).toBe(true);
+  });
+});
+
 describe('drama beat vocabulary', () => {
   it('isDramaBeat only accepts known subtypes (not prototype keys, not other types)', () => {
     expect(isDramaBeat('fight')).toBe(true);

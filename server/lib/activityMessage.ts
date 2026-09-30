@@ -54,6 +54,14 @@ export function renderMessage(entry: ActivityEntry): string {
   if (d.description) return String(d.description);
   if (d.message) return String(d.message);
 
+  // Kisses (lib/intimacy/kiss.ts): typed rows carrying only the two names, kept
+  // discreet on purpose. agent1 is the one who leaned in.
+  if (d.agent1 && d.agent2) {
+    if (entry.type === 'first_kiss') return `${d.agent1} and ${d.agent2} shared a first kiss.`;
+    if (entry.type === 'kiss') return `${d.agent1} and ${d.agent2} kissed.`;
+    if (entry.type === 'kiss_rebuffed') return `${d.agent2} turned away from ${d.agent1}'s kiss.`;
+  }
+
   // Goals
   // `goalPhrase` because trigger-generated goals carry the raw GOAL_REGISTRY key
   // here, the same as the completed/abandoned rows; LLM-authored ones carry prose

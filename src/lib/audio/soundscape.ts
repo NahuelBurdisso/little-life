@@ -335,6 +335,8 @@ const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
   // birthday's bright arpeggio; a father learning it isn't his is heartbreak.
   birth: 'lullaby', paternity: 'sad',
   contest_win: 'cheer',
+  // Intimacy (server/lib/intimacy/): a first kiss is the romance chime, a refusal is sad.
+  kiss: 'romance', kiss_rebuffed: 'sad',
 };
 
 /** Row types that carry their own cue regardless of `metadata.beat`. */

@@ -23,7 +23,7 @@ import { DRAMA_BEAT_KIND, isDramaBeat } from '../../../../../server/data/dramaBe
 
 export type BeatKind =
   | 'fight' | 'gift' | 'romance' | 'heartbreak' | 'arrest'
-  | 'secret' | 'levelup' | 'birthday' | 'death';
+  | 'secret' | 'levelup' | 'birthday' | 'death' | 'kiss';
 
 export interface Beat {
   kind: BeatKind;
@@ -146,6 +146,13 @@ export function classifyActivity(row: ActivityRow): { kind: BeatKind; agentIds: 
     const ids = pairOf(row);
     if (ids.length === 0) return null;
     return { kind: row.type === 'rejection' ? 'heartbreak' : 'romance', agentIds: ids };
+  }
+  // Kisses (server/lib/intimacy/kiss.ts) are typed rows too, not `drama`: a first kiss and a
+  // routine one are the kiss beat, a refusal a broken heart.
+  if (row.type === 'first_kiss' || row.type === 'kiss' || row.type === 'kiss_rebuffed') {
+    const ids = pairOf(row);
+    if (ids.length === 0) return null;
+    return { kind: row.type === 'kiss_rebuffed' ? 'heartbreak' : 'kiss', agentIds: ids };
   }
   if (row.type === 'gift') {
     const ids = pairOf(row);

@@ -113,6 +113,15 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   expecting:   { category: 'relationship', base_importance: 0.7, retention: 'long', template: '{description}' },
   christening: { category: 'relationship', base_importance: 0.6, retention: 'long', template: '{description}' },
 
+  // ─── Kisses (lib/intimacy/kiss.ts) ─────────────────────────────────────────
+  // Their own types rather than `drama` rows (drama is base 0.8, gazette-worthy):
+  // a first kiss is a small-town headline, a routine one is texture for the feed
+  // that expires quickly, a refusal is a private embarrassment the paper leaves
+  // alone. Each row still carries `metadata.beat` for the canvas and the sound.
+  first_kiss:    { category: 'relationship', base_importance: 0.65, retention: 'long', template: '{agent1} and {agent2} shared a first kiss' },
+  kiss:          { category: 'relationship', base_importance: 0.3, retention: 'short', template: '{agent1} and {agent2} kissed', newsworthy: false },
+  kiss_rebuffed: { category: 'drama', base_importance: 0.5, retention: 'medium', template: "{agent2} turned away from {agent1}'s kiss", newsworthy: false },
+
   // ─── The town calendar (lib/townCalendar.ts) ────────────────────────────────
   // "The Harvest Festival is in two days": town news the feed should carry, but
   // not the paper's material — the gazette gets its own "Coming up" section from

@@ -34,6 +34,15 @@ export interface AlertCandidate {
 const MAJOR_CATEGORIES = new Set(['drama', 'world_event', 'aspiration']);
 export const MAJOR_IMPORTANCE = 0.8;
 
+/**
+ * Kisses (lib/intimacy/kiss.ts) never interrupt on their own account. A refusal
+ * is registered as a drama row (importance 0.5), which would otherwise toast for
+ * a favourite; it is a private embarrassment and reads better in the feed. A
+ * first kiss is not listed: its 0.65 relationship row already earns the minor
+ * toast for the player's favourites and nothing else.
+ */
+const QUIET_TYPES = new Set(['kiss', 'kiss_rebuffed']);
+
 const PLAYER_TYPES = new Set(['player_outcome', 'player_nudge_expired', 'challenge_completed', 'challenge_failed']);
 
 /** Status changes that rewrite a pair's story for everyone watching. */
@@ -60,6 +69,7 @@ function involves(row: AlertCandidate, ids: ReadonlySet<number>): boolean {
 
 export function alertTier(row: AlertCandidate, favoriteIds: ReadonlySet<number> = new Set()): AlertTier | null {
   if (PLAYER_TYPES.has(row.type)) return 'player';
+  if (QUIET_TYPES.has(row.type)) return null;
 
   if (row.type === 'relationship_status_change') {
     const status = String(row.template_data?.status ?? '');

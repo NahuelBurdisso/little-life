@@ -21,9 +21,11 @@ export type DramaBeat =
   | 'arrival' | 'departure'                     // the town's population changing (lib/populationFlow.ts); no canvas FX yet
   | 'new_job' | 'help_wanted' | 'inheritance'   // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
   | 'birth' | 'paternity'                      // family life (lib/family.ts): a baby born, a father learning it isn't his
-  | 'contest_win';                              // a festival contest decided (lib/townCalendar.ts)
+  | 'contest_win'                               // a festival contest decided (lib/townCalendar.ts)
+  | 'kiss' | 'kiss_rebuffed'                    // → kiss / heartbreak (lib/intimacy/kiss.ts)
+  | 'tryst' | 'caught' | 'scandal';             // → romance / secret / secret (the adult layer, lib/intimacy/)
 
-export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday';
+export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday' | 'kiss';
 
 /** The canvas animation family each subtype plays; `null` = tagged but nothing to draw. */
 export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
@@ -62,6 +64,15 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   // The winner's moment in front of the crowd: the birthday family's burst of
   // cheer is the right picture (and sound) for it.
   contest_win: 'birthday',
+  // Intimacy (lib/intimacy/). A kiss is its own picture (two figures leaning in),
+  // a refused one is a broken heart, and the adult layer's rows stay suggestive:
+  // hearts for the night together, a whisper for being seen at dawn or the
+  // town's scandal.
+  kiss: 'kiss',
+  kiss_rebuffed: 'heartbreak',
+  tryst: 'romance',
+  caught: 'secret',
+  scandal: 'secret',
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

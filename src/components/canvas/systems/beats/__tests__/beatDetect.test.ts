@@ -368,6 +368,14 @@ describe('detectBeats — death', () => {
   });
 });
 
+describe('kisses (server/lib/intimacy/kiss.ts)', () => {
+  it('classifies the typed kiss rows: a kiss beat, or a broken heart for a refusal', () => {
+    expect(classifyActivity(row({ type: 'first_kiss' }))).toEqual({ kind: 'kiss', agentIds: [1, 2] });
+    expect(classifyActivity(row({ type: 'kiss' }))).toEqual({ kind: 'kiss', agentIds: [1, 2] });
+    expect(classifyActivity(row({ type: 'kiss_rebuffed' }))).toEqual({ kind: 'heartbreak', agentIds: [1, 2] });
+  });
+});
+
 describe('life milestones (server/lib/milestonesEngine.ts)', () => {
   it('classifies the typed milestone rows without reading their wording', () => {
     expect(classifyActivity(row({ type: 'engagement', description: 'Ann asked Bo to marry them — and Bo said yes! They are engaged.' })))

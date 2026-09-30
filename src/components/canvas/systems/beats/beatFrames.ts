@@ -82,6 +82,9 @@ export const BEAT_STYLE: Record<BeatKind, BeatStyle> = {
   levelup:    { fx: 'levelup', lift: 16, emotes: ['levelup', null] },
   birthday:   { fx: 'cake',    lift: 11, dx: 15, emotes: ['cake', null] },
   death:      { fx: 'ghost',   lift: 14, emotes: [null, null] },
+  // Placeholder dressing: the hearts of a romance until the kiss beat gets its own
+  // lean-in and emotes (blush / kiss), which come with the intimacy visuals.
+  kiss:       { fx: 'heart',   lift: 22, emotes: ['heart', 'heart'] },
 };
 
 /** Whole life of one beat's effect, in seconds. */
