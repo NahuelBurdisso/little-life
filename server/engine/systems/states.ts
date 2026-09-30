@@ -26,6 +26,7 @@ import {
   type AgentStateRow,
 } from '../../lib/states';
 import { emitter } from '../emitter';
+import { committedTo } from '../../lib/intimacy/committed';
 import { isIntimacyEligible } from '../../lib/intimacy/eligibility';
 import { createFact, deactivateStaleFacts, getAgentName, jealousRumorContext } from '../../lib/gossip';
 import { taskRunner } from '../../ai/taskRunner';
@@ -974,30 +975,21 @@ function evaluateTriggers(
         activeTypes.add('infatuated');
         createFact('crush', agent.id, targetId, 2, [agent.id], 'witnessed');
 
-        // Check for affair: does the target have romance > 40 with any third agent?
-        const targetRomanceRels = db
-          .select(PAIR_ROMANCE)
-          .from(relationships)
-          .where(or(eq(relationships.agent_a, targetId), eq(relationships.agent_b, targetId)))
-          .all();
-
-        for (const tRel of targetRomanceRels) {
-          const tIsA = tRel.agent_a === targetId;
-          const thirdAgentId = tIsA ? tRel.agent_b : tRel.agent_a;
-          if (thirdAgentId === agent.id) continue;
-          const targetRomanceWithThird = tIsA ? tRel.romance_ab : tRel.romance_ba;
-          if (targetRomanceWithThird > 40) {
-            const coLocated = allAgents
-              .filter(
-                (a) =>
-                  a.current_location === agent.current_location &&
-                  a.id !== agent.id &&
-                  a.id !== targetId,
-              )
-              .map((a) => a.id);
-            createFact('affair', agent.id, targetId, 3, coLocated, 'observed');
-            break;
-          }
+        // Check for affair: somebody in it is spoken for (partner, fiance(e) or spouse) to a third
+        // person. It used to be "the target has romance > 40 with any third agent", spoken for or not,
+        // so two single people drifting together were "an affair" (a 30-day soak: 32 such rumors,
+        // 18 between pairs who never even kissed, each known by ~11 residents, each a candidate for a
+        // partner's reckoning). Known to those in the room, as before.
+        if (committedTo(targetId, agent.id) != null || committedTo(agent.id, targetId) != null) {
+          const coLocated = allAgents
+            .filter(
+              (a) =>
+                a.current_location === agent.current_location &&
+                a.id !== agent.id &&
+                a.id !== targetId,
+            )
+            .map((a) => a.id);
+          createFact('affair', agent.id, targetId, 3, coLocated, 'observed');
         }
 
         break;
