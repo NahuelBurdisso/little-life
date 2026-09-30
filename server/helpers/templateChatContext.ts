@@ -13,6 +13,7 @@ import { agents, economy, locations, needs, relationships, worldEvents, worldSta
 import { firstName } from '../ai/names';
 import { OUTDOOR_TYPES } from '../lib/worldgen/buildingTemplates';
 import { placeIsSpeakable, toneOf, voiceOf } from '../lib/templateChat';
+import { getAgentStates } from '../lib/states';
 import { EVENT_TALK, JOB_NOUNS, type ChatContext, type ChatPerson } from '../data/smallTalkScripts';
 import type { PersonalityProfile } from '../lib/personality';
 
@@ -130,6 +131,8 @@ export function buildTemplateChatContext(
     const n = db.select().from(needs).where(eq(needs.agent_id, agent.id)).get();
     const friendship = rel ? (isA ? rel.friendship_ab : rel.friendship_ba) : 0;
     const mood = n?.mood ?? 50;
+    // Grieving, sick, heartbroken…: the scripts and the tone read them (templateChat.ts).
+    const states: string[] = [...getAgentStates(agent.id)];
     return {
       name: agent.name,
       first: firstName(agent.name),
@@ -138,7 +141,8 @@ export function buildTemplateChatContext(
       hunger: n?.hunger ?? 50,
       energy: n?.energy ?? 50,
       voice: voiceOf(agent.personality as PersonalityProfile | null),
-      tone: toneOf(friendship, mood),
+      tone: toneOf(friendship, mood, states),
+      states,
       job: jobOf(agent.id),
       workplace: locationName(agent.workplace ?? null),
       atWork: agent.workplace != null && agent.workplace === locationId,

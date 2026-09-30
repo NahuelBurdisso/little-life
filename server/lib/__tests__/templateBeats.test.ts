@@ -73,6 +73,23 @@ describe('decideTemplateBeats (pure)', () => {
       .toEqual([]);
   });
 
+  it('nobody flirts with, or as, someone grieving, heartbroken or sick (B2)', () => {
+    const crush = person({ romance: 35 });
+    const flirt = (people: [BeatPerson, BeatPerson], scriptId = 'flirting') =>
+      decideTemplateBeats(input({ scriptId, sentiment: 0.5, people }), always);
+    // The control: the same crush on the same script does flirt.
+    expect(flirt([crush, person()])).toEqual([{ kind: 'flirt', actor: 0 }]);
+    for (const type of ['grieving', 'heartbroken', 'sick']) {
+      const troubled = person({ states: [{ type, target: null }] });
+      for (const scriptId of ['flirting', 'shy_flirt', 'sweethearts']) {
+        expect(flirt([crush, troubled], scriptId), `listener ${type} / ${scriptId}`).toEqual([]);
+        expect(flirt([{ ...crush, states: troubled.states }, person()], scriptId), `opener ${type} / ${scriptId}`).toEqual([]);
+      }
+    }
+    // Other states don't stop a flirt.
+    expect(flirt([crush, person({ states: [{ type: 'drunk', target: null }] })])).toEqual([{ kind: 'flirt', actor: 0 }]);
+  });
+
   it('an honest one with a secret confides in someone they trust', () => {
     const guilty = person({ personality: personality({ honesty: 70 }), hasConfessableSin: true, trust: 60 });
     expect(decideTemplateBeats(input({ people: [person(), guilty] }), always)).toEqual([{ kind: 'confession', actor: 1 }]);

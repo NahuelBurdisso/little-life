@@ -19,7 +19,12 @@
 
 import {
   FOLLOW_ACKS,
+  HEAVY_STATES,
+  OFF_KEY_WHILE_MOURNING,
   SMALL_TALK_SCRIPTS,
+  isGrieving,
+  isMourning,
+  isSick,
   type ChatContext,
   type ChatPerson,
   type OpenerLine,
@@ -62,12 +67,15 @@ export function voiceOf(p: PersonalityProfile | null | undefined): Voice {
 }
 
 /**
- * How someone comes across to this listener: their feelings for them, and
- * their own mood. Below 30 is the mood the rough-day script notices, so the
- * same person can't look miserable and chirp about the sunshine.
+ * How someone comes across to this listener: their feelings for them, their
+ * own mood, and the state they carry. Below 30 is the mood the rough-day script
+ * notices, so the same person can't look miserable and chirp about the
+ * sunshine; a mourner, a broken heart or a depressed man comes across cool at
+ * any mood (a widow at 35 is not cheerful), and cool avoids lines with s > 0.1.
+ * Being sick alone doesn't: a fever isn't a mood.
  */
-export function toneOf(friendship: number, mood: number): Tone {
-  if (friendship < -10 || mood < 30) return 'cool';
+export function toneOf(friendship: number, mood: number, states: readonly string[] = []): Tone {
+  if (friendship < -10 || mood < 30 || states.some((s) => HEAVY_STATES.includes(s))) return 'cool';
   if (friendship >= 30 && mood >= 40) return 'warm';
   return 'neutral';
 }
@@ -251,10 +259,16 @@ export function isHostile(c: ChatContext): boolean {
   return c.people[0].friendship < -10 || c.status === 'rivals' || c.status === 'enemies';
 }
 
-/** The scripts this context could play, before cooldowns. */
+/**
+ * The scripts this context could play, before cooldowns. When EITHER person is
+ * grieving or heartbroken the flirts and the sunny-weather script are off the
+ * table: a crush's smile lands badly on a widow, and "Isn't this sun glorious?"
+ * is said by nobody who has just buried their partner.
+ */
 export function eligibleScripts(c: ChatContext, scripts: readonly TopicScript[] = SMALL_TALK_SCRIPTS): TopicScript[] {
   const hostile = isHostile(c);
-  return scripts.filter((s) => (!hostile || s.hostileOk) && s.when(c));
+  const mourning = c.people.some(isMourning);
+  return scripts.filter((s) => (!hostile || s.hostileOk) && !(mourning && OFF_KEY_WHILE_MOURNING.has(s.id)) && s.when(c));
 }
 
 export interface ComposeOptions {
@@ -281,7 +295,9 @@ export const TOWN_REPEAT_FACTOR = 0.2;
  * Scripts written for why the conversation was queued (`ChatContext.intent`):
  * a flirt → the shy flirt (a couple → sweethearts), an offer of help → the
  * helping hand, comfort → the rough-day script first, a couple's "catching
- * up" → sweethearts.
+ * up" → sweethearts. Whatever the intent, a grieving listener is owed
+ * condolences and a sick one is asked after (their state is why anyone would
+ * stop to talk, and the fallback chat for a queued visit must not ignore it).
  */
 export function preferredScripts(c: ChatContext): Set<string> {
   const intent = (c.intent ?? '').trim().toLowerCase();
@@ -291,6 +307,8 @@ export function preferredScripts(c: ChatContext): Set<string> {
   if (intent === 'offering help' || intent === 'checking in') out.add('help');
   if (intent === 'offering comfort') { out.add('rough_day'); out.add('help'); }
   if (couple && (intent === 'catching up' || intent === '')) out.add('sweethearts');
+  if (isGrieving(c.people[1])) out.add('condolence');
+  if (isSick(c.people[1])) out.add('feeling_poorly');
   return out;
 }
 

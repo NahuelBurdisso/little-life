@@ -65,6 +65,12 @@ export interface ChatPerson {
   atWork: boolean;
   /** Standing in their own home. */
   livesHere: boolean;
+  /**
+   * Active agent states ("grieving", "sick", "heartbroken"…), as `getAgentStates`
+   * lists them. Template chats were blind to them: a widow at mood 35 (not low
+   * enough for `rough_day`) was told "Lovely day!" by the sunny-weather script.
+   */
+  states: string[];
 }
 
 export interface ChatEvent {
@@ -120,6 +126,23 @@ export const isFlirtIntent = (c: ChatContext) => /^(?:flirting|romance)$/i.test(
 /** The queued topic is an offer of help or comfort. */
 export const isHelpIntent = (c: ChatContext) => /^(?:offering help|offering comfort|checking in)$/i.test(c.intent ?? '');
 const COUPLE = new Set(['partners', 'engaged', 'married']);
+
+/**
+ * States that make someone come across cool whatever they feel for the listener
+ * (`toneOf`): a widow, a heartbroken lover and a depressed man don't chirp.
+ */
+export const HEAVY_STATES: readonly string[] = ['grieving', 'heartbroken', 'depressed'];
+export const isGrieving = (p: ChatPerson) => p.states.includes('grieving');
+export const isSick = (p: ChatPerson) => p.states.includes('sick');
+/** Grieving or heartbroken: no flirting with them, and no gushing about the weather. */
+export const isMourning = (p: ChatPerson) => p.states.includes('grieving') || p.states.includes('heartbroken');
+/** The scripts a crush plays out on; the beat rules (templateBeats.ts) read the flirt beat off them. */
+export const FLIRT_SCRIPT_IDS: ReadonlySet<string> = new Set(['sweethearts', 'shy_flirt', 'flirting']);
+/**
+ * Scripts the composer drops when EITHER person is mourning: the flirts, and
+ * the one whose openers marvel at how glorious the sun is.
+ */
+export const OFF_KEY_WHILE_MOURNING: ReadonlySet<string> = new Set([...FLIRT_SCRIPT_IDS, 'weather_sun']);
 
 export interface ScriptLine {
   text: string;
@@ -918,6 +941,144 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
       { text: "Don't let it get you down, {you}.", s: 0.2, when: byOpener },
       { text: "Try not to worry too much, {you}.", s: 0.2, when: byOpener },
       { text: "Thank you. I'll try not to let it get me down.", s: 0.1, when: (c, me) => !byOpener(c, me) },
+    ],
+  },
+
+  // ===== the listener is grieving =====
+  // Before this, a widow at mood 35 (`rough_day` needs < 30) got "Lovely day!" from the
+  // sunny-weather script. Every line here is said gently: a grieving speaker comes across
+  // cool (`toneOf`), so their side keeps to s <= 0.1, and the opener's lines are quiet too.
+  {
+    id: 'condolence',
+    // "Exactly." after "I miss them dreadfully" would be cruel.
+    acks: {
+      agree: [{ text: 'I know.', s: 0 }, { text: 'Of course.', s: 0.1 }],
+      disagree: [{ text: "I won't press you.", s: 0.1 }, { text: 'Forgive me for asking.', s: 0 }],
+      neutral: [{ text: 'Take all the time you need.', s: 0.1 }, { text: 'I understand.', s: 0.1 }],
+    },
+    cooldownHours: 12,
+    when: (c) => civil(c) && isGrieving(c.people[1]),
+    weight: () => 8,
+    topic: () => 'a loss',
+    anchors: () => ['loss', 'sorry', 'miss'],
+    openers: [
+      {
+        kind: 'ask', text: "I'm so sorry, {you}. How are you bearing up?", s: 0.1,
+        replies: [
+          { text: 'Some hours are easier than others. I miss them dreadfully.', s: -0.2, stance: 'agree' },
+          { text: 'One day at a time. The loss is still very new.', s: -0.1, stance: 'neutral' },
+          { text: "I'd sooner not speak of the loss, if it's all the same.", s: -0.2, stance: 'disagree', voice: ['gruff', 'shy', 'plain'] },
+        ],
+      },
+      {
+        kind: 'ask', text: "Have you eaten today, {you}? Forgive me, I'm sorry to fuss.", s: 0.1,
+        when: (_c, me) => me.friendship >= 20,
+        replies: [
+          { text: "A little. I've had no appetite since the loss.", s: -0.2, stance: 'neutral' },
+          { text: 'Not really. Food tastes of nothing, and I miss them at every meal.', s: -0.2, stance: 'agree' },
+        ],
+      },
+      {
+        kind: 'tell', text: "I heard about your loss, {you}. I'm so sorry.", s: 0.1,
+        replies: [
+          { text: 'Thank you for saying so. I miss them more each day.', s: -0.1, stance: 'agree' },
+          { text: "Word travels fast. It's a hard loss to speak of, but thank you.", s: -0.1, stance: 'neutral' },
+          { text: "I can't talk about the loss yet. Forgive me.", s: -0.2, stance: 'disagree', voice: ['gruff', 'shy'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "I've thought of you since your loss. If you need anything, only say.", s: 0.1,
+        replies: [
+          { text: 'That is kind. Some evenings the house is too quiet, and I miss them.', s: -0.1, stance: 'agree' },
+          { text: "Thank you. I'll remember it when the loss is less raw.", s: 0, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'tell', text: "I'm sorry for your loss, {you}. They'll be missed by the whole town.", s: 0.1,
+        replies: [
+          { text: 'Thank you. Hearing that helps, a little. I miss them so.', s: 0, stance: 'agree' },
+          { text: 'I keep expecting them to walk through the door. I miss them terribly.', s: -0.2, stance: 'agree' },
+        ],
+      },
+    ],
+    follow: [
+      { text: "I'm sorry I can't offer more than my company.", s: 0.1 },
+      { text: 'A loss like that is too heavy to carry alone.', s: 0.1 },
+      { text: 'The town will miss them, and I will too.', s: 0 },
+      { text: "Come by for supper this week. You shouldn't sit alone with the loss.", s: 0.1, when: (_c, me) => me.friendship >= 20 },
+    ],
+    close: [
+      // Comfort goes to the one grieving; they answer with thanks.
+      { text: "Be gentle with yourself, {you}. I'm sorry, truly.", s: 0.1, when: byOpener },
+      { text: "I'll look in on you tomorrow, {you}. I'm so sorry.", s: 0.1, when: byOpener },
+      { text: 'If the nights are hardest, send for me. I am sorry for your loss, {you}.', s: 0.1, when: byOpener },
+      { text: "Thank you for coming, {you}. It helps not to miss them alone.", s: 0.1, when: (c, me) => !byOpener(c, me) },
+      { text: "Thank you, {you}. I'm sorry to be poor company.", s: 0, when: (c, me) => !byOpener(c, me) },
+    ],
+  },
+
+  // ===== the listener is sick =====
+  // The clinic script needs the clinic; a sick neighbour in the street got the weather.
+  {
+    id: 'feeling_poorly',
+    // "Exactly." after "I'm no better" would be a poor joke.
+    acks: {
+      agree: [{ text: 'Poor soul.', s: 0.1 }, { text: 'I thought as much.', s: 0 }],
+      disagree: [{ text: 'Well, if you say so.', s: 0 }, { text: "You'd tell me if it were worse.", s: 0.1 }],
+      neutral: [{ text: 'I see.', s: 0 }, { text: 'I understand.', s: 0.1 }],
+    },
+    cooldownHours: 10,
+    when: (c) => civil(c) && isSick(c.people[1]),
+    weight: () => 6,
+    topic: () => 'being unwell',
+    anchors: () => ['unwell', 'rest', 'better'],
+    openers: [
+      {
+        kind: 'ask', text: 'You look unwell, {you}. Have you been resting?', s: 0,
+        replies: [
+          { text: "Not as much as I should. There's too much to do to rest.", s: -0.1, stance: 'neutral' },
+          { text: "I'm not feeling myself, no. I'll rest when the fever breaks.", s: -0.1, stance: 'agree' },
+          { text: "I'm a little unwell, that's all. It will pass.", s: -0.1, stance: 'disagree', voice: ['gruff', 'shy', 'plain'] },
+        ],
+      },
+      {
+        kind: 'ask', text: 'Are you feeling any better today, {you}?', s: 0.1,
+        replies: [
+          { text: 'A little better, thank you. The fever broke in the night.', s: 0.1, stance: 'agree' },
+          { text: "Not really. I'm no better than yesterday.", s: -0.2, stance: 'disagree' },
+          { text: "Slowly. I'm told I need rest, and I'm trying.", s: 0, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'tell', text: "I heard you'd been unwell, {you}. I hope it's nothing serious.", s: 0.1,
+        replies: [
+          { text: "Just a fever, I think. I'll be better in a day or two.", s: 0, stance: 'neutral' },
+          { text: "I've felt better, I'll admit. Rest is all the doctor orders.", s: -0.1, stance: 'agree' },
+          { text: "It's only a cough. I'm not so unwell as people say.", s: -0.1, stance: 'disagree', voice: ['gruff', 'shy', 'plain'] },
+        ],
+      },
+      {
+        kind: 'tell', text: 'You ought to be home resting, {you}, not out here looking so unwell.', s: 0.1,
+        replies: [
+          { text: "I know. I couldn't bear the four walls any longer. I'll rest soon.", s: -0.1, stance: 'neutral' },
+          { text: "I'm headed home now. A night's rest, and I'll be better by morning.", s: 0.1, stance: 'agree' },
+          { text: "Don't fuss. I've no time to rest.", s: -0.2, stance: 'disagree', voice: ['gruff'] },
+        ],
+      },
+    ],
+    follow: [
+      { text: "You mustn't push yourself. Rest is the best medicine there is.", s: 0.1 },
+      { text: "A hot broth and a warm bed will have you better before the week is out.", s: 0.1 },
+      { text: "I hope you're better by Sunday.", s: 0.1 },
+      { text: "Send word if you're still unwell tomorrow.", s: 0 },
+    ],
+    close: [
+      // The rest is the listener's to take: the opener sends them to it, they answer with thanks.
+      { text: 'Get some rest, {you}, and mend soon.', s: 0.1, when: byOpener },
+      { text: "I hope you're better soon, {you}.", s: 0.2, when: byOpener },
+      { text: 'Rest well, {you}. Send word if you need anything.', s: 0.1, when: byOpener },
+      { text: "Thank you, {you}. I'll rest and be better soon.", s: 0.1, when: (c, me) => !byOpener(c, me) },
+      { text: "I'll go and rest now. Thank you for asking after me, {you}.", s: 0.1, when: (c, me) => !byOpener(c, me) },
     ],
   },
 

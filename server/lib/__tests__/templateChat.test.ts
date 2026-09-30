@@ -4,6 +4,7 @@ import {
   eligibleScripts,
   placeIsSpeakable,
   playScript,
+  preferredScripts,
   toneOf,
   type Rng,
   type TemplateChat,
@@ -11,6 +12,7 @@ import {
 import {
   EVENT_TALK,
   JOB_NOUNS,
+  FLIRT_SCRIPT_IDS,
   SMALL_TALK_SCRIPTS,
   type ChatContext,
   type ChatPerson,
@@ -57,6 +59,7 @@ const VOICES: Voice[] = ['warm', 'gruff', 'shy', 'bubbly', 'plain'];
 const STATUSES = ['strangers', 'acquaintances', 'friends', 'close_friends', 'rivals', 'enemies', 'romantic_interest', 'partners'];
 const JOBS = Object.values(JOB_NOUNS);
 const INTENTS = ['flirting', 'offering help', 'offering comfort', 'catching up', 'town news'];
+const STATES = ['grieving', 'heartbroken', 'depressed', 'sick', 'drunk', 'angry'];
 
 function randomContext(rng: Rng): ChatContext {
   const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rng() * xs.length)];
@@ -73,6 +76,9 @@ function randomContext(rng: Rng): ChatContext {
     const mood = range(5, 95);
     const job = rng() < 0.8 ? pick(JOBS) : null;
     const atWork = job != null && rng() < 0.3;
+    // Most people carry no state; a few carry one or two, so the random moments
+    // cover mourning and sick listeners as well as the everyday.
+    const states = STATES.filter(() => rng() < 0.07);
     return {
       name: `${FIRSTS[k]} ${SURNAMES[k]}`,
       first: FIRSTS[k],
@@ -81,7 +87,8 @@ function randomContext(rng: Rng): ChatContext {
       hunger: range(5, 95),
       energy: range(5, 95),
       voice: pick(VOICES),
-      tone: toneOf(friendship, mood),
+      tone: toneOf(friendship, mood, states),
+      states,
       job,
       workplace: atWork ? place.name : job ? pick(PLACES.filter((p) => p.type !== 'home')).name : null,
       atWork,
@@ -277,8 +284,9 @@ describe('template chats are coherent mini-exchanges (G5)', () => {
   describe('why they are talking (playtest #3: partners got the full-moon line)', () => {
     const friendly = (rng: Rng): ChatContext => {
       const c = randomContext(rng);
-      c.people[0] = { ...c.people[0], friendship: 60, mood: 70, tone: 'warm' };
-      c.people[1] = { ...c.people[1], friendship: 60, mood: 70, tone: 'warm' };
+      // Untroubled too: a state would (rightly) steer the pair to other scripts.
+      c.people[0] = { ...c.people[0], friendship: 60, mood: 70, tone: 'warm', states: [] };
+      c.people[1] = { ...c.people[1], friendship: 60, mood: 70, tone: 'warm', states: [] };
       // A friendly pair can't carry a hostile status (the random context may draw one).
       if (c.status === 'rivals' || c.status === 'enemies') c.status = 'friends';
       return c;
@@ -339,6 +347,158 @@ describe('template chats are coherent mini-exchanges (G5)', () => {
         })!;
         expect(again.turns[0].text).not.toBe(first.turns[0].text);
       }
+    });
+  });
+
+  describe('sick, grieving and heartbroken residents (B2)', () => {
+    /** A friendly pair on a sunny morning, romance in the air: the worst moment for a chirpy script. */
+    const sunnyMorning = (rng: Rng, states: { opener?: string[]; listener?: string[] }): ChatContext => {
+      const c = randomContext(rng);
+      const mk = (p: ChatPerson, own: string[] | undefined): ChatPerson => ({
+        ...p, friendship: 60, mood: 70, states: own ?? [], tone: toneOf(60, 70, own ?? []),
+      });
+      c.people = [mk(c.people[0], states.opener), mk(c.people[1], states.listener)];
+      c.weather = 'sunny';
+      c.dayPhase = 'morning';
+      c.status = 'romantic_interest';
+      c.romance = 60;
+      return c;
+    };
+
+    it('toneOf treats grieving, heartbroken and depressed as cool, sick alone as ordinary', () => {
+      for (const state of ['grieving', 'heartbroken', 'depressed']) {
+        expect(toneOf(60, 70, [state]), state).toBe('cool');
+      }
+      expect(toneOf(60, 70, ['sick'])).toBe('warm');
+      expect(toneOf(60, 70, [])).toBe('warm');
+      expect(toneOf(60, 70)).toBe('warm');
+      expect(toneOf(5, 50, ['drunk'])).toBe('neutral');
+    });
+
+    it('a grieving listener is never told about the sunshine or flirted with, and is offered condolences', () => {
+      let condolence = 0;
+      const N = 500;
+      for (let seed = 1; seed <= N; seed++) {
+        const rng = mulberry32(seed);
+        const c = sunnyMorning(rng, { listener: ['grieving'] });
+        c.intent = seed % 3 === 0 ? 'flirting' : seed % 3 === 1 ? 'catching up' : null;
+        const chat = composeTemplateChat(c, { rng })!;
+        assertCoherent(chat, c);
+        expect(chat.scriptId, `seed ${seed}`).not.toBe('weather_sun');
+        expect(FLIRT_SCRIPT_IDS.has(chat.scriptId), `seed ${seed}: ${chat.scriptId}`).toBe(false);
+        if (chat.scriptId === 'condolence') condolence++;
+      }
+      expect(condolence).toBeGreaterThan(N * 0.6);
+    });
+
+    it('no flirting or sunshine when EITHER person is grieving or heartbroken', () => {
+      for (const state of ['grieving', 'heartbroken']) {
+        for (const side of ['opener', 'listener'] as const) {
+          for (let seed = 1; seed <= 200; seed++) {
+            const rng = mulberry32(seed * 31);
+            const c = sunnyMorning(rng, { [side]: [state] });
+            c.intent = seed % 2 === 0 ? 'flirting' : 'romance';
+            const ids = eligibleScripts(c).map((s) => s.id);
+            expect(ids, `${state} ${side}`).not.toContain('weather_sun');
+            for (const flirt of FLIRT_SCRIPT_IDS) expect(ids, `${state} ${side}`).not.toContain(flirt);
+            const chat = composeTemplateChat(c, { rng })!;
+            expect(chat.scriptId).not.toBe('weather_sun');
+            expect(FLIRT_SCRIPT_IDS.has(chat.scriptId)).toBe(false);
+          }
+        }
+      }
+      // The same moment with nobody mourning still offers both (the gate is the state, not the script).
+      const c = sunnyMorning(mulberry32(3), {});
+      const ids = eligibleScripts(c).map((s) => s.id);
+      expect(ids).toContain('weather_sun');
+      expect(ids).toContain('sweethearts');
+    });
+
+    it('a sick listener gets the feeling-poorly script often, and a healthy one never does', () => {
+      let poorly = 0;
+      const N = 500;
+      for (let seed = 1; seed <= N; seed++) {
+        const rng = mulberry32(seed + 9000);
+        const c = sunnyMorning(rng, { listener: ['sick'] });
+        c.status = 'friends';
+        c.romance = 0;
+        c.intent = null;
+        const chat = composeTemplateChat(c, { rng })!;
+        assertCoherent(chat, c);
+        if (chat.scriptId === 'feeling_poorly') poorly++;
+        c.people[1].states = [];
+        expect(eligibleScripts(c).map((s) => s.id)).not.toContain('feeling_poorly');
+      }
+      expect(poorly).toBeGreaterThan(N * 0.6);
+    });
+
+    it('preferredScripts adds the script for the listener state whatever the intent', () => {
+      const rng = mulberry32(4);
+      for (const intent of [null, 'flirting', 'offering help', 'offering comfort', 'catching up', 'town news']) {
+        const grieving = sunnyMorning(rng, { listener: ['grieving'] });
+        grieving.intent = intent;
+        expect(preferredScripts(grieving).has('condolence'), String(intent)).toBe(true);
+        const sick = sunnyMorning(rng, { listener: ['sick'] });
+        sick.intent = intent;
+        expect(preferredScripts(sick).has('feeling_poorly'), String(intent)).toBe(true);
+        const well = sunnyMorning(rng, {});
+        well.intent = intent;
+        expect(preferredScripts(well).has('condolence')).toBe(false);
+        expect(preferredScripts(well).has('feeling_poorly')).toBe(false);
+      }
+    });
+
+    it('a grieving speaker never says a cheerful line (s <= 0.1), in either seat', () => {
+      const condolence = SMALL_TALK_SCRIPTS.find((s) => s.id === 'condolence')!;
+      const poorly = SMALL_TALK_SCRIPTS.find((s) => s.id === 'feeling_poorly')!;
+      for (let seed = 1; seed <= 300; seed++) {
+        const rng = mulberry32(seed + 500);
+        const both = sunnyMorning(rng, { opener: ['grieving'], listener: ['grieving'] });
+        const chat = playScript(condolence, both, rng)!;
+        expect(chat, `seed ${seed}`).not.toBeNull();
+        assertCoherent(chat, both);
+        for (const t of chat.turns) expect(t.sentiment, `${t.speaker}: ${t.text}`).toBeLessThanOrEqual(0.1);
+
+        const listener = sunnyMorning(rng, { listener: ['grieving'] });
+        const solo = playScript(condolence, listener, rng)!;
+        for (const t of solo.turns.filter((x) => x.speaker === 1)) {
+          expect(t.sentiment, t.text).toBeLessThanOrEqual(0.1);
+        }
+        // A sick listener whose mood is on the floor comes across cool too.
+        const glum = sunnyMorning(rng, { listener: ['sick'] });
+        glum.people[1].mood = 15;
+        glum.people[1].tone = toneOf(60, 15, ['sick']);
+        const unwell = playScript(poorly, glum, rng)!;
+        for (const t of unwell.turns.filter((x) => x.speaker === 1)) {
+          expect(t.sentiment, t.text).toBeLessThanOrEqual(0.1);
+        }
+      }
+      // And through the composer, over whole random towns: a grieving listener answers coolly.
+      const rng = mulberry32(77);
+      let grieving = 0;
+      for (let n = 0; n < 4000; n++) {
+        const c = randomContext(rng);
+        if (!c.people[1].states.includes('grieving')) continue;
+        grieving++;
+        const chat = composeTemplateChat(c, { rng })!;
+        expect(chat.turns[1].sentiment, `${chat.scriptId}: ${chat.turns[1].text}`).toBeLessThanOrEqual(0.1);
+      }
+      expect(grieving).toBeGreaterThan(100);
+    });
+
+    it('condolence opens in several ways, each grounded in the loss', () => {
+      const condolence = SMALL_TALK_SCRIPTS.find((s) => s.id === 'condolence')!;
+      const rng = mulberry32(6);
+      const seen = new Set<string>();
+      for (let n = 0; n < 200; n++) {
+        const c = sunnyMorning(rng, { listener: ['grieving'] });
+        const chat = playScript(condolence, c, rng)!;
+        assertCoherent(chat, c);
+        expect(chat.anchors).toEqual(['loss', 'sorry', 'miss']);
+        seen.add(chat.turns[0].text);
+      }
+      // A handful of different openers, not one line said to every widow.
+      expect(seen.size).toBeGreaterThanOrEqual(3);
     });
   });
 

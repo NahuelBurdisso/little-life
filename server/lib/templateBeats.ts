@@ -34,6 +34,7 @@ import {
   performConfession, performReconciliation, reactToPartnerAffair, type BeatAgent,
 } from './conversationBeats';
 import { getNegativeFactCount } from './gossip';
+import { FLIRT_SCRIPT_IDS } from '../data/smallTalkScripts';
 
 export type Rng = () => number;
 
@@ -80,7 +81,13 @@ const hasState = (p: BeatPerson, type: string, targetId?: number) =>
   p.states.some((s) => s.type === type && (targetId == null || s.target == null || s.target === targetId));
 
 /** Scripts a crush plays out on: the one written for it and the established couple's. */
-const FLIRT_SCRIPTS = new Set(['flirting', 'shy_flirt', 'sweethearts']);
+const FLIRT_SCRIPTS = FLIRT_SCRIPT_IDS;
+/**
+ * Nobody flirts with, or as, someone in these states: the chat already turned to comfort
+ * (templateChat.ts drops the flirt scripts for a mourner), and a beat that says "flirted
+ * with" a widow in the feed would contradict the lines just spoken.
+ */
+const NO_FLIRT_STATES = ['grieving', 'heartbroken', 'sick'];
 const HOSTILE_SCRIPT = 'standoff';
 
 /**
@@ -122,7 +129,8 @@ export function decideTemplateBeats(input: TemplateBeatInput, rng: Rng = Math.ra
   if (input.sentiment <= 0.1) return [];
 
   // A crush flirts. The opener is the one sweet on the listener (the script's `when`).
-  if (FLIRT_SCRIPTS.has(input.scriptId) && p0.romance >= 20) {
+  const troubled = input.people.some((p) => NO_FLIRT_STATES.some((s) => hasState(p, s)));
+  if (FLIRT_SCRIPTS.has(input.scriptId) && p0.romance >= 20 && !troubled) {
     const infatuated = hasState(p0, 'infatuated', input.ids[1]);
     const p = clamp(0.2 + (trait(p0, 'sensuality') - 50) * 0.005 + (infatuated ? 0.1 : 0), 0.08, 0.4);
     if (rng() < p) return [{ kind: 'flirt', actor: 0 }];
