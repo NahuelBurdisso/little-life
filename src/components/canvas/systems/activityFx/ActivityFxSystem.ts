@@ -3,6 +3,7 @@ import { actionTypeOf } from "../../SpritePool";
 import type { AgentData } from "../../SpritePool";
 import type { AgentSprite } from "../../AgentSprite";
 import { loadStrip } from "../../stripAtlas";
+import { OUTDOOR_TYPES } from "../../../../../server/lib/worldgen/buildingTemplates";
 import { detailLevel, inView } from "../view";
 import type { CanvasLayers, CanvasServices, CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
 import { activityFor, isAudienceActivity, isPerformerActivity } from "./activity";
@@ -69,6 +70,13 @@ interface Entry {
   /** Standing by someone they are romantically involved with (mingle's heart). */
   romantic: boolean;
   bobber: PIXI.Sprite | null;
+  /**
+   * Middle of the top edge of the building the agent is inside, for `at: 'roof'` emitters; `hasRoof`
+   * is false out of doors (a road, a park, a farmyard), where there is no roofline to anchor to.
+   */
+  hasRoof: boolean;
+  roofX: number;
+  roofY: number;
   seen: number;
 }
 
@@ -89,6 +97,8 @@ class ActivityFxSystem implements CanvasSystem {
   /** Same entries as an array, so the per-frame loop allocates no iterator. */
   private list: Entry[] = [];
   private readonly locationTypes = new Map<number, string>();
+  /** Footprint of every location (the rows' own `position` objects, not copies). */
+  private readonly locationRects = new Map<number, { x: number; y: number; width: number }>();
   private readonly romantic = new Set<string>();
   /** Reused for emote positions: `showEmote` reads it immediately. */
   private readonly pt = { x: 0, y: 0 };
@@ -129,8 +139,12 @@ class ActivityFxSystem implements CanvasSystem {
     const now = performance.now();
 
     this.locationTypes.clear();
+    this.locationRects.clear();
     for (const l of data.locations) {
-      if (typeof l?.id === "number" && typeof l?.type === "string") this.locationTypes.set(l.id, l.type);
+      if (typeof l?.id === "number" && typeof l?.type === "string") {
+        this.locationTypes.set(l.id, l.type);
+        if (l.position) this.locationRects.set(l.id, l.position);
+      }
     }
     this.romantic.clear();
     for (const r of data.relationships ?? []) {
@@ -146,7 +160,8 @@ class ActivityFxSystem implements CanvasSystem {
       if (!e) {
         e = {
           id, numId: Number(agent.id), phase: agentPhase(agent.id), activity: "none", since: now,
-          sprite: null, posed: null, prevClock: 0, prevStroke: 0, drunk: false, romantic: false, bobber: null, seen: 0,
+          sprite: null, posed: null, prevClock: 0, prevStroke: 0, drunk: false, romantic: false, bobber: null,
+          hasRoof: false, roofX: 0, roofY: 0, seen: 0,
         };
         this.entries.set(id, e);
         changed = true;
@@ -154,6 +169,7 @@ class ActivityFxSystem implements CanvasSystem {
       e.seen = this.generation;
       e.sprite = this.services.sprites.getSprite(id) ?? null;
       e.drunk = (agent.activeStates ?? []).some(s => s.type === "drunk");
+      this.anchorRoof(e, agent);
 
       const next = this.activityOf(agent, data.agents);
       if (next !== e.activity) this.switchActivity(e, next, now);
@@ -171,6 +187,18 @@ class ActivityFxSystem implements CanvasSystem {
     if (changed) this.list = Array.from(this.entries.values());
 
     this.faceThePerformers(data.agents);
+  }
+
+  /** Remember where the roofline of the building this agent is in is (or that there is none). */
+  private anchorRoof(e: Entry, agent: AgentData): void {
+    const here = agent.current_location;
+    const rect = here != null ? this.locationRects.get(here) : undefined;
+    const type = here != null ? this.locationTypes.get(here) : undefined;
+    e.hasRoof = !!rect && type !== undefined && !OUTDOOR_TYPES.has(type);
+    if (e.hasRoof) {
+      e.roofX = rect!.x + rect!.width / 2;
+      e.roofY = rect!.y;
+    }
   }
 
   private activityOf(agent: AgentData, all: AgentData[]): ActivityId {
@@ -272,11 +300,14 @@ class ActivityFxSystem implements CanvasSystem {
     const prevStroke = e.prevStroke;
     e.prevStroke = stroke;
 
-    // Off screen, lying down or between two steps: nothing to see, nothing to spend.
-    const visible =
-      inView(frame.view, sprite.x, sprite.y) && sprite.lyingBlend < LYING_HIDE_ABOVE && !sprite.isWalking;
-    if (!visible) {
+    // Off screen, lying down or between two steps: nothing to see, nothing to spend. The roofline
+    // is the exception (a bed indoors is exactly where a house has something to show), so an agent
+    // who is on screen but not standing still runs only the `at: 'roof'` emitters.
+    const onScreen = inView(frame.view, sprite.x, sprite.y);
+    const bodyShows = onScreen && sprite.lyingBlend < LYING_HIDE_ABOVE && !sprite.isWalking;
+    if (!bodyShows) {
       if (e.bobber) e.bobber.visible = false;
+      if (onScreen && detail > 0) this.stepRoofEmitters(e, frame, prevClock, clock);
       return;
     }
 
@@ -303,7 +334,22 @@ class ActivityFxSystem implements CanvasSystem {
       if (shots === 0 || (em.window && !inWindow(em.window, clock))) continue;
       if (shots > MAX_SHOTS_PER_FRAME) shots = MAX_SHOTS_PER_FRAME;
       const n = shots * (em.count ?? 1);
-      for (let k = 0; k < n; k++) this.spawn(em, spec, sprite);
+      for (let k = 0; k < n; k++) this.spawn(em, spec, e);
+    }
+  }
+
+  /** Fire only the roofline emitters (see `animateEntry`): nothing else is drawn for this agent. */
+  private stepRoofEmitters(e: Entry, frame: FrameContext, prevClock: number, clock: number): void {
+    const spec = ACTIVITY_SPECS[e.activity];
+    const emitters = spec.emitters;
+    if (!emitters || !this.textures || !e.sprite || !e.hasRoof) return;
+    for (let i = 0; i < emitters.length; i++) {
+      const em = emitters[i];
+      if (em.at !== "roof" || (em.minDetail && detailLevel(frame.view.scale) < em.minDetail)) continue;
+      let shots = shotsBetween(em.every ?? 1, em.offset ?? 0, prevClock, clock);
+      if (shots === 0 || (em.window && !inWindow(em.window, clock))) continue;
+      if (shots > MAX_SHOTS_PER_FRAME) shots = MAX_SHOTS_PER_FRAME;
+      for (let k = 0; k < shots * (em.count ?? 1); k++) this.spawn(em, spec, e);
     }
   }
 
@@ -345,7 +391,11 @@ class ActivityFxSystem implements CanvasSystem {
     e.bobber = null;
   }
 
-  private spawn(em: EmitterSpec, spec: ActivitySpec, sprite: AgentSprite): void {
+  private spawn(em: EmitterSpec, spec: ActivitySpec, e: Entry): void {
+    const sprite = e.sprite;
+    if (!sprite) return;
+    // A roofline emitter needs a roof; an agent outdoors has none.
+    if (em.at === "roof" && !e.hasRoof) return;
     const pool = em.layer === "ground" ? this.ground : this.over;
     let p: Particle | null = null;
     for (let i = 0; i < pool.items.length; i++) {
@@ -353,9 +403,10 @@ class ActivityFxSystem implements CanvasSystem {
     }
     if (!p) return;
 
-    const f = sprite.facingDir;
-    let x = sprite.x + f * em.x;
-    let y = sprite.y + em.y;
+    // The roof belongs to the building, not to the way the body faces.
+    const f = em.at === "roof" ? 1 : sprite.facingDir;
+    let x = (em.at === "roof" ? e.roofX : sprite.x) + f * em.x;
+    let y = (em.at === "roof" ? e.roofY : sprite.y) + em.y;
     if (em.at === "hand") {
       // Follows the body's bob, lean and running lap.
       x += sprite.rig.x;

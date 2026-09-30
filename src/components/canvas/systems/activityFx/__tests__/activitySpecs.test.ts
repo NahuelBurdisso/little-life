@@ -89,6 +89,36 @@ describe('activity spec table', () => {
     expect(ACTIVITY_SPECS.shoplift.endEmote).toBe('money');
   });
 
+  it('shows the private evening only as hearts over the house, never on the bodies', () => {
+    const s = ACTIVITY_SPECS.tryst;
+    expect(s.pose).toBe('none');
+    expect(s.emitters).toHaveLength(1);
+    const em = s.emitters![0];
+    // Anchored to the roofline: the sprites are lying in bed, where no effect is ever drawn.
+    expect(em.at).toBe('roof');
+    expect(em.sprite).toBe('heart');
+    // Two people run this spec, so each stays well under a heart every 5 s: a hint, not a shower.
+    expect(em.every).toBeGreaterThanOrEqual(6);
+    expect(s.loopEmotes).toBeUndefined();
+    expect(s.startEmote).toBeUndefined();
+  });
+
+  it('only roofline emitters exist for the private evening; every other activity anchors to a body', () => {
+    for (const id of ids) {
+      for (const em of ACTIVITY_SPECS[id].emitters ?? []) {
+        if (em.at === 'roof') expect(id, 'only the private evening has a roofline effect').toBe('tryst');
+      }
+    }
+  });
+
+  it('has the dawn walk home be a furtive shifty walk with a nervous bead now and then', () => {
+    const s = ACTIVITY_SPECS.sneak_home;
+    expect(s.pose).toBe('shifty');
+    expect(s.tint).toBeDefined();
+    expect(s.emitters).toBeUndefined();
+    expect(s.loopEmotes?.flatMap(l => l.names)).toEqual(['sweat']);
+  });
+
   it('shows jogging as a jog and the crouch for shoplifting', () => {
     expect(ACTIVITY_SPECS.jog.pose).toBe('jog');
     expect(ACTIVITY_SPECS.shoplift.pose).toBe('crouch');
@@ -115,6 +145,13 @@ describe('particle atlas', () => {
     });
     expect(parsed.map(p => p[0])).toEqual([...FX_SPRITE_NAMES]);
     for (const [name, n] of parsed) expect(n, name).toBe(FX_CELLS[name as keyof typeof FX_CELLS].count);
+  });
+
+  it('has a heart particle of three frames', () => {
+    expect(FX_SPRITE_NAMES).toContain('heart');
+    expect(FX_CELLS.heart.count).toBe(3);
+    // The last cell of the strip: appended, so no earlier particle moved.
+    expect(FX_CELLS.heart.start + FX_CELLS.heart.count).toBe(FX_CELL_COUNT);
   });
 
   it('ships a strip PNG exactly FX_CELL_COUNT cells wide', () => {

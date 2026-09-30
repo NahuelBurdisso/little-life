@@ -14,6 +14,7 @@ export type ActivityId =
   | 'fish' | 'garden' | 'forage' | 'tend' | 'feed'
   | 'perform' | 'watch' | 'speech' | 'protest'
   | 'cook' | 'scheme' | 'confide' | 'contemplate'
+  | 'tryst' | 'sneak_home'
   | 'work_bakery' | 'work_workshop' | 'work_shop' | 'work_pawnshop'
   | 'work_town_hall' | 'work_clinic' | 'work_tavern' | 'work_farm';
 
@@ -59,6 +60,10 @@ const ZONE_ACTIVITY: Record<string, ActivityId> = {
   lock_out: 'scheme',
   confide: 'confide',
   contemplate: 'contemplate',
+  // The adult layer's private evening and the dawn walk back. Both are hushed: what shows is a
+  // house with a few hearts over it and a furtive walker, never the evening itself.
+  tryst: 'tryst',
+  sneak_home: 'sneak_home',
 };
 
 const WORK_ACTIVITY: Record<string, ActivityId> = {

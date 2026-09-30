@@ -8,7 +8,7 @@
 -- horizontal strip of 16x16 cells packed back to back in the order below — keep in sync with SPEC in
 -- src/components/canvas/systems/activityFx/activityFrames.ts (a vitest test parses this line):
 --
--- ORDER: steam:3 sweat:2 dust:3 note:3 spark:3 coin:4 flour:3 ink:2 cross:2 ripple:4 splash:4 fish:2 bobber:2 drop:3 glint:4 wave:3 crumb:2 clap:3
+-- ORDER: steam:3 sweat:2 dust:3 note:3 spark:3 coin:4 flour:3 ink:2 cross:2 ripple:4 splash:4 fish:2 bobber:2 drop:3 glint:4 wave:3 crumb:2 clap:3 heart:3
 --
 -- These are particles, not icons: each is a few pixels big and drawn in the middle of its cell (the
 -- renderer anchors at 0.5/0.5), so the cell is mostly empty. Solid things (notes, coins, the fish, the
@@ -437,6 +437,36 @@ fx("clap", "none", {
     ...Y...
     W.....W
   ]]) end,
+})
+
+-- heart: a small pink-red heart that drifts up from a house where two people are spending the
+-- evening (ActivityFxSystem, the roofline of the tryst activity). Suggestive and sweet, nothing
+-- more: it swells from a small heart to a full one, then pales as it fades. Hard outline, like
+-- the emote hearts (emotes.lua), but smaller so a house shows a few now and then, not a shout.
+fx("heart", "hard", {
+  function(c) c:spr(A [[
+    .R.R.
+    RpRRR
+    RRRRr
+    .RRr.
+    ..r..
+  ]]) end,
+  function(c) c:spr(A [[
+    .RR.RR.
+    RpRRRRR
+    RRRRRRr
+    .RRRRr.
+    ..RRr..
+    ...r...
+  ]]) end,
+  function(c) c:spr(A [[
+    .pp.pp.
+    ppppppp
+    ppppppR
+    .pppppR
+    ..pppR.
+    ...R...
+  ]], 0, -1) end,
 })
 
 -- ── Output ──────────────────────────────────────────────────────────────────────────────────

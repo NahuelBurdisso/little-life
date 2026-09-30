@@ -25,9 +25,12 @@ export interface EmitterSpec {
 
   /**
    * Where the particle starts, px from the feet with x mirrored by facing.
-   * hand: follows the body's bob and lean; ground: planted on the floor; bobber: out over the water.
+   * hand: follows the body's bob and lean; ground: planted on the floor; bobber: out over the water;
+   * roof: the top edge of the building the agent is inside (x, y are px from its middle-top, not
+   * mirrored by facing), for effects that belong to the house rather than a body -- and which,
+   * unlike every other anchor, still fire for an agent lying down (a bed) or indoors.
    */
-  at: 'hand' | 'ground' | 'bobber';
+  at: 'hand' | 'ground' | 'bobber' | 'roof';
   x: number;
   y: number;
   spreadX?: number;

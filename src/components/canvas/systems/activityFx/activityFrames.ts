@@ -23,6 +23,7 @@ const SPEC = [
   ['wave', 3],
   ['crumb', 2],
   ['clap', 3],
+  ['heart', 3],
 ] as const;
 
 export type FxSprite = (typeof SPEC)[number][0];

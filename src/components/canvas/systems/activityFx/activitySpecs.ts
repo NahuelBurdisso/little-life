@@ -183,6 +183,26 @@ export const ACTIVITY_SPECS: Record<ActivityId, ActivitySpec> = {
 
   contemplate: { pose: 'none' },
 
+  // The private evening (adult layer). The sprites are lying in bed indoors -- ActivityFxSystem
+  // draws nothing on a lying body, and the act is not for the canvas anyway -- so the tell belongs
+  // to the house: a heart now and then, rising off its roofline (`at: 'roof'`). Both partners run
+  // this spec, so one heart per ~9 s each is a heart every ~4-5 s over the house: a hint, not a
+  // shower. The lamp turned down and the curtains (LightingSystem, CurtainSystem) are the rest.
+  tryst: {
+    pose: 'none',
+    emitters: [
+      { sprite: 'heart', every: 9, at: 'roof', x: 0, y: -2, spreadX: 14, vy: -9, velSpreadX: 2, life: 2.6 },
+    ],
+  },
+
+  // The dawn walk home: head down, glancing about, dimmed like a shadow at first light. The
+  // occasional sweat is a nervous bead, not a wink; it only shows on the pauses between steps.
+  sneak_home: {
+    pose: 'shifty',
+    tint: SHADY,
+    loopEmotes: [{ names: ['sweat'], every: 8, offset: 3 }],
+  },
+
   // ── Work: one small tell per workplace, at the tool ──────────────────────────────────────
   work_bakery: {
     pose: 'none',

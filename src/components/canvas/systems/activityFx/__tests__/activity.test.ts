@@ -36,6 +36,8 @@ describe('activityFor — zone verbs', () => {
     ['secret_meeting', 'scheme'],
     ['confide', 'confide'],
     ['contemplate', 'contemplate'],
+    ['tryst', 'tryst'],
+    ['sneak_home', 'sneak_home'],
   ];
   for (const [verb, activity] of cases) {
     it(`idle + ${verb} -> ${activity}`, () => {
@@ -53,6 +55,14 @@ describe('activityFor — zone verbs', () => {
     expect(activityFor(ctx({ actionType: 'comfort' }))).toBe('comfort');
     expect(activityFor(ctx({ actionType: 'comfort', zoneActivity: 'comfort' }))).toBe('comfort');
     expect(activityFor(ctx({ actionType: 'comfort', zoneActivity: 'rest' }))).toBe('none');
+  });
+
+  it('the private evening and the dawn walk only count while idle (a sleeper is just asleep)', () => {
+    for (const verb of ['tryst', 'sneak_home']) {
+      for (const t of ['sleeping', 'walking', 'talking', 'working']) {
+        expect(activityFor(ctx({ actionType: t, zoneActivity: verb })), `${t}+${verb}`).toBe('none');
+      }
+    }
   });
 
   it('a verb never overrides sleeping, walking or talking', () => {
