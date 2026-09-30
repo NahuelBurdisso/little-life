@@ -47,14 +47,14 @@ describe('selfFactsLine', () => {
     const line = selfFactsLine({
       jobTitle: 'Town Mayor', age: 52, tenure: { yearsInTown: 52, jobYears: 12 }, widowed: isWidowed(THOMAS_BIO),
     });
-    expect(line).toBe('Facts about you (keep them straight): Town Mayor for 12 years; born and raised here; widowed.');
+    expect(line).toBe('Facts about you (keep them straight, mention them only when they come up): Town Mayor for 12 years; born and raised here; widowed.');
   });
 
   it('prefers a living partner to widowhood and handles job changes and newcomers', () => {
     expect(selfFactsLine({
       jobTitle: 'Baker', age: 30, tenure: { yearsInTown: 0, jobYears: 0 }, household: 'married to Rosa', widowed: true,
-    })).toBe('Facts about you (keep them straight): recently took up work as Baker; new in town; married to Rosa.');
+    })).toBe('Facts about you (keep them straight, mention them only when they come up): recently took up work as Baker; new in town; married to Rosa.');
     expect(selfFactsLine({ jobTitle: 'Retired Teacher', age: 67, tenure: { yearsInTown: 20, jobYears: 5 } }))
-      .toBe('Facts about you (keep them straight): came to town 20 years ago.');
+      .toBe('Facts about you (keep them straight, mention them only when they come up): came to town 20 years ago.');
   });
 });

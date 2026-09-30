@@ -141,5 +141,7 @@ export function selfFactsLine(f: SelfFactsInput): string {
   else facts.push(`came to town ${years(t)} ago`);
   if (f.household) facts.push(f.household);
   else if (f.widowed) facts.push('widowed');
-  return `Facts about you (keep them straight): ${facts.join('; ')}.`;
+  // "only when it comes up": with the vain voice ("You mention your
+  // achievements") Thomas said "twelve years as mayor" in 19 of 424 lines.
+  return `Facts about you (keep them straight, mention them only when they come up): ${facts.join('; ')}.`;
 }

@@ -38,12 +38,15 @@ const COMBO_VOICES: Array<{ axisA: string; dirA: 'high' | 'low'; axisB: string; 
   { axisA: 'morality', dirA: 'low', axisB: 'vanity', dirB: 'high', voice: "You're a charming schemer. You use compliments and flattery to get what you want." },
 ];
 
-// Speech pattern hints based on personality
+// Speech pattern hints based on personality. Styles, never literal words: the
+// model copies a quoted phrase verbatim, and the vanity hint used to read
+// '"Well, I...", self-references' — playtest #4 had 36 of 424 lines open with
+// "Well, I", mostly from the two vain residents.
 function buildSpeechPattern(personality: PersonalityAxes): string {
   const patterns: string[] = [];
   if (personality.impulsiveness > 65) patterns.push('short sentences, exclamation marks');
-  if (personality.neuroticism > 65) patterns.push('"maybe", "I think", hedging language');
-  if (personality.vanity > 65) patterns.push('"Well, I...", self-references');
+  if (personality.neuroticism > 65) patterns.push('hedging, second-guessing yourself');
+  if (personality.vanity > 65) patterns.push('turning the talk back to yourself');
   if (personality.warmth < 35) patterns.push('curt responses, few questions');
   if (personality.aggression > 65) patterns.push('swearing, confrontational tone');
   if (personality.sensuality > 65) patterns.push('suggestive language, playful teasing');

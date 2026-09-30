@@ -927,8 +927,12 @@ export function buildSubjectsHint(subjects: readonly string[] | undefined): stri
  * Name the speaker's own recent openers and questions so they don't loop on
  * them. Playtest: 14 of 104 lines asked "how are you doing (really)", and one
  * agent opened every line with "Well, I…". Looks at the last two of the
- * speaker's own lines only — a handful of tokens, not a transcript.
+ * speaker's own lines only — a handful of tokens, not a transcript. A span of
+ * years ("twelve years") counts over the whole conversation: playtest #4's
+ * mayor restated his tenure in nearly every line of a talk.
  */
+const YEAR_SPAN = /\b(?:\d+|a few|several|many|(?:twenty|thirty|forty|fifty|sixty)(?:-[a-z]+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen) years\b/gi;
+
 function buildRepetitionHint(
   messages: Array<{ speakerId: number; text: string; fallback?: boolean }>,
   speakerId: number,
@@ -950,7 +954,15 @@ function buildRepetitionHint(
       questions.add(words.length > 8 ? `${words.slice(0, 8).join(' ')}…` : lastQuestion);
     }
   }
+  const spans = new Set<string>();
+  for (const m of messages) {
+    if (m.speakerId !== speakerId || isFallbackMessage(m, speakerName)) continue;
+    for (const hit of (m.text ?? '').matchAll(YEAR_SPAN)) spans.add(hit[0].toLowerCase());
+  }
   const parts: string[] = [];
+  if (spans.size > 0) {
+    parts.push(`You've already mentioned ${[...spans].map((y) => `"${y}"`).join(' and ')} — don't bring it up again.`);
+  }
   if (openers.size > 0) {
     parts.push(`Don't start with ${[...openers].map((o) => `"${o}"`).join(' or ')} again.`);
   }
