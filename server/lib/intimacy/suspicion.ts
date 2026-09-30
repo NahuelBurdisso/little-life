@@ -202,12 +202,36 @@ function confrontTheSuspected(now: number): boolean {
 }
 
 /**
+ * The rule went off: everything this layer had in flight stops. The confrontation
+ * still waiting in the queue would otherwise open a conversation about nights away
+ * that the world no longer models, the `suspicious` states would keep colouring
+ * dialogue, and the counters would resume from where they were when it goes back on.
+ * Idempotent and cheap (two deletes and a walk over in-memory counters), so it simply
+ * runs on every pass while the rule is off. True when anything was removed.
+ */
+function standDown(): boolean {
+  let changed = false;
+  forEachAgentIntimacy((id, a) => {
+    if (Object.keys(a.suspicion).length > 0 || a.awayNight) {
+      updateAgentIntimacy(id, (s) => { s.suspicion = {}; delete s.awayNight; });
+      changed = true;
+    }
+  });
+  if (db.delete(conversationQueue).where(eq(conversationQueue.trigger_reason, SUSPICION_TRIGGER)).run().changes > 0) changed = true;
+  if (db.delete(agentStates).where(eq(agentStates.type, 'suspicious')).run().changes > 0) changed = true;
+  return changed;
+}
+
+/**
  * Once per game morning (game time: the first pass from 7 h of each day, never a tick
- * count), from `intimacyTick`. A no-op with the rule off; the day is not spent then, so
- * turning the rule on mid-morning still gets that morning's pass.
+ * count), from `intimacyTick`. With the rule off it only stands down (`standDown`); the
+ * day is not spent then, so turning the rule on mid-morning still gets that morning's pass.
  */
 export function suspicionPass(time: ClockTime): void {
-  if (!isAdultContent()) return;
+  if (!isAdultContent()) {
+    if (standDown()) emitter.markDirty('agents.all');
+    return;
+  }
   const now = gameMinutes(time);
   const today = Math.floor(now / MINUTES_PER_DAY);
   if (time.hour < SUSPICION_MORNING_HOUR || getSuspicionProcessedDay() === today) return;

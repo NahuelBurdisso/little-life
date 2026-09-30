@@ -287,14 +287,31 @@ describe('suspicion of an empty bed', () => {
   describe('with the rule off', () => {
     it('nothing is counted or queued, and the day is not spent', () => {
       const { p, g, h } = household();
-      ensureAgentIntimacy(p).suspicion[g] = 5;
       awayLastNight(g, h);
       setRuleOverrides({ adultContent: false });
       suspicionPass(MORNING);
-      expect(suspicionOf(p, g)).toBe(5);
+      expect(suspicionOf(p, g)).toBeUndefined();
       expect(statesOf(p)).toHaveLength(0);
       expect(queued()).toHaveLength(0);
       expect(getSuspicionProcessedDay()).toBeNull();
+    });
+
+    it('switching it off stands the whole thing down: the queued confrontation, the state and the counter go', () => {
+      const { p, g, h } = household();
+      awayLastNight(g, h);
+      ensureAgentIntimacy(p).suspicion[g] = 3;
+      suspicionPass(MORNING);
+      expect(queued()).toHaveLength(1);
+      expect(statesOf(p).map((s) => s.type)).toContain('suspicious');
+
+      setRuleOverrides({ adultContent: false });
+      suspicionPass(morningOf(42));
+      expect(queued()).toHaveLength(0);
+      expect(statesOf(p).map((s) => s.type)).not.toContain('suspicious');
+      expect(suspicionOf(p, g)).toBeUndefined();
+      expect(getAgentIntimacy(g)?.awayNight).toBeUndefined();
+      // Idempotent: a second pass with the rule still off changes nothing and does not throw.
+      expect(() => suspicionPass(morningOf(42, 9))).not.toThrow();
     });
   });
 
