@@ -35,6 +35,7 @@ import { taskRunner } from '../../ai/taskRunner';
 import { recordScriptUsage, scriptLastUsed } from '../../ai/templates';
 import { WRAP_UP_FAREWELLS, farewellText } from '../../data/wrapUpFarewells';
 import { composeTemplateChat } from '../../lib/templateChat';
+import { recordConversationTopics } from '../../lib/topicMemory';
 import { buildTemplateChatContext } from '../../helpers/templateChatContext';
 import {
   conversationBudgetGameMinutes,
@@ -1099,6 +1100,18 @@ async function finishCompletedConversation(
     if (releaseTalkingParticipants(fresh)) emitter.markDirty('agents.all');
     return;
   }
+
+  // What each side said, so their next conversations today can be steered
+  // off it (lib/topicMemory.ts: perception penalty + prompt hint). LLM
+  // conversations only — template lines are canned and repeat by design.
+  recordConversationTopics({
+    conversationId: fresh.id,
+    participants: participantIds,
+    participantNames: participants.map((p) => p.name),
+    topic: fresh.topic,
+    messages: messages.map((m) => ({ speakerId: m.speakerId, text: m.text, fallback: isFallback(m) })),
+    gameMinute: gameMinutes(world.time),
+  });
 
   // Accumulate relationship deltas across all pairs for quality evaluation
   let totalFriendshipDelta = 0;

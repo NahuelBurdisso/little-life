@@ -16,6 +16,7 @@ import { goalClause } from '../lib/goalText';
 import { firstName } from '../ai/names';
 import { isNewcomer } from '../lib/newcomers';
 import { selfFactsFor } from './selfFactsStore';
+import { repeatedSubjects } from '../lib/topicMemory';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -247,6 +248,9 @@ export async function getConversationContext(conversationId: number, speakerId: 
 
   // Only a recent arrival is met for the first time; everyone else in town is
   // known by sight and reputation (prompts.ts `firstMeetingOf`).
+  // Subjects the speaker kept returning to in other conversations today.
+  const recentSubjects = world.time ? repeatedSubjects(speakerId, gameMinutes(world.time)) : [];
+
   const newcomer: 'speaker' | 'listener' | null = isNewcomer(speaker.created_at, currentTick)
     ? 'speaker'
     : isNewcomer(otherAgent.created_at, currentTick) ? 'listener' : null;
@@ -271,6 +275,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     townNames,
     newcomer,
     otherJobTitle,
+    recentSubjects,
   };
 }
 

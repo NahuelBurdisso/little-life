@@ -590,6 +590,8 @@ export interface ConversationPromptParams {
   newcomer?: 'speaker' | 'listener' | null;
   /** The listener's job title ("Town Mayor"), for the "You're talking to" line. */
   otherJobTitle?: string | null;
+  /** Words the speaker kept returning to in other conversations today (lib/topicMemory.ts). */
+  recentSubjects?: string[];
 }
 
 /**
@@ -773,9 +775,26 @@ export function buildConversationPrompt(
   // the first message above the history, where later-turn guidance ("wrap up",
   // "they seem upset") drowned under six lines of chat — conversations looped on
   // the same openers and questions.
-  push("user", `[Your turn] ${[turnInstruction, repetitionHint].filter(Boolean).join(' ')} Reply with only your spoken words.`);
+  // What they already said to others today (lib/topicMemory.ts). Not during a
+  // proposal: that question has one subject.
+  const subjectsHint = conversation.topic === PROPOSAL_TOPIC ? '' : buildSubjectsHint(params.recentSubjects);
+  push("user", `[Your turn] ${[turnInstruction, repetitionHint, subjectsHint].filter(Boolean).join(' ')} Reply with only your spoken words.`);
 
   return { system, messages };
+}
+
+/**
+ * "You've already talked about foundation and flour today — bring up something
+ * else unless asked." Playtest #3: Yuki raised the old stone foundation (one of
+ * her goals) in six conversations, Rosa offered extra flour twice; each
+ * conversation started from the same goals with no memory of the last.
+ */
+export function buildSubjectsHint(subjects: readonly string[] | undefined): string {
+  if (!subjects?.length) return '';
+  const list = subjects.length === 1
+    ? subjects[0]
+    : `${subjects.slice(0, -1).join(', ')} and ${subjects[subjects.length - 1]}`;
+  return `You've already talked about ${list} today — bring up something else unless asked.`;
 }
 
 /**
