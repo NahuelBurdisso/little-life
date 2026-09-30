@@ -2,6 +2,7 @@ import { gameMinutes, type ClockTime } from '../gameClock';
 import { registerKissListener } from './kiss';
 import { longingPass } from './longing';
 import { registerRendezvousListener, rendezvousPass } from './rendezvous';
+import { registerSuspicionListeners, suspicionPass } from './suspicion';
 import { trystPass } from './tryst';
 
 // ─── Intimacy: the periodic pass ─────────────────────────────────────────────
@@ -16,14 +17,18 @@ import { trystPass } from './tryst';
 registerKissListener();
 // A lover's invitation is answered on the asker's conversation:ended (rendezvous.ts, adult layer).
 registerRendezvousListener();
+// A partner's empty bed becomes suspicion, a confrontation and (badly ended) a breakup (suspicion.ts, adult layer).
+registerSuspicionListeners();
 
 /**
  * One pass: longing first (the rendezvous pass reads it), then invitations, then
- * the evenings they led to (an agreed pair is settled the same tick it is agreed).
- * Suspicion and pregnancy join it later.
+ * the evenings they led to (an agreed pair is settled the same tick it is agreed),
+ * then, once each game morning, the partners who noticed an empty bed. Pregnancy joins
+ * it later.
  */
 export function intimacyTick(time: ClockTime): void {
   longingPass(gameMinutes(time));
   rendezvousPass(time);
   trystPass(time);
+  suspicionPass(time);
 }

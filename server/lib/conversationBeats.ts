@@ -244,7 +244,24 @@ export function reactToPartnerAffair(discoverer: BeatAgent, partner: BeatAgent, 
     .filter((f) => f.subject_id !== discoverer.id && f.target_id !== discoverer.id)
     .filter((f) => (f.known_by as number[]).includes(discoverer.id));
   if (affairFacts.length === 0) return false;
+  return applyAffairFallout(discoverer, partner, partnerRel, nowMinutes);
+}
 
+/**
+ * What a betrayal does to the couple, by the discoverer's character: an aggressive one breaks up
+ * in a rage (rivals, grudge, heartbroken + angry, the `breakup` beat); a loyal one forgives but
+ * trusts less; anyone else ends it quietly. Shared by `reactToPartnerAffair` (a fact they
+ * learnt) and the suspicion confrontation (lib/intimacy/suspicion.ts: a partner's nights away,
+ * questioned and answered so badly the suspicion is taken as true), which passes its own
+ * `breakupLine` for the rage's drama row. Returns false (nothing changes) without a personality.
+ */
+export function applyAffairFallout(
+  discoverer: BeatAgent,
+  partner: BeatAgent,
+  partnerRel: RelRow,
+  nowMinutes: number,
+  breakupLine?: string,
+): boolean {
   const personality = discoverer.personality as PersonalityProfile | null | undefined;
   if (!personality) return false;
   const pid = discoverer.id;
@@ -279,7 +296,7 @@ export function reactToPartnerAffair(discoverer: BeatAgent, partner: BeatAgent, 
       type: 'drama',
       initiator: pid,
       target: otherId,
-      templateData: { description: `${discoverer.name} discovered ${partner.name}'s affair and broke up!` },
+      templateData: { description: breakupLine ?? `${discoverer.name} discovered ${partner.name}'s affair and broke up!` },
       metadata: { beat: 'breakup' },
     });
   } else if (personality.loyalty > 60) {

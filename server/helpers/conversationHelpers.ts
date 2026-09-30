@@ -191,6 +191,13 @@ export async function getConversationContext(conversationId: number, speakerId: 
         });
       }
     }
+  } else if (speakerStates.includes('suspicious')) {
+    // Suspicion of a partner's nights away (lib/intimacy/suspicion.ts): the scene is only
+    // for the one the state targets.
+    const suspicious = db.select().from(agentStates)
+      .where(and(eq(agentStates.agent_id, speakerId), eq(agentStates.type, 'suspicious'))).all()
+      .find((s) => s.target_agent_id === otherId);
+    if (suspicious) situationalPrompt = generateSituationalPrompt({ type: 'suspicion_confrontation', targetName: otherName });
   } else if (speakerStates.includes('heartbroken')) {
     // Check if otherAgent is the partner who caused heartbreak and speaker knows of an affair
     const affairFact = db.select().from(shared_knowledge)

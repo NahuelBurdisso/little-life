@@ -29,6 +29,14 @@ export const PROPOSAL_TOPIC = 'proposal';
 export const RENDEZVOUS_TOPIC = 'a private evening';
 
 /**
+ * Topic of the conversation lib/intimacy/suspicion.ts queues when a husband, wife
+ * or partner has noticed one night too many of an empty bed: they open it, facing
+ * the one who was away. Its own label so the opener gets an intent written for
+ * that scene (`topicIntent`); the outcome is read from the conversation's tone.
+ */
+export const SUSPICION_TOPIC = 'where you were last night';
+
+/**
  * Topic of the conversation lib/family.ts queues when a husband learns the
  * baby may be another man's: he opens it, facing the man. Its own label so
  * the opener gets an intent written for that scene (`topicIntent`), not the
@@ -393,6 +401,8 @@ export function topicIntent(topic: string, other: string): string {
     // Queued by lib/intimacy/rendezvous.ts (adult layer). The lover who feels more opens;
     // the answer comes from the turn instruction below (RENDEZVOUS_TOPIC).
     [RENDEZVOUS_TOPIC]: `You would like to spend the evening with ${other} somewhere private, just the two of you. Ask them, warmly and discreetly, in the manner of the time — ${other} may accept or decline.`,
+    // Queued by lib/intimacy/suspicion.ts; the suspicious partner opens.
+    [SUSPICION_TOPIC]: `You have noticed ${other} away from home at night, more than once, and you want to know where they were last night. Ask them plainly, and listen to whether the answer rings true.`,
     // Queued by lib/family.ts; the husband opens.
     [PATERNITY_TOPIC]: `You've just learned your wife's baby may be ${other}'s, not yours. Face ${other} with it — demand the truth.`,
   };

@@ -190,7 +190,7 @@ export function curiosityNoveltyBonus(curiosity: number, interactionCount: numbe
 export interface SituationalContext {
   type: 'blackmail' | 'jealousy_confrontation' | 'affair_discovery' |
         'begging' | 'confession' | 'theft_confrontation' |
-        'price_gouging' | 'drunk_confrontation' | 'reconciliation' | null;
+        'price_gouging' | 'drunk_confrontation' | 'reconciliation' | 'suspicion_confrontation' | null;
   targetName?: string;
   rivalName?: string;
   loveInterestName?: string;
@@ -219,6 +219,8 @@ export function generateSituationalPrompt(ctx: SituationalContext): string | nul
       return `${ctx.shopOwnerName} is charging double for ${ctx.itemName}. You think it's unfair.`;
     case 'drunk_confrontation':
       return `You're drunk and angry at ${ctx.targetName}. Old resentments are surfacing.`;
+    case 'suspicion_confrontation':
+      return `You suspect ${ctx.targetName} is hiding something about where they spend their nights. You want a straight answer, and you will know if it is not one.`;
     case 'reconciliation':
       return `You used to be close with ${ctx.targetName} before ${ctx.incidentDescription}. They seem to have changed. Consider whether to forgive them.`;
     default:
