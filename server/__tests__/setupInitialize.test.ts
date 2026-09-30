@@ -623,8 +623,11 @@ describe('opening drama hooks through initialize', () => {
     expect(debt.sensitivity).toBe(3);
     expect(debt.known_by).toEqual(expect.arrayContaining([debt.subject_id, debt.target_id]));
     expect(debt.known_by.length).toBe(3);
-    const debtorMoney = db.select({ money: economy.money }).from(economy).all();
-    expect(debtorMoney.some((m) => m.money <= 12)).toBe(true);
+    // Nearly broke (12). Not pinned exactly: at 17:00 the tick the loop may run
+    // before it is stopped can pay a wage.
+    const debtor = db.select({ money: economy.money, salary: economy.salary }).from(economy)
+      .where(eq(economy.agent_id, debt.subject_id)).get()!;
+    expect(debtor.money).toBeLessThanOrEqual(12 + debtor.salary);
     expect(facts.some((f) => f.type === 'romantic' && f.sensitivity === 3)).toBe(true);
 
     const plot = facts.find((f) => f.type === 'secret_ambition')!;

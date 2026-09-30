@@ -63,7 +63,10 @@ export type RulesConfig = Record<string, boolean | number | string>;
 export const DEFAULT_WORLD: WorldConfig = {
   season: 'spring',
   weather: 'sunny',
-  startHour: 9,
+  // 17:00, the evening social window: work lets out, the tavern fills and the
+  // opening hooks (server/lib/dramaHooks.ts) have people in one room. At 09:00
+  // a new town opened on eight hours of everyone at work.
+  startHour: 17,
   startDay: 1,
 };
 
