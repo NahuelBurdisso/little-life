@@ -14,6 +14,7 @@ import { autoplayRouter } from './routers/autoplay';
 import { gazetteRouter } from './routers/gazette';
 import { savesRouter } from './routers/saves';
 import { challengesRouter } from './routers/challenges';
+import { intimacyRouter } from './routers/intimacy';
 
 export const appRouter = router({
   world: worldRouter,
@@ -31,6 +32,7 @@ export const appRouter = router({
   gazette: gazetteRouter,
   saves: savesRouter,
   challenges: challengesRouter,
+  intimacy: intimacyRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -14,12 +14,13 @@ function simulate(seconds: number) {
     set: (cb: () => void, ms: number) => { const id = nextId++; timers.push({ at: t + ms, cb, id }); return id; },
     clear: (h: unknown) => { const i = timers.findIndex((x) => x.id === h); if (i >= 0) timers.splice(i, 1); },
   };
-  const calls = { active: 0, details: 0, graph: 0, pair: 0 };
+  const calls = { active: 0, details: 0, graph: 0, pair: 0, ledger: 0 };
   const refresh = createAgentRefresh({
     active: () => calls.active++,
     details: () => calls.details++,
     graph: () => calls.graph++,
     pair: () => calls.pair++,
+    ledger: () => calls.ledger++,
   }, () => t, timerApi);
 
   const TICK_MS = 250;
@@ -51,5 +52,8 @@ describe('agentRefresh (playtest #3 client polling)', () => {
     expect(calls.active).toBeGreaterThan(100);
     expect(calls.details).toBeGreaterThan(25);
     expect(calls.graph).toBeGreaterThan(5);
+    // The Hearts ledger follows both channels but is throttled on top: a few refetches a minute, not one per flush.
+    expect(calls.ledger).toBeLessThanOrEqual(60_000 / REFRESH_MS.LEDGER + 1);
+    expect(calls.ledger).toBeGreaterThan(5);
   });
 });

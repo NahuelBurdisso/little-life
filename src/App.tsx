@@ -25,6 +25,7 @@ import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { LocationPanel } from "./components/ui/LocationPanel";
 import { RelationshipGraph } from "./components/ui/RelationshipGraph";
 import { PairDossier } from "./components/ui/PairDossier";
+import { RomanceLedger } from "./components/ui/RomanceLedger";
 import { Journal } from "./components/ui/Journal";
 import { journalUnread, type JournalTab } from "./lib/journal";
 import { useWorldState } from "./hooks/useWorldState";
@@ -80,6 +81,8 @@ export default function App() {
   const gazette = useGazette(journalTab === "paper");
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showRelGraph, setShowRelGraph] = useState(false);
+  // The Hearts ledger (couples, lovers, longing, crushes, scandals). Painted after the graph, below the dossier.
+  const [showHearts, setShowHearts] = useState(false);
   // The pair whose dossier is open (numeric ids). Opened from the graph, the agent
   // panel's relationship rows and the nudge menu; stacks above all of them.
   const [pairDossier, setPairDossier] = useState<{ a: number; b: number } | null>(null);
@@ -103,6 +106,7 @@ export default function App() {
       setJournalTab(null);
       setShowNewAgent(false);
       setShowRelGraph(false);
+      setShowHearts(false);
       setPairDossier(null);
       setShowAutoplay(false);
     }
@@ -229,6 +233,9 @@ export default function App() {
           // Escape closes the topmost layer, so this chain must match paint
           // order: the Journal is rendered after the graph and covers it.
           setJournalTab(null);
+        } else if (showHearts) {
+          // Rendered after the graph, so it is painted over it.
+          setShowHearts(false);
         } else if (showRelGraph) {
           setShowRelGraph(false);
         } else if (recapOpen) {
@@ -244,7 +251,7 @@ export default function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [pairDossier, contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, journalTab, recapOpen, dismissRecap, showAutoplay, selectedLocationId, selectedAgentId]);
+  }, [pairDossier, contextMenuAgent, showEventMenu, showTownStats, showNewAgent, showRelGraph, showHearts, journalTab, recapOpen, dismissRecap, showAutoplay, selectedLocationId, selectedAgentId]);
 
   const cast = useMemo(() => orderCast(agents, favorites), [agents, favorites]);
 
@@ -316,7 +323,7 @@ export default function App() {
   // Every overlay but the Journal: while one is open the resident keys stand
   // down, and J doesn't stack the Journal on top of it.
   const otherOverlayOpen = Boolean(
-    contextMenuAgent || showEventMenu || showTownStats || showNewAgent || showRelGraph || pairDossier ||
+    contextMenuAgent || showEventMenu || showTownStats || showNewAgent || showRelGraph || showHearts || pairDossier ||
     showAutoplay || guide.tourOpen || guide.helpOpen,
   );
 
@@ -477,6 +484,7 @@ export default function App() {
           <FloatingToolbar
             onNewAgent={() => setShowNewAgent(true)}
             onShowRelationships={() => setShowRelGraph(true)}
+            onShowHearts={() => setShowHearts(true)}
             onShowAutoplay={() => setShowAutoplay(true)}
             autoCut={autoCut}
             onToggleAutoCut={() => setAutoCut(v => !v)}
@@ -579,6 +587,15 @@ export default function App() {
         }}
         onViewPair={openPair}
       />
+      <RomanceLedger
+        isOpen={showHearts}
+        onClose={() => setShowHearts(false)}
+        onViewPair={openPair}
+        onSelectAgent={(id) => {
+          setSelectedAgentId(id);
+          setShowHearts(false);
+        }}
+      />
       <Journal
         tab={journalTab}
         onTabChange={openJournal}
@@ -602,6 +619,7 @@ export default function App() {
           // would otherwise happen behind them.
           setPairDossier(null);
           setShowRelGraph(false);
+          setShowHearts(false);
           focusAgent(id);
         }}
       />

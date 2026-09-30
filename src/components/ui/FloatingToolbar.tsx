@@ -3,6 +3,8 @@ import { trpc } from "../../lib/trpc";
 interface FloatingToolbarProps {
   onNewAgent: () => void;
   onShowRelationships: () => void;
+  /** The Hearts ledger: couples, lovers, longing, crushes, scandals. */
+  onShowHearts: () => void;
   onShowAutoplay: () => void;
   autoCut: boolean;
   onToggleAutoCut: () => void;
@@ -78,6 +80,7 @@ function ToolButton({
 export function FloatingToolbar({
   onNewAgent,
   onShowRelationships,
+  onShowHearts,
   onShowAutoplay,
   autoCut,
   onToggleAutoCut,
@@ -118,6 +121,7 @@ export function FloatingToolbar({
       </button>
       <ToolButton rail={rail} icon="➕" label="New Resident" title="Add a new resident to the town" onClick={onNewAgent} />
       <ToolButton rail={rail} icon="🔗" label="Relationships" title="Who likes, loves and loathes whom" onClick={onShowRelationships} />
+      <ToolButton rail={rail} icon="♥" label="Hearts" title="Couples, crushes, who is aching for whom, and what the town is whispering" onClick={onShowHearts} />
       <ToolButton
         rail={rail}
         icon="🎞"

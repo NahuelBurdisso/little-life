@@ -13,6 +13,7 @@ const refresh = createAgentRefresh({
   details: () => targets?.details(),
   graph: () => targets?.graph(),
   pair: () => targets?.pair(),
+  ledger: () => targets?.ledger(),
 });
 
 export function useAgents() {
@@ -30,6 +31,7 @@ export function useAgents() {
     },
     graph: () => { utils.relationships.getGraph.invalidate(); },
     pair: () => { utils.relationships.getPair.invalidate(); },
+    ledger: () => { utils.intimacy.getLedger.invalidate(); },
   };
 
   // Positions, needs, actions, money: throttled (lib/agentRefresh.ts).

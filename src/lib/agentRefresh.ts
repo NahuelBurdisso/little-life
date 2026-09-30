@@ -18,6 +18,10 @@ import { throttle } from './throttle';
  *    thoughts — only mounted queries refetch, so that is the selected agent)
  *    and the town stats: every DETAIL_MS. A panel a second behind is invisible;
  *    a panel refetching its memory list four times a second is not.
+ *  - The Hearts ledger (intimacy.getLedger) also folds in-memory state that no table
+ *    write announces (longing grows hourly, a night is in the intimacy state before
+ *    its relationship event lands), so it follows BOTH channels, throttled to LEDGER_MS.
+ *    Only the mounted (open) modal actually refetches.
  *  - The relationship graph and the open pair dossier refresh on their own
  *    channel (relationships.onUpdate), which fires only when the table was
  *    written, and are throttled on top since a conversation burst writes
@@ -32,6 +36,7 @@ export const REFRESH_MS = {
   DETAIL: 2000,
   GRAPH: 1000,
   PAIR_DOSSIER: 3000,
+  LEDGER: 4000,
 } as const;
 
 export interface RefreshTargets {
@@ -43,6 +48,8 @@ export interface RefreshTargets {
   graph(): void;
   /** relationships.getPair (the open dossier) */
   pair(): void;
+  /** intimacy.getLedger (the Hearts ledger) */
+  ledger(): void;
 }
 
 export interface AgentRefresh {
@@ -61,6 +68,7 @@ export function createAgentRefresh(
   const details = throttle(() => targets.details(), REFRESH_MS.DETAIL, now, timers);
   const graph = throttle(() => targets.graph(), REFRESH_MS.GRAPH, now, timers);
   const pair = throttle(() => targets.pair(), REFRESH_MS.PAIR_DOSSIER, now, timers);
+  const ledger = throttle(() => targets.ledger(), REFRESH_MS.LEDGER, now, timers);
   // Six subscriptions deliver the same flush six times. Without this the
   // first call ran the leading edge and the other five scheduled a trailing
   // run, so every flush that opened a window still cost two refetches.
@@ -72,18 +80,21 @@ export function createAgentRefresh(
       lastAgentsTs = flushTs;
       active();
       details();
+      ledger();
     },
     onRelationshipsFlush(flushTs) {
       if (flushTs !== undefined && flushTs === lastRelTs) return;
       lastRelTs = flushTs;
       graph();
       pair();
+      ledger();
     },
     cancel() {
       active.cancel();
       details.cancel();
       graph.cancel();
       pair.cancel();
+      ledger.cancel();
     },
   };
 }
