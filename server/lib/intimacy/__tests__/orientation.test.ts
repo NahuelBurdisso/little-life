@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeRng } from '../../worldgen/rng';
+import { makeRng, type RNG } from '../../worldgen/rng';
 import { assignOrientations, rollOrientation, type OrientationRelationship } from '../orientation';
 
 const agent = (id: number, gender: 'male' | 'female') => ({ id, gender });
@@ -74,6 +74,21 @@ describe('assignOrientations', () => {
     // Free to roll straight, but also the rare bi / gay.
     expect(outcomes.has('straight')).toBe(true);
     expect(outcomes.size).toBeGreaterThan(1);
+  });
+
+  it('a seeded opposite-gender romance never rolls gay (a rolled gay widens to bi)', () => {
+    // A rng that always draws the gay slice of the free roll.
+    const alwaysGay = { next: () => 0.99 } as unknown as RNG;
+    const out = assignOrientations(town(), [crush(1, 3, 60, 60)], alwaysGay);
+    expect(out.get(1)).toBe('bi');
+    expect(out.get(3)).toBe('bi');
+    // Agents with nothing seeded still take the roll as it fell.
+    expect(out.get(2)).toBe('gay');
+    for (let seed = 0; seed < 600; seed++) {
+      const o = assignOrientations(town(), [crush(1, 3, 60, 60)], makeRng(seed));
+      expect(o.get(1)).not.toBe('gay');
+      expect(o.get(3)).not.toBe('gay');
+    }
   });
 
   it('romance of exactly 30 is not a crush (strictly above)', () => {

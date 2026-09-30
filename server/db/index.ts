@@ -15,7 +15,7 @@ import { backfillActivityLogGameMinutes } from './activityLogClock';
 import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
-import { backfillOrientations } from './orientationBackfill';
+import { backfillOrientations, repairOrientationConflicts } from './orientationBackfill';
 import { CONFIG } from '../lib/constants';
 import { nameHomes } from '../lib/homeNames';
 import path from 'path';
@@ -424,6 +424,9 @@ export function initSchema(): void {
     // After migrateSchema, which adds the column; fills only NULL rows, so a
     // no-op once every resident has one (also runs on save load via initSchema).
     () => { backfillOrientations(sqlite); },
+    // Every start: an older assignment could roll `gay` for a man seeded in love
+    // with a woman; widen those to bi (adults only, a no-op once healed).
+    () => { repairOrientationConflicts(sqlite); },
     // Every start and save load; renames only houses still called `Home N`
     // after their residents, so a no-op once a world is named (homeNames.ts).
     () => { nameHomes(sqlite, { onlyGeneric: true }); },

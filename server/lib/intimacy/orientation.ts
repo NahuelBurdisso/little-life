@@ -32,9 +32,11 @@ export interface OrientationRelationship {
  * Seeded romance is honoured first: a scenario that pairs two men has already
  * made them each other's crush, and rolling one of them "straight" afterwards
  * would leave the eligibility gate refusing a love story the town was built
- * around. An agent whose romance toward someone of their own gender is above
- * `SEEDED_CRUSH_THRESHOLD` is `gay` when every such target (any gender) is the
- * same gender as them, `bi` when the targets mix. Everyone else rolls 88/7/5.
+ * around. Every target above `SEEDED_CRUSH_THRESHOLD` counts, whatever its
+ * gender: all the same gender as the agent -> `gay`; a mix -> `bi`; all the
+ * other gender -> the free roll, except that a rolled `gay` becomes `bi` (a man
+ * seeded in love with a woman must not roll out of it). No targets at all rolls
+ * a free 88/7/5.
  *
  * Agents are visited in id order and each draws exactly one roll whether or not
  * a crush pins them, so the result does not depend on the order the caller
@@ -67,7 +69,10 @@ export function assignOrientations(
     const rolled = rollOrientation(rng);
     const liked = targets.get(agent.id) ?? [];
     const sameGender = liked.filter((g) => g === agent.gender).length;
-    if (sameGender === 0) out.set(agent.id, rolled);
+    if (liked.length === 0) out.set(agent.id, rolled);
+    // Only ever drawn to the other gender: `gay` would make the eligibility gate
+    // refuse the very romance the scenario seeded. Straight and bi both allow it.
+    else if (sameGender === 0) out.set(agent.id, rolled === 'gay' ? 'bi' : rolled);
     else out.set(agent.id, sameGender === liked.length ? 'gay' : 'bi');
   }
   return out;
