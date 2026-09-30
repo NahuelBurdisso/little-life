@@ -9,6 +9,7 @@ import { updateHungerTracking } from '../../lib/lifeEventsEngine';
 import { simEvents } from '../../lib/simEvents';
 import { sampleMood, getMoodMomentum } from '../../lib/moodMomentum';
 import { adaptNeedsMood, moodBaseline } from '../../lib/moodBaseline';
+import { carriedStress, stateMoodEffect } from '../../lib/stateMood';
 import type { PersonalityProfile } from '../../lib/personality';
 import { getHobbyLevel, getMentorshipOpportunity, applyMentorship } from '../../lib/hobbyEngine';
 import { aggregateEventEffects, EVENT_WEATHER, type WorldEventType } from '../../data/worldEventCatalog';
@@ -560,12 +561,18 @@ export function needsTick(): void {
       updatedNeeds.fun * 0.2;
     const baseline = moodBaseline(agent.personality as PersonalityProfile | null);
 
+    // Grief, heartbreak, a cell, jealousy... (lib/stateMood.ts). Rebuilt here
+    // every tick like the rest, because the direct `needs.mood` writes these
+    // states used to make were overwritten by this very line on the next tick.
+    const stateMood = stateMoodEffect(agentStateTypes);
+
     let baseMood =
       adaptNeedsMood(needsComposite, baseline) +
       moodModifierSum +
       weatherModifier +
       eventMoodEffect +
-      moodMomentum;
+      moodMomentum +
+      stateMood;
 
     // Depressed → halve positive mood gains (clamp positive delta)
     if (agentStateTypes.includes('depressed')) {
@@ -610,6 +617,11 @@ export function needsTick(): void {
     if (agentStateTypes.includes('alcoholic')) stress = clamp(stress + 5, 0, 100);
     if (agentStateTypes.includes('heartbroken')) stress = clamp(stress + 12, 0, 100);
     if (agentStateTypes.includes('angry')) stress = clamp(stress + 6, 0, 100);
+
+    // Carry-over: what the needs say is the floor, but a shock written straight
+    // to `needs.stress` (a snap breakdown, a witnessed crime, a cascade's
+    // stressDelta) fades over hours instead of vanishing on this recompute.
+    stress = carriedStress(stress, agentNeeds.stress, world.tick_speed);
 
 
     // Step 12.4: Emit critical need events (once per threshold crossing, not every tick)

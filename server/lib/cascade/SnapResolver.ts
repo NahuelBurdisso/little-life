@@ -15,6 +15,14 @@ import { simEvents } from '../simEvents';
 import { logActivity } from '../activityLogger';
 import { dominantGrievance } from './TensionTracker';
 import { gameMinutesNow } from '../worldClock';
+import { addMoodModifier } from '../dailyLife';
+
+/**
+ * A snap's mood crash lasts 12 game hours: a modifier, because the needs phase
+ * rebuilds `needs.mood` every tick and a direct write was gone a tick later.
+ * The stress spike is still written directly and now fades (needs.ts carry-over).
+ */
+const SNAP_MOOD_MINUTES = 720;
 
 export interface SnapPromptContext {
   agentName: string;
@@ -189,13 +197,13 @@ export class SnapResolver {
       }
       case 'breakdown': {
         // Public emotional breakdown: stress spike, mood crash
-        const agentNeeds = db.select({ stress: needs.stress, mood: needs.mood })
+        const agentNeeds = db.select({ stress: needs.stress })
           .from(needs).where(eq(needs.agent_id, agentId)).get();
         if (agentNeeds) {
           db.update(needs).set({
             stress: Math.min(100, agentNeeds.stress + 25),
-            mood: Math.max(0, agentNeeds.mood - 20),
           }).where(eq(needs.agent_id, agentId)).run();
+          addMoodModifier(agentId, -20, 'snap:breakdown', SNAP_MOOD_MINUTES, gameMinutesNow());
         }
         simEvents.emit('state:triggered', { agentId, state: 'stressed', source: 'snap:breakdown' });
         logActivity({ type: 'drama', initiator: agentId,
@@ -219,13 +227,13 @@ export class SnapResolver {
       }
       case 'self_destruct': {
         // Self-destructive behavior: seek tavern, stress, mood crash
-        const agentNeeds2 = db.select({ stress: needs.stress, mood: needs.mood })
+        const agentNeeds2 = db.select({ stress: needs.stress })
           .from(needs).where(eq(needs.agent_id, agentId)).get();
         if (agentNeeds2) {
           db.update(needs).set({
             stress: Math.min(100, agentNeeds2.stress + 15),
-            mood: Math.max(0, agentNeeds2.mood - 15),
           }).where(eq(needs.agent_id, agentId)).run();
+          addMoodModifier(agentId, -15, 'snap:self_destruct', SNAP_MOOD_MINUTES, gameMinutesNow());
         }
         logActivity({ type: 'drama', initiator: agentId,
           templateData: { description: `${agentName} snapped and spiraled into self-destructive behavior` }, metadata: { beat: 'outburst' } });

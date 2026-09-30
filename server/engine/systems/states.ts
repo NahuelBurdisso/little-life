@@ -42,6 +42,7 @@ import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { HEALER_JOBS } from '../../lib/careers';
 import { rollStateDuration } from '../../lib/stateDurations';
+import { addMoodModifier } from '../../lib/dailyLife';
 import {
   asRecord,
   listMapToRecord,
@@ -1845,18 +1846,11 @@ function processStateEffects(
           });
 
         if (targetConvo) {
-          // Mood penalty for jealousy — apply via needs
-          const agentNeedsRow = db
-            .select()
-            .from(needsTable)
-            .where(eq(needsTable.agent_id, agent.id))
-            .get();
-          if (agentNeedsRow) {
-            db.update(needsTable)
-              .set({ mood: clamp(agentNeedsRow.mood - 10, 0, 100) })
-              .where(eq(needsTable.agent_id, agent.id))
-              .run();
-          }
+          // Seeing them with someone else stings on top of the jealousy itself
+          // (lib/stateMood.ts). A modifier: the needs phase rebuilds `needs.mood`
+          // every tick, so the old direct -10 was gone a tick later. Refreshed
+          // (not stacked) while the sighting lasts.
+          addMoodModifier(agent.id, -10, 'jealous_sighting', 120, nowMinutes);
         }
         break;
       }
@@ -1994,20 +1988,19 @@ function processStateEffects(
       // ── Alcoholic: shame mood penalty ────────────────────────────────────
       case 'alcoholic': {
         if (personality && personality.morality > 70) {
-          const alcNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
-          if (alcNeeds) {
-            db.update(needsTable).set({ mood: Math.max(20, alcNeeds.mood - 0.5) }).where(eq(needsTable.agent_id, agent.id)).run();
-          }
+          // A standing -5 while the drinking lasts, refreshed each tick. It was a
+          // -0.5 written to `needs.mood`, which the needs phase rebuilt away on
+          // the next tick, so the shame never showed.
+          addMoodModifier(agent.id, -5, 'alcoholic_shame', 60, nowMinutes);
         }
         break;
       }
 
       // ── In Debt: mood penalty + theft attempts ───────────────────────────
       case 'in_debt': {
-        const debtNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
-        if (debtNeeds) {
-          db.update(needsTable).set({ mood: Math.max(5, debtNeeds.mood - 0.3) }).where(eq(needsTable.agent_id, agent.id)).run();
-        }
+        // The mood penalty is STATE_MOOD's in_debt entry (lib/stateMood.ts),
+        // applied by the needs phase: the -0.3 written here each tick was
+        // rebuilt away by that phase on the next one.
 
         if (agent.current_location == null) break;
         if (!personality) break;
@@ -2138,10 +2131,8 @@ function processStateEffects(
 
       // ── Jealous: mood penalty, grudge escalation, confrontation ──────────
       case 'jealous': {
-        const jealousNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, agent.id)).get();
-        if (jealousNeeds) {
-          db.update(needsTable).set({ mood: Math.max(5, jealousNeeds.mood - 0.2) }).where(eq(needsTable.agent_id, agent.id)).run();
-        }
+        // Mood penalty: STATE_MOOD's jealous entry (lib/stateMood.ts), applied
+        // by the needs phase, which rebuilt away the -0.2 once written here.
 
         const meta = (state.metadata as Record<string, any> | null) ?? {};
         const rivalId = meta.rivalId as number | undefined;
@@ -2249,10 +2240,9 @@ function processStateEffects(
             db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, agent.id)).run();
 
             // Mood boost
-            const patientNeeds = db.select().from(needsTable).where(eq(needsTable.agent_id, patient.id)).get();
-            if (patientNeeds) {
-              db.update(needsTable).set({ mood: Math.min(100, patientNeeds.mood + 20) }).where(eq(needsTable.agent_id, patient.id)).run();
-            }
+            // A modifier: a +20 written to `needs.mood` was rebuilt away by the
+            // needs phase on the next tick.
+            addMoodModifier(patient.id, 12, 'treated', 480, nowMinutes);
 
             logActivity({
               type: 'system',

@@ -7,6 +7,7 @@ import { dominantGrievance } from '../lib/cascade/TensionTracker';
 import { isDramaBeat } from '../data/dramaBeats';
 import type { SnapAction } from '../lib/cascade/cascadeTypes';
 import { parseSnapResponse, SnapResolver } from '../lib/cascade/SnapResolver';
+import { CONFIG } from '../lib/constants';
 
 describe('parseSnapResponse', () => {
   it('exact match: confront', () => {
@@ -228,6 +229,19 @@ describe('SnapResolver.executeSnapAction: the culprit', () => {
       const beat = (r[0].metadata as { beat?: string } | null)?.beat;
       expect(isDramaBeat(beat), `${a} beat`).toBe(true);
     }
+  });
+
+  it('a breakdown crashes the mood through a modifier, so the needs rebuild cannot erase it', async () => {
+    db.delete(needs).where(eq(needs.agent_id, snapper)).run();
+    db.insert(needs).values({
+      agent_id: snapper, hunger: 60, energy: 60, social: 60, comfort: 60, fun: 60, mood: 60, stress: 20,
+      decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES }, thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
+      mood_modifiers: [], last_updated: 0,
+    }).run();
+    await resolver.executeSnapAction(snapper, 'breakdown', named('Snap Culprit'), { chainId: 'c' });
+    const row = db.select().from(needs).where(eq(needs.agent_id, snapper)).get()!;
+    expect(row.stress).toBe(45);
+    expect(row.mood_modifiers).toEqual([expect.objectContaining({ source: 'snap:breakdown', value: -20 })]);
   });
 
   it('with nobody to blame nothing crashes: confront has no victim, plot no target', async () => {

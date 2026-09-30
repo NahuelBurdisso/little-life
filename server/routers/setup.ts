@@ -34,7 +34,7 @@ import { WorldGenConfigObjectSchema } from '../lib/worldgen/config';
 import { generateWorld } from '../lib/worldgen';
 import { buildSocialEdges } from '../lib/worldgen/social';
 import { buildStartingTies } from '../lib/startingTies';
-import { startingNeeds } from '../lib/startingNeeds';
+import { startingMoodModifiers, startingNeeds } from '../lib/startingNeeds';
 import { saveWorldCaches } from '../engine/worldCaches';
 import { resetWorldRuntime, retireOutgoingWorldTasks } from '../engine/worldRuntime';
 import { randomUUID } from 'crypto';
@@ -478,6 +478,7 @@ function seedWorld(
   }
 
   // 4. Insert needs + economy for each agent
+  const startMinute = gameMinutes({ day: config.world.startDay, hour: config.world.startHour, minute: 0 });
   for (let agentIdx = 0; agentIdx < config.agents.length; agentIdx++) {
     const agentCfg = config.agents[agentIdx];
     const agentId = agentMap.get(agentCfg.name)!;
@@ -490,7 +491,9 @@ function seedWorld(
       stress: scenarioMood?.stress ?? 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
       thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
-      mood_modifiers: [],
+      // The seeded `mood` above only lasts until the needs phase rebuilds it on
+      // the first tick; a troubled start is carried by a modifier instead.
+      mood_modifiers: startingMoodModifiers(scenarioMood?.mood, startMinute),
       last_updated: 0,
     }).run();
 
