@@ -10,6 +10,7 @@ import { parsePivotResult } from './goalParser';
 import { buildPivotPrompt } from './goalPrompts';
 import { PIVOT_THRESHOLD_MINUTES, STALE_ABANDON_MINUTES, STALE_ABANDON_UNTARGETED_MINUTES } from './types';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
+import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
 export function shouldPivot(progress: number, pivotCount: number, minutesElapsed: number): boolean {
   return progress === 0 && pivotCount === 0 && minutesElapsed >= PIVOT_THRESHOLD_MINUTES;
@@ -120,7 +121,9 @@ export class PivotEvaluator {
         return;
       }
 
-      db.update(goals).set({ strategy: result.new_strategy, pivot_count: 1 }).where(eq(goals.id, goal.id)).run();
+      // A strategy about a made-up person keeps the old one (knownPeople.ts).
+      const strategy = mentionsInventedPerson(result.new_strategy) ? goal.strategy : result.new_strategy;
+      db.update(goals).set({ strategy, pivot_count: 1 }).where(eq(goals.id, goal.id)).run();
 
       simEvents.emit('goal:pivoted', {
         agentId: agent.id,

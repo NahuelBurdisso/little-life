@@ -63,7 +63,7 @@ ${contextLines ? '\n' + contextLines + '\n' : ''}
 Your recent experiences:
 ${memoriesList}
 
-What are the 3 questions about your life you most need to answer right now? Think about patterns, worries and what matters to someone like you${params.ambition ? ', and how it all bears on your ambition' : ''}. Ask them in your own words, first person, each one short and specific (name people and places).
+What are the 3 questions about your life you most need to answer right now? Think about patterns, worries and what matters to someone like you${params.ambition ? ', and how it all bears on your ambition' : ''}. Ask them in your own words, first person, each one short and specific (name the people and places you know; never invent anyone).
 
 Reply with JSON: {"questions":["...","...","..."]}`;
 

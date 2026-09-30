@@ -18,6 +18,7 @@ import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { completeGoal } from './goalProgress';
 import { repeatsExistingGoal } from './goalOverlap';
 import { ambitionText } from '../../data/ambitions';
+import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
 const MINUTES_PER_DAY = 1440;
 
@@ -338,6 +339,9 @@ export class GoalReviewer {
         }
         if (isRedundantGoal(agentId, mapped.type, mapped.target_id, nowMinutes)) continue;
         if (repeatsExistingGoal(agentId, ng.description, nowMinutes)) continue;
+        // Goal text feeds every dialogue and plan prompt after it: one made-up
+        // person ("Check in on the Miller boy") becomes a standing character.
+        if (mentionsInventedPerson(ng.description, ng.strategy)) continue;
 
         const inserted = db.insert(goals).values({
           agent_id: agentId,

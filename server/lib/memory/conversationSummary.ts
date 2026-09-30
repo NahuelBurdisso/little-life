@@ -66,7 +66,7 @@ export function buildSummaryPrompt(participants: string[], lines: SummaryLine[],
 Conversation between ${participants.join(' and ')}:
 ${transcript}
 
-For each person, write one first-person sentence (under 30 words) with what THEY will remember: what they learned, agreed, promised, suspected or felt about the other — concrete, from their own point of view. Skip greetings and goodbyes.
+For each person, write one first-person sentence (under 30 words) with what THEY will remember: what they learned, agreed, promised, suspected or felt about the other — concrete, from their own point of view. Skip greetings and goodbyes. Mention only people named in the conversation or living in town; never invent anyone.
 
 Reply with JSON: {${participants.map((p) => `"${p}":"I ..."`).join(',')}}`;
   return {

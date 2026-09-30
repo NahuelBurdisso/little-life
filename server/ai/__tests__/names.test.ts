@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addressName, firstName, nameVariants, withoutHonorific } from '../names';
+import { addressName, firstName, inventedPeople, nameVariants, nameWords, withoutHonorific } from '../names';
 import { sanitizeDialogue } from '../sanitizeDialogue';
 import { buildConversationPrompt } from '../prompts';
 import { pickConversationGist } from '../../lib/memory/conversationGist';
@@ -93,5 +93,21 @@ describe('names — nobody rolls their own first name', () => {
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('names — invented people (playtest #4: "the Miller boy")', () => {
+  const known = nameWords(['Omar Hassan', 'Dr. Sofia Petrov', 'Priya Sharma', 'Green Acres Farm']);
+
+  it('flags people-shaped names nobody in town has', () => {
+    expect(inventedPeople('Check in on the Miller boy to see if his condition has improved.', known)).toEqual(['Miller']);
+    expect(inventedPeople('Old Hobbs said Widow Grange is ill.', known)).toEqual(['Hobbs', 'Grange']);
+    expect(inventedPeople("I worry about Jenkins's daughter.", known)).toEqual(['Jenkins']);
+  });
+
+  it('lets real residents, places and generic references through', () => {
+    expect(inventedPeople('Dr. Petrov and Omar saw the Hassan family at Green Acres Farm.', known)).toEqual([]);
+    expect(inventedPeople("Priya's brother wrote, and a traveler asked about the stranger and the children.", known)).toEqual([]);
+    expect(inventedPeople('Old Man Hassan is tired.', known)).toEqual([]);
   });
 });

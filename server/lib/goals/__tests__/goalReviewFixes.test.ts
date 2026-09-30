@@ -149,4 +149,11 @@ describe('goal review fixes', () => {
   it('gives every ambition category words the review can weigh events against', () => {
     for (const c of AMBITION_CATEGORIES) expect(ambitionText(c), c).not.toBe(c);
   });
+
+  it('never adopts a goal about someone who does not live in town', async () => {
+    const [, , omar] = ids;
+    reply({ new_goals: [newGoal('Check in on the Miller boy to see if his condition has improved.', 'protective')] });
+    await new GoalReviewer().review(omar, NOW, 14);
+    expect(goalsOf(omar)).toHaveLength(0);
+  });
 });
