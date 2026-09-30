@@ -304,6 +304,11 @@ export const CONFIG = {
     // day phase.
     RANDOM_EVENT_CHANCE_PER_HOUR: 0.20,
     MAX_CONCURRENT_EVENTS: 5,
+    // CLOCK: GAME DAYS. A random roll skips any event type that started in this
+    // window (events.ts recentlyStartedTypes): playtest #3 got Bountiful Catch
+    // and Full Moon three times each in about two game days. Two, not more: 14
+    // types roll at ~5 events a day, and a longer window would drain the pool.
+    RANDOM_TYPE_COOLDOWN_DAYS: 2,
     WEATHER_DURATION_RANGE: { min: 2, max: 8 },
   },
 
