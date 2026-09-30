@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildSummaryPrompt, parseSummary } from '../conversationSummary';
+import { maturityDirective } from '../../../ai/contentRating';
+
+// The `adultContent` rule, flipped per test without a world row.
+const rules = vi.hoisted(() => ({ adult: false }));
+vi.mock('../../worldRules', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../worldRules')>()),
+  isAdultContent: () => rules.adult,
+}));
 
 describe('conversation summary', () => {
   const people = ['Marco Rivera', 'Rosa Chen'];
@@ -21,5 +29,25 @@ describe('conversation summary', () => {
   it('returns null for garbage', () => {
     expect(parseSummary('no json here', people)).toBeNull();
     expect(parseSummary('{"Someone Else":"I did a thing today."}', people)).toBeNull();
+  });
+});
+
+describe('maturity directive in the summary prompt', () => {
+  const people = ['Marco Rivera', 'Rosa Chen'];
+  const lines = [{ speaker: 'Marco Rivera', text: "I'm broke." }, { speaker: 'Rosa Chen', text: 'I can lend you ten.' }];
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
+  it('is the chaste line with the rule off, once', () => {
+    rules.adult = false;
+    const { system } = buildSummaryPrompt(people, lines);
+    expect(count(system, maturityDirective(false))).toBe(1);
+    expect(system).not.toContain(maturityDirective(true));
+  });
+
+  it('is the adult line with the rule on, once', () => {
+    rules.adult = true;
+    const { system } = buildSummaryPrompt(people, lines);
+    expect(count(system, maturityDirective(true))).toBe(1);
+    expect(system).not.toContain(maturityDirective(false));
   });
 });

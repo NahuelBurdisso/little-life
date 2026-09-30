@@ -15,6 +15,8 @@ import { callOllamaChat } from '../../ai/ollama';
 import type { LLMPriority } from '../../ai/llmSemaphore';
 import { CONFIG } from '../constants';
 import { firstName } from '../../ai/names';
+import { maturityDirective } from '../../ai/contentRating';
+import { isAdultContent } from '../worldRules';
 
 export interface SummaryLine {
   speaker: string;
@@ -54,7 +56,7 @@ export function buildSummaryPrompt(participants: string[], lines: SummaryLine[])
   const transcript = lines.map((l) => `${firstName(l.speaker)}: ${l.text}`).join('\n');
   const properties: Record<string, unknown> = {};
   for (const p of participants) properties[p] = { type: 'string', minLength: 10, maxLength: 240 };
-  const system = `You write the private memory each person keeps after a conversation in a small town.
+  const system = `You write the private memory each person keeps after a conversation in a small town. ${maturityDirective(isAdultContent())}
 
 Conversation between ${participants.join(' and ')}:
 ${transcript}

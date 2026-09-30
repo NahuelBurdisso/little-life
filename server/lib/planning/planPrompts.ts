@@ -1,6 +1,9 @@
 import { buildPersonalityDescription } from '../personality';
 import type { PersonalityProfile } from '../personality';
 import { TOWN_SETTING } from '../../ai/setting';
+import { maturityDirective } from '../../ai/contentRating';
+import { isAdultAge } from '../intimacy/eligibility';
+import { isAdultContent } from '../worldRules';
 
 function describeMoneyLevel(money: number): string {
   if (money < 10) return 'CRITICAL — nearly broke, avoid spending';
@@ -193,7 +196,7 @@ export function buildDailyPlanPrompt(params: DailyPlanPromptParams): PlanPrompt 
   ].filter(Boolean).join('\n');
 
   const system = `You are ${name}, ${age}. It is day ${dayNumber}. ${personalityDesc}
-${TOWN_SETTING}
+${TOWN_SETTING} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 ${params.selfDescription ? `\nAbout yourself: ${params.selfDescription}\n` : ''}
 Right now — ${describeNeeds(needs)}.
 Home: ${home}. ${workInfo} You wake at ${wakeTime}:00 and sleep at ${sleepTime}:00.
@@ -233,7 +236,7 @@ export function buildDecompositionPrompt(params: DecompositionPromptParams): Pla
   const durationMinutes = (endHour - startHour) * 60;
 
   const system = `You are ${name}. ${personalityDesc}
-${TOWN_SETTING}
+${TOWN_SETTING} ${maturityDirective(isAdultContent())}
 
 From ${startHour}:00 to ${endHour}:00 (${durationMinutes} minutes) you planned to: ${blockAction}
 Where: ${locationHint}
@@ -293,7 +296,7 @@ export function buildReplanPrompt(params: ReplanPromptParams): PlanPrompt {
     : '- Nothing planned.';
 
   const system = `You are ${name}. ${personalityDesc}
-${TOWN_SETTING}
+${TOWN_SETTING} ${maturityDirective(isAdultContent())}
 
 Something just happened: ${eventDescription}
 

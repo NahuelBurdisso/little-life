@@ -1,6 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildAgentSystemPrompt, buildConversationPrompt, topicIntent, romanceLevel, ConversationPromptParams, PROPOSAL_TOPIC, RENDEZVOUS_TOPIC } from '../prompts';
 import { clearVoiceDirectiveCache } from '../voiceDirective';
+import { maturityDirective } from '../contentRating';
+import { TOWN_SETTING } from '../setting';
+
+// The `adultContent` rule, flipped per test without a world row.
+const rules = vi.hoisted(() => ({ adult: false }));
+beforeEach(() => { rules.adult = false; });
+vi.mock('../../lib/worldRules', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/worldRules')>()),
+  isAdultContent: () => rules.adult,
+}));
 
 const mockAgent = {
   id: 1, name: 'Ray Kowalski', bio: '', age: 44, gender: 'male',
@@ -413,5 +423,83 @@ describe('buildConversationPrompt', () => {
       expect(proposal([], ['engaged'])[0].content).toContain("You're engaged to be married.");
       expect(proposal([], ['married'])[0].content).toContain("You're married to them.");
     });
+  });
+
+  describe('intimacy context (ai/intimacyContext.ts)', () => {
+    const withTags = (tags: string[], over: Partial<ConversationPromptParams> = {}) =>
+      buildConversationPrompt({
+        ...baseParams,
+        relationship: { ...baseParams.relationship!, friendship_ab: 60, friendship_ba: 60, romance_ab: 50, romance_ba: 50, tags },
+        ...over,
+      });
+
+    it('tells an adult what they have shared: a kiss, and lovers with the rule on', () => {
+      rules.adult = true;
+      expect(withTags(['kissed']).messages[0].content).toContain('You have kissed Carlos.');
+      const lovers = withTags(['kissed', 'lovers']).messages[0].content;
+      expect(lovers).toContain('You and Carlos are lovers.');
+      expect(lovers).not.toContain('You have kissed Carlos.');
+    });
+
+    it('with the rule off a night is not mentioned, a kiss still is', () => {
+      const lovers = withTags(['kissed', 'lovers']).messages[0].content;
+      expect(lovers).toContain('You have kissed Carlos.');
+      expect(lovers).not.toContain('lovers');
+    });
+
+    it('nothing for minors, whatever the tags say', () => {
+      rules.adult = true;
+      const kid = { ...mockOther, age: 16 };
+      const tagsAll = ['kissed', 'lovers', 'crush'];
+      expect(withTags(tagsAll, { otherAgent: kid }).messages[0].content).not.toMatch(/kissed|lovers/);
+      expect(withTags(tagsAll, { speaker: { ...mockAgent, age: 15 } }).messages[0].content).not.toMatch(/kissed|lovers/);
+    });
+
+    it('a stranger with no history adds no line', () => {
+      rules.adult = true;
+      expect(withTags([]).messages[0].content).not.toMatch(/kissed|lovers|ache for/);
+    });
+  });
+});
+
+describe('maturity directive in the dialogue header', () => {
+  beforeEach(() => { clearVoiceDirectiveCache(); rules.adult = false; });
+  const adultText = maturityDirective(true);
+  const chasteText = maturityDirective(false);
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
+  it('is the chaste line with the rule off, once, right after the setting', () => {
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
+    expect(count(prompt, chasteText)).toBe(1);
+    expect(prompt).not.toContain(adultText);
+    expect(prompt).toContain(`${TOWN_SETTING} ${chasteText}`);
+  });
+
+  it('switches to the adult line with the rule on, still once', () => {
+    rules.adult = true;
+    const prompt = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon);
+    expect(count(prompt, adultText)).toBe(1);
+    expect(prompt).not.toContain(chasteText);
+  });
+
+  it('stays chaste when the speaker or the listener is a minor, rule or not', () => {
+    rules.adult = true;
+    expect(buildAgentSystemPrompt({ ...mockAgent, age: 16 }, mockNeeds, mockEcon)).toContain(chasteText);
+    expect(buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], null, 12)).toContain(chasteText);
+    expect(buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], null, 30)).toContain(adultText);
+  });
+
+  it('a full conversation prompt carries it once', () => {
+    rules.adult = true;
+    const { system } = buildConversationPrompt({
+      speaker: mockAgent, speakerNeeds: mockNeeds, speakerEcon: mockEcon,
+      conversation: { id: 1, messages: [], trigger_reason: 'proximity', topic: 'catching up', sentiment: 0, max_turns: 6 },
+      relationship: null,
+      otherAgent: { id: 2, name: 'Carlos Mendez', bio: '', age: 45, gender: 'male', traits: [], personality: null },
+      memories: [],
+      world: { time: { day: 5, hour: 20, minute: 30, totalTicks: 100, season: 'spring' }, weather: 'cloudy' },
+      location: { id: 1, name: 'The Rusty Lantern', description: 'A cozy tavern' },
+    });
+    expect(count(system, adultText)).toBe(1);
   });
 });

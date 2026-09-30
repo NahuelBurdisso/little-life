@@ -1,6 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { buildDailyPlanPrompt, buildReplanPrompt, describeNeeds } from '../planPrompts';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { buildDailyPlanPrompt, buildDecompositionPrompt, buildReplanPrompt, describeNeeds } from '../planPrompts';
 import type { PersonalityProfile } from '../../personality';
+import { maturityDirective } from '../../../ai/contentRating';
+import { TOWN_SETTING } from '../../../ai/setting';
+
+// The `adultContent` rule, flipped per test without a world row.
+const rules = vi.hoisted(() => ({ adult: false }));
+vi.mock('../../worldRules', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../worldRules')>()),
+  isAdultContent: () => rules.adult,
+}));
+beforeEach(() => { rules.adult = false; });
 
 /**
  * Hunger is a fullness meter (100 = fed). Both plan prompts labelled > 70
@@ -34,5 +44,53 @@ describe('hunger labels in plan prompts', () => {
       needs: { hunger: 90, energy: 80, social: 80 }, currentHour: 12, sleepTime: 22, validLocations: ['Home'],
     });
     expect(system + user).toContain('hunger: well fed');
+  });
+});
+
+/**
+ * The maturity line rides in every plan prompt right after the setting, once,
+ * and follows the `adultContent` rule (a minor's daily plan stays chaste).
+ */
+describe('maturity directive in plan prompts', () => {
+  const adultText = maturityDirective(true);
+  const chasteText = maturityDirective(false);
+  const count = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+  const needs = { hunger: 50, energy: 80, social: 80, mood: 50, stress: 20 };
+
+  const daily = (age = 30) => buildDailyPlanPrompt({
+    name: 'A', age, traits: [], personality, needs,
+    home: 'Home', workplace: null, workStart: 9, workEnd: 17, wakeTime: 7, sleepTime: 22,
+    goals: [], reflections: [], yesterdayPlan: null, dayNumber: 1, validLocations: ['Home'],
+  }).system;
+  const decomposition = () => buildDecompositionPrompt({
+    name: 'A', personality, traits: [], blockAction: 'work', locationHint: 'Home',
+    needs, startHour: 9, endHour: 11, validLocations: ['Home'], validAgents: [],
+  }).system;
+  const replan = () => buildReplanPrompt({
+    name: 'A', personality, traits: [], eventDescription: 'x', remainingBlocks: [],
+    needs, currentHour: 12, sleepTime: 22, validLocations: ['Home'],
+  }).system;
+
+  it('rule off: the chaste line, once, in daily plan, decomposition and revise', () => {
+    rules.adult = false;
+    for (const system of [daily(), decomposition(), replan()]) {
+      expect(count(system, chasteText)).toBe(1);
+      expect(system).toContain(`${TOWN_SETTING} ${chasteText}`);
+      expect(system).not.toContain(adultText);
+    }
+  });
+
+  it('rule on: the adult line, once', () => {
+    rules.adult = true;
+    for (const system of [daily(), decomposition(), replan()]) {
+      expect(count(system, adultText)).toBe(1);
+      expect(system).not.toContain(chasteText);
+    }
+  });
+
+  it('a minor\'s daily plan stays chaste even with the rule on', () => {
+    rules.adult = true;
+    expect(daily(15)).toContain(chasteText);
+    expect(daily(15)).not.toContain(adultText);
   });
 });

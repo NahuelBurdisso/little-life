@@ -2,7 +2,9 @@
  * Prompt Builders for Agent Conversations
  *
  * Constructs system prompts and conversation prompts for LLM calls.
- * Pure functions — no I/O.
+ * Pure apart from two reads the intimacy layer needs: the `adultContent` rule
+ * (once per build, for the maturity line) and the speaker's private history with
+ * the listener (ai/intimacyContext.ts). Neither writes anything.
  */
 
 import { PersonalityProfile } from '../lib/personality';
@@ -11,6 +13,10 @@ import { selectConversationContext, ContextItem } from './contextSelector';
 import { BANNED_OPENERS, isFallbackMessage } from './sanitizeDialogue';
 import { addressName, firstName } from './names';
 import { TOWN_SETTING } from './setting';
+import { maturityDirective } from './contentRating';
+import { intimacyLinesFor } from './intimacyContext';
+import { isAdultContent } from '../lib/worldRules';
+import { isAdultAge } from '../lib/intimacy/eligibility';
 
 /**
  * Conversation topic of a marriage proposal (queued by lib/milestonesEngine.ts,
@@ -61,6 +67,8 @@ export interface AgentRow {
   traits: string[];
   age: number;
   gender: string;
+  /** `agents.orientation`; missing reads as straight (ai/intimacyContext.ts). */
+  orientation?: string | null;
   personality: {
     honesty: number;
     aggression: number;
@@ -260,6 +268,8 @@ function buildRelationshipTag(
   meeting: FirstMeeting = null,
   /** A flirt topic or feelings from the other side: worth saying there are none here. */
   romanticScene = false,
+  /** What the pair has shared and what it would cost (ai/intimacyContext.ts): already capped at two lines. */
+  intimacy: readonly string[] = [],
 ): string {
   if (!relationship) {
     return meeting === 'speaker-new' || meeting === 'listener-new'
@@ -315,6 +325,7 @@ function buildRelationshipTag(
   // licence. Pet names belong to couples; below that the line says so.
   const romanceLine = buildRomanceLine(romanceLevel(romance, relationship.tags), otherName, romanticScene);
   if (romanceLine) parts.push(romanceLine);
+  parts.push(...intimacy);
 
   // Trust
   if (trust > 50) {
@@ -537,6 +548,8 @@ export function buildAgentSystemPrompt(
   effectivePersonality?: PersonalityProfile | null,
   statePrompts?: string[],
   enrichment?: AgentEnrichment | null,
+  /** The listener's age, when known: a scene with a minor in it is always chaste. */
+  otherAge?: number,
 ): string {
   const resolvedPersonality = effectivePersonality ?? agent.personality;
 
@@ -605,7 +618,11 @@ export function buildAgentSystemPrompt(
   const familyLine = enrichment?.family ?? '';
 
   // Build prompt parts, filtering empties
-  const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING}`;
+  // The maturity line follows the setting. It is the chaste text unless the rule
+  // is on AND everyone in the scene is an adult (the listener's age is passed
+  // by buildConversationPrompt), so a child never reads "desire and temptation".
+  const adultTone = isAdultContent() && isAdultAge(agent.age) && (otherAge === undefined || isAdultAge(otherAge));
+  const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING} ${maturityDirective(adultTone)}`;
   const middle = [descriptionLine, factsLine, familyLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
@@ -730,6 +747,7 @@ export function buildConversationPrompt(
     effectivePersonality,
     statePrompts,
     params.enrichment,
+    otherAgent.age,
   );
 
   // Build user message parts
@@ -751,7 +769,16 @@ export function buildConversationPrompt(
     ? (relationship.agent_a === speaker.id ? relationship.romance_ba : relationship.romance_ab)
     : 0;
   const romanticScene = otherRomance > 15 || /^(?:flirting|romance)$/i.test(conversation.topic ?? '');
-  userParts.push(buildRelationshipTag(relationship, speaker.id, addressName(otherAgent.name), meeting, romanticScene));
+  const spokenName = addressName(otherAgent.name);
+  // A private history (a kiss, a night together, a marriage it would betray) is
+  // only told to adults, and only when there is a relationship row to carry it.
+  const intimacy = relationship
+    ? intimacyLinesFor(
+        speaker, otherAgent, spokenName, relationship.tags,
+        relationship.agent_a === speaker.id ? relationship.romance_ab : relationship.romance_ba,
+      )
+    : [];
+  userParts.push(buildRelationshipTag(relationship, speaker.id, spokenName, meeting, romanticScene, intimacy));
 
   // Context items with prefixes
   const contextPrefixes: Record<ContextItem['type'], string> = {
