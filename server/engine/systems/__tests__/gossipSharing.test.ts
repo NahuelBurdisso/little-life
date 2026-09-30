@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { db } from '../../../db';
-import { activityLog, agents, locations, shared_knowledge } from '../../../db/schema';
+import { activityLog, agents, conversations, locations, shared_knowledge } from '../../../db/schema';
 import { desc, eq } from 'drizzle-orm';
 import { gossipTick } from '../gossipEngine';
-import { getShareableFacts } from '../../../lib/gossip';
+import { createFact, getShareableFacts, pickByStoryFamily, rumorClaim, storyFamily } from '../../../lib/gossip';
 import type { PersonalityProfile } from '../../../lib/personality';
 
 /**
@@ -197,5 +197,89 @@ describe('sightings are never self-gossip', () => {
       .map((r) => (r.template_data as { description?: string }).description)
       .find((d) => d?.startsWith('Lane Yuki told'));
     expect(told).toBe('Lane Yuki told Lane Marco that she spotted Lane Diego at a secret meeting.');
+  });
+});
+
+/**
+ * Playtest #4: "Marco Rivera overheard that he was stumbling around drunk,
+ * according to Lucia Fernandez." A witness rumor starts known only to the
+ * witness, so its subject standing by her conversation "overheard" it.
+ */
+describe('nobody overhears a confirmed rumor about themselves', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('the subject next to the conversation is skipped; a bystander still overhears', () => {
+    const tavern = insertLocation('overhear tavern');
+    const lucia = insertAgent('Hear Lucia', tavern, QUIET);
+    const rosa = insertAgent('Hear Rosa', tavern, QUIET);
+    const marco = insertAgent('Hear Marco', tavern, GOSSIP);
+    const priya = insertAgent('Hear Priya', tavern, GOSSIP);
+    const rumor = db.insert(shared_knowledge).values({
+      type: 'rumor', subject_id: marco, target_id: null,
+      content: 'Hear Marco was stumbling around drunk, according to Hear Lucia.',
+      sensitivity: 2, known_by: [lucia], created_at: Date.now(), is_active: true, source: 'witness:fast_gossip',
+    }).returning({ id: shared_knowledge.id }).get().id;
+    db.insert(conversations).values({
+      participants: [lucia, rosa], messages: [], trigger_reason: 'overhear test', topic: null,
+      status: 'active', started_at: Date.now(), ended_at: null, sentiment: 0, max_turns: 4, location: tavern,
+    }).run();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    gossipTick(0);
+
+    expect(knownBy(rumor)).toContain(priya);
+    expect(knownBy(rumor)).not.toContain(marco);
+    const lines = db.select().from(activityLog).where(eq(activityLog.type, 'drama')).all()
+      .map((r) => (r.template_data as { description?: string }).description ?? '');
+    expect(lines.some((d) => d.startsWith('Hear Marco overheard'))).toBe(false);
+    db.update(conversations).set({ status: 'ended' }).where(eq(conversations.trigger_reason, 'overhear test')).run();
+  });
+});
+
+/**
+ * Playtest #4: 316 of 934 gossip lines were about drink — one night at the
+ * tavern made a rumor per onlooker plus a drunk_incident, and the uniform pick
+ * among shareable facts retold whichever kind there was most of.
+ */
+describe('drink stories do not swamp the gossip', () => {
+  it('groups drink facts into one family and keys other rumors on their claim', () => {
+    expect(rumorClaim('Ray Kowalski was stumbling around drunk, according to Lucia Fernandez.'))
+      .toBe('Ray Kowalski was stumbling around drunk');
+    expect(storyFamily({ type: 'rumor', content: 'Ray Kowalski was nursing a brutal hangover, according to Omar Hassan.' })).toBe('drink');
+    expect(storyFamily({ type: 'drunk_incident', content: 'Ray Kowalski got drunk and made a scene.' })).toBe('drink');
+    expect(storyFamily({ type: 'rumor', content: 'Dr. Sofia Petrov flew into a rage, according to Omar Hassan.' }))
+      .toBe(storyFamily({ type: 'rumor', content: 'Ray Kowalski flew into a rage, according to Lucia Fernandez.' }));
+    expect(storyFamily({ type: 'crush', content: 'Ray has a crush on Rosa.' })).toBe('crush');
+  });
+
+  it('picks each family with equal odds, however many facts it holds', () => {
+    const drink = Array.from({ length: 9 }, (_, i) => ({ type: 'rumor', content: `P${i} Q was stumbling around drunk.` }));
+    const crush = { type: 'crush', content: 'Ray has a crush on Rosa.' };
+    // The first roll picks the family: the upper half lands on the second one.
+    expect(pickByStoryFamily([...drink, crush], () => 0.99)).toBe(crush);
+    expect(storyFamily(pickByStoryFamily([...drink, crush], () => 0.01))).toBe('drink');
+  });
+
+  it('a second drink story about the same person waits while one is still circulating', () => {
+    const inn = insertLocation('drink inn');
+    const ray = insertAgent('Drink Ray', inn, QUIET);
+    const lucia = insertAgent('Drink Lucia', inn, QUIET);
+    const omar = insertAgent('Drink Omar', inn, QUIET);
+    const first = createFact('rumor', ray, null, 2, [lucia], 'witness:fast_gossip',
+      { detail: 'was stumbling around drunk', witness: 'Drink Lucia' });
+    expect(first).not.toBeNull();
+    // Another onlooker, another drink rumor, the cascade's drunk_incident: all the same story.
+    expect(createFact('rumor', ray, null, 2, [omar], 'witness:fast_gossip',
+      { detail: 'was nursing a brutal hangover', witness: 'Drink Omar' })).toBeNull();
+    expect(createFact('drunk_incident', ray, null, 2, [ray], 'cascade:drunk_incident')).toBeNull();
+    // Once the town knows, the same claim from another witness is still old news…
+    db.update(shared_knowledge).set({ is_public: true }).where(eq(shared_knowledge.id, first!)).run();
+    expect(createFact('rumor', ray, null, 2, [omar], 'witness:fast_gossip',
+      { detail: 'was stumbling around drunk', witness: 'Drink Omar' })).toBeNull();
+    // …but a different story about him is news.
+    expect(createFact('rumor', ray, null, 2, [omar], 'witness:fast_gossip',
+      { detail: 'flew into a rage', witness: 'Drink Omar' })).not.toBeNull();
   });
 });

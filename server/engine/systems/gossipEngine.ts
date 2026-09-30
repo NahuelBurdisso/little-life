@@ -27,7 +27,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
-import { isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
+import { isOwnSecret, mayBeToldTo, pickByStoryFamily, rumorReachedSubject } from '../../lib/gossip';
 import { isAdultAge, isAdultsOnlyFact } from '../../lib/intimacy/eligibility';
 import { chancePerTick } from '../../lib/gameClock';
 import { recordGoalOutcome } from '../../lib/goals/goalProgress';
@@ -157,6 +157,10 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
         for (const eavesdropper of eavesdroppers) {
           const knownBy = fact.known_by as number[];
           if (knownBy.includes(eavesdropper.id)) continue;
+          // Same gate as telling (section 3): a witness rumor starts known only
+          // to the witness, so its subject standing nearby used to "overhear"
+          // it — "Marco Rivera overheard that he was stumbling around drunk".
+          if (!mayBeToldTo(fact, eavesdropper.id)) continue;
           // A child in the room does not pick up a kiss or a night together from a whisper.
           if (isAdultsOnlyFact(fact) && !isAdultAge(eavesdropper.age)) continue;
 
@@ -241,7 +245,7 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
 
       if (shareable.length === 0) continue;
 
-      const fact = shareable[Math.floor(Math.random() * shareable.length)];
+      const fact = pickByStoryFamily(shareable);
       addKnowers(fact, [target.id]);
       // Telling someone a rumor about themselves: they know who said it.
       rumorReachedSubject(fact, agent.id, target.id);
@@ -279,13 +283,14 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
       const discoverable = allFacts.filter(f => {
         if ((f.known_by as number[]).includes(agent.id)) return false; // already knows
         if (!coLocatedIds.includes(f.subject_id)) return false;
+        if (!mayBeToldTo(f, agent.id)) return false; // "Yuki spotted Diego" is not news to Diego
         if (isAdultsOnlyFact(f) && !isAdultAge(agent.age)) return false; // a child does not "notice" it
         return f.sensitivity >= 2; // only discover non-public shared_knowledge
       });
 
       if (discoverable.length === 0) continue;
 
-      const fact = discoverable[Math.floor(Math.random() * discoverable.length)];
+      const fact = pickByStoryFamily(discoverable);
       addKnowers(fact, [agent.id]);
       recordGoalOutcome(agent.id, fact.subject_id, 'rumor_heard');
 

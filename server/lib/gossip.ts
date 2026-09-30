@@ -202,6 +202,47 @@ export function isOwnSecret(
 }
 
 /**
+ * The kind of story a fact tells, for keeping one kind from swamping the feed.
+ * A night of drinking yields a witness rumor per onlooker ("stumbling around
+ * drunk", "nursing a brutal hangover"), a drunk_incident from the cascade and
+ * the misdeed table, and later an `alcoholic` fact: playtest #4 logged 316 of
+ * 934 gossip lines about drink. They are one family; other rumors are keyed on
+ * their claim, everything else on its type.
+ */
+export function storyFamily(fact: { type: string; content: string }): string {
+  if (fact.type === 'drunk_incident' || fact.type === 'alcoholic') return 'drink';
+  if (fact.type === 'rumor') {
+    const claim = rumorClaim(fact.content);
+    if (/\b(?:drunk|hangover|drinking)\b/i.test(claim)) return 'drink';
+    // Names out, so "X flew into a rage" about two people is one family.
+    return `rumor:${claim.replace(/(?:Dr\.\s+)?[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*)*/g, 'X')}`;
+  }
+  return fact.type;
+}
+
+/** A rumor's claim without the witness: "X was stumbling around drunk, according to Lucia." → "X was stumbling around drunk". */
+export function rumorClaim(content: string): string {
+  return content.replace(/,\s+according to [^,]+?[.!]?$/i, '').replace(/[.!]+$/, '').trim();
+}
+
+/**
+ * Pick one fact, each story family equally likely whatever its size, so ten
+ * drink rumors and one crush are a coin flip rather than ten to one.
+ */
+export function pickByStoryFamily<T extends { type: string; content: string }>(facts: readonly T[], rand: () => number = Math.random): T {
+  const families = new Map<string, T[]>();
+  for (const f of facts) {
+    const key = storyFamily(f);
+    const list = families.get(key);
+    if (list) list.push(f);
+    else families.set(key, [f]);
+  }
+  const groups = [...families.values()];
+  const group = groups[Math.floor(rand() * groups.length)];
+  return group[Math.floor(rand() * group.length)];
+}
+
+/**
  * Whether `listenerId` may be told this fact as gossip. Nobody is told a
  * confirmed fact about themselves as if it were news about someone else (G7:
  * "Marco told Diego that Yuki spotted Diego…"): they either lived it or it is
@@ -326,9 +367,24 @@ export function createFact(
   // second white lie, about something else, is fresh gossip. Without this every subject could
   // hold one secret per type for the life of the world, and a calm town ran out of material
   // after two weeks (a 30-day soak: no new secrets after day 14).
-  const existing = checkInactiveToo
+  // Rumors compare their claim, not the witness: a second onlooker's "X was
+  // stumbling around drunk, according to Priya" is the same story as the public
+  // "…according to Lucia" one and piled up as a new fact per witness.
+  const sameStory = (a: string) => (type === 'rumor' ? rumorClaim(a) === rumorClaim(content) : a === content);
+  let existing = checkInactiveToo
     ? duplicates[0]
-    : duplicates.find((d) => !d.is_public || d.content === content);
+    : duplicates.find((d) => !d.is_public || sameStory(d.content));
+  // One drink story about a person circulates at a time: while a drunk
+  // rumor, a drunk_incident (or an alcoholic reputation) about them is still
+  // news, another night at the tavern adds nothing the town will retell.
+  if (!existing && (type === 'drunk_incident' || (type === 'rumor' && storyFamily({ type, content }) === 'drink'))) {
+    existing = db
+      .select({ id: shared_knowledge.id, is_public: shared_knowledge.is_public, content: shared_knowledge.content, type: shared_knowledge.type })
+      .from(shared_knowledge)
+      .where(and(eq(shared_knowledge.subject_id, subjectId), eq(shared_knowledge.is_active, true), eq(shared_knowledge.is_public, false)))
+      .all()
+      .find((d) => storyFamily(d) === 'drink');
+  }
 
   if (existing) {
     // If there's an inactive duplicate, reactivate it instead of creating new
