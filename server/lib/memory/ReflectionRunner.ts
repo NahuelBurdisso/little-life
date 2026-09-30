@@ -178,6 +178,7 @@ export class ReflectionRunner {
 
     const { system: sSystem, user: sUser, format: sFormat } = buildSynthesisPrompt({
       name,
+      age,
       personality,
       traits,
       questions,

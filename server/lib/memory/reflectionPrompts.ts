@@ -1,4 +1,7 @@
+import { maturityDirective } from '../../ai/contentRating';
 import { buildPersonalityDescription } from '../personality';
+import { isAdultAge } from '../intimacy/eligibility';
+import { isAdultContent } from '../worldRules';
 import type { PersonalityProfile } from '../personality';
 
 export interface QuestionPromptParams {
@@ -13,6 +16,8 @@ export interface QuestionPromptParams {
 
 export interface SynthesisPromptParams {
   name: string;
+  /** The thinker's age: a child's reflection never gets the adult tone (a caller without one is treated as an adult). */
+  age?: number;
   personality: PersonalityProfile;
   traits: string[];
   questions: string[];
@@ -51,7 +56,9 @@ export function buildQuestionPrompt(params: QuestionPromptParams): JSONPrompt {
   const goalsLine = params.activeGoals?.length ? `Current goals: ${params.activeGoals.join('; ')}` : '';
   const contextLines = [ambitionLine, goalsLine].filter(Boolean).join('\n');
 
-  const system = `You are ${name}, ${age}. ${personalityDesc}
+  // The maturity line (contentRating.ts): a memory of a night must not turn into a frank thought, and with the
+  // rule off romance stays chaste here too.
+  const system = `You are ${name}, ${age}. ${personalityDesc} ${maturityDirective(isAdultContent() && isAdultAge(age))}
 ${contextLines ? '\n' + contextLines + '\n' : ''}
 Your recent experiences:
 ${memoriesList}
@@ -74,7 +81,7 @@ Reply with JSON: {"questions":["...","...","..."]}`;
 }
 
 export function buildSynthesisPrompt(params: SynthesisPromptParams): JSONPrompt {
-  const { name, personality, traits, questions, evidence } = params;
+  const { name, age, personality, traits, questions, evidence } = params;
 
   const personalityDesc = buildPersonalityDescription(personality, traits);
 
@@ -87,7 +94,7 @@ export function buildSynthesisPrompt(params: SynthesisPromptParams): JSONPrompt 
   // thoughts: first person, plain sentences. Playtest insights came back
   // addressed to "you" (as if advising the player), wrapped in **markdown**,
   // or with an in-character preamble ("Right. Reflections. I suppose…").
-  const system = `You are ${name}. ${personalityDesc}
+  const system = `You are ${name}. ${personalityDesc} ${maturityDirective(isAdultContent() && (age == null || isAdultAge(age)))}
 
 You are thinking about:
 ${questionsList}
