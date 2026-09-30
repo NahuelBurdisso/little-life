@@ -135,7 +135,7 @@ export function FloatingToolbar({
         rail={rail}
         icon="🎬"
         label="Director"
-        title="Let the camera pick the best scene and caption it (C toggles captions; moving the map pauses it)"
+        title="Let the camera pick the best scene and caption it (D toggles it, C toggles captions; moving the map pauses it)"
         onClick={onToggleAutoCut}
         active={autoCut}
         pressed={autoCut}

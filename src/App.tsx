@@ -34,6 +34,7 @@ import { useAgents } from "./hooks/useAgents";
 import { useConversations } from "./hooks/useConversations";
 import { useNudge } from "./hooks/useNudge";
 import { useKeyboardControls } from "./hooks/useKeyboardControls";
+import { loadDirectorOn, saveDirectorOn } from "./lib/directorPref";
 import { useFavorites } from "./hooks/useFavorites";
 import { useWatchedPairs } from "./hooks/useWatchedPairs";
 import { worldSeedOf, orderCast, cycleAgentId } from "./lib/favorites";
@@ -90,7 +91,15 @@ export default function App() {
   // panel's relationship rows and the nudge menu; stacks above all of them.
   const [pairDossier, setPairDossier] = useState<{ a: number; b: number } | null>(null);
   const [showAutoplay, setShowAutoplay] = useState(false);
-  const [autoCut, setAutoCut] = useState(false);
+  // Director mode defaults ON (persisted): a new player should see the best scene, not a static map.
+  // Player camera input pauses it for 20 s (useDirector), so taking the wheel still works.
+  const [autoCut, setAutoCut] = useState(loadDirectorOn);
+  const toggleAutoCut = useCallback(() => {
+    setAutoCut((v) => {
+      saveDirectorOn(!v);
+      return !v;
+    });
+  }, []);
 
   // Reset all UI state when world returns to wizard state (after resetToWizard)
   // `resetToWizard` is the only thing that nulls `setup_config`, so that is what
@@ -313,6 +322,13 @@ export default function App() {
     setSelectedAgentId(agentId);
   }, [noteDirectorInput]);
 
+  // D: the keyboard twin of the toolbar's 🎬 button. Says which way it went, since
+  // the camera switching itself is easy to miss.
+  const handleToggleDirector = useCallback(() => {
+    toggleAutoCut();
+    pushToast(autoCut ? "Director off" : "Director on", "info", "🎬");
+  }, [toggleAutoCut, autoCut]);
+
   const toggleCaptions = director.toggleCaptions;
   const handleToggleCaptions = useCallback(() => {
     const on = toggleCaptions();
@@ -353,6 +369,7 @@ export default function App() {
       setFollowRequest(r => ({ nonce: (r?.nonce ?? 0) + 1, mode: "toggle" }));
     },
     onToggleCaptions: handleToggleCaptions,
+    onToggleDirector: handleToggleDirector,
     onToggleMute: () => {
       audio.toggleMute();
       return audio.getSettings().muted;
@@ -515,7 +532,7 @@ export default function App() {
             onShowHearts={() => setShowHearts(true)}
             onShowAutoplay={() => setShowAutoplay(true)}
             autoCut={autoCut}
-            onToggleAutoCut={() => setAutoCut(v => !v)}
+            onToggleAutoCut={toggleAutoCut}
             cinematic={cinematic.enabled}
             onToggleCinematic={cinematic.toggle}
             onMeetTheTown={guide.openTour}

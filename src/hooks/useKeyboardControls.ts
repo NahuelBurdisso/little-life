@@ -22,6 +22,8 @@ export function useKeyboardControls(callbacks: {
   onToggleFollow: () => void;
   /** C: show or hide the Director's lower-third captions. */
   onToggleCaptions?: () => void;
+  /** D: switch the Director (auto-cutting camera) on or off, like the toolbar's 🎬. */
+  onToggleDirector?: () => void;
   /**
    * M: mute or unmute the town's sound. Returns whether it is muted now, so the
    * toast can say which way it went (the speaker button is easy to miss).
@@ -123,6 +125,11 @@ export function useKeyboardControls(callbacks: {
           // Same guard as F: with a dialog open the key belongs to the dialog.
           if (!cbRef.current.agentKeysEnabled) break;
           cbRef.current.onToggleCaptions?.();
+          break;
+        case "KeyD":
+          // Same guard as F and C: with a dialog open the key belongs to the dialog.
+          if (!cbRef.current.agentKeysEnabled) break;
+          cbRef.current.onToggleDirector?.();
           break;
         case "KeyM": {
           // Same guard as F and C: with a dialog open the key belongs to the dialog.
