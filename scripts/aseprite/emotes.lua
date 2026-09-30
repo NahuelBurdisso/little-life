@@ -842,33 +842,36 @@ emote("dizzy", {
   function(c) dizzy(c, 0.66) end,
 })
 
--- blush: a pair of rosy cheek ovals, hatched, that swell and settle. Deliberately face-less — the
--- emote floats over an agent's head, and two warm patches read as "flustered" at 16 px.
+-- blush: two rosy cheek patches, hatched with diagonal strokes, that deepen over the three frames.
+-- Deliberately face-less and dot-less (an earlier pair of ovals with two dark dots read as a pig's
+-- snout): the emote floats over an agent's head, and two warm hatched patches read as "flustered"
+-- at 16 px. Each patch stays 6 px wide so the pair keeps a gap for the outline between them.
 local CHEEK_S = A [[
-  .ppp.
-  pRpRp
-  .ppp.
+  .pppp.
+  pppRpp
+  ppRppp
+  .pppp.
 ]]
 local CHEEK_M = A [[
-  .ppp.
-  ppppp
-  pRpRp
-  .ppp.
+  .ppRp.
+  ppRppR
+  pRppRp
+  .ppRp.
 ]]
 local CHEEK_L = A [[
-  .ppp.
-  ppppp
-  pRpRp
-  ppppp
-  .ppp.
+  .ppRp.
+  ppRppR
+  pRppRp
+  RppRpp
+  .pRpp.
 ]]
-local function cheeks(c, shape, dy)
-  c:spr(shape, -4, dy); c:spr(shape, 4, dy)
+local function cheeks(c, shape)
+  c:spr(shape, -4, 0); c:spr(shape, 4, 0)
 end
 emote("blush", {
-  function(c) cheeks(c, CHEEK_S, 0) end,
-  function(c) cheeks(c, CHEEK_M, 0) end,
-  function(c) cheeks(c, CHEEK_L, 0); c:px(8, 3, "p"); c:px(7, 2, "R"); c:px(9, 2, "R") end,
+  function(c) cheeks(c, CHEEK_S) end,
+  function(c) cheeks(c, CHEEK_M) end,
+  function(c) cheeks(c, CHEEK_L) end,
 })
 
 -- kiss: red lips puckering, a little heart popping off them.
