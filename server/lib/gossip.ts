@@ -40,6 +40,12 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} holds a grudge against ${t ?? 'someone'}`,
   affair: (s, t) =>
     `${s} and ${t ?? 'someone'} are getting suspiciously close`,
+  // Seen, not known: what a bystander can honestly say (lib/intimacy/). Kept
+  // discreet on purpose; the town fills in the rest.
+  kiss_seen: (s, t) =>
+    `${s} was seen kissing ${t ?? 'someone'}`,
+  tryst_seen: (s, t) =>
+    `${s} was seen leaving ${t ?? 'someone'}'s house at dawn`,
   financial: (s, _t, ctx) =>
     ctx?.detail ? `${s} is struggling with money — ${ctx.detail}` :
     `${s} is struggling with money`,
@@ -166,6 +172,8 @@ const PARTICIPANT_TARGET_TYPES = new Set([
   // A baby on the way is the father's news to break as much as the mother's,
   // and the lover named in a paternity secret doesn't spread it either.
   'pregnancy', 'paternity',
+  // A kiss or a night seen is both people's secret: neither gossips about it.
+  'kiss_seen', 'tryst_seen',
 ]);
 
 /**
@@ -407,6 +415,12 @@ const NEGATIVE_FACT_TYPES = [
   'theft', 'blackmail', 'gambling_loss', 'rumor',
   'reputation', 'work_issue', 'drunk_incident', 'grudge',
   'affair', 'arrest', 'seduction',
+  // A night spent together outside marriage is a scandal in this town; a stolen
+  // kiss (`kiss_seen`) is deliberately NOT here. The list is per type, so it
+  // cannot tell a kiss between two single people (innocent) from one that betrays a
+  // marriage; the betrayal already lands as an `affair` fact above, and the
+  // kiss_seen's own sensitivity (2 / 3 / 4) carries how bad it is to spread.
+  'tryst_seen',
 ];
 
 export function getNegativeFactCount(agentId: number): number {

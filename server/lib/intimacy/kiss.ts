@@ -6,7 +6,7 @@ import { logActivity } from '../activityLogger';
 import { addMoodModifier } from '../dailyLife';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
-import { isSpokenFor } from '../marriage';
+import { MILESTONE_TAGS, affairInvolvesMarriage, affairSensitivity, isSpokenFor } from '../marriage';
 import { simEvents } from '../simEvents';
 import { getAgentStates, getEffectivePersonality } from '../states';
 import { gameMinutesNow } from '../worldClock';
@@ -307,6 +307,63 @@ function seedAffair(a: number, b: number, witnessIds: number[]): void {
   learnFact('affair', subject, target, 3, [a, b, ...witnessIds], 'observed');
 }
 
+// ─── Seen ────────────────────────────────────────────────────────────────────
+
+/** A kiss nobody minds: two people who are openly a couple are not news. */
+const KISS_SEEN_SENSITIVITY = 2;
+/** ... or one that is scandalous because one of them is engaged or married to someone else. */
+const KISS_SEEN_SPOKEN_FOR_SENSITIVITY = 3;
+
+export interface IntimacyKissPayload {
+  a: number;
+  b: number;
+  first: boolean;
+  witnessIds: number[];
+}
+
+/**
+ * Whether the two are openly together: partners, engaged or married to each
+ * other. Someone who is spoken for to a THIRD person is not openly anyone's,
+ * even when their row with the kisser says partners: a couple that has to
+ * hide behind a marriage elsewhere is exactly what a witness remembers.
+ */
+export function isOpenCouple(a: number, b: number): boolean {
+  const rel = pairRelationship(a, b);
+  if (!rel) return false;
+  const together = rel.status === 'partners' || rel.tags.some((t) => MILESTONE_TAGS.includes(t));
+  return together && !isSpokenFor(a, b) && !isSpokenFor(b, a);
+}
+
+/**
+ * Sensitivity of "X was seen kissing Y": 2, 3 when either is engaged or
+ * married to somebody else, 4 when a marriage is betrayed (the same step
+ * `affairSensitivity` gives an affair secret).
+ */
+export function kissSeenSensitivity(a: number, b: number): number {
+  const spokenFor = isSpokenFor(a, b) || isSpokenFor(b, a);
+  return affairSensitivity(
+    spokenFor ? KISS_SEEN_SPOKEN_FOR_SENSITIVITY : KISS_SEEN_SENSITIVITY,
+    affairInvolvesMarriage(a, b),
+  );
+}
+
+/**
+ * Whoever saw a kiss between two people who are not openly together learns it as
+ * a `kiss_seen` secret: "create or add knowers", so a second sighting of the same
+ * pair by someone new is not lost. The two are not knowers (they do not know they
+ * were seen) and never gossip about it (`PARTICIPANT_TARGET_TYPES`). An open couple
+ * kissing produces nothing: nobody cares. The subject is the lower id so a kiss led
+ * by either of them lands on the same fact.
+ *
+ * Not routed through the WitnessAmplifier: that one reacts to `interaction:completed`
+ * and friends, and a kiss is not one; creating the fact here as well would double it.
+ */
+export function witnessKiss(p: IntimacyKissPayload): void {
+  if (p.witnessIds.length === 0) return;
+  if (isOpenCouple(p.a, p.b)) return;
+  learnFact('kiss_seen', Math.min(p.a, p.b), Math.max(p.a, p.b), kissSeenSensitivity(p.a, p.b), p.witnessIds, 'observed');
+}
+
 // ─── Registration ────────────────────────────────────────────────────────────
 
 let registered = false;
@@ -322,6 +379,13 @@ export function registerKissListener(): void {
       // A listener runs inside the emitting phase: a failed kiss must never take
       // the conversation's own bookkeeping down with it.
       console.warn('[intimacy] kiss failed:', (err as Error).message);
+    }
+  });
+  simEvents.on('intimacy:kiss', (p: IntimacyKissPayload) => {
+    try {
+      witnessKiss(p);
+    } catch (err) {
+      console.warn('[intimacy] witnessing a kiss failed:', (err as Error).message);
     }
   });
 }
