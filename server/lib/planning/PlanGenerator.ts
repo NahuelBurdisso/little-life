@@ -24,6 +24,7 @@ import {
 } from './PlanLLMGate';
 import { joinForFeed, shortenForFeed } from '../factText';
 import { gameMinutes, type ClockTime } from '../gameClock';
+import { planCalendarNote } from '../townCalendar';
 
 /** Run an optional context lookup; on failure log it and plan without it. */
 async function bestEffort<T>(what: string, fn: () => Promise<T[]>): Promise<T[]> {
@@ -469,6 +470,7 @@ export class PlanGenerator {
       yesterdayPlan,
       dayNumber: currentDay,
       validLocations,
+      calendar: planCalendarNote(agentId, currentDay),
       economy: agentEcon ? { money: agentEcon.money, job: agentEcon.job, jobTitle: agentEcon.job_title, salary: agentEcon.salary } : undefined,
       selfDescription: agentRow.self_description ?? undefined,
       hobbies: getAgentHobbies(agentId),

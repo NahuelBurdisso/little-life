@@ -115,14 +115,18 @@ export const WORLD_EVENTS = {
     description: 'The town is celebrating with music, food, and games!',
     durationHours: 6,
     effects: { social_boost: 20, fun_boost: 15, shop_prices: 0.7 },
-    random: { weight: 10, condition: (phase) => phase === 'afternoon' || phase === 'evening' },
+    // Rare and impromptu now: the calendar (data/calendar.ts) holds four real
+    // festivals a year, and a random one every few days drowned them out.
+    random: { weight: 3, condition: (phase) => phase === 'afternoon' || phase === 'evening' },
   },
   market_day: {
     name: 'Market Day',
     description: 'Merchants have set up stalls with discounted goods.',
     durationHours: 8,
     effects: { shop_prices: 0.5 },
-    random: { weight: 15, condition: (phase) => phase === 'morning' },
+    // The calendar opens a market every week (data/calendar.ts); a random one
+    // on top made markets an every-other-day thing.
+    random: { weight: 0, condition: (phase) => phase === 'morning' },
   },
   storm: {
     name: 'Heavy Storm',
@@ -250,6 +254,43 @@ export const WORLD_EVENTS = {
     effects: { mood_boost: 10 },
   },
 
+  // ── The town calendar (data/calendar.ts, lib/townCalendar.ts) ────────────
+  // Fixed days of the year, never rolled: no `random`. Each belongs to a family
+  // (EVENT_FAMILY below) so the systems that key on event types — the crowd
+  // pull to the square, festival lighting, small-talk topics — treat a Spring
+  // Fair as the festival it is without a second copy of every rule.
+  spring_fair: {
+    name: 'Spring Fair',
+    description: 'Stalls, a maypole and the ploughing match: the whole town is out on the square.',
+    durationHours: 6,
+    effects: { social_boost: 20, fun_boost: 15, shop_prices: 0.8 },
+  },
+  midsummer: {
+    name: 'Midsummer',
+    description: 'A bonfire, music and dancing into the short night, and a singing contest.',
+    durationHours: 6,
+    effects: { social_boost: 20, fun_boost: 20, romance_boost: 10 },
+  },
+  harvest_festival: {
+    name: 'Harvest Festival',
+    description: 'The harvest is in: a supper for everyone, cider, and the pie contest.',
+    durationHours: 6,
+    effects: { social_boost: 20, fun_boost: 15, food_prices: 0.7 },
+  },
+  winter_lights: {
+    name: 'Winter Lights',
+    description: 'Lanterns on every door, carols and mulled wine against the dark, and the baking contest.',
+    durationHours: 6,
+    // The warmth of the crowd makes the cold square bearable for an evening.
+    effects: { social_boost: 20, fun_boost: 15, mood_outdoor: 6 },
+  },
+  election_day: {
+    name: 'Election Count',
+    description: 'The votes for mayor are being counted on the square.',
+    durationHours: 2,
+    effects: { social_boost: 10, gossip_boost: 1.5 },
+  },
+
   // ── Started by other systems, with a per-instance name/description ───────
   funeral: {
     name: 'Funeral',
@@ -281,6 +322,37 @@ export const EVENT_WEATHER: Partial<Record<WorldEventType, string>> = {
   // key on `world.weather`, so the event has to set it like the storm does.
   heatwave: 'hot',
 };
+
+/**
+ * The generic event a specific one behaves like. Crowd pulls, festival
+ * lighting, conversation topics and the audio bed were all written against
+ * `festival` / `town_meeting`; a calendar festival is one of those with its own
+ * name, decorations and contest. Readers that key behaviour on a type go
+ * through `eventFamily` (or `withFamilies` for a set), so a new calendar event
+ * only needs a line here to be attended.
+ */
+export const EVENT_FAMILY: Partial<Record<WorldEventType, WorldEventType>> = {
+  spring_fair: 'festival',
+  midsummer: 'festival',
+  harvest_festival: 'festival',
+  winter_lights: 'festival',
+  election_day: 'town_meeting',
+};
+
+/** The family a type behaves as (itself when it has none). */
+export function eventFamily(type: string): string {
+  return isWorldEventType(type) ? EVENT_FAMILY[type] ?? type : type;
+}
+
+/** Every type in `types` plus the family each belongs to. */
+export function withFamilies(types: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const t of types) {
+    out.add(t);
+    out.add(eventFamily(t));
+  }
+  return out;
+}
 
 /** Events the player can start from the Events menu (`world.triggerEvent`). */
 export const PLAYER_EVENT_TYPES = [

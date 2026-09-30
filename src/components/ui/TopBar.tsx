@@ -4,6 +4,7 @@ import { SpeedControls } from "./SpeedControls";
 import { SavesDialog } from "./SavesDialog";
 import { trpc } from "../../lib/trpc";
 import { badgeText } from "../../lib/journal";
+import { calendarChip } from "../../lib/calendarChip";
 
 interface TopBarProps {
   world: {
@@ -135,6 +136,8 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
   ].join('\n');
 
   const hasConfig = !!world.setup_config;
+  // What the town calendar has coming (pure, from the clock: no query to go stale).
+  const chip = calendarChip(world.time.day, world.time.hour);
 
   // The "more" menu (narrow windows). Outside click closes it; Escape closes just
   // it (capture + stopPropagation, like the confirm dialog above, so App's own
@@ -168,6 +171,18 @@ export function TopBar({ world, events, liveConversations, awakeAgents, onShowEv
           <span className="text-ui-dim capitalize">
             {seasonEmoji(world.time.season)}<span className="hidden lg:inline"> {world.time.season}</span>
           </span>
+          {/* The next festival or election within two days. Icon only below xl
+              (the full label in the tooltip), like the bar's buttons. */}
+          {chip && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs text-ui-gold border border-ui-line rounded-sm bg-ui-raised"
+              title={chip.title}
+              aria-label={chip.title}
+            >
+              <span aria-hidden="true">{chip.icon}</span>
+              <span className="hidden xl:inline">{chip.label}</span>
+            </span>
+          )}
         </div>
 
         {/* Live activity readout (hidden on narrow windows: the speed controls and buttons need the room) */}

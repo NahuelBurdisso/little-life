@@ -3,6 +3,7 @@ import {
   MINUTES_PER_DAY, type Challenge, type ChallengeKind, type SnapAgent, type SnapPair, type TownSnapshot,
 } from '../catalog';
 import { beginChallenge, evaluateChallenge } from '../evaluate';
+import { kingmakerDraft } from '../suggest';
 
 /**
  * Every evaluator on hand-built snapshots: the checks are pure functions of
@@ -285,5 +286,37 @@ describe('recluse', () => {
 
   it('expires still alone', () => {
     expect(evaluateChallenge(c, later(before, 7)).status).toBe('expired');
+  });
+});
+
+describe('kingmaker', () => {
+  // Day 10, before the day-24 election's campaign.
+  const before = town({ mayorId: 4, candidates: [], lastElection: null });
+  const c = beginChallenge(offer('kingmaker', { agentIds: [1], target: 24 }), before);
+
+  it('runs to the end of election day and tracks the ballot', () => {
+    expect(c.deadline).toBe(25 * DAY);
+    expect(c.progress?.label).toMatch(/not on the ballot yet/);
+    expect(evaluateChallenge(c, later(before, 11, { candidates: [4, 1] })).progress.label).toMatch(/on the ballot/);
+  });
+
+  it('completes when they hold the chair, fails when someone else wins', () => {
+    expect(evaluateChallenge(c, later(before, 14, { mayorId: 1, lastElection: { electionDay: 24, winnerId: 1 } })))
+      .toMatchObject({ status: 'completed', outcome: 'Name1 is the mayor.' });
+    expect(evaluateChallenge(c, later(before, 14, { lastElection: { electionDay: 24, winnerId: 4 } })))
+      .toMatchObject({ status: 'failed', outcome: 'Name4 won the election.' });
+    // Last season's result doesn't count against it.
+    expect(evaluateChallenge(c, later(before, 1, { lastElection: { electionDay: -4, winnerId: 4 } })).status).toBe('active');
+  });
+
+  it('is offered for the next election that can still take the pick', () => {
+    const rng = () => 0;
+    // Day 10: this season's vote (day 24) is still ahead of its campaign.
+    expect(kingmakerDraft(town({ mayorId: 4 }), rng)).toMatchObject({ kind: 'kingmaker', target: 24, agentIds: [1] });
+    // A campaign is running: the pick is one of its challengers, never the mayor.
+    expect(kingmakerDraft(town({ nowMinute: 22 * DAY, day: 22, mayorId: 4, candidates: [4, 3] }), rng))
+      .toMatchObject({ target: 24, agentIds: [3] });
+    // Too late for this season without a campaign: the next one.
+    expect(kingmakerDraft(town({ nowMinute: 23 * DAY, day: 23, mayorId: 4 }), rng)).toMatchObject({ target: 52 });
   });
 });

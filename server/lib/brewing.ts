@@ -29,8 +29,10 @@ import { snapThreshold } from './cascade/TensionTracker';
 import type { PersonalityProfile } from './personality';
 import { isCommonKnowledge } from '../engine/systems/gossipEngine';
 import { leavingThoughts, REASON_PHRASES, type DepartureReason } from './populationFlow';
+import { electionBrewing, type ElectionBrewing } from './townCalendar';
+import { worldState } from '../db/schema';
 
-export type BrewingKind = 'snap' | 'secret' | 'confrontation' | 'nudge' | 'goal' | 'relationship' | 'leaving';
+export type BrewingKind = 'snap' | 'secret' | 'confrontation' | 'nudge' | 'goal' | 'relationship' | 'leaving' | 'election';
 
 export interface BrewingItem {
   /** Stable across recomputes so the UI can key rows and animate heat. */
@@ -124,6 +126,7 @@ const GOAL_PHRASES: Record<string, (target: string | null) => string> = {
   steal_from: (t) => (t ? `stealing from ${t}` : 'a big score'),
   investigate: (t) => (t ? `getting to the bottom of ${t}` : 'getting to the bottom of something'),
   protect: (t) => (t ? `protecting ${t}` : 'protecting someone'),
+  campaign: () => 'winning the election for mayor',
 };
 
 function goalPhrase(g: BrewingInput['goals'][number], targetName: string | null): string {
@@ -181,6 +184,41 @@ export interface BrewingInput {
    * (lib/populationFlow.ts). Optional: fixtures written before it existed.
    */
   leaving?: { agentId: number; reasons: DepartureReason[]; decided: boolean }[];
+  /** The running mayoral campaign (lib/townCalendar.ts `electionBrewing`). Optional for old fixtures. */
+  election?: ElectionBrewing | null;
+}
+
+/** Campaign support ahead of the runner-up by at least this reads as "has the edge". */
+export const ELECTION_EDGE = 6;
+
+/**
+ * The campaign as one card. The support score stays hidden — it is the
+ * suspense — so the card only says who is standing, when the town votes, and
+ * whether anyone is pulling ahead or it is too close to call. Hotter as the
+ * vote nears.
+ */
+export function electionItem(e: ElectionBrewing, nameOf: (id: number) => string | undefined): BrewingItem | null {
+  const standing = e.candidates.filter((c) => nameOf(c.id));
+  if (standing.length === 0) return null;
+  const label = (c: ElectionBrewing['candidates'][number]) => `${nameOf(c.id)}${c.incumbent ? ' (mayor)' : ''}`;
+  const when = e.daysLeft <= 0 ? 'today' : e.daysLeft === 1 ? 'tomorrow' : `in ${e.daysLeft} days`;
+  let text: string;
+  if (standing.length === 1) {
+    text = `${label(standing[0])} stands for mayor unopposed — the vote is ${when}`;
+  } else {
+    const ranked = [...standing].sort((a, b) => b.support - a.support || a.id - b.id);
+    const lead = ranked[0].support - ranked[1].support >= ELECTION_EDGE
+      ? `${nameOf(ranked[0].id)} has the edge`
+      : 'too close to call';
+    text = `${joinList(standing.map(label))} are campaigning for mayor — the vote is ${when}, ${lead}`;
+  }
+  return {
+    id: `election-${e.electionDay}`,
+    kind: 'election',
+    agentIds: standing.map((c) => c.id),
+    text,
+    heat: clamp01(0.55 + 0.1 * (3 - e.daysLeft)),
+  };
 }
 
 /**
@@ -373,6 +411,12 @@ export function buildBrewing(input: BrewingInput): BrewingItem[] {
     });
   }
 
+  // ── The mayoral campaign ──────────────────────────────────────────────────
+  if (input.election) {
+    const item = electionItem(input.election, (id) => nameOf.get(id));
+    if (item) items.push(item);
+  }
+
   // Ties broken by id so the order is stable between recomputes.
   items.sort((x, y) => y.heat - x.heat || x.id.localeCompare(y.id));
   return items.slice(0, MAX_ITEMS);
@@ -391,6 +435,11 @@ let cache: { at: number; items: BrewingItem[] } | null = null;
 /** Drops the memo. Called on world replace (worldCaches) and by tests. */
 export function resetBrewingCache() {
   cache = null;
+}
+
+function electionBrewingNow(): ElectionBrewing | null {
+  const day = db.select({ time: worldState.time }).from(worldState).limit(1).get()?.time?.day;
+  return day == null ? null : electionBrewing(day);
 }
 
 export function getBrewing(now: number = Date.now()): BrewingItem[] {
@@ -423,6 +472,7 @@ export function getBrewing(now: number = Date.now()): BrewingItem[] {
     }).from(goals).where(eq(goals.status, 'active')).all(),
     relationships: db.select().from(relationships).all(),
     leaving: leavingThoughts(),
+    election: electionBrewingNow(),
   });
   cache = { at: now, items };
   return items;

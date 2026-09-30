@@ -132,6 +132,11 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   // Target is the lover; `detail` the husband's name.
   paternity: (s, t, ctx) =>
     `${s}'s baby may be ${t ?? 'another man'}'s${ctx?.detail ? `, not ${ctx.detail}'s` : ''}`,
+  // Festival contests (lib/townCalendar.ts); detail is the prize ("the best pie
+  // at the Harvest Festival"). Public from the start: the whole crowd saw it.
+  contest_win: (s, _t, ctx) =>
+    ctx?.detail ? `${s} won ${ctx.detail}` :
+    `${s} won a contest at the festival`,
 };
 
 /**

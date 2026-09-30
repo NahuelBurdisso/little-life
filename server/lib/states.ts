@@ -42,6 +42,7 @@ export type StateType =
   | 'depressed'
   | 'confident'
   | 'jealous'
+  | 'envious'
   | 'alcoholic'
   | 'in_debt'
   | 'arrested';
@@ -138,6 +139,15 @@ export const STATE_DEFINITIONS: Record<StateType, StateDefinition> = {
     prompt: (targetName) =>
       `You're consumed by jealousy over ${targetName ?? 'someone'}. You can't stop thinking about them with your rival. It makes you irritable and obsessive.`,
     conditionalExit: true,
+  },
+  // Someone else won what you wanted: a festival contest, the mayor's chair
+  // (lib/townCalendar.ts). Not `jealous`, whose prompt is about a rival in
+  // love; envy is about standing, fixed-length, and the seed of a grudge.
+  envious: {
+    type: 'envious',
+    modifiers: { aggression: 10, warmth: -15, neuroticism: 10 },
+    prompt: (targetName) =>
+      `You can't shake your envy of ${targetName ?? 'someone'}. They won what should have been yours, and everyone keeps congratulating them.`,
   },
   alcoholic: {
     type: 'alcoholic',

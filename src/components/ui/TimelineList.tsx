@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { formatGameMinute, formatTime, gameTimeAgo, seasonEmoji } from "../../lib/formatters";
+import { calendarDayTags } from "../../lib/calendarChip";
 import { renderMessage } from "../../lib/activityMessage";
 import { dayOfMinute, relativeDay, subjectOf, type TimelineDay } from "../../lib/timeline";
 import { EmptyState } from "./EmptyState";
@@ -116,6 +117,11 @@ export function TimelineList({
                 {d.season}
                 {nowDay != null && <> · {relativeDay(d.day, nowDay)}</>}
               </span>
+              {calendarDayTags(d.day).map((t) => (
+                <span key={t.name} className="text-[10px] text-ui-gold/80 whitespace-nowrap" title={`On the town calendar: ${t.name}`}>
+                  <span aria-hidden="true">{t.icon} </span>{t.name}
+                </span>
+              ))}
               <span className="ml-auto text-[10px] text-ui-muted">{d.events.length}</span>
             </div>
             {d.headline && (

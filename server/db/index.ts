@@ -179,6 +179,8 @@ function migrateSchema() {
   addColumnIfMissing('world_state', 'rule_overrides', 'TEXT');
   // Per-world identity for saves (schema.ts has why).
   addColumnIfMissing('world_state', 'world_id', 'TEXT');
+  // The town calendar's bookkeeping and the running election (lib/townCalendar.ts).
+  addColumnIfMissing('world_state', 'civic', 'TEXT');
 
   // Backfills. Each runs independently — sharing one catch meant a failure on
   // the goals backfill skipped the aspirations one entirely. The first real

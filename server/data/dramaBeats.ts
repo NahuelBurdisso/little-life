@@ -20,7 +20,8 @@ export type DramaBeat =
   | 'theft'                                     // tagged so it is not mistaken for a beat; no canvas FX
   | 'arrival' | 'departure'                     // the town's population changing (lib/populationFlow.ts); no canvas FX yet
   | 'new_job' | 'help_wanted' | 'inheritance'   // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
-  | 'birth' | 'paternity';                      // family life (lib/family.ts): a baby born, a father learning it isn't his
+  | 'birth' | 'paternity'                      // family life (lib/family.ts): a baby born, a father learning it isn't his
+  | 'contest_win';                              // a festival contest decided (lib/townCalendar.ts)
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday';
 
@@ -56,6 +57,9 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   // The believed father's heart, not a fight: the confrontation with the lover
   // is its own conversation later, with its own beat if it turns to blows.
   paternity: 'heartbreak',
+  // The winner's moment in front of the crowd: the birthday family's burst of
+  // cheer is the right picture (and sound) for it.
+  contest_win: 'birthday',
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

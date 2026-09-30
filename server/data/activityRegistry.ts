@@ -104,4 +104,14 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // christening on the square a day after the birth.
   expecting:   { category: 'relationship', base_importance: 0.7, retention: 'long', template: '{description}' },
   christening: { category: 'relationship', base_importance: 0.6, retention: 'long', template: '{description}' },
+
+  // ─── The town calendar (lib/townCalendar.ts) ────────────────────────────────
+  // "The Harvest Festival is in two days": town news the feed should carry, but
+  // not the paper's material — the gazette gets its own "Coming up" section from
+  // the calendar itself, so the notice would only print the same thing twice.
+  calendar_notice:   { category: 'world_event', base_importance: 0.5, retention: 'medium', template: '{description}', newsworthy: false },
+  // Who is standing for mayor, and the count. Their own types so the client can
+  // tell the election's rows apart (sound, Journal) without reading the words.
+  election_campaign: { category: 'world_event', base_importance: 0.8, retention: 'long', template: '{description}' },
+  election_result:   { category: 'world_event', base_importance: 0.95, retention: 'permanent', template: '{description}' },
 };

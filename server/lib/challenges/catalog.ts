@@ -27,7 +27,8 @@ export type ChallengeKind =
   | 'first_engagement'
   | 'feud'
   | 'recluse'
-  | 'first_baby';
+  | 'first_baby'
+  | 'kingmaker';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -76,7 +77,7 @@ export interface Challenge {
   goal: string;
   /** Residents the challenge is about (the Journal's focus buttons). */
   agentIds: number[];
-  /** A number the kind needs: full_house's population target. */
+  /** A number the kind needs: full_house's population target, kingmaker's election day. */
   target?: number;
   /** Game days from acceptance to the deadline. */
   durationDays: number;
@@ -117,6 +118,7 @@ export const CHALLENGE_KINDS: Readonly<Record<ChallengeKind, ChallengeKindDef>> 
   feud: { icon: '⚔', name: 'A feud', blurb: 'Two friends become rivals or worse.', survive: false },
   recluse: { icon: '🫂', name: 'The recluse', blurb: 'Get the loneliest resident a best friend.', survive: false },
   first_baby: { icon: '👶', name: 'First baby', blurb: 'A baby born anywhere in town.', survive: false },
+  kingmaker: { icon: '👑', name: 'Kingmaker', blurb: 'Get a resident elected mayor at the next election.', survive: false },
 };
 
 // ─── Thresholds (the relationship ladder in engine/systems/relationships.ts) ──
@@ -208,6 +210,14 @@ export interface TownSnapshot {
   handsOnCount: number;
   /** The death rule (lib/worldRules.ts): Guardian is a freebie in a town where nobody can die. */
   deathEnabled: boolean;
+  /**
+   * The mayor now (economy.job), the running campaign's candidates and the last
+   * count (lib/townCalendar.ts): Kingmaker's state. Optional so fixtures written
+   * before it need no change.
+   */
+  mayorId?: number | null;
+  candidates?: number[];
+  lastElection?: { electionDay: number; winnerId: number } | null;
   /**
    * Children in town (lib/family.ts), for First baby. Optional so a snapshot
    * built by hand (the tests) without a family reads as a town with none.

@@ -149,9 +149,16 @@ const CRICKET_SEASON: Readonly<Record<string, number>> = { summer: 1, spring: 0.
 const CROWD_EVENTS: Readonly<Record<string, number>> = {
   festival: 0.4, market_day: 0.35, wedding: 0.3, competition: 0.3, fire_outbreak: 0.35, town_meeting: 0.15,
   traveling_merchant: 0.15, christening: 0.2,
+  // The town calendar's days (server/data/calendar.ts). Listed by name rather
+  // than read through the catalog's families: each has its own loudness — the
+  // count is a murmur, Midsummer a full square.
+  spring_fair: 0.4, midsummer: 0.45, harvest_festival: 0.4, winter_lights: 0.35, election_day: 0.3,
 };
 /** Events with music in the streets (the square gets plucks even with no tavern in view). */
-const MUSIC_EVENTS: Readonly<Record<string, number>> = { festival: 0.5, wedding: 0.35, harvest: 0.2 };
+const MUSIC_EVENTS: Readonly<Record<string, number>> = {
+  festival: 0.5, wedding: 0.35, harvest: 0.2,
+  spring_fair: 0.45, midsummer: 0.6, harvest_festival: 0.5, winter_lights: 0.4,
+};
 
 /**
  * Birds through the day: a dawn chorus (5–8h), quieter through the working day, a smaller
@@ -327,10 +334,15 @@ const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
   // Family (server/lib/family.ts): a newborn gets its own soft chime, not the
   // birthday's bright arpeggio; a father learning it isn't his is heartbreak.
   birth: 'lullaby', paternity: 'sad',
+  contest_win: 'cheer',
 };
 
 /** Row types that carry their own cue regardless of `metadata.beat`. */
-const TYPE_CUE: Readonly<Record<string, StoryCue>> = { wedding: 'peal', engagement: 'engaged' };
+const TYPE_CUE: Readonly<Record<string, StoryCue>> = {
+  wedding: 'peal', engagement: 'engaged',
+  // The mayor's name read out on the square: the town-hall bell.
+  election_result: 'tolls',
+};
 
 export interface StoryRow {
   id: number;
@@ -359,6 +371,7 @@ export function storyCueOf(row: StoryRow): StoryCue | null {
 /** World events that announce themselves when they start. */
 const EVENT_CUE: Readonly<Record<string, StoryCue>> = {
   funeral: 'knell', town_meeting: 'tolls', fire_outbreak: 'alarm', festival: 'cheer', christening: 'lullaby',
+  spring_fair: 'cheer', midsummer: 'cheer', harvest_festival: 'cheer', winter_lights: 'cheer', election_day: 'tolls',
 };
 
 export function eventCueOf(type: string | undefined): StoryCue | null {

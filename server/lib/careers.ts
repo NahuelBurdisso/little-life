@@ -50,7 +50,11 @@ export function healerInTown(): boolean {
     .limit(1).get() != null;
 }
 
-export type CareerReason = 'promotion' | 'vacancy' | 'ambition' | 'player';
+/**
+ * Why a job changed. `election`: the mayor's chair changing hands at the
+ * season's vote (lib/townCalendar.ts) — the winner in, the ousted mayor out.
+ */
+export type CareerReason = 'promotion' | 'vacancy' | 'ambition' | 'player' | 'election';
 
 export interface JobChange {
   agentId: number;
@@ -151,17 +155,26 @@ export function changeJob(
   const role = essential ? `the town's new ${lower}` : `${article(lower)} ${lower}${workplace ? ` at ${workplace.name}` : ''}`;
   const because = opts.because ? ` now that ${opts.because}` : '';
   const takeLine = takeOver && workplace ? ` and takes over running ${workplace.name}` : '';
-  const feed = reason === 'promotion'
-    ? `${agent.name} has stepped up from ${oldTitle.toLowerCase()} to ${role}${because}${takeLine}.`
-    : reason === 'ambition'
-      ? `${agent.name} has followed a long-held wish and become ${role}${takeLine}.`
-      : `${agent.name} is ${role}${because}${takeLine}.`;
+  // Losing an election leaves the old mayor with no trade at all; "X is an
+  // unemployed" is not a sentence, and the town hears it as a fall.
+  const ousted = reason === 'election' && JOBLESS.has(job);
+  const feed = ousted
+    ? `${agent.name} has cleared out the mayor's office${because}.`
+    : reason === 'promotion'
+      ? `${agent.name} has stepped up from ${oldTitle.toLowerCase()} to ${role}${because}${takeLine}.`
+      : reason === 'ambition'
+        ? `${agent.name} has followed a long-held wish and become ${role}${takeLine}.`
+        : `${agent.name} is ${role}${because}${takeLine}.`;
 
-  const memory = reason === 'promotion'
-    ? `I've stepped up: I'm ${role} now${because}. It's more responsibility than I've ever had.`
-    : reason === 'ambition'
-      ? `I did it — I'm ${role} now. It's what I've wanted, and I mean to be good at it.`
-      : `I've taken up work as ${article(lower)} ${lower}${because}. A new start${workplace ? ` at ${workplace.name}` : ''}.`;
+  const memory = ousted
+    ? `I'm not the mayor any more${because}. The office I ran is somebody else's now.`
+    : reason === 'election'
+      ? `The town chose me: I'm ${role} now${because}. I have promises to keep.`
+      : reason === 'promotion'
+        ? `I've stepped up: I'm ${role} now${because}. It's more responsibility than I've ever had.`
+        : reason === 'ambition'
+          ? `I did it — I'm ${role} now. It's what I've wanted, and I mean to be good at it.`
+          : `I've taken up work as ${article(lower)} ${lower}${because}. A new start${workplace ? ` at ${workplace.name}` : ''}.`;
   memoryService.record(agentId, 'observation', memory, { subtype: 'new_job', from: econ.job, to: job }, 0.5, 7);
 
   logActivity({

@@ -1195,6 +1195,12 @@ export const EVENT_TALK: Record<string, Omit<ChatEvent, 'key'>> = {
   starry_night: { phrase: 'the starry sky', anchor: 'starry', mood: 'good' },
   scandal: { phrase: 'the scandal', anchor: 'scandal', mood: 'odd' },
   new_arrival: { phrase: 'the newcomer', anchor: 'newcomer', mood: 'odd' },
+  // The town calendar (data/calendar.ts): named, because everyone knows which one it is.
+  spring_fair: { phrase: 'the Spring Fair', anchor: 'fair', mood: 'good' },
+  midsummer: { phrase: 'Midsummer', anchor: 'midsummer', mood: 'good' },
+  harvest_festival: { phrase: 'the Harvest Festival', anchor: 'harvest', mood: 'good' },
+  winter_lights: { phrase: 'Winter Lights', anchor: 'lights', mood: 'good' },
+  election_day: { phrase: 'the election', anchor: 'election', mood: 'odd' },
 };
 
 /** How people name a job in passing. Unlisted jobs (retired, unemployed) have none. */

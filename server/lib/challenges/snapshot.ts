@@ -1,9 +1,10 @@
 import { and, eq, inArray, gte, max, sql } from 'drizzle-orm';
 import { db } from '../../db';
-import { activityLog, agents, children, needs, relationships, shared_knowledge, worldState } from '../../db/schema';
+import { activityLog, agents, children, economy, needs, relationships, shared_knowledge, worldState } from '../../db/schema';
 import { CONFIG } from '../constants';
 import { gameMinutes } from '../gameClock';
 import { isDeathEnabled } from '../worldRules';
+import { parseCivic } from '../townCalendar';
 import { MINUTES_PER_DAY, type SnapPair, type TownSnapshot } from './catalog';
 
 /**
@@ -25,7 +26,7 @@ export const PLAYER_ACTION_TYPES: readonly string[] = [
 ];
 
 export function readTownSnapshot(handsOnCount: number): TownSnapshot | null {
-  const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
+  const world = db.select({ time: worldState.time, civic: worldState.civic }).from(worldState).limit(1).get();
   if (!world?.time) return null;
   const time = world.time;
   const nowMinute = gameMinutes(time);
@@ -79,6 +80,11 @@ export function readTownSnapshot(handsOnCount: number): TownSnapshot | null {
     .where(inArray(activityLog.type, [...PLAYER_ACTION_TYPES]))
     .get();
 
+  const civic = parseCivic(world.civic);
+  const living = new Set(agentRows.filter((a) => a.is_active).map((a) => a.id));
+  const mayor = db.select({ agent_id: economy.agent_id }).from(economy).where(eq(economy.job, 'mayor')).all()
+    .map((r) => r.agent_id).filter((id) => living.has(id)).sort((x, y) => x - y)[0] ?? null;
+
   return {
     nowMinute,
     day: time.day,
@@ -101,5 +107,8 @@ export function readTownSnapshot(handsOnCount: number): TownSnapshot | null {
     deathEnabled: isDeathEnabled(),
     children: db.select({ id: children.id, name: children.name, motherId: children.mother_id, fatherId: children.father_id })
       .from(children).where(eq(children.alive, true)).all(),
+    mayorId: mayor,
+    candidates: civic.election?.candidates ?? [],
+    lastElection: civic.lastElection ? { electionDay: civic.lastElection.electionDay, winnerId: civic.lastElection.winnerId } : null,
   };
 }
