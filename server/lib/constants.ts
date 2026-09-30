@@ -8,10 +8,13 @@ import { MAX_AGENTS as POPULATION_CAP } from './worldgen/config';
  * `CONFIG.TYPO` a compile error and `CONFIG.AI.BACKEND` a literal union again.
  */
 export const AUTOPLAY_CONFIG = {
-  // Opt-in via `autoplay.configure({ enabled: true })`. Off by default: the
-  // profiler adds per-tick DB reads and the nudger injects events into the
-  // player's town outside the tick transactions. Toggled from the Autoplay panel.
-  ENABLED: false,
+  // On by default (the Balanced storyteller, rulesCatalog.ts): a town left to
+  // itself had quiet stretches nobody broke, and the nudger only acts once a
+  // window scores bored above BOREDOM_THRESHOLD, at most MAX_NUDGES_PER_DAY and
+  // one per NUDGE_COOLDOWN_MINUTES (nudger.ts). The cost is two small DB reads a
+  // tick for the profiler. Off from the Autoplay panel's switch or the Calm
+  // storyteller, and that choice is saved with the world (autoplaySettings.ts).
+  ENABLED: true,
   // GAME minutes per analysis window (one game hour). It used to be counted in
   // ticks and tested with `totalTicks % N`, which is a different span at every
   // tick_speed (a 60-tick window was 4 game hours at 4x) and could miss the
@@ -302,12 +305,14 @@ export const CONFIG = {
 
   // Events
   EVENTS: {
-    // Rolled once per game hour (events.ts gates on the clock crossing an hour), so 0.20 is
-    // ~5 world events a day against the old ~1. The random pool in
+    // Rolled once per game hour (events.ts gates on the clock crossing an hour), so 0.12 is
+    // ~3 world events a day (0.20 was ~5: with every type back within ~2.5 days the
+    // town's events felt like a metronome; per-type cooldowns now live in
+    // data/worldEventCatalog.ts). The random pool in
     // data/worldEventCatalog.ts mixes good (festival, harvest, wedding,
     // competition) and bad (storm, flu outbreak, fire), gated by season and
     // day phase.
-    RANDOM_EVENT_CHANCE_PER_HOUR: 0.20,
+    RANDOM_EVENT_CHANCE_PER_HOUR: 0.12,
     MAX_CONCURRENT_EVENTS: 5,
     // CLOCK: GAME DAYS. A random roll skips any event type that started in this
     // window (events.ts recentlyStartedTypes): playtest #3 got Bountiful Catch

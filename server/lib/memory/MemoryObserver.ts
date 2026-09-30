@@ -3,11 +3,12 @@ import { describeEvent } from './descriptionTemplates';
 import { pickConversationGist, type GistLine } from './conversationGist';
 import type { MemoryService } from './MemoryService';
 import { db } from '../../db';
-import { agents } from '../../db/schema';
+import { agents, conversations } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { gameMinutesNow } from '../worldClock';
 import { CONFIG } from '../constants';
-import { summarizeConversation, summaryPriority, type SummaryLine } from './conversationSummary';
+import { summarizeConversation, summaryPriority, type ConversationSummary, type SummaryLine } from './conversationSummary';
+import { applyConversationFeelings, type FeelingPair } from '../conversationFeelings';
 import { isAnyWatched } from '../spotlight';
 import { isFallbackMessage } from '../../ai/sanitizeDialogue';
 import { getImportance } from './ImportanceScorer';
@@ -18,8 +19,46 @@ import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isAdultAge } from '../intimacy/eligibility';
 import { mentionsInventedPerson } from '../../helpers/knownPeople';
 
+/** `interaction:completed` beat actions sent as bare nouns, as "I <phrase> with <other>." reads them. */
+const BEAT_ACTION_PHRASES: Record<string, string> = {
+  confrontation: 'had it out',
+  insult: 'traded insults',
+  flirt: 'flirted',
+};
+
+/** The other party of an `interaction:completed` cast, by name; undefined if it names nobody else. */
+function interactionOtherName(cast: { agentId: number; perpetratorId?: number | null; victimId?: number | null }): string | undefined {
+  const otherId = [cast.perpetratorId, cast.victimId].find((id) => id != null && id !== cast.agentId);
+  if (otherId == null) return undefined;
+  return db.select({ name: agents.name }).from(agents).where(eq(agents.id, otherId)).get()?.name;
+}
+
 /** One summary call per conversation, shared by its participants' handlers. */
-const pendingSummaries = new Map<number, Promise<Map<string, string> | null>>();
+const pendingSummaries = new Map<number, Promise<ConversationSummary | null>>();
+
+/**
+ * The pair whose feelings the summary call should judge, or null. Only a conversation
+ * of exactly two people (the stored row, so a silent third party counts), both of whom
+ * spoke under the names the summary keys by, and only when every line was real speech:
+ * a canned fallback ("X shrugs.") stands in for a reply the model never gave, and a
+ * verdict on a half-canned talk would be judging the filler.
+ */
+function feelingsPair(
+  conversationId: number,
+  messages: GistLine[],
+  nameOf: (id: number) => string | undefined,
+): FeelingPair | null {
+  if (messages.some((m) => isFallbackMessage(m, nameOf(m.speakerId) ?? ''))) return null;
+  const row = db.select({ participants: conversations.participants }).from(conversations)
+    .where(eq(conversations.id, conversationId)).get();
+  const ids = [...new Set((row?.participants as number[] | undefined) ?? [])];
+  if (ids.length !== 2) return null;
+  const [aName, bName] = ids.map(nameOf);
+  if (!aName || !bName || aName === bName) return null;
+  const spoke = new Set(messages.map((m) => m.speakerId));
+  if (!spoke.has(ids[0]) || !spoke.has(ids[1])) return null;
+  return { aId: ids[0], aName, bId: ids[1], bName };
+}
 
 /**
  * Game minutes before the same perception line may be stored again for the
@@ -145,14 +184,24 @@ export function initMemoryObserver(memoryService: MemoryService): void {
             const row = db.select({ age: agents.age }).from(agents).where(eq(agents.id, id)).get();
             return isAdultAge(row?.age);
           });
-          pending = summarizeConversation(participants, spoken, priority, allAdults);
+          // How it went, for a pair (lib/conversationFeelings.ts). Applied here, once per
+          // conversation — the per-participant handlers below only record memories.
+          const pair = feelingsPair(conversationId, messages ?? [], nameOf);
+          pending = summarizeConversation(participants, spoken, priority, allAdults, pair != null);
           pendingSummaries.set(conversationId, pending);
+          if (pair) {
+            pending.then((result) => {
+              if (result) applyConversationFeelings(pair, result.feelings, worldEpoch);
+            }).catch((err) => {
+              console.warn('[MemoryObserver] conversation feelings failed:', err);
+            });
+          }
           // Every participant's handler runs in this same emit loop, so the
           // entry is only needed until the call settles.
           void pending.finally(() => pendingSummaries.delete(conversationId));
         }
-        pending.then((takeaways) => {
-          const takeaway = takeaways?.get(me);
+        pending.then((result) => {
+          const takeaway = result?.takeaways?.get(me);
           // The world may have been replaced while the model answered, and
           // SQLite reuses ids. A name check alone missed it whenever the new
           // world kept the default cast (same names, same ids): the epoch is
@@ -328,11 +377,19 @@ export function initMemoryObserver(memoryService: MemoryService): void {
 
   simEvents.on(
     'interaction:completed',
-    ({ agentId, otherName, action }: { agentId: number; otherName: string; action: string }) => {
+    (payload: {
+      agentId: number; otherName?: string; action: string;
+      perpetratorId?: number | null; victimId?: number | null;
+    }) => {
+      const { agentId, action } = payload;
+      // The drama beats and the cascade send the cast as ids, not `otherName`, and
+      // a bare noun as the action: the memory read "I confrontation with undefined."
+      // Name the other party from the cast, and phrase the three beat nouns.
+      const otherName = payload.otherName ?? interactionOtherName(payload) ?? 'someone';
       const description = describeEvent('interaction_completed', {
 
         other: otherName,
-        action,
+        action: BEAT_ACTION_PHRASES[action] ?? action,
       });
       memoryService.record(agentId, 'observation', description, { subtype: 'interaction', otherName, action });
     },

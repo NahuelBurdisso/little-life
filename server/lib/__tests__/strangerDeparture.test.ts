@@ -70,12 +70,12 @@ describe('story events wait out a longer cooldown', () => {
       triggered_by: 'random', is_active: false,
     }).run();
     past('mysterious_stranger', 5); // inside its 10 days
-    past('storm', 3); // inside its 4 days
-    past('festival', 3); // default 2 days: over
+    past('storm', 3); // inside its 5 days
+    past('christening', 3); // no own cooldown, so the default 2 days: over
 
     expect(startWorldEvent('mysterious_stranger', { triggeredBy: 'autoplay', announce: false }).ok).toBe(false);
     expect(startWorldEvent('storm', { triggeredBy: 'autoplay', announce: false }).ok).toBe(false);
-    expect(startWorldEvent('festival', { triggeredBy: 'autoplay', announce: false }).ok).toBe(true);
+    expect(startWorldEvent('christening', { triggeredBy: 'autoplay', announce: false }).ok).toBe(true);
     expect(startWorldEvent('storm', { triggeredBy: 'player', announce: false }).ok).toBe(true);
     db.delete(worldEvents).run();
   });

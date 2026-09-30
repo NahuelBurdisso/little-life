@@ -205,7 +205,7 @@ describe('store round trips', () => {
     const p = profile(50);
     const tracker = new TensionTracker();
     tracker.addTension(A, 150, { event: 'need:critical', description: 'starving', tick: 10, agentInvolved: 'Omar' });
-    tracker.recordSnap(A, 500); // value → 20, cooldown until 700
+    tracker.recordSnap(A, 500); // value → 20, cooldown until 1220
     tracker.addTension(A, 200, { event: 'x', description: 'y', tick: 20 });
     tracker.addTension(B, 200, { event: 'x', description: 'never snapped', tick: 30 });
 
@@ -215,8 +215,8 @@ describe('store round trips', () => {
     expect(restored.getTension(A)).toBe(220);
     expect(restored.getSources(B)).toEqual([{ event: 'x', description: 'never snapped', tick: 30 }]);
     // The cooldown stamp came back: no immediate second snap after a restart...
-    expect(restored.shouldSnap(A, p, 600)).toBe(false);
-    expect(restored.shouldSnap(A, p, 700)).toBe(true);
+    expect(restored.shouldSnap(A, p, 1200)).toBe(false);
+    expect(restored.shouldSnap(A, p, 1220)).toBe(true);
     // ...and "never snapped" is still -Infinity, not null → 0.
     expect(restored.shouldSnap(B, p, 0)).toBe(true);
   });

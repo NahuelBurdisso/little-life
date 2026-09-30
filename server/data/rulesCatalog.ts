@@ -5,7 +5,7 @@
  * option lists and the numbers behind them cannot drift apart.
  *
  * Every default below maps to a multiplier of exactly 1: the rates the systems
- * already use (0.20 random events an hour, 0.0001 sickness a game minute, ...)
+ * already use (0.12 random events an hour, 0.0001 sickness a game minute, ...)
  * were tuned on the defaults, so a world set up without touching the wizard —
  * or saved before these rules did anything — plays exactly as it did.
  */
@@ -128,10 +128,11 @@ export interface StorytellerPreset {
  * any preset: it is a moral choice the player made in the wizard, and a
  * "Chaos" click should not quietly start killing people off.
  *
- * Balanced is the wizard defaults with autoplay off (its default — the
- * profiler costs DB reads every tick), so a fresh world reads as Balanced.
- * Calm keeps illness but stops it spreading. Chaos turns the watcher on with a
- * short fuse, so a quiet hour gets poked instead of waited out.
+ * Balanced is the wizard defaults with autoplay on at the shipped threshold
+ * (AUTOPLAY_CONFIG), so a fresh world reads as Balanced: the storyteller pokes
+ * a lull that stays boring for an hour, never a town that is busy on its own.
+ * Calm keeps illness but stops it spreading, and leaves the town alone. Chaos
+ * shortens the fuse, so a quiet hour gets poked instead of waited out.
  */
 export const STORYTELLERS: readonly StorytellerPreset[] = [
   {
@@ -146,9 +147,9 @@ export const STORYTELLERS: readonly StorytellerPreset[] = [
     id: 'balanced',
     label: 'Balanced',
     icon: '⚖️',
-    blurb: 'The town as tuned: the odd event, grudges when earned, a cold now and then.',
+    blurb: 'The town as tuned: the odd event, grudges when earned, a cold now and then — and a nudge when it goes quiet.',
     rules: { dramaIntensity: 'medium', sicknessRate: 'low', contagionRate: 'low' },
-    autoplay: { enabled: false, boredThreshold: 55 },
+    autoplay: { enabled: true, boredThreshold: 55 },
   },
   {
     id: 'chaos',
@@ -163,7 +164,7 @@ export const STORYTELLERS: readonly StorytellerPreset[] = [
 /**
  * Which preset the town is running, or null for a hand-tuned mix. The
  * threshold only counts while autoplay is on: switched off it does nothing, so
- * Calm and Balanced must not stop matching because it was left elsewhere.
+ * Calm must not stop matching because it was left elsewhere.
  */
 export function matchStoryteller(
   rules: Pick<LiveRules, 'dramaIntensity' | 'sicknessRate' | 'contagionRate'>,

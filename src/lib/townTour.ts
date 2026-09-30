@@ -25,6 +25,8 @@ export interface TourRelationship {
   romance_ab: number;
   romance_ba: number;
   status: string;
+  /** Marriage and engagement are tags on a `partners` row (server/lib/marriage.ts). */
+  tags?: readonly string[];
 }
 
 /** A row of knowledge.getSecretNetwork; only who it is about and whether it is still hidden. */
@@ -130,7 +132,8 @@ function pickLinks(
     if (name === undefined) continue; // moved away / dead: not part of the town any more
     const friendship = (r.friendship_ab + r.friendship_ba) / 2;
     const romance = Math.max(r.romance_ab, r.romance_ba);
-    const link = { id: otherId, name, label: relationLabel(r.status) };
+    const bond = r.tags?.includes('married') ? 'married' : r.tags?.includes('engaged') ? 'engaged' : null;
+    const link = { id: otherId, name, label: bond ?? relationLabel(r.status) };
 
     // Romance counts extra: a partner should beat a merely warm friend.
     const warmth = friendship + Math.max(0, romance) * 0.5;

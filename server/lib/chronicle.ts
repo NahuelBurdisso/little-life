@@ -403,7 +403,9 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
         'rivalry',
         [a, b],
         `${nameA} vs ${nameB}`,
-        `${hostileCount} clash${hostileCount === 1 ? '' : 'es'} and counting.`,
+        // A feud the town was seeded with (setup.ts, the opening hooks) has a
+        // history row and no clash yet: "0 clashes and counting" read as a bug.
+        hostileCount === 0 ? 'An old quarrel. No open clash yet.' : `${hostileCount} clash${hostileCount === 1 ? '' : 'es'} and counting.`,
         toBeats(pairEvents.filter((e) => e.sentiment < 0 || HOSTILE_EVENTS.has(e.event_type)), now),
       );
     }

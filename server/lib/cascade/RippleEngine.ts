@@ -11,10 +11,15 @@ import { describeWitnessedAct, type WitnessAmplifier } from './WitnessAmplifier'
 import type { TensionTracker } from './TensionTracker';
 import { logActivity } from '../activityLogger';
 import { gameMinutesNow } from '../worldClock';
+import { rollStateDuration } from '../stateDurations';
+import { addMoodModifier } from '../dailyLife';
 import { getRules, type LiveRules } from '../worldRules';
 import { rippleProbabilityScale } from './ruleTone';
 import { mayRomanceGrow } from '../intimacy/attraction';
 import crypto from 'crypto';
+
+/** How long a cascade rule's moodDelta colours the mood (6 game hours). */
+const RIPPLE_MOOD_MINUTES = 360;
 
 interface QueueItem {
   rule: RippleRule;
@@ -784,9 +789,14 @@ export class RippleEngine {
           agent_id: agentId,
           type: fx.createState,
           severity: 0.5,
-          // Agent states run on game minutes (lib/states.ts).
+          // Agent states run on game minutes (lib/states.ts). The native length
+          // for the type (lib/stateDurations.ts): a flat 120 made a cascade
+          // heartbreak last two hours instead of days, and a cascade `angry`
+          // never reached the 480-minute grudge conversion. 120 stays the
+          // fallback for types the table has no length for (the conditional-
+          // exit ones never read it).
           started_at: gameMinutesNow(),
-          duration: 120,
+          duration: rollStateDuration(fx.createState) ?? 120,
           target_agent_id: aboutId,
           source: `cascade:${rule.id}`,
           metadata: { _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, ruleId: rule.id } },
@@ -880,16 +890,16 @@ export class RippleEngine {
       simEvents.emit(fx.emitEvent, emitPayload);
     }
 
-    // moodDelta
+    // moodDelta: a modifier the needs phase sums, not a write to `needs.mood`,
+    // which that phase rebuilds every tick (the old write was gone a tick
+    // later). Per-rule source, so a rule refiring refreshes its own effect
+    // instead of stacking, and so these never share the conversation cap.
     if (fx.moodDelta) {
-      const row = db.select({ mood: needs.mood }).from(needs).where(eq(needs.agent_id, agentId)).get();
-      if (row) {
-        const newMood = Math.max(0, Math.min(100, row.mood + fx.moodDelta));
-        db.update(needs).set({ mood: newMood }).where(eq(needs.agent_id, agentId)).run();
-      }
+      addMoodModifier(agentId, fx.moodDelta, `cascade:${rule.id}`, RIPPLE_MOOD_MINUTES, gameMinutesNow());
     }
 
-    // stressDelta
+    // stressDelta: written straight through; the needs phase now carries stress
+    // over and lets it fade (lib/stateMood.ts carriedStress).
     if (fx.stressDelta) {
       const row = db.select({ stress: needs.stress }).from(needs).where(eq(needs.agent_id, agentId)).get();
       if (row) {

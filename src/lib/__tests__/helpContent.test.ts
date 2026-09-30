@@ -13,6 +13,10 @@ describe('helpContent', () => {
     expect(VERBS.some((v) => /director/i.test(v.how))).toBe(true);
   });
 
+  it('lists the Director key', () => {
+    expect(HOTKEYS.some((h) => h.keys.includes('D') && /director/i.test(h.what))).toBe(true);
+  });
+
   it('lists the Journal key and points at the Journal, not the old Paper button', () => {
     expect(HOTKEYS.some((h) => h.keys.includes('J'))).toBe(true);
     expect(VERBS.some((v) => /journal/i.test(v.how))).toBe(true);

@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { bubbleOffsetX, bubbleText, speakerSentiment } from '../../lib/bubbleText';
+import { bubbleDurationMs, bubbleOffsetX, bubbleText, speakerSentiment } from '../../lib/bubbleText';
 import type { SpritePool } from "./SpritePool";
 import { loadStrip } from "./stripAtlas";
 import { idString } from "./idString";
@@ -12,7 +12,14 @@ import {
 const BUBBLE_MAX_CHARS = 84;
 /** px a head-anchored overlay must fall to stay with a fully lying-down body. */
 const LYING_HEAD_DROP = 15;
-const SPEECH_DURATION_MS = 4000;
+/**
+ * Text is rasterised at 2x (more on a hi-dpi screen, capped at 4x): at 7 px a
+ * monospace glyph drawn at 1x and then scaled up by the camera zoom is mush.
+ * Raising the texture resolution, not the font size, keeps the wrap width (100)
+ * and every bubble's measured width/height -- `Text.width` is in logical px --
+ * exactly as laid out, so nothing about the bubble geometry moves.
+ */
+const TEXT_RESOLUTION = Math.min(4, Math.max(2, (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1) * 2));
 const EMOTE_DURATION_MS = 1500;
 /** px per second — `update` is handed `ticker.deltaTime / 60`, not raw ticks. */
 const EMOTE_FLOAT_SPEED = 18;
@@ -197,7 +204,7 @@ export class BubbleSystem {
 
     const bubbleContainer = new PIXI.Container();
 
-    const textObj = new PIXI.Text({ text: truncated, style: SPEECH_STYLE });
+    const textObj = new PIXI.Text({ text: truncated, style: SPEECH_STYLE, resolution: TEXT_RESOLUTION });
     const padX = 6;
     const padY = 4;
     const bgW = textObj.width + padX * 2;
@@ -236,7 +243,7 @@ export class BubbleSystem {
       agentId,
       type: "speech",
       createdAt: Date.now(),
-      duration: SPEECH_DURATION_MS,
+      duration: bubbleDurationMs(truncated.length), // scales with the line: 3.5-7 s
       dx,
       bgH,
     });
@@ -280,7 +287,7 @@ export class BubbleSystem {
     });
   }
 
-  /** Show a text thought bubble (italic, translucent) above the agent. Auto-dismisses after 4s. */
+  /** Show a text thought bubble (italic, translucent) above the agent. Auto-dismisses after 3.5-7 s, by length. */
   showTextThought(agentId: string, text: string, position: { x: number; y: number }) {
     // Don't replace speech bubbles with thoughts
     const existing = this.bubbles.get(agentId);
@@ -292,7 +299,7 @@ export class BubbleSystem {
 
     const bubbleContainer = new PIXI.Container();
 
-    const textObj = new PIXI.Text({ text: `💭 ${truncated}`, style: TEXT_THOUGHT_STYLE });
+    const textObj = new PIXI.Text({ text: `💭 ${truncated}`, style: TEXT_THOUGHT_STYLE, resolution: TEXT_RESOLUTION });
     const padX = 5;
     const padY = 3;
     const bgW = textObj.width + padX * 2;
@@ -316,7 +323,7 @@ export class BubbleSystem {
       agentId,
       type: 'thought',
       createdAt: Date.now(),
-      duration: 4000, // 4 seconds
+      duration: bubbleDurationMs(truncated.length),
       dx: -bgW / 2,
       bgH,
     });
@@ -478,7 +485,7 @@ export class BubbleSystem {
 
     // Clear the watermark as soon as an agent leaves every conversation. Doing
     // it only when they still own a live bubble was not enough: speech bubbles
-    // expire after 4s, so a conversation that ended later stranded the count,
+    // expire after a few seconds, so a conversation that ended later stranded the count,
     // and the agent then stayed mute through their whole next conversation
     // until it exceeded the old message total. Also keeps the map from growing
     // for agents that leave the roster.

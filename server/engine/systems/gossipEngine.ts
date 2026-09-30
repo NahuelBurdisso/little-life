@@ -18,7 +18,6 @@ import {
   relationships,
   conversations,
   worldEvents,
-  needs as needsTable,
   agentStates,
 } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -31,6 +30,7 @@ import { isOwnSecret, mayBeToldTo, pickByStoryFamily, rumorReachedSubject } from
 import { isAdultAge, isAdultsOnlyFact } from '../../lib/intimacy/eligibility';
 import { chancePerTick } from '../../lib/gameClock';
 import { recordGoalOutcome } from '../../lib/goals/goalProgress';
+import { addMoodModifier } from '../../lib/dailyLife';
 
 interface AgentInfo {
   id: number;
@@ -78,6 +78,8 @@ export function isCommonKnowledge(
 
 /** How hard being found out hits the subject, per point of sensitivity. */
 const EXPOSURE_MOOD_HIT = 6;
+/** How long the shame of an exposed secret weighs on the subject's mood (12 game hours). */
+const EXPOSURE_MOOD_MINUTES = 720;
 
 /**
  * `nowMinutes`: the game-minute clock agent states are stamped in (lib/states.ts).
@@ -332,17 +334,11 @@ export function gossipTick(nowMinutes: number, tickSpeed = 1): void {
     });
     if (!subject) continue;
 
-    const subjectNeeds = db
-      .select()
-      .from(needsTable)
-      .where(eq(needsTable.agent_id, subject.id))
-      .get();
-    if (subjectNeeds) {
-      db.update(needsTable)
-        .set({ mood: Math.max(5, subjectNeeds.mood - EXPOSURE_MOOD_HIT * fact.sensitivity) })
-        .where(eq(needsTable.agent_id, subject.id))
-        .run();
-    }
+    // A modifier, not a write to `needs.mood`: the needs phase rebuilds mood
+    // every tick, so the old direct write was gone before the subject could
+    // feel it. One `exposed` source: a second exposure the same day replaces
+    // the first rather than stacking into a mood of zero.
+    addMoodModifier(subject.id, -EXPOSURE_MOOD_HIT * fact.sensitivity, 'exposed', EXPOSURE_MOOD_MINUTES, nowMinutes);
 
     // Reuse `stressed` rather than a bespoke `shamed` state: a new type would
     // need entries in the decay, effect and prompt tables to mean anything.

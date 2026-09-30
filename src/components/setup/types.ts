@@ -63,7 +63,10 @@ export type RulesConfig = Record<string, boolean | number | string>;
 export const DEFAULT_WORLD: WorldConfig = {
   season: 'spring',
   weather: 'sunny',
-  startHour: 9,
+  // 17:00, the evening social window: work lets out, the tavern fills and the
+  // opening hooks (server/lib/dramaHooks.ts) have people in one room. At 09:00
+  // a new town opened on eight hours of everyone at work.
+  startHour: 17,
   startDay: 1,
 };
 
@@ -153,8 +156,11 @@ export const PRESETS: DramaPreset[] = [
   {
     id: 'balanced',
     label: 'Balanced',
-    description: 'Default mix — unpredictable and varied',
-    values: { drama: 45, romance: 45, crime: 35, trust: 50 },
+    description: 'Default mix — unpredictable and varied, with stories already under way',
+    // Drama 55 (was 45): seven starting secrets instead of five. Every preset
+    // from drama 40 up also gets the opening hooks (server/lib/dramaHooks.ts):
+    // a love triangle, a feud, a debt, a rival for the mayor.
+    values: { drama: 55, romance: 45, crime: 35, trust: 50 },
   },
 ];
 

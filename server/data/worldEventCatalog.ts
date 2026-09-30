@@ -109,7 +109,10 @@ export interface WorldEventDef {
     /**
      * Game days before this type rolls again (default CONFIG.EVENTS.RANDOM_TYPE_COOLDOWN_DAYS).
      * A story event wants a longer gap than weather: playtest #4 had the hooded
-     * stranger 10 times in 27 days, storms 12, the merchant 10.
+     * stranger 10 times in 27 days, storms 12, the merchant 10. Every random type
+     * sets one (5-8 days, the full moon a lunar 28 = one per season): with the
+     * 2-day default, nine types recurred every ~2.5 days and town events read as
+     * a metronome rather than occasions.
      */
     cooldownDays?: number;
   };
@@ -123,7 +126,7 @@ export const WORLD_EVENTS = {
     effects: { social_boost: 20, fun_boost: 15, shop_prices: 0.7 },
     // Rare and impromptu now: the calendar (data/calendar.ts) holds four real
     // festivals a year, and a random one every few days drowned them out.
-    random: { weight: 3, condition: (phase) => phase === 'afternoon' || phase === 'evening' },
+    random: { weight: 3, condition: (phase) => phase === 'afternoon' || phase === 'evening', cooldownDays: 6 },
   },
   market_day: {
     name: 'Market Day',
@@ -139,35 +142,35 @@ export const WORLD_EVENTS = {
     description: 'A heavy storm is battering the town. Best stay indoors!',
     durationHours: 3,
     effects: { mood_outdoor: -15 },
-    random: { weight: 8, condition: (_phase, weather) => weather === 'cloudy' || weather === 'rainy', cooldownDays: 4 },
+    random: { weight: 8, condition: (_phase, weather) => weather === 'cloudy' || weather === 'rainy', cooldownDays: 5 },
   },
   sickness: {
     name: 'Flu Outbreak',
     description: 'A flu outbreak is spreading through town. Visit the doctor!',
     durationHours: 24,
     effects: { energy_drain: 1.5 },
-    random: { weight: 5, condition: (_phase, _weather, season) => season === 'winter' || season === 'autumn' },
+    random: { weight: 5, condition: (_phase, _weather, season) => season === 'winter' || season === 'autumn', cooldownDays: 7 },
   },
   harvest: {
     name: 'Harvest Bounty',
     description: 'An abundant harvest has brought plenty of food to town.',
     durationHours: 12,
     effects: { farm_production: 2.0, food_prices: 0.6 },
-    random: { weight: 10, condition: (_phase, _weather, season) => season === 'summer' || season === 'autumn' },
+    random: { weight: 10, condition: (_phase, _weather, season) => season === 'summer' || season === 'autumn', cooldownDays: 7 },
   },
   traveling_merchant: {
     name: 'Traveling Merchant',
     description: 'A mysterious merchant has arrived with rare and exotic wares.',
     durationHours: 6,
     effects: { shop_prices: 0.8, fun_boost: 5 },
-    random: { weight: 8, condition: (phase) => phase === 'morning' || phase === 'afternoon', cooldownDays: 4 },
+    random: { weight: 8, condition: (phase) => phase === 'morning' || phase === 'afternoon', cooldownDays: 5 },
   },
   town_meeting: {
     name: 'Town Meeting',
     description: 'The mayor has called a town meeting to discuss important matters.',
     durationHours: 2,
     effects: { social_boost: 10 },
-    random: { weight: 7, condition: (phase) => phase === 'evening' },
+    random: { weight: 7, condition: (phase) => phase === 'evening', cooldownDays: 6 },
   },
   wedding: {
     name: 'Wedding Celebration',
@@ -197,7 +200,7 @@ export const WORLD_EVENTS = {
     description: 'A fire has broken out! Townspeople rush to help contain the blaze.',
     durationHours: 2,
     effects: { mood_outdoor: -10, social_boost: 15 },
-    random: { weight: 4, condition: (_phase, _weather, season) => season === 'summer' || season === 'autumn' },
+    random: { weight: 4, condition: (_phase, _weather, season) => season === 'summer' || season === 'autumn', cooldownDays: 8 },
   },
   mysterious_stranger: {
     name: 'Mysterious Stranger',
@@ -215,6 +218,7 @@ export const WORLD_EVENTS = {
     effects: { fun_boost: 25, social_boost: 10 },
     random: {
       weight: 8,
+      cooldownDays: 6,
       condition: (phase, weather) => (phase === 'morning' || phase === 'afternoon') && weather !== 'stormy',
     },
   },
@@ -223,28 +227,28 @@ export const WORLD_EVENTS = {
     description: 'The full moon bathes the town in silver light. Romance and mischief fill the air.',
     durationHours: 6,
     effects: { romance_boost: 15, fun_boost: 5, mood_outdoor: 5 },
-    random: { weight: 6, condition: (phase) => phase === 'night' },
+    random: { weight: 6, condition: (phase) => phase === 'night', cooldownDays: 28 },
   },
   heatwave: {
     name: 'Scorching Heatwave',
     description: 'An oppressive heatwave grips the town. Everyone seeks shade and cool drinks.',
     durationHours: 10,
     effects: { energy_drain: 1.3, mood_outdoor: -8, fun_boost: -5 },
-    random: { weight: 7, condition: (_phase, weather, season) => season === 'summer' && weather === 'sunny' },
+    random: { weight: 7, condition: (_phase, weather, season) => season === 'summer' && weather === 'sunny', cooldownDays: 8 },
   },
   bountiful_catch: {
     name: 'Bountiful Catch',
     description: 'The river is teeming with fish! Anglers are having a field day.',
     durationHours: 8,
     effects: { farm_production: 1.5, fun_boost: 10 },
-    random: { weight: 6, condition: (_phase, _weather, season) => season === 'spring' || season === 'summer' },
+    random: { weight: 6, condition: (_phase, _weather, season) => season === 'spring' || season === 'summer', cooldownDays: 6 },
   },
   starry_night: {
     name: 'Spectacular Starry Night',
     description: 'The sky is crystal clear, revealing a breathtaking display of stars.',
     durationHours: 4,
     effects: { mood_outdoor: 10, romance_boost: 5, fun_boost: 8 },
-    random: { weight: 5, condition: (phase, weather) => phase === 'night' && weather === 'sunny' },
+    random: { weight: 5, condition: (phase, weather) => phase === 'night' && weather === 'sunny', cooldownDays: 6 },
   },
 
   // ── Player-only ──────────────────────────────────────────────────────────

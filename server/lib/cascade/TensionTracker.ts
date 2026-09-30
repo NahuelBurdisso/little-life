@@ -4,8 +4,32 @@ import type { TensionState } from './cascadeTypes';
 import { asId, asNumber, asRecord, decodeStamp, encodeStamp } from '../../engine/snapshotCodec';
 
 const MAX_SOURCES = 5;
-/** Game minutes an agent must wait after snapping before they can snap again. */
-const SNAP_COOLDOWN_MINUTES = 200;
+/**
+ * Game minutes an agent must wait after snapping before they can snap again.
+ * 12 game hours: with the slower drain below, tension now actually carries
+ * from one grievance to the next, so a volatile resident sitting on a pile of
+ * them could otherwise re-snap every few hours at the same target. Half a day
+ * lets the confrontation land (and be answered) before the next one.
+ */
+const SNAP_COOLDOWN_MINUTES = 720;
+
+// --- Passive drift, per GAME MINUTE ------------------------------------------
+// Ripple hits add 10-40 and snap thresholds are 55-125 (`snapThreshold`). The
+// old natural decay of 0.3/min drained 18 per game hour, so a hit was gone in
+// one or two hours and two grievances almost never overlapped: tension could
+// not accumulate and snaps were rare no matter how bad the day. At 0.08/min
+// (~4.8 per game hour) a 30-point hit lingers for most of a waking day, so
+// three or four bad things in a day add up to a snap, while one hit on its own
+// still fades long before it could.
+/** Natural decay every game minute, whatever the resident's state. */
+const TENSION_DECAY_PER_MIN = 0.08;
+/** Passive build-up while the state is active (stressed nets +0.17/min, ~10 per game hour). */
+const TENSION_GAIN_STRESSED_PER_MIN = 0.25;
+const TENSION_GAIN_ANGRY_PER_MIN = 0.2;
+const TENSION_GAIN_DEPRESSED_PER_MIN = 0.1;
+/** Extra drain while the state is active: good spirits defuse a temper faster. */
+const TENSION_RELIEF_EUPHORIC_PER_MIN = 0.4;
+const TENSION_RELIEF_CONFIDENT_PER_MIN = 0.25;
 
 /**
  * The tension at which a personality snaps. Free-standing (the method below only
@@ -98,16 +122,16 @@ export class TensionTracker {
     let delta = 0;
 
     // Natural decay
-    delta -= 0.3;
+    delta -= TENSION_DECAY_PER_MIN;
 
     // Passive gains from negative states
-    if (activeStates.includes('stressed')) delta += 0.5;
-    if (activeStates.includes('angry')) delta += 0.4;
-    if (activeStates.includes('depressed')) delta += 0.2;
+    if (activeStates.includes('stressed')) delta += TENSION_GAIN_STRESSED_PER_MIN;
+    if (activeStates.includes('angry')) delta += TENSION_GAIN_ANGRY_PER_MIN;
+    if (activeStates.includes('depressed')) delta += TENSION_GAIN_DEPRESSED_PER_MIN;
 
     // Decay boosts from positive states
-    if (activeStates.includes('euphoric')) delta -= 0.8;
-    if (activeStates.includes('confident')) delta -= 0.5;
+    if (activeStates.includes('euphoric')) delta -= TENSION_RELIEF_EUPHORIC_PER_MIN;
+    if (activeStates.includes('confident')) delta -= TENSION_RELIEF_CONFIDENT_PER_MIN;
 
     state.value = Math.max(0, state.value + delta * elapsedMinutes);
   }
@@ -116,7 +140,8 @@ export class TensionTracker {
 
   /**
    * CLOCK: GAME MINUTES. The cooldown was 200 TICKS, i.e. 800 game minutes
-   * between snaps at 4x; it is now 200 game minutes at every speed.
+   * between snaps at 4x; it is now SNAP_COOLDOWN_MINUTES (720) game minutes
+   * at every speed.
    *
    * `thresholdScale` is the world's "Drama Intensity" (worldRules.ts
    * `snapThresholdScale`): below 1 tempers run shorter. A parameter rather

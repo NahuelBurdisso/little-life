@@ -2,6 +2,7 @@ import { SECRETS_POOL } from '../data/secretsPool';
 import { ROMANCE_POOL } from '../data/romancePool';
 import { isAdultAge } from './intimacy/eligibility';
 import { isRomanticSecret } from './intimacy/seedRomance';
+import { generateDramaHooks, type DramaHooks } from './dramaHooks';
 
 // ─── Inline types (no cross-boundary imports from src/) ───────────────────────
 
@@ -11,6 +12,9 @@ export interface GeneratorAgent {
   personality: Record<string, number>;
   salary?: number;
   job?: string;
+  /** Household (the wizard's `homeName`): the opening hooks marry housemates. */
+  homeName?: string;
+  gender?: string;
 }
 
 export interface SliderConfig {
@@ -52,6 +56,12 @@ export interface GenerationResult {
   trustDelta: number;
   /** pairs of agent indices that become rivals */
   rivalPairs: Array<[number, number]>;
+  /**
+   * The stories already under way at minute one (lib/dramaHooks.ts): a love
+   * triangle, a trade rivalry, a debt, a challenger for the mayor, old secrets.
+   * Separate from the slider counts above, which they do not change.
+   */
+  hooks: DramaHooks;
 }
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
@@ -319,7 +329,8 @@ export function generateFromSliders(
   // ── 5. Mood adjustments ───────────────────────────────────────────────────────
   const moodAdjustments: Record<number, { mood: number; stress: number }> = {};
   const numLowMood = Math.round(drama * MOOD_LOW_AGENT_RATIO);
-  const moodTargets = new Set(shuffle(agents.map((_, i) => i), rand).slice(0, numLowMood));
+  const lowMood = shuffle(agents.map((_, i) => i), rand).slice(0, numLowMood);
+  const moodTargets = new Set(lowMood);
 
   for (let i = 0; i < agents.length; i++) {
     if (moodTargets.has(i)) {
@@ -336,6 +347,11 @@ export function generateFromSliders(
     }
   }
 
+  // ── 6. Opening hooks ─────────────────────────────────────────────────────────
+  // Last, so the sections above draw exactly what they drew before the hooks
+  // existed: the same seed still gives the same secrets, threads and moods.
+  const hooks = generateDramaHooks(drama, agents, rand, usedRomanceAgents, lowMood);
+
   return {
     secrets,
     romanceThreads,
@@ -344,5 +360,6 @@ export function generateFromSliders(
     relationships: {},
     trustDelta,
     rivalPairs,
+    hooks,
   };
 }
