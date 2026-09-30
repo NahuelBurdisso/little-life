@@ -267,6 +267,33 @@ Player-facing:
   30–70% residents invisible some days, a serial-arrest loop on seduction facts (`decisions.ts:~2343`,
   `gossip.ts:~319`). Template chats emit no drama beats (`conversations.ts` `processTimedOutEntry`).
   A story-health pass is in progress. Tick p95 433 ms at 32 residents (interval 1000 ms).
+- **Wave 7 (final):** **family** (`children` table, `server/lib/family.ts` + `familyState.ts`:
+  married couples conceive, secret → public "expecting" → birth at 7 game days → christening; paternity
+  secrets from affairs; children in prompts, AgentPanel, PairDossier, heirs in trust; baby bundle held
+  item; "first baby" challenge); **town calendar** (`server/data/calendar.ts`: 112-day year, Spring
+  Fair / Midsummer / Harvest Festival / Winter Lights with contests, weekly market, seasonal mayoral
+  election with a 3-day campaign, vote and `changeJob`; `world_state.civic`; TopBar chip; Kingmaker
+  challenge; random market days off, random festivals rare); **story health** (goal progress by type +
+  real completion, template chats emit drama beats `templateBeats.ts`, mood regresses to a personality
+  baseline + daily stressors `dailyLife.ts`, small misdeeds keep secrets coming `smallMisdeeds.ts`,
+  serial arrests fixed via `shared_knowledge.paid_at`, personal events for invisible residents;
+  30-day soak: beat types 2 → 9, goals completed 0 → 44, invisible 42% → 3%, mood ~75);
+  **playtest #3 fixes** (neighbours know each other by sight — only newcomers introduce themselves,
+  "facts about you" with stored tenure `agents.years_in_town/job_years`, romance-level grounding and
+  no pet names below a couple, topic memory `topicMemory.ts`, trigger-aware template scripts +
+  variety; tomorrow's plans requested overnight `nightPlanner.ts`, 8 s real-time floor on queue waits,
+  deterministic decompose 23% → 54% of blocks, client refetch throttles + `relationships.all`
+  channel, recap card yields to the Director, partners at romance min > 65 & avg > 70 + reciprocity,
+  2-day cooldown per random event type); **dev**: vite no longer watches `.claude/**`/`data/**`
+  (with 54 worktrees it sat at 100% CPU); the ✦ You feed rows read "You gave …".
+- Open from wave 7: sickness can't kill anyone (sick states last ≤ 24 h, death needs > 5 days,
+  `lifeEventsEngine.ts:116`); gossip is still ~86–92% of beats; mood creeps up late in long runs
+  (`moodMomentum.ts`); the model invents townsfolk names ("Silas") — no roster in the prompt;
+  `observers` goal triggers still skipped (`goals.ts:~189`); ousted mayor becomes unemployed;
+  `envious` state has no client styling; no live playtest yet of family/calendar/overnight plans.
+- **Housekeeping:** 54 agent worktrees remain under `.claude/worktrees/` (all merged except the
+  pre-session ones); remove with `git worktree remove` when convenient. `data/saves/` holds two
+  autosaves of test copies of the old world.
 - **Playtest #3** (real LLM, day 3 → 6 of a save, 1x then 4x + night skips): turn p50 0.8 s (1x) /
   2.0 s (4x), template share 20–28% (was ~50%), "how are you" openers 2.2% (was 9%), 0 truncations, 0
   embedding failures, 0 path fallbacks (was 278), no stuck/frozen/overlapping conversations, 0
