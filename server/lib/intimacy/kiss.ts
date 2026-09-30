@@ -218,17 +218,22 @@ export function onKissConversationEnded(p: KissConversationEnded, rng: () => num
   const recvRow = initiator.id === first.id ? second : first;
   const now = gameMinutesNow();
   const pair = getPairIntimacy(initiator.id, receiver.id);
-  const witnessIds = witnessesOf(initRow, recvRow);
 
-  const chance = kissChance({
+  const base: KissChanceCtx = {
     initiator, receiver,
     sentiment: p.sentiment ?? 0,
     kissedBefore: rel.tags.includes(KISSED_TAG),
     isDate: isDateHour(hourOf(now)) && receiver.romance > REBUFF_BELOW_ROMANCE,
-    romanceBoost: romanceBoostActive(),
-    thirdPresent: witnessIds.length > 0,
+    romanceBoost: false,
+    thirdPresent: false,
     kissedToday: pair?.lastKissAt != null && day(pair.lastKissAt) === day(now),
-  });
+  };
+  // The cheap, pure exits (a minor, a cold talk, a kiss already today) before the
+  // two DB reads below: who could see, and whether a festival is on. Neither can
+  // turn a zero chance into a positive one, only scale a positive one.
+  if (kissChance(base) <= 0) return;
+  const witnessIds = witnessesOf(initRow, recvRow);
+  const chance = kissChance({ ...base, romanceBoost: romanceBoostActive(), thirdPresent: witnessIds.length > 0 });
   if (chance <= 0) return;
 
   const rebuff = receiver.romance < REBUFF_BELOW_ROMANCE;

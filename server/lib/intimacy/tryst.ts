@@ -28,9 +28,9 @@ import { SNEAK_RANGE_PX, onlookersNear, withHiddenLoveBump } from './witnesses';
 // the `adultContent` rule is on and only for two adults who are drawn to each
 // other (`isIntimacyEligible`, the one age gate); every entry point re-checks
 // both, and a pair that fails is cancelled. It happens OFF SCREEN and nothing
-// here narrates it: the feed says two people "spent the evening together" and
+// here narrates it: the feed says two people "slipped away together" and
 // the morning after says somebody "saw X slipping out of Y's house at dawn". The
-// canvas shows a hushed pose, nothing more (client, Task 19).
+// canvas shows a hushed pose, nothing more (the client's tryst pose).
 //
 //   rendezvous.ts agrees an evening ({pendingRendezvous.agreed})
 //        │  pickVenue: the asker's home if nobody else lives or is at it, else
@@ -75,6 +75,8 @@ export const TRYST_RETRY_MARRIED_MINUTES = 8 * 60;
 export const VENUE_RETRY_MINUTES = MINUTES_PER_DAY;
 /** A guest's stay lapses on its own after this long (a night and a morning). */
 export const STAY_MAX_MINUTES = 14 * 60;
+/** A stay that lapsed with the guest still in the house gets this long to be walked home before it is dropped. */
+export const STAY_SEND_HOME_GRACE_MINUTES = 60;
 /** How long after leaving at dawn somebody can still catch the guest on the way home. */
 export const SNEAK_WATCH_MINUTES = 30;
 /** Outdoors it is dark from this hour until the next morning's. */
@@ -227,8 +229,12 @@ export function trystStepFor(agent: TrystAgent, ctx: TrystCtx): TrystStep | null
 
   // A guest at the house they are staying at.
   if (stay && stay.leftAt == null && agent.current_location === stay.locationId) {
+    // Seen asleep here tonight: remembered on the stay, so dawn does not depend on
+    // the wake-up decision being the one that happens to see `sleeping` (a
+    // higher tier may take that decision and replace the action first).
+    if (last?.type === 'sleeping' && !stay.slept) updateStay(agent.id, (s) => { s.slept = true; });
     // Dawn (awake again, after sleeping) or told to go: home, quietly.
-    if (stay.leaving || (last?.type === 'sleeping' && ctx.awake)) {
+    if (stay.leaving || (stay.slept && ctx.awake)) {
       return { kind: 'sneak_home', locationId: agent.home, dawn: true };
     }
     if (!ctx.awake) return { kind: 'sleep', locationId: stay.locationId };
@@ -262,7 +268,7 @@ type Scene = 'dawn' | 'found' | 'outdoors';
 /**
  * Somebody saw. The secret is born (or gains knowers) as a `tryst_seen` fact
  * (sensitivity 3; 4 when either is married to a third person), one feed row
- * names the first witness, and an `intimacy:caught` per witness lets whatever
+ * (per stay) names the first witness, and an `intimacy:caught` per witness lets whatever
  * reacts to it do so (a same-sex pair's secret weighs one more, capped at 4:
  * `withHiddenLoveBump`). If a witness is the husband or wife of one of the two, the
  * affair is theirs to know too (an `affair` fact), which the existing discovery
@@ -276,6 +282,8 @@ function reportCaught(subject: AgentRow, other: AgentRow, witnessIds: number[], 
   const sensitivity = withHiddenLoveBump(affairSensitivity(3, affairInvolvesMarriage(subject.id, other.id)), subject.id, other.id);
   learnFact('tryst_seen', subject.id, other.id, sensitivity, witnessIds, 'observed',
     scene === 'dawn' ? undefined : { detail: scene });
+  // It is out now: the dialogue context stops saying "nobody may know".
+  updatePairIntimacy(subject.id, other.id, (p) => { p.secret = false; });
 
   for (const w of witnessIds) {
     for (const [straying, lover] of [[subject, other], [other, subject]] as const) {
@@ -285,16 +293,23 @@ function reportCaught(subject: AgentRow, other: AgentRow, witnessIds: number[], 
     }
   }
 
-  const first = db.select({ name: agents.name }).from(agents).where(eq(agents.id, witnessIds[0])).get();
-  logActivity({
-    type: 'caught',
-    initiator: subject.id,
-    target: other.id,
-    agents: [subject.id, other.id, witnessIds[0]],
-    ...(subject.current_location != null ? { location: subject.current_location } : {}),
-    templateData: { agent1: subject.name, agent2: other.name, witness: first?.name ?? 'Someone', scene },
-    metadata: { beat: 'caught' },
-  });
+  // One feed row per stay: the walk home is watched for half an hour and the road
+  // can have several people on it, so later witnesses (and an interrupted evening
+  // followed by the dawn walk) learn the fact and get their event, silently.
+  const stay = getStay(subject.id);
+  if (!stay?.caughtLogged) {
+    const first = db.select({ name: agents.name }).from(agents).where(eq(agents.id, witnessIds[0])).get();
+    logActivity({
+      type: 'caught',
+      initiator: subject.id,
+      target: other.id,
+      agents: [subject.id, other.id, witnessIds[0]],
+      ...(subject.current_location != null ? { location: subject.current_location } : {}),
+      templateData: { agent1: subject.name, agent2: other.name, witness: first?.name ?? 'Someone', scene },
+      metadata: { beat: 'caught' },
+    });
+    if (stay) updateStay(subject.id, (s) => { s.caughtLogged = true; });
+  }
   for (const w of witnessIds) simEvents.emit('intimacy:caught', { a: subject.id, b: other.id, witnessId: w });
 }
 
@@ -358,6 +373,24 @@ export function beginTryst(
   const married = spouseOf(a.id) === b.id;
   const initiatorId = getPairIntimacy(a.id, b.id)?.pendingRendezvous?.initiatorId ?? a.id;
 
+  // DB writes first, in-memory state after. The pair/stay maps are not undone by a
+  // rollback, so if a write here throws (the pass's transaction rolls back) the
+  // agreed evening must still be pending and no stay may exist; setting the state
+  // first left an evening "in progress" that never began.
+  startTrystAction(a, venue, b.id, minutes, time);
+  startTrystAction(b, venue, a.id, minutes, time);
+
+  const [first, second] = initiatorId === b.id ? [b, a] : [a, b];
+  // Worded as the start of the evening ("slipped away together"): it may be cut short.
+  logActivity({
+    type: 'tryst',
+    initiator: first.id,
+    target: second.id,
+    location: venue.id,
+    templateData: { agent1: first.name, agent2: second.name, venue: venue.name },
+    metadata: { beat: 'tryst' },
+  });
+
   updatePairIntimacy(a.id, b.id, (p) => {
     delete p.pendingRendezvous;
     p.trysts += 1;
@@ -369,29 +402,23 @@ export function beginTryst(
     if (secret) p.secret = true;
   });
 
-  startTrystAction(a, venue, b.id, minutes, time);
-  startTrystAction(b, venue, a.id, minutes, time);
-
   // At somebody else's home the guest stays the night. Where both live, nobody does.
   if (venue.type === 'home') {
     const guest = guestOf(a, b, venue.id);
     if (guest) setStay(guest.id, { locationId: venue.id, hostId: guest.id === a.id ? b.id : a.id, until: now + STAY_MAX_MINUTES });
   }
 
-  const [first, second] = initiatorId === b.id ? [b, a] : [a, b];
-  logActivity({
-    type: 'tryst',
-    initiator: first.id,
-    target: second.id,
-    location: venue.id,
-    templateData: { agent1: first.name, agent2: second.name, venue: venue.name },
-    metadata: { beat: 'tryst' },
-  });
-  simEvents.emit('intimacy:tryst', { a: a.id, b: b.id, venueId: venue.id, secret });
-
-  // A barn or a grove is open to whoever is about.
-  if (venue.type !== 'home' && isExposed(a, b, venue.id)) {
-    reportCaught(first, second, onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]), 'outdoors');
+  // The rest is reaction, best effort: the evening has begun whatever a listener
+  // or a fact write does, and a throw escaping from here would roll back the
+  // actions above while the in-memory evening stayed.
+  try {
+    simEvents.emit('intimacy:tryst', { a: a.id, b: b.id, venueId: venue.id, secret });
+    // A barn or a grove is open to whoever is about.
+    if (venue.type !== 'home' && isExposed(a, b, venue.id)) {
+      reportCaught(first, second, onlookersNear({ current_location: venue.id, position: a.position }, [a.id, b.id]), 'outdoors');
+    }
+  } catch (err) {
+    console.warn('[intimacy] tryst start reactions failed:', (err as Error).message);
   }
   return true;
 }
@@ -593,7 +620,21 @@ export function trystPass(time: ClockTime, rng: () => number = Math.random): voi
   for (const [guestId, stay] of guests) {
     if (!stay) continue;
     if (stay.leftAt == null) {
-      if (now >= stay.until) { clearStay(guestId); dirty = true; }
+      const guestRow = db.select().from(agents).where(eq(agents.id, guestId)).get();
+      const atVenue = guestRow != null && guestRow.current_location === stay.locationId;
+      const action = (guestRow?.current_action as { type?: string } | null)?.type;
+      if (atVenue && action === 'sleeping' && !stay.slept) { updateStay(guestId, (s) => { s.slept = true; }); }
+      if (now >= stay.until) {
+        // A stay nobody ended: still at the house, they are sent home (quietly, and
+        // seen if anyone is about) instead of being forgotten there. The grace
+        // window is the time the decision tier has to pick the walk up.
+        if (atVenue && !stay.leaving) {
+          updateStay(guestId, (s) => { s.leaving = true; s.until = now + STAY_SEND_HOME_GRACE_MINUTES; });
+        } else {
+          clearStay(guestId);
+        }
+        dirty = true;
+      }
       continue;
     }
     const rows = db.select().from(agents).where(inArray(agents.id, [guestId, stay.hostId])).all();

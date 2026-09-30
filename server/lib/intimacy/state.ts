@@ -31,8 +31,8 @@ export interface PairIntimacy {
    * - agreed (`agreed: true`): both said yes (or, for a married couple who are
    *   home together, both were willing and nobody had to ask). `agreedAt` is the
    *   game minute it was settled. `venueId` is set only when the couple are at
-   *   their own home right now; otherwise it is left for Task 9's `pickVenue`.
-   *   Task 9 owns everything after this: it picks the venue, walks the pair
+   *   their own home right now; otherwise tryst.ts's `pickVenue` chooses it.
+   *   tryst.ts owns everything after this: it picks the venue, walks the pair
    *   there and clears the pending when the night begins. An agreed pending
    *   nobody acts on is dropped ~6 game hours after `agreedAt`.
    */
@@ -47,15 +47,18 @@ export interface PairIntimacy {
   activeTryst?: { venueId: number; startedAt: number; endsAt: number; secret: boolean };
   /** No new invitation for this pair before this game minute (after a refusal). */
   rendezvousRetryAfter?: number;
-  /** Nobody in town knows (yet). Flips false when it gets out. */
+  /**
+   * Nobody in town knows about their nights (yet). tryst.ts sets it when an evening
+   * begins for a pair who must hide it (spoken for elsewhere, or same-sex in 1900) and
+   * clears it the first time somebody sees them (`reportCaught`). Read by the
+   * dialogue context (ai/intimacyContext.ts: "nobody may know").
+   */
   secret: boolean;
 }
 
 export interface AgentIntimacy {
   /** 0..100; grows while the adult layer is on, forced to 0 while it is off. */
   longing: number;
-  /** Game minute of the last kiss or night together. */
-  lastTouchedAt?: number;
   /** partnerId → 0..100, how sure they are their partner strayed. */
   suspicion: Record<number, number>;
   /**
@@ -81,6 +84,15 @@ export interface Stay {
   until: number;
   /** Set when they are told to go now (somebody walked in): the next decision is the walk home. */
   leaving?: boolean;
+  /**
+   * The guest has been seen asleep at the venue tonight. Dawn is "awake again after
+   * having slept here", judged from this flag and not from the guest's current
+   * action, which a higher-scoring decision (an emergency meal, say) may already
+   * have replaced by the time the wake-up decision comes round.
+   */
+  slept?: true;
+  /** A `caught` feed row was already written for this stay: later witnesses learn the fact silently. */
+  caughtLogged?: true;
   /** Game minute the walk home began; the witness watch runs for a while after it. */
   leftAt?: number;
   /** Everyone who already saw them leave, so the same sighting is not reported twice. */
@@ -258,6 +270,8 @@ function restoreStay(raw: unknown): Stay | null {
   if (locationId === null || hostId === null || until === null) return null;
   const stay: Stay = { locationId, hostId, until, seenBy: [] };
   if (r.leaving === true) stay.leaving = true;
+  if (r.slept === true) stay.slept = true;
+  if (r.caughtLogged === true) stay.caughtLogged = true;
   const leftAt = asNumber(r.leftAt);
   if (leftAt !== null) stay.leftAt = leftAt;
   if (Array.isArray(r.seenBy)) {
@@ -274,8 +288,6 @@ function restoreAgent(raw: unknown): AgentIntimacy | null {
   if (!r) return null;
   const a = blankAgent();
   a.longing = clamp(asNumber(r.longing) ?? 0, 0, 100);
-  const touched = asNumber(r.lastTouchedAt);
-  if (touched !== null) a.lastTouchedAt = touched;
   for (const [k, v] of Object.entries(asRecord(r.suspicion) ?? {})) {
     const partner = asId(k);
     const level = asNumber(v);

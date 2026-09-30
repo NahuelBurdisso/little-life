@@ -1,4 +1,4 @@
-import { eq, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../db';
 import { agents, relationships } from '../../db/schema';
 import { ENGAGED_TAG, MARRIED_TAG } from '../marriage';
@@ -24,7 +24,8 @@ export function committedTo(agentId: number, except?: number): number | null {
     .from(relationships)
     .where(or(eq(relationships.agent_a, agentId), eq(relationships.agent_b, agentId)))
     .all();
-  let best: { id: number; rank: number } | null = null;
+  // Rank first, and ask who is alive once for every ranked candidate (one query, not one per row).
+  const ranked: Array<{ id: number; rank: number }> = [];
   for (const r of rows) {
     const other = r.a === agentId ? r.b : r.a;
     if (other === except) continue;
@@ -32,9 +33,16 @@ export function committedTo(agentId: number, except?: number): number | null {
     const rank = tags.includes(MARRIED_TAG) ? 3
       : tags.includes(ENGAGED_TAG) ? 2
         : tags.includes('partner') || r.status === 'partners' ? 1 : 0;
-    if (rank === 0 || (best && best.rank >= rank)) continue;
-    const alive = db.select({ active: agents.is_active }).from(agents).where(eq(agents.id, other)).get();
-    if (alive?.active) best = { id: other, rank };
+    if (rank > 0) ranked.push({ id: other, rank });
+  }
+  if (ranked.length === 0) return null;
+  const alive = new Set(
+    db.select({ id: agents.id }).from(agents)
+      .where(and(inArray(agents.id, ranked.map((c) => c.id)), eq(agents.is_active, true))).all().map((r) => r.id),
+  );
+  let best: { id: number; rank: number } | null = null;
+  for (const c of ranked) {
+    if (alive.has(c.id) && (!best || c.rank > best.rank)) best = c;
   }
   return best ? best.id : null;
 }

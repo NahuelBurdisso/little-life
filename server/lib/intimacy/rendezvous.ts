@@ -32,7 +32,7 @@ import {
 // The adult layer starts here, and everything in this module runs only while the
 // `adultContent` rule is on and only for two adults who are drawn to each other
 // (`isIntimacyEligible`, the one age gate). It decides WHO asks WHOM and WHETHER
-// they agree; where and how the evening goes is Task 9 (tryst.ts), and nothing
+// they agree; where and how the evening goes is tryst.ts's, and nothing
 // here narrates anything past an invitation.
 //
 //   evening (19-23 h), a pair that kissed, both keen and trusting, and one of
@@ -42,7 +42,7 @@ import {
 //        └─ everyone else ─▶ `pendingRendezvous` (asked, unanswered) ─▶ the
 //             asker walks to the other (decisions.ts, score 6300) ─▶ an
 //             `llm_deep` conversation on RENDEZVOUS_TOPIC
-//                 ├─ yes ─▶ pending flips to `agreed` (Task 9 takes it from here)
+//                 ├─ yes ─▶ pending flips to `agreed` (tryst.ts takes it from here)
 //                 └─ no  ─▶ asker's mood drops, no new invitation for two days
 //
 // Consent is modelled, and a refusal is a real outcome. The answer is read from
@@ -466,7 +466,7 @@ function startEveningRendezvous(now: number, busyAgents: Set<number>): boolean {
     const otherRow = initiator.id === a.id ? b : a;
 
     // Married and home together: nobody has to ask. When both are willing the
-    // evening is simply agreed (Task 9 takes it from there).
+    // evening is simply agreed (tryst.ts takes it from there).
     const home = commonHome(rel, initRow, otherRow, homeTypes);
     if (home != null) {
       if (willingnessOf(initRow, otherRow, rel) < AGREE_MIN_WILLINGNESS
@@ -620,7 +620,7 @@ export async function onRendezvousConversationEnded(
   emitter.markDirty('agents.all');
 }
 
-/** Yes: the evening is agreed. The venue is Task 9's to choose, so `venueId` stays unset. */
+/** Yes: the evening is agreed. The venue is tryst.ts's `pickVenue` to choose, so `venueId` stays unset. */
 function acceptRendezvous(initiatorId: number, answererId: number, now: number): void {
   updatePairIntimacy(initiatorId, answererId, (s) => {
     const rv = s.pendingRendezvous;

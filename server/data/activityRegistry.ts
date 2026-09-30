@@ -126,7 +126,7 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // The evening itself is a quiet line (the town does not know: the paper leaves
   // it alone); being seen slipping out at dawn is the scandal, and reads as one.
   // Wording stays discreet in both (activityMessage.ts renders them).
-  tryst:  { category: 'relationship', base_importance: 0.5, retention: 'medium', template: '{agent1} and {agent2} spent the evening together at {venue}', newsworthy: false },
+  tryst:  { category: 'relationship', base_importance: 0.5, retention: 'medium', template: '{agent1} and {agent2} slipped away together to {venue}', newsworthy: false },
   caught: { category: 'drama', base_importance: 0.75, retention: 'long', template: '{witness} saw {agent1} slipping out of {agent2}\'s house at dawn' },
 
   // ─── The scandal (lib/intimacy/pregnancy.ts, the adult layer) ─────────────

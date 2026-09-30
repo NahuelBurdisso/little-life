@@ -67,8 +67,8 @@ export function renderMessage(entry: ActivityEntry): string {
   // a house walked in on, or a barn or grove after dark). agent1 is the one seen leaving.
   if (entry.type === 'tryst' && d.agent1 && d.agent2) {
     return d.venue
-      ? `${d.agent1} and ${d.agent2} spent the evening together at ${d.venue}.`
-      : `${d.agent1} and ${d.agent2} spent the evening together.`;
+      ? `${d.agent1} and ${d.agent2} slipped away together to ${d.venue}.`
+      : `${d.agent1} and ${d.agent2} slipped away together.`;
   }
   // The unwed pregnancy the town has noticed (lib/intimacy/pregnancy.ts): agent1 is the mother, never more.
   if (entry.type === 'scandal' && d.agent1) return `Whispers follow ${d.agent1} through town.`;

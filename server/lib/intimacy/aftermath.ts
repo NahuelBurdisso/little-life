@@ -146,7 +146,6 @@ function spendTheNight(t: TrystCompletion, a: AgentRow, b: AgentRow): void {
     addMoodModifier(me.id, AFTERGLOW_MOOD, 'afterglow', AFTERGLOW_MINUTES, t.now);
     if (t.first) remember(me.id, `I spent the night with ${other.name}.`, 0.9, 9, other.id);
     else remember(me.id, `Another evening with ${other.name}.`, 0.7, 4, other.id);
-    updateAgentIntimacy(me.id, (s) => { s.lastTouchedAt = t.now; });
 
     // A guest who stays the night was away from home for it: the partner they share a bed
     // with may notice (suspicion.ts consumes this on the next morning).

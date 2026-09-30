@@ -5,7 +5,7 @@ import {
   activityLog, agentStates, agents, locations, needs, relationshipEvents, relationships, shared_knowledge, worldState,
 } from '../../../db/schema';
 import {
-  SNEAK_WATCH_MINUTES, STAY_MAX_MINUTES, TRYST_MAX_MINUTES, TRYST_MIN_MINUTES, TRYST_RETRY_MARRIED_MINUTES,
+  SNEAK_WATCH_MINUTES, STAY_MAX_MINUTES, STAY_SEND_HOME_GRACE_MINUTES, TRYST_MAX_MINUTES, TRYST_MIN_MINUTES, TRYST_RETRY_MARRIED_MINUTES,
   TRYST_RETRY_MINUTES, VENUE_RETRY_MINUTES, beginTryst, isDarkHour, isFoulWeather, pickVenue, sleepTargetFor,
   startSneakHome, trystDuration, trystPass, trystStepFor,
 } from '../tryst';
@@ -553,6 +553,38 @@ describe('the tryst', () => {
       expect(trystStepFor(load(b), { awake: true })).toEqual({ kind: 'sneak_home', locationId: bHome, dawn: true });
     });
 
+    it('a guest seen asleep still walks home at dawn when another tier took the wake-up decision', () => {
+      const { b, bHome } = morningAfter();
+      // The pass sees them asleep in the house at night...
+      trystPass(at(60), () => 0);
+      expect(getStay(b)!.slept).toBe(true);
+      // ...and by morning a higher-scoring decision (a meal) has replaced 'sleeping'.
+      db.update(agents).set({ current_action: { type: 'eating' } }).where(eq(agents.id, b)).run();
+      expect(trystStepFor(load(b), { awake: true })).toEqual({ kind: 'sneak_home', locationId: bHome, dawn: true });
+    });
+
+    it('the tryst step itself remembers a guest it saw asleep, and an awake guest who never slept is not sent home', () => {
+      const l = lovers();
+      setStay(l.b, { locationId: l.aHome, hostId: l.a, until: NOW + STAY_MAX_MINUTES });
+      db.update(agents).set({ current_action: { type: 'idle' } }).where(eq(agents.id, l.b)).run();
+      expect(trystStepFor(load(l.b), { awake: true })).toEqual({ kind: 'stay', locationId: l.aHome });
+      expect(getStay(l.b)!.slept).toBeUndefined();
+      db.update(agents).set({ current_action: { type: 'sleeping' } }).where(eq(agents.id, l.b)).run();
+      trystStepFor(load(l.b), { awake: false });
+      expect(getStay(l.b)!.slept).toBe(true);
+    });
+
+    it('a stay that lapses with the guest still in the house sends them home instead of forgetting them', () => {
+      const { b, bHome } = morningAfter();
+      const past = at(STAY_MAX_MINUTES + 10);
+      trystPass(past, () => 0);
+      expect(getStay(b)!.leaving).toBe(true);
+      expect(trystStepFor(load(b), { awake: true })).toEqual({ kind: 'sneak_home', locationId: bHome, dawn: true });
+      // Nobody picks it up: after the grace window it is finally dropped.
+      trystPass(at(STAY_MAX_MINUTES + 10 + STAY_SEND_HOME_GRACE_MINUTES + 10), () => 0);
+      expect(getStay(b)).toBeUndefined();
+    });
+
     it('starting the walk clears the sleepover (the bed is their own again) and stamps the time', () => {
       const { b, bHome } = morningAfter();
       startSneakHome(b, NOW + 600);
@@ -583,6 +615,18 @@ describe('the tryst', () => {
       expect(rows[0].template_data).toMatchObject({ witness: load(snoop).name, agent1: load(b).name, agent2: load(a).name });
       expect(rows[0].metadata).toEqual({ beat: 'caught' });
       expect(caught.seen).toEqual([{ a: b, b: a, witnessId: snoop }]);
+    });
+
+    it('once somebody has seen, the pair is no longer a secret', () => {
+      const { a, b, aHome } = morningAfter();
+      updatePairIntimacy(a, b, (p) => { p.secret = true; });
+      startSneakHome(b, NOW + 600);
+      // Nobody about: still hidden.
+      expect(getPairIntimacy(a, b)!.secret).toBe(true);
+      const neighbourHome = insertLocation('Telltale Cottage', 'home', 700);
+      insertAgent(`Telltale ${madeAgents.length}`, neighbourHome, { current_location: aHome });
+      trystPass(at(600 + 10), () => 0);
+      expect(getPairIntimacy(a, b)!.secret).toBe(false);
     });
 
     it('a betrayed marriage makes it sensitivity 4', () => {
@@ -637,6 +681,25 @@ describe('the tryst', () => {
       expect(rowsOf('caught', b)).toHaveLength(1);
     });
 
+    it('a second witness on the road learns it silently: one caught row for the whole dawn', () => {
+      const { b } = morningAfter();
+      const homeA = insertLocation('Row House A', 'home', 900);
+      const first = insertAgent(`Early ${madeAgents.length}`, homeA, { current_location: null, position: { x: 1050, y: 1050 } });
+      db.update(agents).set({ current_location: null, position: { x: 1000, y: 1000 } }).where(eq(agents.id, b)).run();
+      startSneakHome(b, NOW + 600);
+      expect(rowsOf('caught', b)).toHaveLength(1);
+      const homeB = insertLocation('Row House B', 'home', 950);
+      const second = insertAgent(`Later ${madeAgents.length}`, homeB, { current_location: null, position: { x: 1020, y: 1000 } });
+      const caught = captureEvents<{ witnessId: number }>('intimacy:caught');
+      try {
+        trystPass(at(600 + 10), () => 0);
+      } finally { caught.stop(); }
+      // They know (the fact, the event), but the feed does not repeat the scene.
+      expect(factsOf(b)[0].known_by).toEqual(expect.arrayContaining([first, second]));
+      expect(caught.seen.map((e) => e.witnessId)).toEqual([second]);
+      expect(rowsOf('caught', b)).toHaveLength(1);
+    });
+
     it('after half an hour the watch is over: nobody sees them any more', () => {
       const { b } = morningAfter();
       startSneakHome(b, NOW);
@@ -656,6 +719,20 @@ describe('the tryst', () => {
       trystPass(at(10), () => 0);
       expect(getStay(b)).toBeUndefined();
       expect(factsOf(b)).toHaveLength(0);
+    });
+  });
+
+  describe('a failed start leaves nothing half-begun', () => {
+    it('if the writes throw, the invitation is still pending and no evening or stay exists', () => {
+      const { a, b, aHome } = lovers();
+      agree(a, b, { venueId: aHome });
+      const broken = { ...locOf(aHome), position: null } as unknown as ReturnType<typeof locOf>;
+      expect(() => beginTryst(load(a), load(b), broken, TIME, () => 0)).toThrow();
+      const p = getPairIntimacy(a, b)!;
+      expect(p.pendingRendezvous?.agreed).toBe(true);
+      expect(p.activeTryst).toBeUndefined();
+      expect(p.trysts).toBe(0);
+      expect(getStay(b)).toBeUndefined();
     });
   });
 
@@ -751,14 +828,13 @@ describe('the tryst', () => {
     it('a stay and an evening in progress survive a snapshot round trip', () => {
       const { a, b, aHome } = lovers();
       beginTryst(load(a), load(b), locOf(aHome), TIME, () => 0);
-      updatePairIntimacy(a, b, (p) => { p.secret = true; });
-      setStay(b, { locationId: aHome, hostId: a, until: NOW + 500, leaving: true, leftAt: NOW + 5, seenBy: [7, 8] });
+      setStay(b, { locationId: aHome, hostId: a, until: NOW + 500, leaving: true, slept: true, leftAt: NOW + 5, seenBy: [7, 8] });
       const blob = JSON.parse(JSON.stringify(intimacySnapshotStore.serialize()));
 
       clearIntimacy();
       expect(getStay(b)).toBeUndefined();
       intimacySnapshotStore.restore(blob);
-      expect(getStay(b)).toEqual({ locationId: aHome, hostId: a, until: NOW + 500, leaving: true, leftAt: NOW + 5, seenBy: [7, 8] });
+      expect(getStay(b)).toEqual({ locationId: aHome, hostId: a, until: NOW + 500, leaving: true, slept: true, leftAt: NOW + 5, seenBy: [7, 8] });
       expect(getPairIntimacy(a, b)!.activeTryst).toEqual({ venueId: aHome, startedAt: NOW, endsAt: NOW + 60, secret: false });
     });
 
@@ -787,10 +863,10 @@ describe('how a night reads in the feed', () => {
   const at = (type: string, data: Record<string, string | number> = {}) =>
     renderMessage({ type, template_data: { ...names, ...data }, timestamp: 0 });
 
-  it('says two people spent the evening together, and no more', () => {
-    expect(at('tryst')).toBe('Ada and Bruno spent the evening together at Ada Cottage.');
+  it('says two people slipped away together, and no more (the row is written when the evening begins)', () => {
+    expect(at('tryst')).toBe('Ada and Bruno slipped away together to Ada Cottage.');
     expect(renderMessage({ type: 'tryst', template_data: { agent1: 'Ada', agent2: 'Bruno' }, timestamp: 0 }))
-      .toBe('Ada and Bruno spent the evening together.');
+      .toBe('Ada and Bruno slipped away together.');
   });
 
   it('says who saw whom slipping out at dawn (or found them, or saw them go off after dark)', () => {

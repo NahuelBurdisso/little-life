@@ -49,7 +49,7 @@ describe('snapshot store', () => {
       p.rendezvousRetryAfter = 1200; p.secret = true;
     });
     const a = ensureAgentIntimacy(4);
-    a.longing = 42; a.lastTouchedAt = 777; a.suspicion[9] = 30;
+    a.longing = 42; a.suspicion[9] = 30;
     const blob = JSON.parse(JSON.stringify(intimacySnapshotStore.serialize()));
 
     clearIntimacy();
@@ -59,7 +59,7 @@ describe('snapshot store', () => {
       kisses: 3, firstKissAt: 100, lastKissAt: 900, trysts: 2, firstTrystAt: 400, lastTrystAt: 800,
       pendingRendezvous: { initiatorId: 9, since: 950, venueId: 12 }, rendezvousRetryAfter: 1200, secret: true,
     });
-    expect(getAgentIntimacy(4)).toEqual({ longing: 42, lastTouchedAt: 777, suspicion: { 9: 30 } });
+    expect(getAgentIntimacy(4)).toEqual({ longing: 42, suspicion: { 9: 30 } });
   });
 
   it('round-trips a night away and the day the suspicion pass last ran, and drops a bogus night', () => {

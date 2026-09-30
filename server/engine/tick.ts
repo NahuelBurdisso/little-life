@@ -356,8 +356,10 @@ export async function gameTick(): Promise<void> {
     // Proposals and weddings (lib/milestonesEngine.ts). One transaction: a
     // wedding writes the event, the tags, the feed and the facts together.
     runGuarded('milestones', () => db.transaction(() => milestonesTick(newTime, nowMinutes)));
-    // Longing, and later the rendezvous and suspicion passes (lib/intimacy/).
-    runGuarded('intimacy', () => db.transaction(() => intimacyTick(newTime)));
+    // Longing, invitations, evenings, suspicion, unwed pregnancy (lib/intimacy/).
+    // Guarded and transactional per pass inside intimacyTick: its state is in memory,
+    // so one transaction around all of them would roll back DB writes whose state stays.
+    intimacyTick(newTime);
     // Married life: pregnancies, births, christenings, paternity (lib/family.ts).
     runGuarded('family', () => db.transaction(() => familyTick(newTime, nowMinutes)));
     // Newcomers walking in, leavers setting off and reaching the edge (lib/populationFlow.ts).
