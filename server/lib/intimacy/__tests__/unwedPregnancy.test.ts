@@ -372,13 +372,13 @@ describe('an unwed pregnancy against the DB', () => {
       expect(before).toBeGreaterThan(0);
     });
 
-    it('does nothing while the rule is off', () => {
+    it('still tells him with the rule off: the pregnancy already exists', () => {
       const { mother, father } = pair();
       expecting(mother, father);
       db.update(agents).set({ is_active: true }).where(inArray(agents.id, [mother, father])).run();
       setRuleOverrides({ adultContent: false });
-      pregnancyPass(CONCEIVED + 3 * DAY);
-      expect(pregnancyOf(mother)!.spouseTold).toBeUndefined();
+      pregnancyPass(CONCEIVED + TELL_FATHER_AFTER_MINUTES);
+      expect(pregnancyOf(mother)!.spouseTold).toBe(true);
     });
 
     it('he shows up in her prompt line and in his own once he knows', () => {
@@ -642,13 +642,60 @@ describe('an unwed pregnancy against the DB', () => {
       expect(scandalRows(mother)).toHaveLength(1);
     });
 
-    it('does not run for a married pregnancy, or with the rule off', () => {
+    it('does not run for a married pregnancy, or with the rule off (she is still told the father, but no scandal)', () => {
       const { mother, father } = pair();
       expecting(mother, father);
       db.update(agents).set({ is_active: true }).where(inArray(agents.id, [mother, father])).run();
       setRuleOverrides({ adultContent: false });
       pregnancyPass(CONCEIVED + SHOWING_AFTER_MINUTES);
       expect(scandalFacts(mother)).toHaveLength(0);
+      expect(scandalRows(mother)).toHaveLength(0);
+      expect(pregnancyOf(mother)!.showing).toBeUndefined();
+      expect(pregnancyOf(mother)!.spouseTold).toBe(true);
+    });
+
+    it('the scandal fact is retired at the birth, and a later pregnancy starts a fresh one', () => {
+      const { mother, father } = pair({ fatherP: { loyalty: 10, morality: 40 } });
+      expecting(mother, father);
+      db.update(agents).set({ is_active: true }).where(inArray(agents.id, [mother, father])).run();
+      insertAgent('Neighbour One', { gender: 'female', age: 40 });
+      pregnancyPass(NOW);
+      pregnancyPass(CONCEIVED + SHOWING_AFTER_MINUTES);
+      const [first] = scandalFacts(mother);
+      expect(first.is_active).toBe(true);
+
+      familyTick(TIME, CONCEIVED + PREGNANCY_MINUTES, () => 0);
+      expect(pregnancyOf(mother)).toBeUndefined();
+      expect(db.select().from(shared_knowledge).where(eq(shared_knowledge.id, first.id)).get()!.is_active).toBe(false);
+
+      // Another child, another whisper: a new fact, not the old one attached again.
+      const second = rollTrystConception(load(mother), load(father), NOW + 300 * DAY, () => 0)!;
+      expect(second).not.toBeNull();
+      pregnancyPass(NOW + 300 * DAY + TELL_FATHER_AFTER_MINUTES);
+      pregnancyPass(NOW + 300 * DAY + SHOWING_AFTER_MINUTES);
+      const active = scandalFacts(mother).filter((f) => f.is_active);
+      expect(active).toHaveLength(1);
+      expect(active[0].id).not.toBe(first.id);
+      expect(pregnancyOf(mother)!.scandalFactId).toBe(active[0].id);
+    });
+
+    it('a wedding after the town has whispered retires the scandal too', () => {
+      const { mother, father } = pair({ fatherP: { loyalty: 10, morality: 40 } });
+      expecting(mother, father);
+      db.update(agents).set({ is_active: true }).where(inArray(agents.id, [mother, father])).run();
+      insertAgent('Neighbour Two', { gender: 'female', age: 40 });
+      pregnancyPass(NOW);
+      pregnancyPass(CONCEIVED + SHOWING_AFTER_MINUTES);
+      const [fact] = scandalFacts(mother);
+      expect(fact.is_active).toBe(true);
+      // They marry (after the father turned her away, he comes round).
+      db.update(relationships).set({ tags: ['lovers', 'married'], status: 'partners' })
+        .where(or(eq(relationships.agent_a, mother), eq(relationships.agent_b, mother))).run();
+      const p = pregnancyOf(mother)!;
+      (p as { fatherDenied?: boolean }).fatherDenied = false;
+      pregnancyPass(CONCEIVED + SHOWING_AFTER_MINUTES + 20);
+      expect(pregnancyOf(mother)!.unwed).toBe(false);
+      expect(db.select().from(shared_knowledge).where(eq(shared_knowledge.id, fact.id)).get()!.is_active).toBe(false);
     });
   });
 

@@ -406,6 +406,8 @@ export function familyTick(time: ClockTime, nowMinutes: number, rng: Rng = Math.
       // nothing is announced, nobody is told there was a baby to lose.
       endPregnancy(p.motherId);
       if (p.factId != null) db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, p.factId)).run();
+      // The whispering about an unwed one ends with it.
+      retireScandal(p);
       continue;
     }
     const age = nowMinutes - p.conceivedAt;
@@ -524,6 +526,20 @@ function announce(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: number
   });
 }
 
+/**
+ * The whispers are over (she married the father, or the child was born): the
+ * `illegitimate_pregnancy` secret stops being current. Left active it would keep being
+ * gossiped and, worse, a LATER unwed pregnancy of hers would find it as its duplicate
+ * (createFact dedups on type + subject + target) and never raise a scandal of its own.
+ * giveBirth calls this too, and so does the pregnancy pass when she marries the father
+ * (intimacy/pregnancy.ts). A no-op when there is no scandal fact.
+ */
+export function retireScandal(p: Pregnancy): void {
+  if (p.scandalFactId == null) return;
+  db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, p.scandalFactId)).run();
+  delete p.scandalFactId;
+}
+
 // ─── The birth ───────────────────────────────────────────────────────────────
 
 function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: number, rng: Rng): ChildRow | null {
@@ -559,6 +575,8 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
 
   // The pregnancy is over; the birth is its own (public) fact.
   if (p.factId != null) db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, p.factId)).run();
+  // The whispers about an unwed one end with it, so a later pregnancy of hers can start a fresh scandal.
+  retireScandal(p);
   const kin = kinWord(sex);
   const parents = named ? `${mother.name} and ${father!.name}` : mother.name;
   logActivity({

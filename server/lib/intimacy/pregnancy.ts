@@ -5,7 +5,7 @@ import { emitter } from '../../engine/emitter';
 import { logActivity } from '../activityLogger';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { addMoodModifier } from '../dailyLife';
-import { FATHER_MIN_AGE, MOTHER_MAX_AGE, roomForAnotherChild, startPregnancy } from '../family';
+import { FATHER_MIN_AGE, MOTHER_MAX_AGE, retireScandal, roomForAnotherChild, startPregnancy } from '../family';
 import { MINUTES_PER_DAY, childAgeDays, childrenOf, allPregnancies, pregnancyOf, type Pregnancy } from '../familyState';
 import { addKnowers, learnFact } from '../gossip';
 import { ENGAGED_TAG, MARRIED_TAG, isSpokenFor, spouseOf } from '../marriage';
@@ -283,11 +283,14 @@ function judgeScandal(p: Pregnancy): void {
 
 /**
  * Every 10 game minutes (intimacy/index.ts): tell the father, raise the scandal, let the
- * strict adults who learned of it judge. Only while the adult layer is on; the pregnancy
- * itself (and its birth, family.ts) carries on regardless.
+ * strict adults who learned of it judge. A pregnancy that already exists is not undone by
+ * the rule going off: the mother still tells the father (it is her own story, not new
+ * adult content) and a wedding still turns it into an ordinary married one. Only what the
+ * layer would ADD is gated: the scandal and its judging (and, in `rollTrystConception`, a
+ * new conception). The birth itself is family.ts's, on its usual timer.
  */
 export function pregnancyPass(now: number): void {
-  if (!isAdultContent()) return;
+  const adult = isAdultContent();
   let dirty = false;
   for (const p of allPregnancies()) {
     if (!p.unwed) continue;
@@ -297,6 +300,7 @@ export function pregnancyPass(now: number): void {
     // A wedding turns it into an ordinary married pregnancy (family.ts announces it now).
     if (p.fatherId != null && !p.fatherDenied && marriedToEachOther(p.motherId, p.fatherId)) {
       p.unwed = false;
+      retireScandal(p);
       dirty = true;
       continue;
     }
@@ -304,6 +308,7 @@ export function pregnancyPass(now: number): void {
     const age = now - p.conceivedAt;
     if (!p.spouseTold && age >= TELL_FATHER_AFTER_MINUTES) { tellFather(p, now); dirty = true; }
 
+    if (!adult) continue;
     if (!p.showing && age >= SHOWING_AFTER_MINUTES) {
       const nobodySees = adultsBeside(mother, apartFrom(p)).length === 0;
       const waiting = weddingOnItsWay(p) || nobodySees;
