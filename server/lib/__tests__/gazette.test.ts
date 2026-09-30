@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { db } from '../../db';
-import { activityLog } from '../../db/schema';
+import { activityLog, worldState } from '../../db/schema';
 import { ACTIVITY_REGISTRY } from '../../data/activityRegistry';
-import { buildGazettePrompt, parseGazette, gatherMaterial, GAZETTE_NAME } from '../gazette';
+import { buildGazettePrompt, parseGazette, gatherMaterial, arcsForPaper, GAZETTE_NAME } from '../gazette';
+import { maturityDirective } from '../../ai/contentRating';
+import { setRuleOverrides } from '../worldRules';
 
 describe('gazette prompt and parser', () => {
   const material = {
@@ -96,5 +98,50 @@ describe('gatherMaterial', () => {
     // The registry says so too: private by default, the leak and the scandal are not.
     for (const t of ['first_kiss', 'kiss', 'kiss_rebuffed', 'tryst']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).toBe(false);
     for (const t of ['caught', 'scandal']) expect(ACTIVITY_REGISTRY[t].newsworthy, t).not.toBe(false);
+  });
+});
+
+describe('the paper stays discreet', () => {
+  const empty = { items: ['Ada and Bruno shared a first kiss'], events: [], arcs: [] };
+
+  // The rules live on the world row.
+  beforeAll(() => {
+    if (db.select().from(worldState).get()) return;
+    db.insert(worldState).values({
+      time: { day: 5, hour: 12, minute: 0, totalTicks: 7200, seasonDay: 5, season: 'spring' }, day_phase: 'afternoon',
+      weather: 'sunny', weather_duration: 120, tick_speed: 1, is_paused: true, last_tick_completed: 0,
+      current_tick_phase: 0, tick_id: 'test', pending_transitions: [], tax_pool: 0, map_width: 40, map_height: 30,
+      collision_grid: '',
+    }).run();
+  });
+
+  afterEach(() => setRuleOverrides({ adultContent: false }));
+
+  it('carries the maturity line for the rule as it stands, and its own period discretion either way', () => {
+    setRuleOverrides({ adultContent: true });
+    const adult = buildGazettePrompt(empty, 4, 'spring', 'sunny').system;
+    expect(adult).toContain(maturityDirective(true));
+    expect(adult).toMatch(/never describe intimacy/);
+    expect(adult).toMatch(/under 18/);
+
+    setRuleOverrides({ adultContent: false });
+    const chaste = buildGazettePrompt(empty, 4, 'spring', 'sunny').system;
+    expect(chaste).toContain(maturityDirective(false));
+    expect(chaste).not.toContain(maturityDirective(true));
+    expect(chaste).toMatch(/hint and euphemism/);
+  });
+
+  it('is never handed an arc the town does not know about', () => {
+    const arc = (title: string, secret?: true) => ({
+      id: title, kind: 'love_triangle' as const, title, summary: `${title} summary`, participants: [1, 2, 3],
+      participantNames: [], beats: [], heat: 0.5, lastActivity: 0, ...(secret ? { secret } : {}),
+    });
+    expect(arcsForPaper([arc('Open scandal'), arc('Hidden affair', true), arc('Feud')])).toEqual([
+      { title: 'Open scandal', summary: 'Open scandal summary' },
+      { title: 'Feud', summary: 'Feud summary' },
+    ]);
+    // Still four at most, counted after the secret ones are gone.
+    const many = ['a', 'b', 'c', 'd', 'e', 'f'].map((t) => arc(t));
+    expect(arcsForPaper([arc('h1', true), ...many])).toHaveLength(4);
   });
 });

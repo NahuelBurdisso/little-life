@@ -414,6 +414,8 @@ describe('the kiss against the DB', () => {
     const ev = events(a).filter((e) => e.event_type === 'kiss_rebuffed');
     expect(ev).toHaveLength(1);
     expect(ev[0]).toMatchObject({ romance_delta_ab: -5, romance_delta_ba: -5 });
+    // A turning point of the pair's story: kept past the daily prune, and a beat the chronicle can show.
+    expect(isPivotalEvent('kiss_rebuffed', ev[0].sentiment)).toBe(true);
     const mood = moods(a).find((m) => m.source === 'kiss_rebuffed');
     expect(mood).toMatchObject({ value: -10, expiresAt: NOW + 4 * 60 });
     expect(moods(b)).toHaveLength(0);

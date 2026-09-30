@@ -17,9 +17,11 @@ import { activityLog, gazetteIssues, worldState, type GazetteArticle } from '../
 import { callOllamaChat } from '../ai/ollama';
 import { CONFIG } from './constants';
 import { TOWN_SETTING } from '../ai/setting';
+import { maturityDirective } from '../ai/contentRating';
 import { renderMessage } from './activityMessage';
 import { storyKey } from './factText';
-import { detectStoryArcs } from './chronicle';
+import { detectStoryArcs, type StoryArc } from './chronicle';
+import { isAdultContent } from './worldRules';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
 import { currentWorldEpoch, isStaleWorldEpoch } from './worldEpoch';
@@ -48,6 +50,20 @@ export interface GazetteMaterial {
    * Optional: fixtures written before it need no change.
    */
   upcoming?: string[];
+}
+
+/** How many of the chronicle's arcs the paper is handed. */
+const MAX_ARCS = 4;
+
+/**
+ * The chronicle's arcs as the paper may read them: hottest first, and never one the town does
+ * not know about (`StoryArc.secret`: a hidden couple's romance or triangle until somebody
+ * beyond the two holds the secret). The player's Stories tab shows those; the Town Crier
+ * printing "Edda and Jonas are involved" about a night nobody saw would be the paper knowing
+ * what only the player may.
+ */
+export function arcsForPaper(arcs: readonly StoryArc[]): Array<{ title: string; summary: string }> {
+  return arcs.filter((a) => !a.secret).slice(0, MAX_ARCS).map((a) => ({ title: a.title, summary: a.summary }));
 }
 
 /** Newsworthy lines logged after `sinceTick`, oldest first, deduplicated. */
@@ -92,9 +108,7 @@ export function gatherMaterial(sinceTick: number): GazetteMaterial {
   }
   const picked = [...byStory.values()].sort((a, b) => a.ts - b.ts);
 
-  const arcs = detectStoryArcs()
-    .slice(0, 4)
-    .map((a) => ({ title: a.title, summary: a.summary }));
+  const arcs = arcsForPaper(detectStoryArcs());
 
   return {
     items: picked.filter((p) => !p.event).map((p) => p.text),
@@ -110,7 +124,11 @@ export function buildGazettePrompt(material: GazetteMaterial, day: number, seaso
 } {
   const section = (title: string, lines: string[]) =>
     lines.length > 0 ? `\n${title}:\n${lines.map((l) => `- ${l}`).join('\n')}\n` : '';
-  const system = `You are the editor of ${GAZETTE_NAME}, the local paper of a small town. ${TOWN_SETTING}
+  // The paper's own discretion holds whatever the rule says (the maturity line still changes what the
+  // model may hint at): no edition ever describes what happens behind a door, and a scandal is a rumour
+  // told by euphemism. The reports below were already filtered to what the town knows (gatherMaterial).
+  const system = `You are the editor of ${GAZETTE_NAME}, the local paper of a small town. ${TOWN_SETTING} ${maturityDirective(isAdultContent())}
+A respectable paper of the time never prints what happens behind a closed door. Report romance and scandal only by hint and euphemism ("keeping company", "was seen leaving a certain house", "the whole town is talking"), as rumour rather than proof, and never describe intimacy or write about anyone under 18 in such a story.
 
 Write the edition for day ${day} (${season}, ${weather}) from these reports — they are the ONLY facts you may use. Do not invent events, people or places; you may add period colour, opinion and wit.
 ${section('What residents did', material.items)}${section('Ongoing stories', material.arcs.map((a) => `${a.title}: ${a.summary}`))}${section('Town happenings', material.events)}${section('Coming up (end the paper with a short notice of these)', material.upcoming ?? [])}

@@ -374,3 +374,123 @@ describe('buildArcs on the game clock', () => {
     expect(arcs[0].lastActivity).toBe(0);
   });
 });
+
+/**
+ * Intimacy in the Stories tab (lib/intimacy/). The player is a spectator and sees every
+ * thread, secret or not; the arcs that would give a hidden couple away carry `secret`, which
+ * the Town Crier drops (gazette.test.ts). Wording stays discreet: nothing here narrates a night.
+ */
+describe('buildArcs and intimacy', () => {
+  const secretFact = (over: Partial<ChronicleInput['secrets'][number]>): ChronicleInput['secrets'][number] => ({
+    id: 1, type: 'affair', subject_id: 2, target_id: 3, content: 'Jonas and Edda are getting suspiciously close',
+    sensitivity: 3, known_by: [2, 3], created_at: 0, is_active: true, reliability: 'confirmed',
+    source: 'committed', is_public: false, revealed_at: null, paid_at: null, ...over,
+  });
+  /** Mara (1) and Jonas (2) are together; Edda (3) is Jonas' lover. */
+  const affairTown = (extra: Partial<ChronicleInput> = {}) => input({
+    relationships: [
+      rel(1, 2, { status: 'partners', romance_ab: 80, romance_ba: 80, tags: ['partner'] }),
+      // Low romance on purpose: the torch-carrying triangle needs > 40, the act does not.
+      rel(2, 3, { status: 'acquaintances', romance_ab: 20, romance_ba: 20, tags: ['kissed', 'lovers'] }),
+    ],
+    events: [evt(2, 3, 'first_tryst', 0.8, 30, { romance_delta_ab: 5, romance_delta_ba: 5 })],
+    ...extra,
+  });
+
+  it('a lover and a spouse make a love triangle, without any torch on the graph', () => {
+    const triangle = buildArcs(affairTown(), NOW).find((a) => a.kind === 'love_triangle');
+    expect(triangle).toBeDefined();
+    expect([...triangle!.participants].sort()).toEqual([1, 2, 3]);
+    // The committed one is the anchor, the lover the outsider.
+    expect(triangle!.title).toBe('Edda, Jonas and Mara');
+    expect(triangle!.summary).toBe('Edda and Jonas are involved, though Jonas is with Mara.');
+    // The beats are the lovers' history: the first night is on the arc.
+    expect(triangle!.beats.map((b) => b.eventType)).toContain('first_tryst');
+  });
+
+  it('is secret while nobody outside the pair knows, and stops being once it is loose', () => {
+    const find = (secrets: ChronicleInput['secrets']) =>
+      buildArcs(affairTown({ secrets }), NOW).find((a) => a.kind === 'love_triangle')!;
+    expect(find([]).secret).toBe(true);
+    // The two of them alone: still a secret.
+    expect(find([secretFact({ known_by: [2, 3] })]).secret).toBe(true);
+    // One witness is a rumour waiting to happen, not the town's business yet.
+    expect(find([secretFact({ known_by: [2, 3, 4] })]).secret).toBe(true);
+    // Two outsiders, or the whole town: out.
+    expect(find([secretFact({ known_by: [2, 3, 1, 4] })]).secret).toBeUndefined();
+    expect(find([secretFact({ known_by: [2, 3], is_public: true })]).secret).toBeUndefined();
+    // A sighting is the same secret from the other side (its knowers are the witnesses only).
+    expect(find([secretFact({ type: 'tryst_seen', known_by: [1, 4] })]).secret).toBeUndefined();
+  });
+
+  it('an old fling of somebody who is now with a third person is not a live triangle when they fell out', () => {
+    const arcs = buildArcs(affairTown({
+      relationships: [
+        rel(1, 2, { status: 'partners', romance_ab: 80, romance_ba: 80, tags: ['partner'] }),
+        rel(2, 3, { status: 'enemies', tags: ['lovers'] }),
+      ],
+    }), NOW);
+    expect(arcs.find((a) => a.kind === 'love_triangle')).toBeUndefined();
+  });
+
+  it('an engaged or married partner counts, and so does a partner found only by tag', () => {
+    const married = buildArcs(affairTown({
+      relationships: [
+        rel(1, 2, { status: 'partners', tags: ['partner', 'married'] }),
+        rel(2, 3, { status: 'acquaintances', tags: ['lovers'] }),
+      ],
+    }), NOW);
+    expect(married.find((a) => a.kind === 'love_triangle')).toBeDefined();
+    // Lovers with nobody else in the picture are a couple, not a triangle.
+    const single = buildArcs(input({
+      relationships: [rel(2, 3, { status: 'partners', romance_ab: 70, romance_ba: 70, tags: ['lovers'] })],
+      events: [evt(2, 3, 'first_tryst', 0.8, 30, { romance_delta_ab: 5, romance_delta_ba: 5 })],
+    }), NOW);
+    expect(single.some((a) => a.kind === 'love_triangle')).toBe(false);
+    expect(single.find((a) => a.kind === 'romance')?.secret).toBeUndefined();
+  });
+
+  it('the hidden couple\'s own romance arc is secret; an open pair of singles is not', () => {
+    const hidden = buildArcs(affairTown({
+      relationships: [
+        rel(1, 2, { status: 'partners', romance_ab: 80, romance_ba: 80, tags: ['partner'] }),
+        rel(2, 3, { status: 'partners', romance_ab: 70, romance_ba: 70, tags: ['partner', 'lovers'] }),
+      ],
+    }), NOW);
+    const arc = hidden.find((a) => a.kind === 'romance' && a.participants.includes(3));
+    expect(arc?.secret).toBe(true);
+    // Mara and Jonas themselves (a public couple with no night on the record) are not secret.
+    expect(hidden.find((a) => a.kind === 'romance' && !a.participants.includes(3))?.secret).toBeUndefined();
+  });
+
+  it('a same-sex couple who spent a night is a secret in 1900 too', () => {
+    const arcs = buildArcs(input({
+      agents: [{ id: 1, name: 'Mara', gender: 'female' }, { id: 3, name: 'Edda', gender: 'female' }],
+      relationships: [rel(1, 3, { status: 'partners', romance_ab: 70, romance_ba: 70, tags: ['partner', 'lovers'] })],
+      events: [evt(1, 3, 'first_tryst', 0.8, 30, { romance_delta_ab: 5, romance_delta_ba: 5 })],
+    }), NOW);
+    expect(arcs.find((a) => a.kind === 'romance')?.secret).toBe(true);
+  });
+
+  it('an unwed pregnancy the town noticed is a scandal arc even when only a couple of people hold it', () => {
+    const arcs = buildArcs(input({
+      secrets: [secretFact({
+        type: 'illegitimate_pregnancy', subject_id: 1, target_id: 2, sensitivity: 3, known_by: [1, 2],
+        content: 'Mara is expecting a child out of wedlock, and Jonas is said to be the father', source: 'observed',
+      })],
+    }), NOW);
+    expect(arcs).toHaveLength(1);
+    expect(arcs[0]).toMatchObject({ kind: 'scandal', title: 'Whispers follow Mara' });
+    expect(arcs[0].secret).toBeUndefined();
+    // Another sensitive secret held by two people is still not a scandal.
+    expect(buildArcs(input({ secrets: [secretFact({ known_by: [2, 3] })] }), NOW).some((a) => a.kind === 'scandal')).toBe(false);
+  });
+
+  it('a tryst seen by three, or an affair the spouse learned of, is a scandal arc', () => {
+    const arcs = buildArcs(input({
+      secrets: [secretFact({ type: 'tryst_seen', subject_id: 3, target_id: 2, known_by: [1, 4, 5] })],
+      agents: [...AGENTS, { id: 5, name: 'Ilse' }],
+    }), NOW);
+    expect(arcs.find((a) => a.kind === 'scandal')?.title).toBe("Edda's secret");
+  });
+});

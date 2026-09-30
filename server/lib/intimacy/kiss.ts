@@ -8,6 +8,7 @@ import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
 import { MILESTONE_TAGS, affairInvolvesMarriage, affairSensitivity } from '../marriage';
 import { committedTo } from './committed';
+import { PIVOTAL_SENTIMENT } from '../storyBeats';
 import { simEvents } from '../simEvents';
 import { getAgentStates, getEffectivePersonality } from '../states';
 import { gameMinutesNow } from '../worldClock';
@@ -250,7 +251,10 @@ export function onKissConversationEnded(p: KissConversationEnded, rng: () => num
 function rebuffKiss(initiator: AgentRow, receiver: AgentRow, now: number): void {
   insertPairEvent(initiator.id, receiver.id, 'kiss_rebuffed',
     `${receiver.name} turned away from ${initiator.name}'s kiss`,
-    { friendshipFrom: -1, friendshipTo: 0, romanceFrom: REBUFF_ROMANCE, romanceTo: REBUFF_ROMANCE }, -0.4);
+    { friendshipFrom: -1, friendshipTo: 0, romanceFrom: REBUFF_ROMANCE, romanceTo: REBUFF_ROMANCE },
+    // Exactly the pivotal line (storyBeats.ts PIVOTAL_SENTIMENT): being turned away is a turning point of the
+    // pair's story, so the chronicle keeps it past the daily prune instead of letting the pining lose its beginning.
+    -PIVOTAL_SENTIMENT);
   addMoodModifier(initiator.id, REBUFF_MOOD, 'kiss_rebuffed', REBUFF_MOOD_MINUTES, now);
 
   logActivity({

@@ -3,8 +3,16 @@ import {
   agents, conversations, relationshipEvents, activityLog, goals,
   locations, economyTransactions, agentStates,
 } from '../../db/schema';
-import { eq, and, gte } from 'drizzle-orm';
+import { eq, and, or, inArray, gte } from 'drizzle-orm';
 import type { EngagementSnapshot, AnalysisWindow } from '../types';
+
+/**
+ * Romantic beats that are drama to a spectator but are typed `relationship` rows, not `drama`
+ * (a `drama` row is gazette-worthy, activityRegistry.ts): a first kiss and an evening together.
+ * The routine repeat `kiss` is texture and stays out. The refusal, the sighting and the
+ * scandal are `drama` rows already.
+ */
+const ROMANTIC_DRAMA_TYPES = ['first_kiss', 'tryst'];
 
 export class EngagementCollector {
   collect(window: AnalysisWindow): EngagementSnapshot {
@@ -123,7 +131,7 @@ export class EngagementCollector {
       metadata: activityLog.metadata,
     }).from(activityLog).where(
       and(
-        eq(activityLog.category, 'drama'),
+        or(eq(activityLog.category, 'drama'), inArray(activityLog.type, ROMANTIC_DRAMA_TYPES)),
         gte(activityLog.timestamp, startTick),
       )
     ).all();

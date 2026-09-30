@@ -8,7 +8,11 @@
  *
  * What makes the cut, most important first:
  *   death > wedding > engagement > a pair turning partners / enemies / estranged
- *   > what the player's meddling came to > the biggest story beats of the span.
+ *   > what the player's meddling came to > a first kiss > the biggest story beats of the span.
+ *   A first kiss is the one romantic milestone that is not already a status flip; a routine
+ *   kiss, an evening together and a refusal are below the importance bar on purpose (the Hearts
+ *   ledger has them), and being seen or a scandal are beats. Every line is the feed's own
+ *   discreet sentence.
  * The paper's headline for the span leads the card when there is one. Picked by
  * importance, then shown in the order it happened: a recap reads as a story.
  */
@@ -37,7 +41,7 @@ export interface RecapHeadline {
   headline: string;
 }
 
-export type RecapKind = 'paper' | 'death' | 'wedding' | 'engagement' | 'status' | 'player' | 'beat';
+export type RecapKind = 'paper' | 'death' | 'wedding' | 'engagement' | 'status' | 'player' | 'romance' | 'beat';
 
 export interface RecapBullet {
   /** Stable React key: the row id, or `paper-<day>`. */
@@ -65,6 +69,8 @@ export const RECAP_MAX_HEADLINES = 2;
 const MAX_PLAYER = 2;
 /** Beats of one family (row type + story beat: gossip, fights, storms…) on one card. */
 const MAX_PER_FAMILY = 2;
+/** A first kiss outranks a generic beat but not the player's own outcomes (70). */
+const FIRST_KISS_PRIORITY = 60;
 /** Rows below this never reach the recap, whatever their kind (the router pre-filters on it). */
 export const RECAP_MIN_IMPORTANCE = 0.6;
 /** A generic beat needs this much to compete with the named kinds above. */
@@ -93,6 +99,8 @@ const NEVER_BEATS = new Set([
 const BEAT_ICONS: Record<string, string> = {
   fight: '⚔', insult: '⚔', snap: '🔥', date: '♥', flirt: '♥', reconciliation: '☘',
   confession: '🤫', gossip: '🤫', breakup: '💔', estrangement: '💔', arrest: '⛓', birthday: '🎂', theft: '💰',
+  // Being seen leaving a house at dawn, and the town's whispers about a baby (lib/intimacy/): a secret out.
+  caught: '🤫', scandal: '🤫',
 };
 const CATEGORY_ICONS: Record<string, string> = {
   world_event: '~', aspiration: '★', goal: '▶', relationship: '♦', social: '💬', drama: '!',
@@ -152,6 +160,7 @@ function classify(row: RecapRow): Candidate | null {
       priority: row.type === 'player_outcome' ? 70 : 55, subject: `player-${row.id}`,
     };
   }
+  if (row.type === 'first_kiss') return { ...base, kind: 'romance', icon: '♥', text: sentence(row), priority: FIRST_KISS_PRIORITY };
   if (NEVER_BEATS.has(row.type) || row.importance < BEAT_MIN_IMPORTANCE) return null;
   const icon = (beat && BEAT_ICONS[beat]) ?? CATEGORY_ICONS[row.category] ?? '·';
   // Below every named kind, ordered among themselves by how much they mattered.
@@ -223,8 +232,8 @@ export function buildRecap({ sinceMinute, untilMinute, rows, headlines = [] }: B
   for (const c of ranked) {
     if (picked.length >= room) break;
     if (c.kind === 'player' && players >= MAX_PLAYER) continue;
-    if (c.kind === 'beat') {
-      // A gossip-heavy day would otherwise be six "The whole town now knows…".
+    if (c.kind === 'beat' || c.kind === 'romance') {
+      // A gossip-heavy day would otherwise be six "The whole town now knows…"; a busy spring, six first kisses.
       const n = perFamily.get(c.family) ?? 0;
       if (n >= MAX_PER_FAMILY) continue;
       perFamily.set(c.family, n + 1);

@@ -32,6 +32,13 @@ export const HOSTILE_EVENTS: ReadonlySet<string> = new Set([
  */
 export const ROMANTIC_EVENTS: ReadonlySet<string> = new Set(['confession', 'seduction', 'gift', 'proposal', 'wedding', 'first_kiss', 'first_tryst']);
 
+/**
+ * The sticky relationship tag once a pair spent a night together (lib/intimacy/aftermath.ts
+ * sets it). Here, in the pure story module, because the chronicle reads it to find a hidden
+ * couple and must not import the intimacy engine (DB, movement, family) for one string.
+ */
+export const LOVERS_TAG = 'lovers';
+
 /** The mend that turns a rivalry into a reconciliation arc. */
 export const MEND_EVENT = 'reconciliation';
 

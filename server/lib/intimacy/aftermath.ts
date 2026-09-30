@@ -5,6 +5,7 @@ import { addMoodModifier } from '../dailyLife';
 import { insertPairEvent, pairRelationship } from '../conversationBeats';
 import { learnFact } from '../gossip';
 import { affairInvolvesMarriage, affairSensitivity } from '../marriage';
+import { LOVERS_TAG } from '../storyBeats';
 import { committedTo } from './committed';
 import { simEvents } from '../simEvents';
 import { getEffectivePersonality, type StateType } from '../states';
@@ -36,8 +37,8 @@ import { getStay, updateAgentIntimacy, updatePairIntimacy } from './state';
 
 // ─── Tuning ──────────────────────────────────────────────────────────────────
 
-/** The sticky relationship tag once a night together happened (contract name). */
-export const LOVERS_TAG = 'lovers';
+/** The sticky relationship tag once a night together happened (contract name; the chronicle reads it from storyBeats.ts). */
+export { LOVERS_TAG };
 
 export const AFTERGLOW_MINUTES = 8 * 60;
 export const AFTERGLOW_MOOD = 6;

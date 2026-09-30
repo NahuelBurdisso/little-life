@@ -20,6 +20,7 @@ import { gameMinutes, MINUTES_PER_DAY } from './gameClock';
 import { ENGAGED_TAG, MARRIED_TAG } from './marriage';
 import {
   HOSTILE_EVENTS,
+  LOVERS_TAG,
   MEND_EVENT,
   PIVOTAL_EVENT_SQL,
   ROMANTIC_EVENTS,
@@ -60,6 +61,13 @@ export interface StoryArc {
   heat: number;
   /** Game minute of the newest dated beat; 0 when none is dated. */
   lastActivity: number;
+  /**
+   * A thread the town does not know about: the player, who watches everything, sees it, but
+   * the Town Crier must not print it (lib/gazette.ts drops these). Set on the arcs that would
+   * give a hidden couple away: lovers who are spoken for elsewhere (or a same-sex pair, in
+   * 1900) until somebody beyond the two holds the secret. Absent (never `false`) otherwise.
+   */
+  secret?: true;
 }
 
 /** Recomputing on every feed invalidation would re-scan five tables per poll. */
@@ -89,6 +97,9 @@ const LATEST_BEATS_SHOWN = 2;
  * week's fade behind it without disappearing.
  */
 const HEAT_HALF_LIFE_GAME_MINUTES = MINUTES_PER_DAY;
+
+/** Fewer holders than this and a sensitive secret is not yet a scandal; some types are one from the start. */
+const SCANDAL_MIN_HOLDERS: Record<string, number> = { illegitimate_pregnancy: 1 };
 
 const ROMANTIC_STATUSES = new Set(['partners', 'romantic_interest', 'complicated']);
 const HOSTILE_STATUSES = new Set(['enemies', 'rivals', 'estranged']);
@@ -198,7 +209,7 @@ export function detectStoryArcs(): StoryArc[] {
   const arcs = buildArcs(
     {
       agents: db
-        .select({ id: agents.id, name: agents.name })
+        .select({ id: agents.id, name: agents.name, gender: agents.gender })
         .from(agents)
         .where(eq(agents.is_active, true))
         .all(),
@@ -217,8 +228,11 @@ export function detectStoryArcs(): StoryArc[] {
 }
 
 export interface ChronicleInput {
-  /** Living agents only — arcs about the departed aren't current stories. */
-  agents: { id: number; name: string }[];
+  /**
+   * Living agents only — arcs about the departed aren't current stories. `gender` is optional
+   * (fixtures need not say): it only matters for telling a hidden same-sex couple.
+   */
+  agents: { id: number; name: string; gender?: string | null }[];
   relationships: typeof relationships.$inferSelect[];
   /** Any order; sorted newest-first (by game minute) in `buildArcs`. */
   events: EventRow[];
@@ -236,6 +250,7 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   if (agentRows.length === 0) return [];
 
   const nameOf = new Map<number, string>(agentRows.map((a) => [a.id, a.name]));
+  const genderOf = new Map<number, string | null>(agentRows.map((a) => [a.id, a.gender ?? null]));
   const relationshipRows = input.relationships;
   const eventRows = [...input.events].sort(newestFirst);
 
@@ -247,6 +262,48 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
     if (bucket) bucket.push(row);
     else eventsByPair.set(key, [row]);
   }
+
+  // --- Who is hiding what (lib/intimacy/) -----------------------------------
+  // Same meaning as intimacy/committed.ts `committedTo`, over the rows already loaded: whom
+  // `id` is with (married, then engaged, then an established partner) other than `except`.
+  const committedElsewhere = (id: number, except: number): number | null => {
+    let best: { id: number; rank: number } | null = null;
+    for (const r of relationshipRows) {
+      if (r.agent_a !== id && r.agent_b !== id) continue;
+      const other = r.agent_a === id ? r.agent_b : r.agent_a;
+      if (other === except || !nameOf.has(other)) continue;
+      const rank = r.tags.includes(MARRIED_TAG) ? 3
+        : r.tags.includes(ENGAGED_TAG) ? 2
+          : r.status === 'partners' || r.tags.includes('partner') ? 1 : 0;
+      if (rank > 0 && (!best || rank > best.rank)) best = { id: other, rank };
+    }
+    return best?.id ?? null;
+  };
+  /**
+   * Whether a hidden pair's affair has got out: an `affair` or `tryst_seen` secret about
+   * exactly the two, public or held by at least two people beyond them. One witness is a
+   * rumour waiting to happen, not yet the town's business (the paper waits for the second).
+   */
+  const affairIsLoose = (x: number, y: number): boolean =>
+    input.secrets.some((f) => {
+      if (!f.is_active || (f.type !== 'affair' && f.type !== 'tryst_seen')) return false;
+      const about = [f.subject_id, f.target_id];
+      if (!about.includes(x) || !about.includes(y)) return false;
+      if (f.is_public) return true;
+      return (f.known_by ?? []).filter((id) => id !== x && id !== y).length >= 2;
+    });
+  const sameSex = (x: number, y: number): boolean => {
+    const gx = genderOf.get(x);
+    const gy = genderOf.get(y);
+    return gx != null && gx === gy;
+  };
+  /** Lovers who must hide it (spoken for elsewhere, or a same-sex pair in 1900: tryst.ts `secret`) and have not been found out. */
+  const isHiddenPair = (rel: { agent_a: number; agent_b: number; tags: string[] }): boolean =>
+    rel.tags.includes(LOVERS_TAG)
+    && !affairIsLoose(rel.agent_a, rel.agent_b)
+    && (committedElsewhere(rel.agent_a, rel.agent_b) != null
+      || committedElsewhere(rel.agent_b, rel.agent_a) != null
+      || sameSex(rel.agent_a, rel.agent_b));
 
   const arcs: StoryArc[] = [];
   const seen = new Set<string>();
@@ -337,6 +394,8 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
         toBeats(pairEvents.filter((e) => e.sentiment < 0 || HOSTILE_EVENTS.has(e.event_type)), now),
       );
     }
+    // A couple the town must not read about yet stays on the player's page, marked for the paper.
+    if (arc && arc.kind === 'romance' && isHiddenPair(rel)) arc.secret = true;
     if (arc) push(arc);
   }
 
@@ -356,6 +415,32 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
       const list = romanceToward.get(rel.agent_a) ?? [];
       list.push({ other: rel.agent_b, score: rel.romance_ba });
       romanceToward.set(rel.agent_a, list);
+    }
+  }
+
+  // Lovers first (their more specific arc wins the shared id): somebody who spent a night with
+  // a person who is not their partner is a triangle whatever the romance numbers say, since
+  // the act, not pining, is what started it. Fallen-out exes (`lovers` is sticky) are not.
+  for (const lov of relationshipRows) {
+    if (!lov.tags.includes(LOVERS_TAG) || HOSTILE_STATUSES.has(lov.status)) continue;
+    if (!nameOf.has(lov.agent_a) || !nameOf.has(lov.agent_b)) continue;
+    for (const [anchor, third] of [[lov.agent_a, lov.agent_b], [lov.agent_b, lov.agent_a]] as const) {
+      const partner = committedElsewhere(anchor, third);
+      if (partner == null) continue;
+      const merged = [
+        ...(eventsByPair.get(pairKey(anchor, partner)) ?? []),
+        ...(eventsByPair.get(pairKey(anchor, third)) ?? []),
+      ].sort(newestFirst);
+      const arc = makeArc(
+        'love_triangle',
+        [anchor, partner, third],
+        `${nameOf.get(third)}, ${nameOf.get(anchor)} and ${nameOf.get(partner)}`,
+        `${nameOf.get(third)} and ${nameOf.get(anchor)} are involved, though ${nameOf.get(anchor)} is with ${nameOf.get(partner)}.`,
+        toBeats(merged, now),
+      );
+      if (!arc) continue;
+      if (!affairIsLoose(anchor, third)) arc.secret = true;
+      push(arc);
     }
   }
 
@@ -426,18 +511,21 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
   for (const secret of input.secrets) {
     if (secret.sensitivity < 3) continue;
     const holders = secret.known_by?.length ?? 0;
-    if (holders < 3) continue;
+    // An unwed pregnancy is only a fact once she shows and the town has been told (a `scandal`
+    // feed row went out with it), so it is a scandal from the first person who holds it.
+    if (holders < (SCANDAL_MIN_HOLDERS[secret.type] ?? 3)) continue;
     if (!nameOf.has(secret.subject_id)) continue;
 
     const participants = [secret.subject_id];
     if (secret.target_id != null && nameOf.has(secret.target_id)) {
       participants.push(secret.target_id);
     }
+    const whispers = secret.type === 'illegitimate_pregnancy';
     const arc = makeArc(
       'scandal',
       participants,
-      `${nameOf.get(secret.subject_id)}'s secret`,
-      `${holders} people know. It will not stay quiet.`,
+      whispers ? `Whispers follow ${nameOf.get(secret.subject_id)}` : `${nameOf.get(secret.subject_id)}'s secret`,
+      holders >= 3 || !whispers ? `${holders} people know. It will not stay quiet.` : 'The town is beginning to talk.',
       [
         {
           gameMinute: null,

@@ -201,3 +201,55 @@ describe('buildRecap', () => {
     expect(r.bullets[1].text).toContain('Wedding bells');
   });
 });
+
+describe('buildRecap and romance', () => {
+  const names = { agent1: 'Ada Finch', agent2: 'Bruno Vale' };
+  const firstKiss = (m: number, a = 4, b = 5, data: Record<string, string> = names) =>
+    row({ type: 'first_kiss', category: 'relationship', importance: 0.65, game_minute: m, initiator_id: a, target_id: b, agent_ids: [a, b], metadata: { beat: 'kiss' }, template_data: data });
+
+  it('a first kiss makes the card, in the feed\'s own discreet words', () => {
+    const r = buildRecap({ sinceMinute: 0, untilMinute: DAY, rows: [firstKiss(100)] });
+    expect(r.bullets).toHaveLength(1);
+    expect(r.bullets[0]).toMatchObject({ kind: 'romance', icon: '♥', text: 'Ada Finch and Bruno Vale shared a first kiss.', agentIds: [4, 5] });
+  });
+
+  it('nothing else of the private side does: a routine kiss, an evening, a refusal', () => {
+    const r = buildRecap({
+      sinceMinute: 0, untilMinute: DAY,
+      rows: [
+        row({ type: 'kiss', category: 'relationship', importance: 0.3, game_minute: 100, agent_ids: [4, 5], template_data: names }),
+        row({ type: 'tryst', category: 'relationship', importance: 0.5, game_minute: 110, agent_ids: [4, 5], template_data: { ...names, venue: 'Ada Cottage' } }),
+        row({ type: 'kiss_rebuffed', category: 'drama', importance: 0.5, game_minute: 120, agent_ids: [4, 5], template_data: names }),
+      ],
+    });
+    expect(r.bullets).toEqual([]);
+  });
+
+  it('being seen and the town\'s whispers are beats, with a hush icon', () => {
+    const r = buildRecap({
+      sinceMinute: 0, untilMinute: DAY,
+      rows: [
+        row({ type: 'caught', importance: 0.75, game_minute: 100, agent_ids: [4, 5, 6], metadata: { beat: 'caught' }, template_data: { ...names, witness: 'Cora Lund', scene: 'dawn' } }),
+        row({ type: 'scandal', importance: 0.85, game_minute: 200, initiator_id: 4, agent_ids: [4], metadata: { beat: 'scandal' }, template_data: { agent1: 'Ada Finch' } }),
+      ],
+    });
+    expect(r.bullets.map((b) => [b.kind, b.icon, b.text])).toEqual([
+      ['beat', '🤫', "Cora Lund saw Ada Finch slipping out of Bruno Vale's house at dawn."],
+      ['beat', '🤫', 'Whispers follow Ada Finch through town.'],
+    ]);
+  });
+
+  it('a first kiss that became a couple is one line, the status flip', () => {
+    const r = buildRecap({ sinceMinute: 0, untilMinute: DAY, rows: [firstKiss(100, 2, 3), status(300, 'partners')] });
+    expect(r.bullets.map((b) => b.kind)).toEqual(['status']);
+  });
+
+  it('keeps first kisses to two a card so a spring of them is not the whole recap', () => {
+    const r = buildRecap({
+      sinceMinute: 0, untilMinute: DAY,
+      rows: [10, 12, 14, 16].map((a, i) =>
+        firstKiss(100 * (i + 1), a, a + 1, { agent1: `Lover ${a}`, agent2: `Beloved ${a + 1}` })),
+    });
+    expect(r.bullets.filter((b) => b.kind === 'romance')).toHaveLength(2);
+  });
+});
