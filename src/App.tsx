@@ -50,6 +50,7 @@ import { useToolbarCollapsed } from "./hooks/useToolbarCollapsed";
 import { toolbarClearance } from "./lib/toolbarLayout";
 import { useRecap } from "./hooks/useRecap";
 import { RecapCard } from "./components/ui/RecapCard";
+import { recapAutoDismissMs, recapVisible } from "./lib/recapDisplay";
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -465,6 +466,8 @@ export default function App() {
               openJournal("timeline");
             }}
             onDismiss={dismissRecap}
+            autoDismissMs={recapAutoDismissMs(autoCut)}
+            hidden={!recapVisible({ directorOn: autoCut, captionShown: director.caption != null })}
           />
           {/* Tools strip: bottom-right of the map, folds into an icon rail */}
           <FloatingToolbar
