@@ -24,6 +24,7 @@ import { isMarriedTags } from '../../lib/marriage';
 import {
   completeGoal, describeGoal, recordGoalOutcome, HOSTILE_CHAT, WARM_CHAT, type GoalOutcome,
 } from '../../lib/goals/goalProgress';
+import { firstName as givenName } from '../../ai/names';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -455,7 +456,8 @@ const RECOVERED_COUNTS_AS_DONE = 0.3;
 
 function targetFirstName(targetId: number | null): string | null {
   if (targetId == null) return null;
-  return db.select({ name: agents.name }).from(agents).where(eq(agents.id, targetId)).get()?.name.split(' ')[0] ?? null;
+  const name = db.select({ name: agents.name }).from(agents).where(eq(agents.id, targetId)).get()?.name;
+  return name ? givenName(name) : null;
 }
 
 /**

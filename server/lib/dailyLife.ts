@@ -25,6 +25,7 @@ import { simEvents } from './simEvents';
 import { chancePerTick } from './gameClock';
 import { insertPairEvent } from './conversationBeats';
 import type { PersonalityProfile } from './personality';
+import { firstName as givenName } from '../ai/names';
 
 export type Rng = () => number;
 
@@ -254,12 +255,12 @@ export function dailyLifeHourly(hour: number, weather: string, nowMinutes: numbe
       states: statesByAgent.get(agent.id) ?? [],
       companionHere: companion != null,
     };
-    const first = agent.name.split(' ')[0];
+    const first = givenName(agent.name);
 
     if (tickRng() < chancePerTick(stressorChancePerMinute(personality), 60)) {
       const m = pickMoment(STRESSORS, ctx, tickRng);
       if (m?.key === 'money_quarrel' && companion) {
-        const otherFirst = companion.name.split(' ')[0];
+        const otherFirst = givenName(companion.name);
         const line = `${first} and ${otherFirst} quarrelled over money.`;
         applyMoment(agent, { ...m, feedLine: line }, nowMinutes, { relatedAgentId: companion.id, location: here });
         applyMoment(companion, { ...m, feedLine: line }, nowMinutes, { relatedAgentId: agent.id, location: here });

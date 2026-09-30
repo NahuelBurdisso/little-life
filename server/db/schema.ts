@@ -525,7 +525,7 @@ export const activityLog = sqliteTable(
     source_type: text('source_type'),
     source_id: integer('source_id'),
     severity: real('severity'),
-    metadata: text('metadata', { mode: 'json' }).$type<{ chainId?: string; chainDepth?: number; ruleId?: string; beat?: string } | null>(),
+    metadata: text('metadata', { mode: 'json' }).$type<{ chainId?: string; chainDepth?: number; ruleId?: string; beat?: string; factId?: number } | null>(),
     timestamp: integer('timestamp').notNull(),
     // GAME MINUTE the row was logged at (`gameMinutes(world.time)`) — what the
     // town timeline groups into days. `timestamp` is a TICK count, and a tick is

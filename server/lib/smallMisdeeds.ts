@@ -29,6 +29,7 @@ import { chancePerTick } from './gameClock';
 import { createFact, getAgentSelf } from './gossip';
 import { thatSentence } from './factText';
 import type { PersonalityProfile } from './personality';
+import { firstName as givenName } from '../ai/names';
 
 export type Rng = () => number;
 
@@ -143,7 +144,7 @@ export function pickMisdeed(c: MisdeedContext, rng: Rng = Math.random): Misdeed 
 // ─── Effects ──────────────────────────────────────────────────────────────────
 
 type AgentRow = typeof agents.$inferSelect;
-const firstName = (a: { name: string }) => a.name.split(' ')[0];
+const firstName = (a: { name: string }) => givenName(a.name);
 const isAwake = (a: AgentRow) => (a.current_action as { type?: string } | null)?.type !== 'sleeping';
 
 /** Once per game hour; returns how many new facts it created (tests). */

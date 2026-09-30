@@ -72,3 +72,26 @@ describe('titled townsfolk in dialogue', () => {
     expect(gist?.quote).toBe('I lied to you about the money, and I am so sorry.');
   });
 });
+
+describe('names — nobody rolls their own first name', () => {
+  // Playtest #4: "Dr. has made up their mind to learn something new this season."
+  // Thirteen modules took `name.split(' ')[0]`; they all go through firstName now.
+  it('no server module takes the first word of a name by hand', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const root = join(__dirname, '..', '..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          if (entry !== '__tests__' && entry !== 'node_modules') walk(full);
+        } else if (full.endsWith('.ts') && !full.endsWith(join('ai', 'names.ts'))) {
+          if (readFileSync(full, 'utf8').includes(".split(' ')[0]")) offenders.push(full);
+        }
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
+  });
+});

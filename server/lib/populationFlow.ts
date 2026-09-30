@@ -64,6 +64,7 @@ import { makeRng, stringToSeed } from './worldgen/rng';
 import { startWorldEvent } from '../engine/systems/events';
 import { emitter } from '../engine/emitter';
 import { asNumber, asRecord, type SnapshotStore } from '../engine/snapshotCodec';
+import { firstName as givenName } from '../ai/names';
 
 // ─── Tuning ──────────────────────────────────────────────────────────────────
 
@@ -485,7 +486,7 @@ function nameOf(id: number): string {
 }
 
 function firstName(name: string): string {
-  return name.split(' ')[0];
+  return givenName(name);
 }
 
 // ─── The daily pass ──────────────────────────────────────────────────────────
