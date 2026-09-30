@@ -238,11 +238,25 @@ export function reactToPartnerAffair(discoverer: BeatAgent, partner: BeatAgent, 
   // close" has Ben as subject when Ben strayed and as target when it was Ana. Matching only the
   // subject missed half of them. A fact the discoverer is themselves part of (their own
   // courtship with this very partner, or with anyone) is not a betrayal by the partner.
+  //
+  // Once per betrayal: a partner who forgave stays `partners`, so without this the same fact matched at every
+  // later conversation (a soak logged 96 discoveries for ~25 pairs, 8 for one, each a new memory, a pivotal
+  // beat and another -30 trust). The pair's own `affair_discovered` beat, by this discoverer, marks when they
+  // reacted (events and facts both stamp real ms): only a fact born after it is news. A loyal partner who
+  // forgave one affair still meets the next one as a new betrayal.
+  const lastReaction = db.select({ ts: relationshipEvents.timestamp }).from(relationshipEvents)
+    .where(and(
+      eq(relationshipEvents.event_type, 'affair_discovered'),
+      eq(relationshipEvents.agent_a, Math.min(discoverer.id, partner.id)),
+      eq(relationshipEvents.agent_b, Math.max(discoverer.id, partner.id)),
+      eq(relationshipEvents.description, `${discoverer.name} found out about ${partner.name}'s affair`),
+    )).all().reduce((latest, e) => Math.max(latest, e.ts), -Infinity);
   const affairFacts = db.select().from(shared_knowledge)
     .where(and(eq(shared_knowledge.type, 'affair'), eq(shared_knowledge.is_active, true),
       or(eq(shared_knowledge.subject_id, partner.id), eq(shared_knowledge.target_id, partner.id)))).all()
     .filter((f) => f.subject_id !== discoverer.id && f.target_id !== discoverer.id)
-    .filter((f) => (f.known_by as number[]).includes(discoverer.id));
+    .filter((f) => (f.known_by as number[]).includes(discoverer.id))
+    .filter((f) => f.created_at > lastReaction);
   if (affairFacts.length === 0) return false;
   return applyAffairFallout(discoverer, partner, partnerRel, nowMinutes);
 }

@@ -71,6 +71,8 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  // The pair's own discovery beats mark when it last reacted: a test's leftovers must not mute the next one.
+  db.delete(relationshipEvents).where(or(inArray(relationshipEvents.agent_a, ids), inArray(relationshipEvents.agent_b, ids))).run();
   db.delete(agentStates).where(inArray(agentStates.agent_id, ids)).run();
   db.delete(shared_knowledge).where(or(inArray(shared_knowledge.subject_id, ids), inArray(shared_knowledge.target_id, ids))).run();
   db.delete(relationships).where(or(inArray(relationships.agent_a, ids), inArray(relationships.agent_b, ids))).run();
@@ -173,6 +175,48 @@ describe('what discovering an affair leaves behind', () => {
       expect(Math.abs(beats[0].sentiment)).toBeGreaterThanOrEqual(0.5);
     });
   }
+
+  // A 30-day soak logged 96 `affair_discovered` beats for about 25 pairs (8 for one pair): a partner who forgave
+  // (loyal, not aggressive) stayed partnered, so the same fact matched at EVERY later conversation with the
+  // partner, each time a new memory, a pivotal beat and another -30 trust.
+  it('a forgiven affair is reacted to once: the same fact does not hurt again at the next talk', () => {
+    const forgiving = { aggression: 10, loyalty: 90 };
+    const fact = createFact('affair', partner, lover, 3, [discoverer], 'observed');
+    db.update(shared_knowledge).set({ created_at: 1 }).where(eq(shared_knowledge.id, fact!)).run();
+    const before = storyBeats().length;
+    const trust = () => pairRelationship(discoverer, partner)!.trust_ab;
+
+    expect(reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', forgiving), beat(partner, 'Percival Ashby'), 1000)).toBe(true);
+    expect(trust()).toBe(20);
+    expect(reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', forgiving), beat(partner, 'Percival Ashby'), 1100)).toBe(false);
+    expect(reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', forgiving), beat(partner, 'Percival Ashby'), 1200)).toBe(false);
+    expect(storyBeats().length - before).toBe(1);
+    expect(trust()).toBe(20);
+  });
+
+  it('... but a NEW affair after the forgiveness is a new betrayal', () => {
+    const forgiving = { aggression: 10, loyalty: 90 };
+    const first = createFact('affair', partner, lover, 3, [discoverer], 'observed');
+    db.update(shared_knowledge).set({ created_at: 1 }).where(eq(shared_knowledge.id, first!)).run();
+    const before = storyBeats().length;
+    const go = () => reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', forgiving), beat(partner, 'Percival Ashby'), 1000);
+    expect(go()).toBe(true);
+    expect(go()).toBe(false);
+    const second = createFact('affair', partner, other, 3, [discoverer], 'observed');
+    db.update(shared_knowledge).set({ created_at: Date.now() + 60_000 }).where(eq(shared_knowledge.id, second!)).run();
+    expect(go()).toBe(true);
+    expect(storyBeats().length - before).toBe(2);
+  });
+
+  it('the other partner discovering their own side is not muted by the first discovery', () => {
+    const forgiving = { aggression: 10, loyalty: 90 };
+    const theirs = createFact('affair', discoverer, other, 3, [partner], 'observed');
+    db.update(shared_knowledge).set({ created_at: 1 }).where(eq(shared_knowledge.id, theirs!)).run();
+    const mine = createFact('affair', partner, lover, 3, [discoverer], 'observed');
+    db.update(shared_knowledge).set({ created_at: 1 }).where(eq(shared_knowledge.id, mine!)).run();
+    expect(reactToPartnerAffair(beat(discoverer, 'Delphine Ashby', forgiving), beat(partner, 'Percival Ashby'), 1000)).toBe(true);
+    expect(reactToPartnerAffair(beat(partner, 'Percival Ashby', forgiving), beat(discoverer, 'Delphine Ashby'), 1000)).toBe(true);
+  });
 
   it('nothing at all without a personality to react with', () => {
     createFact('affair', partner, lover, 3, [discoverer], 'observed');
