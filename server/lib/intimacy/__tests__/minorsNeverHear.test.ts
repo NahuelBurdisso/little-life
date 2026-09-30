@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import { agents, locations, shared_knowledge } from '../../../db/schema';
-import { getShareableFacts, isAdultsOnlyFact, createFact } from '../../gossip';
+import { getShareableFacts, createFact } from '../../gossip';
+import { isAdultsOnlyFact } from '../eligibility';
 import { gossipTick } from '../../../engine/systems/gossipEngine';
 import { onlookersNear, witnessesOf } from '../witnesses';
 import type { PersonalityProfile } from '../../personality';

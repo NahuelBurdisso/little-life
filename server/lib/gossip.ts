@@ -9,7 +9,7 @@ import { thatSentence, type FactSelf } from './factText';
 import { gameMinutesNow } from './worldClock';
 import { affairInvolvesMarriage, affairSensitivity } from './marriage';
 import { recordGoalOutcome } from './goals/goalProgress';
-import { isAdultAge } from './intimacy/eligibility';
+import { isAdultAge, isAdultsOnlyFact } from './intimacy/eligibility';
 
 // ─── Fact Content Templates ───────────────────────────────────────────────────
 
@@ -479,21 +479,6 @@ export function getHiddenSinCount(agentId: number): number {
 }
 
 // ─── Romance a minor is never told, and never tells ──────────────────────────
-
-/** Fact types that are about love or a night together: never passed to or from someone under 18. */
-const ADULTS_ONLY_FACT_TYPES: readonly string[] = [
-  'kiss_seen', 'tryst_seen', 'illegitimate_pregnancy', 'affair', 'seduction', 'paternity',
-];
-
-/**
- * Whether this fact is about romance or intimacy, so that a minor may neither hear
- * it nor pass it on. Beyond the listed types, a `pregnancy` at sensitivity 3 is an
- * unwed one (family.ts creates it at 3 when unwed, 2 when married): the married
- * kind is family news a child may hear, the unwed kind is the scandal.
- */
-export function isAdultsOnlyFact(fact: { type: string; sensitivity: number }): boolean {
-  return ADULTS_ONLY_FACT_TYPES.includes(fact.type) || (fact.type === 'pregnancy' && fact.sensitivity >= 3);
-}
 
 /** Fail closed: an unknown agent or a missing age is not an adult. */
 function isAdultAgent(agentId: number): boolean {

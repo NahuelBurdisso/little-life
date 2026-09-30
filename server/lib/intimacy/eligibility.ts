@@ -64,3 +64,23 @@ export function isIntimacyEligible(a: IntimacyParty, b: IntimacyParty): boolean 
 export function isAdultAge(age: unknown): boolean {
   return typeof age === 'number' && Number.isFinite(age) && age >= INTIMACY_MIN_AGE;
 }
+
+/**
+ * Fact types that are about love or a night together: never passed to or from someone
+ * under 18. Kept here, beside the age line, because it is pure: the gossip paths and
+ * the startup repair (db/minorRomanceRepair.ts, which cannot import the DB-bound
+ * gossip module) share it.
+ */
+const ADULTS_ONLY_FACT_TYPES: readonly string[] = [
+  'kiss_seen', 'tryst_seen', 'illegitimate_pregnancy', 'affair', 'seduction', 'paternity',
+];
+
+/**
+ * Whether this fact is about romance or intimacy, so that a minor may neither hear
+ * it nor pass it on. Beyond the listed types, a `pregnancy` at sensitivity 3 is an
+ * unwed one (family.ts creates it at 3 when unwed, 2 when married): the married
+ * kind is family news a child may hear, the unwed kind is the scandal.
+ */
+export function isAdultsOnlyFact(fact: { type: string; sensitivity: number }): boolean {
+  return ADULTS_ONLY_FACT_TYPES.includes(fact.type) || (fact.type === 'pregnancy' && fact.sensitivity >= 3);
+}

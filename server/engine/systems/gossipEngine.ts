@@ -27,8 +27,8 @@ import { logActivity } from '../../lib/activityLogger';
 import { getAgentStates } from '../../lib/states';
 import { aggregateEventEffects } from '../../data/worldEventCatalog';
 import { thatSentence } from '../../lib/factText';
-import { isAdultsOnlyFact, isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
-import { isAdultAge } from '../../lib/intimacy/eligibility';
+import { isOwnSecret, mayBeToldTo, rumorReachedSubject } from '../../lib/gossip';
+import { isAdultAge, isAdultsOnlyFact } from '../../lib/intimacy/eligibility';
 import { chancePerTick } from '../../lib/gameClock';
 import { recordGoalOutcome } from '../../lib/goals/goalProgress';
 

@@ -16,6 +16,7 @@ import { runStartupSteps } from './startupSteps';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
 import { backfillOrientations, repairOrientationConflicts } from './orientationBackfill';
+import { repairMinorRomance } from './minorRomanceRepair';
 import { CONFIG } from '../lib/constants';
 import { nameHomes } from '../lib/homeNames';
 import path from 'path';
@@ -427,6 +428,9 @@ export function initSchema(): void {
     // Every start: an older assignment could roll `gay` for a man seeded in love
     // with a woman; widen those to bi (adults only, a no-op once healed).
     () => { repairOrientationConflicts(sqlite); },
+    // Every start and save load: worlds from before the adults-only rule may still
+    // hold romance, romantic states or facts naming a minor. Idempotent, no-op for a town of adults.
+    () => { repairMinorRomance(sqlite); },
     // Every start and save load; renames only houses still called `Home N`
     // after their residents, so a no-op once a world is named (homeNames.ts).
     () => { nameHomes(sqlite, { onlyGeneric: true }); },
