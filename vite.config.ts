@@ -5,6 +5,16 @@ import { configDefaults } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    watch: {
+      // Agent worktrees (.claude/worktrees/*, each a full checkout with a
+      // node_modules junction) and the SQLite files under data/ (rewritten every
+      // tick, plus saves and test-worker copies) are not client sources. With
+      // dozens of worktrees the watcher crawled them all: the dev server sat at
+      // 100% CPU and single modules took 20–36 s to serve.
+      ignored: ["**/.claude/**", "**/data/**"],
+    },
+  },
   test: {
     // `setupInitialize.test.ts` calls setupRouter.initialize, which clears every
     // table. Without this override `server/db` falls back to the DATABASE_PATH in
