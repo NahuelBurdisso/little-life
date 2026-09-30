@@ -41,6 +41,7 @@ import { itemPhrase } from '../../data/economyData';
 import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { HEALER_JOBS } from '../../lib/careers';
+import { rollStateDuration } from '../../lib/stateDurations';
 import {
   asRecord,
   listMapToRecord,
@@ -1511,26 +1512,10 @@ function applyCascades(
     // Check if this state already exists for the agent
     if (ctx.states.find(cascade.agentId, cascade.stateType)) continue;
 
-    let duration: number;
     let severity = cascade.severity ?? 0.5;
-
-    switch (cascade.stateType) {
-      case 'hungover':
-        duration = Math.floor(180 + Math.random() * 180); // 3-6 hours
-        break;
-      case 'angry':
-        duration = Math.floor(180 + Math.random() * 540); // 3-12 hours
-        break;
-      case 'depressed':
-        duration = 999999;
-        break;
-      case 'sick':
-        duration = Math.floor(360 + Math.random() * 720); // 6-18 hours
-        break;
-      default:
-        duration = 240;
-        break;
-    }
+    // Shared with the ripple engine's cascade states (lib/stateDurations.ts):
+    // hungover 3-6 h, angry 3-12 h, sick 6-18 h, depressed open-ended.
+    const duration = rollStateDuration(cascade.stateType) ?? 240;
 
     db.insert(agentStates)
       .values({

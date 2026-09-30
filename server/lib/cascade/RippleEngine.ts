@@ -11,6 +11,7 @@ import { describeWitnessedAct, type WitnessAmplifier } from './WitnessAmplifier'
 import type { TensionTracker } from './TensionTracker';
 import { logActivity } from '../activityLogger';
 import { gameMinutesNow } from '../worldClock';
+import { rollStateDuration } from '../stateDurations';
 import { getRules, type LiveRules } from '../worldRules';
 import { rippleProbabilityScale } from './ruleTone';
 import { mayRomanceGrow } from '../intimacy/attraction';
@@ -784,9 +785,14 @@ export class RippleEngine {
           agent_id: agentId,
           type: fx.createState,
           severity: 0.5,
-          // Agent states run on game minutes (lib/states.ts).
+          // Agent states run on game minutes (lib/states.ts). The native length
+          // for the type (lib/stateDurations.ts): a flat 120 made a cascade
+          // heartbreak last two hours instead of days, and a cascade `angry`
+          // never reached the 480-minute grudge conversion. 120 stays the
+          // fallback for types the table has no length for (the conditional-
+          // exit ones never read it).
           started_at: gameMinutesNow(),
-          duration: 120,
+          duration: rollStateDuration(fx.createState) ?? 120,
           target_agent_id: aboutId,
           source: `cascade:${rule.id}`,
           metadata: { _cascade: { chainId: metadata.chainId, chainDepth: metadata.chainDepth, ruleId: rule.id } },
