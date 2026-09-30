@@ -101,6 +101,8 @@ const BEAT_ICONS: Record<string, string> = {
   confession: '🤫', gossip: '🤫', breakup: '💔', estrangement: '💔', arrest: '⛓', birthday: '🎂', theft: '💰',
   // Being seen leaving a house at dawn, and the town's whispers about a baby (lib/intimacy/): a secret out.
   caught: '🤫', scandal: '🤫',
+  // The small rows that used to go untagged (lib/tavernEngine.ts, lonelinessEngine.ts, states.ts).
+  release: '🔓', drunk: '🍺', outburst: '❗', blackmail: '✉', lonely: '☁',
 };
 const CATEGORY_ICONS: Record<string, string> = {
   world_event: '~', aspiration: '★', goal: '▶', relationship: '♦', social: '💬', drama: '!',

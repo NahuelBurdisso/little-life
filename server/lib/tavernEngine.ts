@@ -104,6 +104,7 @@ export function tavernTick(nowMinutes: number): void {
         type: 'drama',
         initiator: agent.id,
         templateData: { description: `${agent.name} is getting tipsy at the tavern` },
+        metadata: { beat: 'drunk' },
       });
     }
 
@@ -128,6 +129,7 @@ export function tavernTick(nowMinutes: number): void {
           type: 'drama',
           initiator: agent.id,
           templateData: { description: `${agent.name} is now drunk at the tavern!` },
+          metadata: { beat: 'drunk' },
         });
       }
     }
@@ -145,6 +147,7 @@ export function tavernTick(nowMinutes: number): void {
         type: 'drama',
         initiator: agent.id,
         templateData: { description: outbursts[Math.floor(Math.random() * outbursts.length)] },
+        metadata: { beat: 'outburst' },
       });
       adjustReputation(agent.id, -2);
     }

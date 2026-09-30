@@ -339,6 +339,8 @@ const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
   kiss: 'romance', kiss_rebuffed: 'sad',
   // A night together is private: no chime. Being seen leaving at dawn is a whispered secret.
   tryst: null, caught: 'whisper', scandal: 'whisper',
+  // Small everyday rows (a release, a tipsy night, a lonely week): the town's background, no cue.
+  release: null, drunk: null, outburst: null, blackmail: null, lonely: null,
 };
 
 /** Row types that carry their own cue regardless of `metadata.beat`. */

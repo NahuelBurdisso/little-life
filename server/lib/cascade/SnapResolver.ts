@@ -13,6 +13,7 @@ import { agents, needs, agentStates, locations } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { simEvents } from '../simEvents';
 import { logActivity } from '../activityLogger';
+import { dominantGrievance } from './TensionTracker';
 import { gameMinutesNow } from '../worldClock';
 
 export interface SnapPromptContext {
@@ -112,23 +113,33 @@ export class SnapResolver {
   async executeSnapAction(
     agentId: number,
     action: SnapAction,
-    _tensionSources: Array<{ event: string; description: string; tick: number }>,
+    tensionSources: Array<{ event: string; description: string; tick: number; agentInvolved?: string }>,
     metadata: Record<string, unknown>
   ): Promise<void> {
-    const agentRow = db.select({ name: agents.name, home: agents.home })
+    const agentRow = db.select({ name: agents.name, home: agents.home, current_location: agents.current_location })
       .from(agents).where(eq(agents.id, agentId)).get();
     const agentName = agentRow?.name ?? `Agent#${agentId}`;
+    // Who the grievances were about, if anyone. Every write below is a small sync
+    // statement: this runs outside the tick's transaction (after the model's answer),
+    // so nothing here may hold one open across an await.
+    const culprit = this.findCulprit(agentId, tensionSources);
 
     switch (action) {
       case 'confront': {
-        // Find the most mentioned agent in tension sources
+        // Same shape as emitFightBeat (conversationBeats.ts): the doer is the perpetrator and
+        // the culprit the victim, which is the direction goals.ts reads to credit a
+        // 'fought_target' outcome. Without both ids it drops the event, so a confrontation
+        // that named nobody moved no goal and no relationship.
         simEvents.emit('interaction:completed', {
           agentId,
+          ...(culprit ? { perpetratorId: agentId, victimId: culprit.id } : {}),
           action: 'confrontation',
+          locationId: agentRow?.current_location ?? null,
           _cascade: metadata,
         });
-        logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} snapped and confronted someone!` }, metadata: { beat: 'snap' } });
+        logActivity({ type: 'drama', initiator: agentId, ...(culprit ? { target: culprit.id } : {}),
+          templateData: { description: culprit ? `${agentName} snapped and confronted ${culprit.name}!` : `${agentName} snapped and confronted someone!` },
+          metadata: { beat: 'snap' } });
         break;
       }
       case 'flee': {
@@ -146,24 +157,34 @@ export class SnapResolver {
           }
         }
         logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} snapped and fled home in distress` } });
+          templateData: { description: `${agentName} snapped and fled home in distress` }, metadata: { beat: 'outburst' } });
         break;
       }
       case 'plot': {
         // Create stressed state + emit plot event
-        const existingStressed = db.select({ id: agentStates.id }).from(agentStates)
+        const existingStressed = db.select({ id: agentStates.id, target: agentStates.target_agent_id }).from(agentStates)
           .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, 'angry'))).get();
-        if (!existingStressed) {
+        if (existingStressed) {
+          // An angry state with no target never trips the revenge trigger
+          // (goalRegistry: angry + has_target), so aim the one already there.
+          if (culprit && existingStressed.target == null) {
+            db.update(agentStates).set({ target_agent_id: culprit.id })
+              .where(eq(agentStates.id, existingStressed.id)).run();
+          }
+        } else {
           // `started_at: 0` made the state already 240+ minutes old on insert, so
           // the very next states tick expired it and the plot never happened.
           // State clock is game minutes, not the cascade's tick.
           db.insert(agentStates).values({
             agent_id: agentId, type: 'angry', severity: 0.7,
             started_at: gameMinutesNow(), duration: 240, source: 'snap:plot', metadata: {},
+            // The plot is AGAINST someone: this target is what lets goals.ts open a revenge goal.
+            target_agent_id: culprit?.id ?? null,
           }).run();
         }
         logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} snapped quietly and began plotting revenge` } });
+          templateData: { description: culprit ? `${agentName} snapped quietly and began plotting revenge on ${culprit.name}` : `${agentName} snapped quietly and began plotting revenge` },
+          metadata: { beat: 'misdeed' } });
         break;
       }
       case 'breakdown': {
@@ -178,7 +199,7 @@ export class SnapResolver {
         }
         simEvents.emit('state:triggered', { agentId, state: 'stressed', source: 'snap:breakdown' });
         logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} had a public emotional breakdown!` } });
+          templateData: { description: `${agentName} had a public emotional breakdown!` }, metadata: { beat: 'outburst' } });
         break;
       }
       case 'lash_out': {
@@ -207,10 +228,24 @@ export class SnapResolver {
           }).where(eq(needs.agent_id, agentId)).run();
         }
         logActivity({ type: 'drama', initiator: agentId,
-          templateData: { description: `${agentName} snapped and spiraled into self-destructive behavior` } });
+          templateData: { description: `${agentName} snapped and spiraled into self-destructive behavior` }, metadata: { beat: 'outburst' } });
         break;
       }
     }
+  }
+
+  /**
+   * The active resident the grievances were mostly about, or null (no source named
+   * anyone, the name is nobody in town any more, or it is the snapper themself).
+   * `agentInvolved` is a NAME, so it is looked up among ACTIVE agents: a departed or
+   * dead culprit must not become a revenge target.
+   */
+  private findCulprit(agentId: number, sources: Array<{ agentInvolved?: string }>): { id: number; name: string } | null {
+    const top = dominantGrievance(sources as Parameters<typeof dominantGrievance>[0]);
+    if (!top) return null;
+    const row = db.select({ id: agents.id, name: agents.name }).from(agents)
+      .where(and(eq(agents.name, top.name), eq(agents.is_active, true))).get();
+    return row && row.id !== agentId ? row : null;
   }
 
   /** Random active agent sharing the snapping agent's location, or null. */

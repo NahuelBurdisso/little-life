@@ -22,6 +22,30 @@ export function snapThreshold(personality: PersonalityProfile): number {
   return Math.max(55, Math.min(125, base - neuroReduction - impulseReduction + moralityBoost + warmthBoost));
 }
 
+/**
+ * The person most of a resident's grievances are about, if any grievance names
+ * one (`agentInvolved`, set by the ripple engine where the cause is another
+ * resident). `share` is their fraction of ALL the sources, so a name on one
+ * of five reads "partly" and not "mostly". Ties go to the newest.
+ *
+ * Free-standing and pure: the Brewing readout (lib/brewing.ts) names the person
+ * with it, and the snap resolver aims a confrontation / revenge at the same one,
+ * so the card and what the resident then does can never disagree.
+ */
+export function dominantGrievance(sources: TensionState['sources']): { name: string; share: number } | null {
+  const counts = new Map<string, number>();
+  for (const s of sources) {
+    if (s.agentInvolved) counts.set(s.agentInvolved, (counts.get(s.agentInvolved) ?? 0) + 1);
+  }
+  let best: { name: string; count: number } | null = null;
+  // Oldest first, `>=`: a later (newer) name wins a tie.
+  for (const s of sources) {
+    const count = s.agentInvolved ? counts.get(s.agentInvolved)! : 0;
+    if (s.agentInvolved && (!best || count >= best.count)) best = { name: s.agentInvolved, count };
+  }
+  return best ? { name: best.name, share: best.count / sources.length } : null;
+}
+
 export class TensionTracker {
   private states: Map<number, TensionState> = new Map();
 

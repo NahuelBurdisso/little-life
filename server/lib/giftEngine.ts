@@ -474,6 +474,7 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
       templateData: {
         description: `${witnessName} saw ${giverName} giving a gift to ${receiverName} and feels jealous`,
       },
+      metadata: { beat: 'outburst' },
     });
 
     simEvents.emit('jealousy:triggered', {

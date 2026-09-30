@@ -376,6 +376,7 @@ function expireTimedStates(
         templateData: {
           description: `${agent.name} was released from prison after ${Math.round(state.duration / 60)} hours.`,
         },
+        metadata: { beat: 'release' },
       });
     } else {
       logActivity({
@@ -407,7 +408,7 @@ function exposeBlackmailOnDayChange() {
       // Self-expose: make the secret public, deactivate blackmail
       db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, fact.id)).run();
       simEvents.emit('state:triggered', { agentId: victimId, state: 'relieved', cause: 'exposed blackmail secret publicly' });
-      logActivity({ type: 'drama', initiator: victimId, templateData: { description: `${victim.name} publicly exposed their blackmailer's leverage, ending the blackmail.` } });
+      logActivity({ type: 'drama', initiator: victimId, templateData: { description: `${victim.name} publicly exposed their blackmailer's leverage, ending the blackmail.` }, metadata: { beat: 'blackmail' } });
     }
   }
 }
@@ -2126,6 +2127,7 @@ function processStateEffects(
             initiator: agent.id,
             target: loc.owner ?? undefined,
             templateData: { description: `${agent.name} was caught stealing from ${loc.name}!` },
+            metadata: { beat: 'theft' },
           });
 
           // Observation memories for witnesses
@@ -2365,6 +2367,7 @@ function processStateEffects(
                 initiator: agent.id,
                 target: opponent.id,
                 templateData: { description: `${agent.name} and ${opponent.name} gambled at the tavern — ${agentWins ? agent.name : opponent.name} won $${betAmount}` },
+                metadata: { beat: 'drunk' },
               });
               simEvents.emit('economy:gambling', { agentId: agent.id, amount: betAmount, won: agentWins, opponentName: opponent.name });
               gamblingCooldowns.set(pairKey, nowMinutes);
@@ -2458,6 +2461,7 @@ function processStateEffects(
           initiator: agent.id,
           target: target.id,
           templateData: { description: `${agent.name} started spreading rumors about ${target.name}.` },
+          metadata: { beat: 'gossip' },
         });
       }
     }

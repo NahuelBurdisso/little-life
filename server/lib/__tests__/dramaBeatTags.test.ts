@@ -45,6 +45,16 @@ describe('drama beat vocabulary: intimacy beats', () => {
   });
 });
 
+describe('drama beat vocabulary: the small everyday rows', () => {
+  it('knows the beats that untagged rows now carry, and draws nothing for them', () => {
+    for (const b of ['release', 'drunk', 'outburst', 'blackmail', 'lonely']) {
+      expect(isDramaBeat(b), b).toBe(true);
+      // They never had a picture (their wording matched nothing in beatDetect); tagging must not add one.
+      expect(DRAMA_BEAT_KIND[b as DramaBeat], b).toBeNull();
+    }
+  });
+});
+
 describe('drama beat vocabulary', () => {
   it('isDramaBeat only accepts known subtypes (not prototype keys, not other types)', () => {
     expect(isDramaBeat('fight')).toBe(true);
@@ -83,6 +93,28 @@ const EMIT_SITES: Array<[string, string, DramaBeat]> = [
   ['lib/gossip.ts', '} learned`', 'gossip'],
   ['lib/lifeEventsEngine.ts', 'has died.', 'death'],
   ['lib/agingEngine.ts', 'Happy birthday to', 'birthday'],
+  // The snap's quiet outcomes (the story-health tally counts `metadata.beat`, so an untagged row is invisible).
+  ['lib/cascade/SnapResolver.ts', 'snapped and fled home in distress', 'outburst'],
+  ['lib/cascade/SnapResolver.ts', 'snapped quietly and began plotting revenge`', 'misdeed'],
+  ['lib/cascade/SnapResolver.ts', 'had a public emotional breakdown!', 'outburst'],
+  ['lib/cascade/SnapResolver.ts', 'spiraled into self-destructive behavior', 'outburst'],
+  // Rows that used to log `drama` untagged: gossip read as ~90% of the beats because these were invisible.
+  ['engine/systems/states.ts', 'was released from prison after', 'release'],
+  ['engine/systems/states.ts', "publicly exposed their blackmailer's leverage", 'blackmail'],
+  ['engine/systems/states.ts', 'was caught stealing from ${loc.name}!', 'theft'],
+  ['engine/systems/states.ts', 'gambled at the tavern', 'drunk'],
+  ['engine/systems/states.ts', 'started spreading rumors about', 'gossip'],
+  ['lib/tavernEngine.ts', 'is getting tipsy at the tavern', 'drunk'],
+  ['lib/tavernEngine.ts', 'is now drunk at the tavern!', 'drunk'],
+  ['lib/tavernEngine.ts', 'outbursts[Math.floor(Math.random() * outbursts.length)]', 'outburst'],
+  ['engine/systems/economy.ts', 'during the economic crisis', 'theft'],
+  ['engine/systems/economy.ts', 'to a traveling scammer', 'theft'],
+  ['engine/systems/economy.ts', 'is hoarding supplies', 'misdeed'],
+  ['lib/lonelinessEngine.ts', 'has become lonely and withdrawn', 'lonely'],
+  ['lib/lonelinessEngine.ts', 'seems lonely and decided to visit', 'lonely'],
+  ['lib/giftEngine.ts', 'and feels jealous', 'outburst'],
+  ['engine/systems/conversations.ts', 'reported blackmail to the constable', 'blackmail'],
+  ['lib/gossip.ts', 'and is furious.', 'outburst'],
 ];
 
 describe('drama emit sites carry their beat tag', () => {

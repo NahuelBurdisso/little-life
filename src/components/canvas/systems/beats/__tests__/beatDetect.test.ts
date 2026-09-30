@@ -130,6 +130,14 @@ describe('classifyActivity — explicit metadata.beat subtype', () => {
     expect(classifyActivity(tagged('theft', 'Ana started a fight with the shopkeeper over a stolen loaf'))).toBeNull();
   });
 
+  it('the small everyday beats (release, drunk, outburst, blackmail, lonely) draw nothing, whatever their wording says', () => {
+    // Tagged so the story-health tally can see them; they never had a picture, so the tag must not
+    // hand the wording fallback a chance to invent one (a "fight" mentioned in a tavern outburst).
+    for (const beat of ['release', 'drunk', 'outburst', 'blackmail', 'lonely']) {
+      expect(classifyActivity(tagged(beat, 'Ana started a fight with Bo')), beat).toBeNull();
+    }
+  });
+
   it('keeps the arrest / death / birthday agent shaping', () => {
     expect(classifyActivity(tagged('arrest', 'x', { initiator_id: 2, target_id: 1 }))).toEqual({ kind: 'arrest', agentIds: [1, 2] });
     expect(classifyActivity(tagged('death', 'x'))).toEqual({ kind: 'death', agentIds: [1] });

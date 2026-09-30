@@ -328,6 +328,10 @@ describe('storyCueOf', () => {
 
   it('leaves gossip, untagged and unknown rows silent', () => {
     expect(storyCueOf(row({ metadata: { beat: 'gossip' } }))).toBeNull();
+    // The small everyday beats: tagged for the tally, silent on the map.
+    for (const beat of ['release', 'drunk', 'outburst', 'blackmail', 'lonely']) {
+      expect(storyCueOf(row({ metadata: { beat } })), beat).toBeNull();
+    }
     expect(storyCueOf(row({}))).toBeNull();
     expect(storyCueOf(row({ metadata: { beat: 'dance-off' } }))).toBeNull();
     expect(storyCueOf(row({ metadata: null }))).toBeNull();

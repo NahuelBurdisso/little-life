@@ -23,7 +23,8 @@ export type DramaBeat =
   | 'birth' | 'paternity'                      // family life (lib/family.ts): a baby born, a father learning it isn't his
   | 'contest_win'                               // a festival contest decided (lib/townCalendar.ts)
   | 'kiss' | 'kiss_rebuffed'                    // → kiss / heartbreak (lib/intimacy/kiss.ts)
-  | 'tryst' | 'caught' | 'scandal';             // → romance / secret / secret (the adult layer, lib/intimacy/)
+  | 'tryst' | 'caught' | 'scandal'              // → romance / secret / secret (the adult layer, lib/intimacy/)
+  | 'release' | 'drunk' | 'outburst' | 'blackmail' | 'lonely'; // small rows that were untagged; no canvas FX (see the table)
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday' | 'kiss';
 
@@ -73,6 +74,19 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   tryst: 'romance',
   caught: 'secret',
   scandal: 'secret',
+  // Rows that logged `drama` with no tag and so were invisible to the story-health tally
+  // (which counts `metadata.beat`), which is how gossip came to read as ~90% of all beats.
+  // Tagged now so the tally, the recap and the gazette can tell them apart, but none gets a
+  // canvas picture or a sound: they never had one (their wording matched nothing in
+  // beatDetect), and a tavern night or a lonely week should not start playing a puff.
+  // release: a sentence served (states.ts); drunk: the tavern's excess, tipsy through gambling
+  // (tavernEngine, states.ts); outburst: a public flare-up, a drunken scene or a stab of jealousy;
+  // blackmail: leverage exposed or reported; lonely: withdrawal, and the neighbour who visits.
+  release: null,
+  drunk: null,
+  outburst: null,
+  blackmail: null,
+  lonely: null,
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

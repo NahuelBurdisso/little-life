@@ -647,6 +647,7 @@ export function rumorReachedSubject(
     target: tellerId,
     severity: 0.4,
     templateData: { description: `${subjectName} heard what ${tellerName} has been saying about them and is furious.` },
+    metadata: { beat: 'outburst' },
   });
 
   // Only player-planted rumors are `unverified` (godPowers.startRumor), so this

@@ -29,6 +29,7 @@ import { logActivity } from '../../lib/activityLogger';
 import { eq, and, desc, gt, lt, sql } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
 import { gameMinutes } from '../../lib/gameClock';
+import { addConversationModifier } from '../../lib/moodModifiers';
 import { clearConversationCache, fallbackDetector } from '../../helpers/conversationHelpers';
 import { emitter } from '../emitter';
 import { taskRunner } from '../../ai/taskRunner';
@@ -1456,14 +1457,13 @@ async function finishCompletedConversation(
       if (personality && personality.neuroticism > 60) {
         moodModifierDuration = Math.round(moodModifierDuration * 1.5);
       }
-      const moodModifiers = [
-        ...agentNeeds.mood_modifiers,
-        {
-          source: 'conversation',
-          value: overallSentiment * 5,
-          expiresAt: currentTime + moodModifierDuration,
-        },
-      ];
+      // Capped: the needs phase sums every active modifier, and chats used to pile up
+      // unchecked (lib/moodModifiers.ts), so a warm afternoon lifted the mood by a dozen +4s.
+      const moodModifiers = addConversationModifier(agentNeeds.mood_modifiers, {
+        source: 'conversation',
+        value: overallSentiment * 5,
+        expiresAt: currentTime + moodModifierDuration,
+      }, currentTime);
 
       db.update(needs)
         .set({
@@ -1680,7 +1680,7 @@ async function finishCompletedConversation(
             const updatedKnownBy = [...knownBy, constableId];
             db.update(shared_knowledge).set({ known_by: updatedKnownBy }).where(eq(shared_knowledge.id, fact.id)).run();
             const victimName = db.select({ name: agents.name }).from(agents).where(eq(agents.id, nonConstableId)).get()?.name ?? `Agent#${nonConstableId}`;
-            logActivity({ type: 'drama', initiator: nonConstableId, templateData: { description: `${victimName} reported blackmail to the constable.` } });
+            logActivity({ type: 'drama', initiator: nonConstableId, templateData: { description: `${victimName} reported blackmail to the constable.` }, metadata: { beat: 'blackmail' } });
           }
         }
       }
@@ -1978,14 +1978,14 @@ async function processTimedOutEntry(
       const currentTime = agentNeeds.last_updated ?? 0;
 
       // Add mood modifier like LLM conversations do
-      const moodModifiers = [...agentNeeds.mood_modifiers];
-      if (Math.abs(avgSentiment) > 0.1) {
-        moodModifiers.push({
+      // Same budget as the LLM chats above: both sources share one +/-6 allowance.
+      const moodModifiers = Math.abs(avgSentiment) > 0.1
+        ? addConversationModifier(agentNeeds.mood_modifiers, {
           value: avgSentiment * 3,
           source: 'template_conversation',
           expiresAt: currentTime + CONFIG.NEEDS.MOOD_MODIFIER_DURATION_GAME_MINUTES,
-        });
-      }
+        }, currentTime)
+        : [...agentNeeds.mood_modifiers];
 
       db.update(needs)
         .set({

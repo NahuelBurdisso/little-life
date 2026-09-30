@@ -92,6 +92,7 @@ export function lonelinessCheck(nowMinutes: number): void {
           type: 'drama',
           initiator: agent.id,
           templateData: { description: `${agent.name} has become lonely and withdrawn` },
+          metadata: { beat: 'lonely' },
         });
 
         // Trigger warm neighbor intervention
@@ -143,6 +144,7 @@ function triggerComfortVisit(
       initiator: other.id,
       target: lonelyAgentId,
       templateData: { description: `${visitorName} noticed ${lonelyName} seems lonely and decided to visit` },
+      metadata: { beat: 'lonely' },
     });
 
     break; // Only one visitor at a time

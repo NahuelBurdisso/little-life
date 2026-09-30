@@ -1146,7 +1146,7 @@ export function economyTick(): void {
           if (richAgent && poorAgent) {
             createFact('theft', poorest.agent_id, richest.agent_id, 2, [poorest.agent_id], 'committed');
             logActivity({ type: 'drama', initiator: poorest.agent_id, target: richest.agent_id,
-              templateData: { description: `${poorAgent.name} stole $${stolen} from ${richAgent.name} during the economic crisis` } });
+              templateData: { description: `${poorAgent.name} stole $${stolen} from ${richAgent.name} during the economic crisis` }, metadata: { beat: 'theft' } });
             simEvents.emit('economy:theft', { thief: poorest.agent_id, victim: richest.agent_id, amount: stolen });
           }
         }
@@ -1176,7 +1176,7 @@ export function economyTick(): void {
             const agent = activeAgents.find(a => a.id === target.agent_id);
             if (agent) {
               logActivity({ type: 'drama', initiator: target.agent_id,
-                templateData: { description: `${agent.name} lost $${lost} to a traveling scammer` } });
+                templateData: { description: `${agent.name} lost $${lost} to a traveling scammer` }, metadata: { beat: 'theft' } });
               simEvents.emit('economy:scam', { agentId: target.agent_id, amount: lost });
             }
           }
@@ -1188,7 +1188,7 @@ export function economyTick(): void {
         const hoarderAgent = activeAgents.find(a => a.id === hoarder?.agent_id);
         if (hoarderAgent) {
           logActivity({ type: 'drama', initiator: hoarder.agent_id,
-            templateData: { description: `${hoarderAgent.name} is hoarding supplies — prices spike across town` } });
+            templateData: { description: `${hoarderAgent.name} is hoarding supplies — prices spike across town` }, metadata: { beat: 'misdeed' } });
           createFact('hoarding', hoarder.agent_id, null, 1, [hoarder.agent_id], 'observed');
         }
       }
