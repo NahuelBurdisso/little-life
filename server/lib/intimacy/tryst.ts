@@ -187,7 +187,8 @@ function homeIsAsleep(homeId: number, pair: readonly number[]): boolean {
  * Where two people can be alone, best first:
  *  1. the asker's own home, if nobody else lives or is in it;
  *  2. the other's home, the same test;
- *  3. a barn or grove (whichever is nearest them), only in the dark. Foul weather
+ *  3. a barn or grove, only in the dark: one with nobody awake in it if there is one (a
+ *     couple does not pick the crowd), else the nearest to them. Foul weather
  *     closes the groves but not the barn (it has a roof). Before dark that is `'wait'`:
  *     the evening is not lost (the agreed pending lapses on its own after six hours);
  *  4. late at night (`isSleepingHouseHour`), a home where every other resident is
@@ -211,7 +212,15 @@ export function pickVenue(initiator: AgentRow, other: AgentRow, ctx: VenueCtx): 
       x: ((initiator.position as { x: number }).x + (other.position as { x: number }).x) / 2,
       y: ((initiator.position as { y: number }).y + (other.position as { y: number }).y) / 2,
     };
-    candidates.sort((p, q) => distance(mid, p.entry_point) - distance(mid, q.entry_point) || p.id - q.id);
+    // Who is awake where right now (the pair themselves are no company). Empty places first, then nearest.
+    const company = new Map<number, number>();
+    for (const o of db.select({ id: agents.id, at: agents.current_location, action: agents.current_action }).from(agents)
+      .where(eq(agents.is_active, true)).all()) {
+      const type = (o.action as { type?: string } | null)?.type;
+      if (o.at != null && !pair.includes(o.id) && type !== 'sleeping' && type !== 'dead') company.set(o.at, (company.get(o.at) ?? 0) + 1);
+    }
+    const crowded = (l: LocationRow) => ((company.get(l.id) ?? 0) > 0 ? 1 : 0);
+    candidates.sort((p, q) => crowded(p) - crowded(q) || distance(mid, p.entry_point) - distance(mid, q.entry_point) || p.id - q.id);
     return { locationId: candidates[0].id, outdoors: true };
   }
 

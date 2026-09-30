@@ -241,6 +241,31 @@ describe('the tryst', () => {
         expect(choice).not.toMatchObject({ locationId: far });
       });
 
+      // A soak had half of its evenings walked in on at the start (13 of 15 at the same park, where the town
+      // spends its evenings): a couple does not pick the place with a crowd in it when another is empty.
+      it('an outdoor place with nobody awake in it beats a nearer one with company', () => {
+        const { a, b } = bothBlocked();
+        const busy = insertLocation('Busy Grove', 'park', 300);
+        const empty = insertLocation('Empty Farm', 'farm', 5000);
+        const somewhere = insertLocation('Somebodys Home', 'home', 900);
+        insertAgent(`Stroller ${madeAgents.length}`, somewhere, { current_location: busy });
+        expect(pickVenue(load(a), load(b), fair)).toEqual({ locationId: empty, outdoors: true });
+        // Somebody asleep there is no company, and the pair themselves are not a crowd.
+        db.update(agents).set({ current_action: { type: 'sleeping' } }).where(eq(agents.current_location, busy)).run();
+        db.update(agents).set({ current_location: busy }).where(inArray(agents.id, [a, b])).run();
+        expect(pickVenue(load(a), load(b), fair)).toEqual({ locationId: busy, outdoors: true });
+      });
+
+      it('when every outdoor place has company, the nearest still wins', () => {
+        const { a, b } = bothBlocked();
+        const near = insertLocation('Near Grove 2', 'park', 300);
+        const far = insertLocation('Far Farm 2', 'farm', 5000);
+        const somewhere = insertLocation('Elsewhere Home', 'home', 900);
+        insertAgent(`Stroller ${madeAgents.length}`, somewhere, { current_location: near });
+        insertAgent(`Farmhand ${madeAgents.length}`, somewhere, { current_location: far });
+        expect(pickVenue(load(a), load(b), fair)).toEqual({ locationId: near, outdoors: true });
+      });
+
       it('rain, snow or a storm: nobody goes to a grove (the evening is dropped)', () => {
         const { a, b } = bothBlocked();
         insertLocation('Rainy Grove', 'park', 500);
