@@ -67,16 +67,3 @@ export function recordScriptUsage(agentA: number, agentB: number, scriptId: stri
   }).run();
 }
 
-export function interpolateTemplate(
-  text: string,
-  vars: Record<string, string>
-): string {
-  return text.replace(/\{([^}]+)\}/g, (match, key: string) => {
-    const trimmedKey = key.trim();
-    if (trimmedKey in vars) {
-      return vars[trimmedKey];
-    }
-    // Leave unmatched placeholders as-is
-    return match;
-  });
-}

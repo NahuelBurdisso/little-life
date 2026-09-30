@@ -273,6 +273,3 @@ export function daysLeft(deadline: number | undefined, nowMinute: number): numbe
   return Math.max(0, Math.ceil((deadline - nowMinute) / MINUTES_PER_DAY));
 }
 
-export function isTerminal(status: ChallengeStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'expired' || status === 'abandoned';
-}
