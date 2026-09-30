@@ -6,6 +6,7 @@ import {
 // window glow despite having no walls), and the real OPEN_AREA_TYPES misses the
 // derived open-ground types — see buildingTemplates.ts.
 import { OUTDOOR_TYPES } from '../../../server/lib/worldgen/buildingTemplates';
+import { eventFamily } from '../../../server/data/worldEventCatalog';
 import { carriesLantern } from './lanterns';
 import { emitCanvasEvent } from '../../lib/canvasBus';
 import { southWindowXs, WINDOW_CENTER_ABOVE_SOUTH_EDGE } from './BuildingRenderer';
@@ -407,7 +408,8 @@ export class LightingSystem {
 
     // ── Event lights ───────────────────────────────────────────────────
     this.eventLights = [];
-    if (activeEvents.includes('festival')) {
+    // Any festival, the calendar's included (worldEventCatalog families).
+    if (activeEvents.some((t) => eventFamily(t) === 'festival')) {
       // Find town square for extra festival glow
       const sq = locations.find(l => l.type === 'town_square');
       if (sq) {

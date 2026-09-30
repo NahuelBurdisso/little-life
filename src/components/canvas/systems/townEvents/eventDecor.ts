@@ -532,7 +532,73 @@ const heatwave: Recipe = l => {
   }
 };
 
+// ── The town calendar's days (server/data/calendar.ts) ──────────────────────────────────────
+// Built from the existing atlas frames, so each fixed festival reads as itself without a new
+// sprite sheet: the season's own falling thing, and the thing its contest needs.
+
+const both = (...recipes: Recipe[]): Recipe => l => recipes.forEach(r => r(l));
+
+/** Stalls and bunting like any fair, flags for the ploughing match, blossom on the wind. */
+const springFair: Recipe = l => {
+  stalls(['nw', 'ne'], ['sw', 'se'], marketBunting)(l);
+  const flag = { frames: 2, fps: 4 } as const;
+  for (const s of ['w', 'e'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.flag, x, y, { ...flag, salt: s === 'w' ? 21 : 22 });
+  }
+  l.falling(DECOR_FRAMES.petalFall, 4, l.r.x + 30, l.r.x + l.r.width - 30, l.r.y + 50, { dy: 80, dx: 30, period: 9 });
+};
+
+/** The bonfire in the middle, lanterns round it for the dancing, sparks drifting up. */
+const midsummer: Recipe = l => {
+  l.bunting(l.r.y + 30, DECOR_FRAMES.bunting, DECOR_FRAMES.lantern, 'ground', 2);
+  l.add(DECOR_FRAMES.fire, l.ax, l.nFoot + 6, { layer: 'over', frames: 4, fps: 6, solid: false, salt: 1 });
+  l.add(DECOR_FRAMES.smoke, l.ax + 2, l.nFoot - 22, { layer: 'over', frames: 3, fps: 4, solid: false, salt: 2 });
+  for (const s of ['nw', 'ne', 'sw', 'se'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 30 + s.length });
+  }
+  for (const dx of [-64, 64]) l.add(DECOR_FRAMES.bench, l.ax + dx, l.nFoot);
+  sparkles(3)(l);
+};
+
+/** The harvest home: the produce show, plus a stall pair for the supper and bunting over it all. */
+const harvestFestival: Recipe = both(harvest, l => {
+  l.bunting(l.r.y + 30, DECOR_FRAMES.bunting, DECOR_FRAMES.lantern, 'ground', 2);
+  l.add(DECOR_FRAMES.podium, l.ax, l.nFoot);
+});
+
+/** Lanterns everywhere and candles along the well, gold motes in the cold air. */
+const winterLights: Recipe = l => {
+  l.bunting(l.r.y + 30, DECOR_FRAMES.buntingWhite, DECOR_FRAMES.lantern, 'ground', 2);
+  for (const s of ['nw', 'ne', 'w', 'e', 'sw', 'se'] as const) {
+    const [x, y] = l.slot(s);
+    l.add(DECOR_FRAMES.lantern, x, y, { frames: 2, fps: BUNTING_FPS, salt: 40 + s.length });
+  }
+  const flame = { frames: 3, fps: 5, solid: false } as const;
+  [-58, -28, 28, 58].forEach((dx, i) => l.add(DECOR_FRAMES.candle, l.ax + dx, l.nFoot + 2, { ...flame, salt: 50 + i }));
+  l.falling(DECOR_FRAMES.moteFall, 4, l.r.x + 30, l.r.x + l.r.width - 30, l.r.y + 40, { dy: 84, dx: -10, period: 9 });
+};
+
+/** The count: the lectern and benches of a meeting, notice boards with the candidates, flags. */
+const electionCount: Recipe = both(townMeeting, l => {
+  const [wx, wy] = l.slot('w');
+  const [ex, ey] = l.slot('e');
+  l.add(DECOR_FRAMES.board, wx, wy + 18);
+  l.add(DECOR_FRAMES.board, ex, ey + 18);
+  const flag = { frames: 2, fps: 4 } as const;
+  l.add(DECOR_FRAMES.flag, l.ax - 44, l.nFoot, { ...flag, salt: 61 });
+  l.add(DECOR_FRAMES.flag, l.ax + 44, l.nFoot, { ...flag, salt: 62 });
+});
+
+const PARK_FIRST = ['park', 'town_square', 'market_square'] as const;
+
 const RECIPES: Record<string, { prefer: readonly string[]; recipe: Recipe }> = {
+  spring_fair: { prefer: SQUARE_FIRST, recipe: springFair },
+  midsummer: { prefer: PARK_FIRST, recipe: midsummer },
+  harvest_festival: { prefer: SQUARE_FIRST, recipe: harvestFestival },
+  winter_lights: { prefer: SQUARE_FIRST, recipe: winterLights },
+  election_day: { prefer: SQUARE_FIRST, recipe: electionCount },
   festival: { prefer: SQUARE_FIRST, recipe: festival },
   market_day: { prefer: MARKET_FIRST, recipe: stalls(['nw', 'ne', 'sw', 'se'], ['w', 'e'], marketBunting) },
   traveling_merchant: { prefer: MARKET_FIRST, recipe: stalls(['e'], ['e'], merchantCart) },

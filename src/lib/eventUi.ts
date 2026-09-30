@@ -25,6 +25,12 @@ export const EVENT_UI: Record<WorldEventType, { icon: string; blurb: string }> =
   heatwave: { icon: '🥵', blurb: 'Energy drains faster; everyone seeks shade.' },
   bountiful_catch: { icon: '🎣', blurb: 'The river is teeming with fish.' },
   starry_night: { icon: '✨', blurb: 'A clear sky lifts spirits outdoors.' },
+  // The town calendar (server/data/calendar.ts): same glyphs as the TopBar chip.
+  spring_fair: { icon: '🌸', blurb: 'Stalls, a maypole and the ploughing match on the square.' },
+  midsummer: { icon: '🔥', blurb: 'A bonfire, dancing and the singing contest.' },
+  harvest_festival: { icon: '🎃', blurb: 'The harvest supper, cheap food and the pie contest.' },
+  winter_lights: { icon: '🕯', blurb: 'Lanterns, carols and the baking contest.' },
+  election_day: { icon: '🗳', blurb: 'The votes for mayor are counted on the square.' },
   funeral: { icon: '🕯️', blurb: 'The town gathers to mourn.' },
   new_arrival: { icon: '🧭', blurb: 'Someone new has moved to town.' },
 };
