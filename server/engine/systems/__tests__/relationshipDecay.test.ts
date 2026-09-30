@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '../../../db';
-import { agents, locations, relationships } from '../../../db/schema';
+import { agents, locations, relationshipEvents, relationships } from '../../../db/schema';
 import { tick as relationshipsTick } from '../relationships';
 import { gameMinutes } from '../../../lib/gameClock';
 import { CONFIG } from '../../../lib/constants';
@@ -90,6 +90,7 @@ describe('relationship decay runs on game time', () => {
   });
 
   afterAll(() => {
+    db.delete(relationshipEvents).where(inArray(relationshipEvents.agent_a, ids)).run();
     db.delete(relationships).where(inArray(relationships.agent_a, ids)).run();
     db.delete(agents).where(inArray(agents.id, ids)).run();
     db.delete(locations).where(eq(locations.id, homeId)).run();
@@ -106,6 +107,29 @@ describe('relationship decay runs on game time', () => {
     const id = insertPair(ids[0], ids[2], NOW_MINUTES - GRACE_MINUTES - 5 * 1440);
     relationshipsTick(WORLD);
     expect(row(id).friendship_ab).toBeLessThan(60);
+  });
+
+  // I3: lovers whose romance "fell fast" were blamed on this decay. It is not the cause: it moves romance by at
+  // most 0.45 a day (DECAY_DAILY_RATE 0.3 x ROMANCE_DECAY_MULTIPLIER 1.5 at full strength, 30 days after the last
+  // interaction), and any relationship event, a kiss or a night together included, restarts the grace clock.
+  // What zeroed those pairs was an affair coming out (conversationBeats.applyAffairFallout).
+  it('a kiss or a night together restarts the grace clock: lovers who see each other do not decay', () => {
+    const stale = NOW_MINUTES - GRACE_MINUTES - 10 * 1440;
+    const lovers = insertPair(ids[1], ids[2], stale);
+    const strangers = insertPair(ids[2], ids[3], stale);
+    for (const id of [lovers, strangers]) db.update(relationships).set({ romance_ab: 80, romance_ba: 80 }).where(eq(relationships.id, id)).run();
+    db.insert(relationshipEvents).values({
+      agent_a: Math.min(ids[1], ids[2]), agent_b: Math.max(ids[1], ids[2]), event_type: 'tryst',
+      description: 'spent the evening together', friendship_delta_ab: 1, friendship_delta_ba: 1,
+      romance_delta_ab: 2, romance_delta_ba: 2, trust_delta_ab: 1, trust_delta_ba: 1,
+      sentiment: 0.4, processed: false, timestamp: Date.now(),
+    }).run();
+    relationshipsTick(WORLD);
+    expect(row(lovers).last_interaction_minute).toBe(NOW_MINUTES);
+    expect(row(lovers).romance_ab).toBeGreaterThanOrEqual(80);
+    // The same pair with nothing since does decay, but slowly: well under half a point on this pass.
+    expect(row(strangers).romance_ab).toBeLessThan(80);
+    expect(80 - row(strangers).romance_ab).toBeLessThan(0.5);
   });
 
   it('starts the clock of a pair with no game-minute stamp instead of decaying it', () => {
