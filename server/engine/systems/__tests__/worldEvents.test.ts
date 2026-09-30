@@ -13,6 +13,7 @@ import {
   EVENT_EFFECT_STACKING,
   PLAYER_EVENT_TYPES,
   WORLD_EVENTS,
+  type WorldEventDef,
   type WorldEventType,
 } from '../../../data/worldEventCatalog';
 
@@ -238,20 +239,32 @@ describe('eventsTick under the Drama Intensity rule', () => {
   }
 
   it("starts an hour's event at a roll only chaos passes", () => {
-    // 0.3 is over the 0.20 base (medium) and under 0.20 x 2.5 (chaos).
-    expect(eventsStartedAt('medium', 0.3)).toBe(0);
-    expect(eventsStartedAt('chaos', 0.3)).toBe(1);
+    // 0.2 is over the 0.12 base (medium) and under 0.12 x 2.5 = 0.30 (chaos).
+    expect(eventsStartedAt('medium', 0.2)).toBe(0);
+    expect(eventsStartedAt('chaos', 0.2)).toBe(1);
   });
 
   it("skips an hour's event at a roll low drama no longer passes", () => {
-    // 0.15 is under the base 0.20 and over 0.20 x 0.5 (low).
-    expect(eventsStartedAt('medium', 0.15)).toBe(1);
-    expect(eventsStartedAt('low', 0.15)).toBe(0);
+    // 0.09 is under the base 0.12 and over 0.12 x 0.5 = 0.06 (low).
+    expect(eventsStartedAt('medium', 0.09)).toBe(1);
+    expect(eventsStartedAt('low', 0.09)).toBe(0);
   });
 });
 
 describe('eventsTick per-type cooldown (playtest #3)', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('gives every randomly rolled event type its own multi-day cooldown', () => {
+    // With the 2-day default, nine types came back every ~2.5 days: a metronome.
+    const rolled = Object.entries(WORLD_EVENTS)
+      .filter(([, def]) => ((def as WorldEventDef).random?.weight ?? 0) > 0);
+    expect(rolled.length).toBeGreaterThan(5);
+    for (const [type, def] of rolled) {
+      const days = (def as WorldEventDef).random?.cooldownDays ?? 0;
+      expect(days, type).toBeGreaterThanOrEqual(4);
+      expect(days, type).toBeLessThanOrEqual(28);
+    }
+  });
 
   it('does not roll the same event type twice inside the cooldown', () => {
     // Every hourly roll passes and weightedRandom always takes the first

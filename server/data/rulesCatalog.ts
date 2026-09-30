@@ -5,7 +5,7 @@
  * option lists and the numbers behind them cannot drift apart.
  *
  * Every default below maps to a multiplier of exactly 1: the rates the systems
- * already use (0.20 random events an hour, 0.0001 sickness a game minute, ...)
+ * already use (0.12 random events an hour, 0.0001 sickness a game minute, ...)
  * were tuned on the defaults, so a world set up without touching the wizard —
  * or saved before these rules did anything — plays exactly as it did.
  */
