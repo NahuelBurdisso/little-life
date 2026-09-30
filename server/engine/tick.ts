@@ -33,6 +33,7 @@ import { personalEventsHourly } from '../lib/personalEvents';
 import { confrontationCheck } from '../lib/confrontationEngine';
 import { agingTick } from '../lib/agingEngine';
 import { milestonesTick } from '../lib/milestonesEngine';
+import { intimacyTick } from '../lib/intimacy';
 import { familyDaily, familyTick } from '../lib/family';
 import { populationFlowDaily, populationFlowTick } from '../lib/populationFlow';
 import { runChallengeChecks } from '../lib/challenges/evaluate';
@@ -355,6 +356,8 @@ export async function gameTick(): Promise<void> {
     // Proposals and weddings (lib/milestonesEngine.ts). One transaction: a
     // wedding writes the event, the tags, the feed and the facts together.
     runGuarded('milestones', () => db.transaction(() => milestonesTick(newTime, nowMinutes)));
+    // Longing, and later the rendezvous and suspicion passes (lib/intimacy/).
+    runGuarded('intimacy', () => db.transaction(() => intimacyTick(newTime)));
     // Married life: pregnancies, births, christenings, paternity (lib/family.ts).
     runGuarded('family', () => db.transaction(() => familyTick(newTime, nowMinutes)));
     // Newcomers walking in, leavers setting off and reaching the edge (lib/populationFlow.ts).

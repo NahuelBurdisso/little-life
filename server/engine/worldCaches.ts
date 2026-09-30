@@ -70,6 +70,7 @@ import { hungerSnapshotStore } from '../lib/lifeEventsEngine';
 import { tensionSnapshotStore } from '../lib/cascade';
 import { clearMilestones, milestonesSnapshotStore } from '../lib/milestonesEngine';
 import { clearPopulationFlow, populationFlowSnapshotStore } from '../lib/populationFlow';
+import { clearIntimacy, intimacySnapshotStore } from '../lib/intimacy/state';
 import { clearVacancies } from '../lib/vacancies';
 import { clearFamilyState, familySnapshotStore } from '../lib/familyState';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
@@ -90,7 +91,9 @@ import type { SnapshotStore } from './snapshotCodec';
  * two newcomers on consecutive days or forget a leaver halfway down the road),
  * and the family timers (a baby on the way, when a couple married, a
  * christening waiting for daylight, a husband looking for his wife's lover —
- * the children themselves are in the `children` table).
+ * the children themselves are in the `children` table),
+ * and the intimacy state (how many times a pair kissed, an invitation waiting
+ * for its answer, longing and suspicion — the `kissed`/`lovers` tags are in the DB).
  *
  * Out, deliberately:
  *   - LLM backoffs (`planLLMGate`, goal reviewer/pivot stamps): they describe
@@ -117,6 +120,7 @@ const PERSISTED_STORES: readonly SnapshotStore[] = [
   milestonesSnapshotStore,
   populationFlowSnapshotStore,
   familySnapshotStore,
+  intimacySnapshotStore,
 ];
 
 /** Checkpoint every persisted store for the current world. Never throws. */
@@ -207,6 +211,8 @@ export function clearPerWorldCaches(): void {
   clearVacancies();
   // Pregnancies, marriage clocks, christenings: agent/child ids of the old town.
   clearFamilyState();
+  // Kisses, nights together, longing and suspicion keyed on agent ids and game minutes (lib/intimacy/state.ts).
+  clearIntimacy();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();

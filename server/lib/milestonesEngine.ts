@@ -10,7 +10,7 @@ import { createFact } from './gossip';
 import { getAgentStates } from './states';
 import { gameMinutesNow } from './worldClock';
 import { queueMaxWait } from './conversationPacing';
-import { clamp } from './utils';
+import { clamp, pairKey } from './utils';
 import { startWorldEvent } from '../engine/systems/events';
 import { emitter } from '../engine/emitter';
 import { PROPOSAL_TOPIC } from '../ai/prompts';
@@ -104,10 +104,6 @@ export interface PairMilestone {
 
 /** Keyed by `pairKey` (lower id first). */
 const pairs = new Map<string, PairMilestone>();
-
-export function pairKey(a: number, b: number): string {
-  return a < b ? `${a}-${b}` : `${b}-${a}`;
-}
 
 /** Read-only view for tests and diagnostics. */
 export function getPairMilestone(a: number, b: number): Readonly<PairMilestone> | undefined {

@@ -4,6 +4,16 @@ export function clamp(value: number, min: number, max: number): number {
   return value;
 }
 
+/**
+ * Order-independent key for an agent pair, lower id first ("3-7" for both
+ * (3, 7) and (7, 3)). Lives here rather than in milestonesEngine because
+ * importing that module registers its event listeners as a side effect, and
+ * the pair-keyed stores (milestones, intimacy) all need the same key.
+ */
+export function pairKey(a: number, b: number): string {
+  return a < b ? `${a}-${b}` : `${b}-${a}`;
+}
+
 export function distance(
   a: { x: number; y: number },
   b: { x: number; y: number },
