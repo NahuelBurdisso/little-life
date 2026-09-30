@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../../db';
 import {
@@ -119,11 +119,16 @@ describe('what a night leaves behind', () => {
   });
 
   beforeEach(() => {
+    // A night between a man and an unmarried woman rolls for a baby (pregnancy.ts, Math.random):
+    // pinned to "no", so these tests are about the morning after and never about a stray pregnancy.
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     clearIntimacy();
     setRuleOverrides({ adultContent: true });
     setClock();
     if (madeAgents.length) db.update(agents).set({ is_active: false }).where(inArray(agents.id, madeAgents)).run();
   });
+
+  afterEach(() => { vi.restoreAllMocks(); });
 
   afterAll(() => {
     setRuleOverrides({ adultContent: false });

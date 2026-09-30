@@ -50,6 +50,11 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     ctx?.detail === 'outdoors' ? `${s} was seen slipping away with ${t ?? 'someone'} after dark` :
     ctx?.detail === 'found' ? `${s} was found alone with ${t ?? 'someone'} at ${t ?? 'someone'}'s house late in the evening` :
     `${s} was seen leaving ${t ?? 'someone'}'s house at dawn`,
+  // A baby on the way and no husband (lib/intimacy/pregnancy.ts, the adult layer): what the town
+  // can honestly say once she shows. Discreet on purpose. `t` is the father when he is named.
+  illegitimate_pregnancy: (s, t) =>
+    t ? `${s} is expecting a child out of wedlock, and ${t} is said to be the father`
+      : `${s} is expecting a child out of wedlock`,
   financial: (s, _t, ctx) =>
     ctx?.detail ? `${s} is struggling with money — ${ctx.detail}` :
     `${s} is struggling with money`,
@@ -178,6 +183,8 @@ const PARTICIPANT_TARGET_TYPES = new Set([
   'pregnancy', 'paternity',
   // A kiss or a night seen is both people's secret: neither gossips about it.
   'kiss_seen', 'tryst_seen',
+  // The named father shares the mother's scandal, and doesn't spread it.
+  'illegitimate_pregnancy',
 ]);
 
 /**
@@ -425,6 +432,8 @@ const NEGATIVE_FACT_TYPES = [
   // marriage; the betrayal already lands as an `affair` fact above, and the
   // kiss_seen's own sensitivity (2 / 3 / 4) carries how bad it is to spread.
   'tryst_seen',
+  // An unmarried woman's pregnancy is a scandal in 1900.
+  'illegitimate_pregnancy',
 ];
 
 export function getNegativeFactCount(agentId: number): number {

@@ -1,6 +1,7 @@
 import { gameMinutes, type ClockTime } from '../gameClock';
 import { registerKissListener } from './kiss';
 import { longingPass } from './longing';
+import { pregnancyPass } from './pregnancy';
 import { registerRendezvousListener, rendezvousPass } from './rendezvous';
 import { registerSuspicionListeners, suspicionPass } from './suspicion';
 import { trystPass } from './tryst';
@@ -23,12 +24,13 @@ registerSuspicionListeners();
 /**
  * One pass: longing first (the rendezvous pass reads it), then invitations, then
  * the evenings they led to (an agreed pair is settled the same tick it is agreed),
- * then, once each game morning, the partners who noticed an empty bed. Pregnancy joins
- * it later.
+ * then, once each game morning, the partners who noticed an empty bed, and last the
+ * unwed pregnancies (told to the father, showing, the scandal).
  */
 export function intimacyTick(time: ClockTime): void {
   longingPass(gameMinutes(time));
   rendezvousPass(time);
   trystPass(time);
   suspicionPass(time);
+  pregnancyPass(gameMinutes(time));
 }

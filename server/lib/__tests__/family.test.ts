@@ -507,7 +507,8 @@ describe('family against the DB', () => {
       expect(pregnancyOf(7)).toBeUndefined();
       restoreWorldCaches();
       expect(familySnapshotStore.serialize()).toEqual(before);
-      expect(pregnancyOf(7)).toEqual({ motherId: 7, fatherId: 8, conceivedAt: 100, factId: 3, spouseTold: true, trueFatherId: 9, paternityFactId: 4 });
+      // A checkpoint from before unwed pregnancies existed restores as a married one.
+      expect(pregnancyOf(7)).toEqual({ motherId: 7, fatherId: 8, unwed: false, conceivedAt: 100, factId: 3, spouseTold: true, trueFatherId: 9, paternityFactId: 4 });
     });
 
     it('restore skips malformed entries', () => {
@@ -518,7 +519,7 @@ describe('family against the DB', () => {
         confrontations: [{ fatherId: 1 }, 'x'],
       });
       expect(familySnapshotStore.serialize()).toEqual({
-        pregnancies: { 6: { motherId: 6, fatherId: 1, conceivedAt: 2 } },
+        pregnancies: { 6: { motherId: 6, fatherId: 1, unwed: false, conceivedAt: 2 } },
         marriedSince: { '3-4': 9 },
         christenings: { 2: 5 },
         confrontations: [],

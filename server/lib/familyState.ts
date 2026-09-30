@@ -37,8 +37,20 @@ export type ChildRow = typeof children.$inferSelect;
 
 export interface Pregnancy {
   motherId: number;
-  /** The husband: the father as the town will believe. */
-  fatherId: number;
+  /**
+   * The husband: the father as the town will believe. Null only for an unwed
+   * pregnancy started with no named father (`startPregnancy`); a married
+   * pregnancy always has one.
+   */
+  fatherId: number | null;
+  /**
+   * Conceived outside marriage (lib/intimacy/pregnancy.ts, the adult layer). The
+   * engine's own `tellSpouse` / `announce` timers skip it: who is told, when, and
+   * whether the town whispers is that module's. A wedding to the father flips it
+   * back to `false` and the pregnancy carries on as a married one. Snapshots from
+   * before this field read as `false`.
+   */
+  unwed: boolean;
   /** Set when the real father is the mother's lover (lib/family.ts, an affair). */
   trueFatherId?: number;
   /** Game minute of conception. */
@@ -53,6 +65,18 @@ export interface Pregnancy {
   announced?: boolean;
   /** The husband learned the truth before the birth: the drama has played. */
   paternityRevealed?: boolean;
+  /**
+   * An unwed father who was told and turned her away. `fatherId` stays for the record
+   * (and for the town's rumours) but the child is born with `father_id` NULL: it is
+   * NOT `true_father_id`, which drives the paternity drama of a marriage.
+   */
+  fatherDenied?: boolean;
+  /** An unwed pregnancy has begun to show: the scandal has been raised (or called off). */
+  showing?: boolean;
+  /** The `illegitimate_pregnancy` secret, once it exists (shared_knowledge id). */
+  scandalFactId?: number;
+  /** Everyone whose opinion of her the scandal has already moved (each is judged once). */
+  judgedBy?: number[];
 }
 
 /** A christening waiting for its daytime slot: the child, and from when it may start. */
@@ -89,7 +113,7 @@ export function pregnancyOf(motherId: number): Readonly<Pregnancy> | undefined {
 export function pregnancyInvolving(agentId: number): Readonly<Pregnancy> | undefined {
   const own = pregnancies.get(agentId);
   if (own) return own;
-  for (const p of pregnancies.values()) if (p.fatherId === agentId) return p;
+  for (const p of pregnancies.values()) if (p.fatherId === agentId && !p.fatherDenied) return p;
   return undefined;
 }
 
@@ -159,7 +183,7 @@ export const familySnapshotStore: SnapshotStore = {
   key: 'family',
   version: 1,
   serialize: () => ({
-    pregnancies: Object.fromEntries([...pregnancies].map(([k, v]) => [String(k), { ...v }])),
+    pregnancies: Object.fromEntries([...pregnancies].map(([k, v]) => [String(k), { ...v, ...(v.judgedBy ? { judgedBy: [...v.judgedBy] } : {}) }])),
     marriedSince: Object.fromEntries(marriedSince),
     christenings: Object.fromEntries([...christenings].map(([k, v]) => [String(k), v])),
     confrontations: [...confrontations.values()].map((c) => ({ ...c })),
@@ -173,8 +197,10 @@ export const familySnapshotStore: SnapshotStore = {
       if (motherId === null || !r) continue;
       const fatherId = asNumber(r.fatherId);
       const conceivedAt = asNumber(r.conceivedAt);
-      if (fatherId === null || conceivedAt === null) continue;
-      const p: Pregnancy = { motherId, fatherId, conceivedAt };
+      const unwed = r.unwed === true;
+      // A married pregnancy always names its father; only an unwed one may not.
+      if (conceivedAt === null || (fatherId === null && !unwed)) continue;
+      const p: Pregnancy = { motherId, fatherId, unwed, conceivedAt };
       const trueFatherId = asNumber(r.trueFatherId);
       const factId = asNumber(r.factId);
       const paternityFactId = asNumber(r.paternityFactId);
@@ -184,6 +210,13 @@ export const familySnapshotStore: SnapshotStore = {
       if (r.spouseTold === true) p.spouseTold = true;
       if (r.announced === true) p.announced = true;
       if (r.paternityRevealed === true) p.paternityRevealed = true;
+      if (r.fatherDenied === true) p.fatherDenied = true;
+      if (r.showing === true) p.showing = true;
+      const scandalFactId = asNumber(r.scandalFactId);
+      if (scandalFactId !== null) p.scandalFactId = scandalFactId;
+      if (Array.isArray(r.judgedBy)) {
+        p.judgedBy = r.judgedBy.map(asNumber).filter((n): n is number => n !== null);
+      }
       pregnancies.set(motherId, p);
     }
     for (const [k, raw] of Object.entries(asRecord(root.marriedSince) ?? {})) {
@@ -391,15 +424,17 @@ function pregnancyClause(agentId: number, names: Map<number, string>): string {
   const p = pregnancyInvolving(agentId);
   if (!p) return '';
   if (p.motherId === agentId) {
-    const base = p.announced ? "You're expecting a baby" : "You're expecting a baby — nobody knows yet";
+    // An unwed mother's secret is out once she shows: the town is talking, not being told.
+    const base = p.unwed && p.showing ? "You're expecting a baby, and the town is whispering about it"
+      : p.announced ? "You're expecting a baby" : "You're expecting a baby — nobody knows yet";
     if (p.trueFatherId != null && !p.paternityRevealed) {
       const lover = firstNameOf(names.get(p.trueFatherId) ?? 'your lover');
-      const husband = firstNameOf(names.get(p.fatherId) ?? 'your husband');
+      const husband = firstNameOf(names.get(p.fatherId ?? -1) ?? 'your husband');
       return `${base}, and you fear it is ${lover}'s, not ${husband}'s.`;
     }
     return `${base}.`;
   }
-  if (p.fatherId === agentId && p.spouseTold) {
+  if (p.fatherId === agentId && p.spouseTold && !p.fatherDenied) {
     return `${firstNameOf(names.get(p.motherId) ?? 'Your wife')} is expecting your baby.`;
   }
   return '';
@@ -415,7 +450,7 @@ function pregnancyClause(agentId: number, names: Map<number, string>): string {
 export function familyPromptLine(agentId: number, nowMinute: number): string {
   const kids = childrenOf(agentId).slice(-3);
   const p = pregnancyInvolving(agentId);
-  const names = nameMap(p ? [p.motherId, p.fatherId, ...(p.trueFatherId != null ? [p.trueFatherId] : [])] : []);
+  const names = nameMap(p ? [p.motherId, ...(p.fatherId != null ? [p.fatherId] : []), ...(p.trueFatherId != null ? [p.trueFatherId] : [])] : []);
   const parts: string[] = [];
   if (kids.length > 0) parts.push(`Your family: ${kids.map((k) => `your ${describeChild(k, nowMinute)}`).join(', ')}.`);
   const preg = pregnancyClause(agentId, names);
@@ -438,6 +473,10 @@ export function familyPlanLine(agentId: number, nowMinute: number): string {
       : 'spend a little time with them'}.`);
   }
   if (p?.motherId === agentId) parts.push("You're expecting a baby — take the day a little easier.");
-  else if (p?.fatherId === agentId && p.spouseTold) parts.push('Your wife is expecting — look after her a little.');
+  else if (p?.fatherId === agentId && p.spouseTold && !p.fatherDenied) {
+    parts.push(p.unwed
+      ? "You're going to be a father — think about what you owe her."
+      : 'Your wife is expecting — look after her a little.');
+  }
   return parts.join(' ');
 }

@@ -10,6 +10,7 @@ import { getEffectivePersonality, type StateType } from '../states';
 import { isAdultContent } from '../worldRules';
 import { isIntimacyEligible } from './eligibility';
 import { relieveLongingTo } from './longing';
+import { rollTrystConception } from './pregnancy';
 import { getStay, updateAgentIntimacy, updatePairIntimacy } from './state';
 
 // ─── What a night leaves behind ──────────────────────────────────────────────
@@ -24,6 +25,8 @@ import { getStay, updateAgentIntimacy, updatePairIntimacy } from './state';
 //        a pivotal `first_tryst`, kept forever; later ones a routine `tryst`),
 //        longing spent down to a little, `afterglow` for ~8 game hours and a
 //        memory each ("I spent the night with X" the first time, plainer after)
+//        and, for a man and an unmarried woman of childbearing age, the conception
+//        roll (pregnancy.ts)
 //   if either is engaged or married to somebody else ─▶ the `affair` secret is
 //        born from the act itself (known to the two), and whoever has a
 //        conscience (morality > 60) is `guilty` for a day toward the betrayed
@@ -108,6 +111,8 @@ export function applyTrystAftermath(t: TrystCompletion): void {
   }
   spendTheNight(t, a, b);
   if (isSpokenFor(a.id, b.id) || isSpokenFor(b.id, a.id)) betrayal(t, a, b);
+  // A night can leave more than a memory: the roll for an unmarried mother (pregnancy.ts).
+  rollTrystConception(a, b, t.now);
 }
 
 function interrupted(t: TrystCompletion, a: AgentRow, b: AgentRow): void {

@@ -405,5 +405,7 @@ describe('the adult layer\'s typed rows (server/lib/intimacy/tryst.ts)', () => {
   it('a night together is the romance beat, being seen leaving at dawn a secret', () => {
     expect(classifyActivity(row({ type: 'tryst' }))).toEqual({ kind: 'romance', agentIds: [1, 2] });
     expect(classifyActivity(row({ type: 'caught' }))).toEqual({ kind: 'secret', agentIds: [1, 2] });
+    // The unwed pregnancy the town noticed (server/lib/intimacy/pregnancy.ts) is a secret out too.
+    expect(classifyActivity(row({ type: 'scandal' }))).toEqual({ kind: 'secret', agentIds: [1, 2] });
   });
 });

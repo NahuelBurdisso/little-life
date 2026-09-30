@@ -156,10 +156,10 @@ export function classifyActivity(row: ActivityRow): { kind: BeatKind; agentIds: 
   }
   // The adult layer's typed rows (server/lib/intimacy/tryst.ts): a night together is hearts, being
   // seen leaving at dawn is a secret getting out. Suggestive at most, never a picture of the act.
-  if (row.type === 'tryst' || row.type === 'caught') {
+  if (row.type === 'tryst' || row.type === 'caught' || row.type === 'scandal') {
     const ids = pairOf(row);
     if (ids.length === 0) return null;
-    return { kind: row.type === 'caught' ? 'secret' : 'romance', agentIds: ids };
+    return { kind: row.type === 'tryst' ? 'romance' : 'secret', agentIds: ids };
   }
   if (row.type === 'gift') {
     const ids = pairOf(row);

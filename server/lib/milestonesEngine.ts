@@ -85,6 +85,12 @@ export const WEDDING_LAST_START_HOUR = 16;
 /** Two agents this close (px) may talk even outside a building; same bound as the scheduler. */
 const TALK_RANGE_PX = 64;
 const ADULT_AGE = 18;
+/**
+ * A shotgun proposal (an unwed father asked to do right by her, `queueShotgunProposal`) is
+ * not the couple's own idea and cannot wait a game day to be re-decided: it stays pending
+ * this long, then is given up (the pregnancy's scandal path takes over).
+ */
+const SHOTGUN_PENDING_MINUTES = 2 * 24 * 60;
 /** States that put a proposal out of the question for now. */
 const NOT_NOW_STATES = new Set(['heartbroken', 'depressed', 'arrested', 'grieving', 'sick']);
 
@@ -96,6 +102,12 @@ export interface PairMilestone {
   pendingSince?: number;
   /** The `proposal` feed line was written for this pending proposal. */
   announced?: boolean;
+  /**
+   * The proposal (and the engagement it leads to) was forced by a pregnancy
+   * (lib/intimacy/pregnancy.ts), so the pair need not be `partners` for it to stand: the
+   * status gates below accept them. Cleared by a refusal, like the rest of the state.
+   */
+  shotgun?: true;
   /** Game minute the engagement began. */
   engagedAt?: number;
   /** No new proposal before this game minute (after a refusal or an abandoned attempt). */
@@ -144,6 +156,7 @@ export const milestonesSnapshotStore: SnapshotStore = {
         if (r.announced === true) entry.announced = true;
       }
       if (engagedAt !== null) entry.engagedAt = engagedAt;
+      if (r.shotgun === true && (entry.proposerId != null || entry.engagedAt != null)) entry.shotgun = true;
       if (retryAfter !== null) entry.retryAfter = retryAfter;
       if (Object.keys(entry).length > 0) pairs.set(k, entry);
     }
@@ -321,7 +334,7 @@ export function milestonesTick(time: ClockTime, nowMinutes: number): void {
   const alive = (id: number) => byId.get(id)?.is_active === true;
 
   const rels = db.select().from(relationships).all()
-    .filter((r) => r.status === 'partners' || r.tags.includes(ENGAGED_TAG));
+    .filter((r) => r.status === 'partners' || r.tags.includes(ENGAGED_TAG) || pairs.get(pairKey(r.agent_a, r.agent_b))?.shotgun === true);
   const seen = new Set<string>();
   let dirty = false;
 
@@ -332,9 +345,13 @@ export function milestonesTick(time: ClockTime, nowMinutes: number): void {
     const b = byId.get(rel.agent_b);
     const engaged = rel.tags.includes(ENGAGED_TAG);
     const married = rel.tags.includes(MARRIED_TAG);
+    const shotgun = pairs.get(key)?.shotgun === true;
 
     // --- Engagements that fell apart ---
-    if (engaged && (rel.status !== 'partners' || !alive(rel.agent_a) || !alive(rel.agent_b))) {
+    // A shotgun engagement stands on the baby, not on the couple's romance: it survives the
+    // pair not being `partners` and ends only with an estrangement or a death.
+    const bond = shotgun ? !rel.tags.includes('estranged') : rel.status === 'partners';
+    if (engaged && (!bond || !alive(rel.agent_a) || !alive(rel.agent_b))) {
       setTags(rel.id, rel.tags.filter((t) => t !== ENGAGED_TAG));
       pairs.delete(key);
       dirty = true;
@@ -378,7 +395,7 @@ export function milestonesTick(time: ClockTime, nowMinutes: number): void {
 
     // --- Proposals ---
     if (state.proposerId != null && state.pendingSince != null) {
-      if (nowMinutes - state.pendingSince > PROPOSAL_PENDING_MINUTES) {
+      if (nowMinutes - state.pendingSince > (state.shotgun ? SHOTGUN_PENDING_MINUTES : PROPOSAL_PENDING_MINUTES)) {
         // Never managed it: think it over for a day.
         pairs.set(key, { retryAfter: nowMinutes + 24 * 60 });
         continue;
@@ -480,6 +497,38 @@ function queueProposal(proposer: AgentRow, other: AgentRow, state: PairMilestone
   }
 }
 
+// ─── A proposal a baby forces ────────────────────────────────────────────────
+
+/**
+ * An unwed father who means to do right by the mother (lib/intimacy/pregnancy.ts) proposes
+ * NOW: the 4 to 7 game days of being partners the couple's own proposal waits for are
+ * skipped, and so is the `partners` status. Same answer flow as any proposal (an llm_deep
+ * conversation, yes leads to the engagement and the wedding a game day later, no goes to the
+ * scandal), so this only writes the pending state and seats the question when they are
+ * together. Returns false, writing nothing, when the pair could never marry: not a man and a
+ * woman (1900, and the adult layer's same-sex pairs stay unwed), someone under 18 or gone,
+ * either already engaged or married to somebody else, or the two already engaged or married.
+ */
+export function queueShotgunProposal(proposerId: number, partnerId: number): boolean {
+  const proposer = db.select().from(agents).where(eq(agents.id, proposerId)).get();
+  const other = db.select().from(agents).where(eq(agents.id, partnerId)).get();
+  if (!proposer?.is_active || !other?.is_active || proposerId === partnerId) return false;
+  if (proposer.age < ADULT_AGE || other.age < ADULT_AGE || proposer.gender === other.gender) return false;
+  if (isSpokenFor(proposerId, partnerId) || isSpokenFor(partnerId, proposerId)) return false;
+  const rel = relBetween(proposerId, partnerId);
+  if (!rel || rel.tags.includes(ENGAGED_TAG) || rel.tags.includes(MARRIED_TAG)) return false;
+
+  const key = pairKey(proposerId, partnerId);
+  const state: PairMilestone = { proposerId, pendingSince: gameMinutesNow(), shotgun: true };
+  pairs.set(key, state);
+  // A stale question from the couple's own (slower) timeline is replaced, not doubled.
+  dropQueuedProposals(proposerId, partnerId);
+  // Already together: no reason to wait for the next pass.
+  if (canProposeNow(proposer, other)) queueProposal(proposer, other, state);
+  emitter.markDirty('agents.all');
+  return true;
+}
+
 // ─── Going to find them ──────────────────────────────────────────────────────
 //
 // `milestonesTick` only seats a proposal when the two happen to be together at
@@ -552,7 +601,7 @@ export function queuePendingProposalNow(proposerId: number): boolean {
   const proposer = db.select().from(agents).where(eq(agents.id, proposerId)).get();
   const other = db.select().from(agents).where(eq(agents.id, partnerId)).get();
   if (!state || !proposer || !other || !proposer.is_active || !other.is_active) return false;
-  if (relBetween(proposerId, partnerId)?.status !== 'partners') return false;
+  if (relBetween(proposerId, partnerId)?.status !== 'partners' && !state.shotgun) return false;
   if (!canProposeNow(proposer, other)) return false;
   if (!proposalQueued(proposerId, partnerId)) {
     queueProposal(proposer, other, state);
@@ -602,7 +651,7 @@ export function onConversationEnded(p: ConversationEndedPayload): void {
   if (isLLM && p.summary !== PROPOSAL_TOPIC) return;
 
   const rel = relBetween(p.agentId, otherId);
-  if (!rel || rel.status !== 'partners') {
+  if (!rel || (rel.status !== 'partners' && !state.shotgun)) {
     pairs.delete(key);
     dropQueuedProposals(p.agentId, otherId);
     return;
@@ -622,16 +671,18 @@ export function onConversationEnded(p: ConversationEndedPayload): void {
 
   dropQueuedProposals(p.agentId, otherId);
   const now = gameMinutesNow();
-  if (outcome.accepted) acceptProposal(rel, p.agentId, otherId, now);
+  if (outcome.accepted) acceptProposal(rel, p.agentId, otherId, now, state.shotgun === true);
   else refuseProposal(p.agentId, otherId, now);
   emitter.markDirty('agents.all');
 }
 
-function acceptProposal(rel: RelRow, proposer: number, answerer: number, now: number): void {
+function acceptProposal(rel: RelRow, proposer: number, answerer: number, now: number, shotgun: boolean): void {
   const pName = nameOf(proposer);
   const aName = nameOf(answerer);
   setTags(rel.id, [...rel.tags.filter((t) => t !== ENGAGED_TAG), ENGAGED_TAG]);
-  pairs.set(pairKey(proposer, answerer), { engagedAt: now });
+  // A shotgun engagement keeps its flag: the couple is not `partners`, and the status gate would
+  // call it off at the next pass.
+  pairs.set(pairKey(proposer, answerer), { engagedAt: now, ...(shotgun ? { shotgun: true as const } : {}) });
 
   db.insert(relationshipEvents).values({
     agent_a: proposer, agent_b: answerer, event_type: 'proposal',

@@ -70,6 +70,8 @@ export function renderMessage(entry: ActivityEntry): string {
       ? `${d.agent1} and ${d.agent2} spent the evening together at ${d.venue}.`
       : `${d.agent1} and ${d.agent2} spent the evening together.`;
   }
+  // The unwed pregnancy the town has noticed (lib/intimacy/pregnancy.ts): agent1 is the mother, never more.
+  if (entry.type === 'scandal' && d.agent1) return `Whispers follow ${d.agent1} through town.`;
   if (entry.type === 'caught' && d.witness && d.agent1 && d.agent2) {
     if (d.scene === 'found') return `${d.witness} found ${d.agent1} and ${d.agent2} together.`;
     if (d.scene === 'outdoors') return `${d.witness} saw ${d.agent1} and ${d.agent2} slipping away together after dark.`;

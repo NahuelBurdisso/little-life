@@ -13,6 +13,7 @@ const FACT_COLORS: Record<string, string> = {
   affair: "text-red-400",
   kiss_seen: "text-pink-300",
   tryst_seen: "text-pink-400",
+  illegitimate_pregnancy: "text-rose-300",
   theft: "text-orange-400",
   blackmail: "text-red-500",
   grudge: "text-red-600",

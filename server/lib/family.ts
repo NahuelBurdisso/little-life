@@ -47,6 +47,11 @@ import type { ClockTime } from './gameClock';
 // her husband learns it — or the whole town does — he confronts the lover,
 // and the marriage may not survive it.
 //
+// A pregnancy can also begin outside marriage (the adult layer, lib/intimacy/pregnancy.ts,
+// through `startPregnancy`): it is marked `unwed`, skips `tellSpouse` / `announce` (that
+// module tells the father and lets the town whisper), and is born through `giveBirth` like any
+// other, with no father of record when he denied it.
+//
 // A child is not an agent: no needs, no plan, no LLM. Children appear in their
 // parents' prompts (familyState.ts), in the agent panel, as a bundle in the
 // mother's arms on the canvas, and in the line of heirs (heirs.ts). They never
@@ -131,6 +136,15 @@ export function canConceive(g: ConceptionGate): boolean {
   if (g.motherAge < MOTHER_MIN_AGE || g.motherAge > MOTHER_MAX_AGE || g.fatherAge < FATHER_MIN_AGE) return false;
   if (g.romance < PREGNANCY_MIN_ROMANCE) return false;
   if (g.expecting || g.notNow) return false;
+  return roomForAnotherChild(g);
+}
+
+/**
+ * The family-size rule, on its own: at most MAX_CHILDREN in town, and never two
+ * babies closer than MIN_DAYS_BETWEEN_BABIES. The unwed conception roll
+ * (lib/intimacy/pregnancy.ts) asks this without the marriage gates.
+ */
+export function roomForAnotherChild(g: Pick<ConceptionGate, 'childCount' | 'youngestAgeDays'>): boolean {
   if (g.childCount >= MAX_CHILDREN) return false;
   return g.youngestAgeDays == null || g.youngestAgeDays >= MIN_DAYS_BETWEEN_BABIES;
 }
@@ -173,8 +187,8 @@ function kinWord(sex: string): string {
   return sex === 'female' ? 'daughter' : 'son';
 }
 
-function remember(agentId: number, description: string, valence: number, importance: number, related?: number): void {
-  simEvents.emit('life:milestone', { agentId, description, valence, importance, relatedAgentId: related });
+function remember(agentId: number, description: string, valence: number, importance: number, related?: number | null): void {
+  simEvents.emit('life:milestone', { agentId, description, valence, importance, relatedAgentId: related ?? undefined });
 }
 
 function addMood(agentId: number, value: number, source: string, minutes: number, now: number): void {
@@ -295,31 +309,64 @@ export function familyDaily(nowMinutes: number, rng: Rng = Math.random): void {
   if (dirty) emitter.markDirty('agents.all');
 }
 
-/** A baby on the way: the pregnancy timer, the secret, and — with a lover — the paternity secret. */
+/** A married couple's baby on the way (the daily roll): who, if anyone, else may be the father. */
 function conceive(mother: AgentRow, father: AgentRow, now: number, rng: Rng, byId: ReadonlyMap<number, AgentRow>): Pregnancy {
   const lover = affairLoverOf(mother, father.id, byId);
   const trueFatherId = lover != null && rng() < AFFAIR_PATERNITY_CHANCE ? lover : undefined;
+  return beginPregnancy(mother, father, trueFatherId != null ? byId.get(trueFatherId) ?? null : null, false, now);
+}
 
-  const p: Pregnancy = { motherId: mother.id, fatherId: father.id, conceivedAt: now };
+export interface StartPregnancyInput {
+  motherId: number;
+  /** The father as the town will believe; null when nobody is named (an unwed pregnancy). */
+  fatherId: number | null;
+  /** The mother's lover, when he is the real father of a married woman's child (an affair). */
+  trueFatherId?: number;
+  /** Conceived outside marriage: the engine's tell-the-husband / announce timers do not run (see `Pregnancy.unwed`). */
+  unwed: boolean;
+  now: number;
+}
+
+/**
+ * Begin a pregnancy from outside the daily roll: the adult layer's unwed conception
+ * (lib/intimacy/pregnancy.ts) comes in through here so it shares the one place a
+ * pregnancy is created. Null when the mother is not in town or is already expecting.
+ */
+export function startPregnancy(input: StartPregnancyInput): Pregnancy | null {
+  if (pregnancyOf(input.motherId)) return null;
+  const rowOf = (id: number | null | undefined) => (id == null ? null : db.select().from(agents).where(eq(agents.id, id)).get() ?? null);
+  const mother = rowOf(input.motherId);
+  if (!mother?.is_active) return null;
+  return beginPregnancy(mother, rowOf(input.fatherId), rowOf(input.trueFatherId), input.unwed, input.now);
+}
+
+/** A baby on the way: the pregnancy timer, the secret, and — with a lover — the paternity secret. */
+function beginPregnancy(mother: AgentRow, father: AgentRow | null, trueFather: AgentRow | null, unwed: boolean, now: number): Pregnancy {
+  const p: Pregnancy = { motherId: mother.id, fatherId: father?.id ?? null, unwed, conceivedAt: now };
   // Private: only she knows. Sensitivity 2 — happy news, but hers to tell, so
   // it spreads like a confidence (secretSharing) rather than like the weather.
-  const factId = createFact('pregnancy', mother.id, father.id, 2, [mother.id], 'private');
+  // Unmarried, it is a step heavier (3): a secret she has every reason to keep.
+  const factId = createFact('pregnancy', mother.id, father?.id ?? null, unwed ? 3 : 2, [mother.id], 'private');
   if (factId != null) p.factId = factId;
 
   let fear = '';
-  if (trueFatherId != null) {
-    p.trueFatherId = trueFatherId;
-    const loverName = byId.get(trueFatherId)?.name ?? 'him';
+  if (trueFather && father) {
+    p.trueFatherId = trueFather.id;
     // The worst secret a married woman can keep in 1900: a step past every
     // other (same bar as an affair that betrays a marriage).
-    p.paternityFactId = createFact('paternity', mother.id, trueFatherId, MARRIED_AFFAIR_SENSITIVITY, [mother.id], 'private',
-      { detail: father.name }) ?? existingFactId('paternity', mother.id, trueFatherId) ?? undefined;
-    fear = ` I'm afraid it may be ${firstName(loverName)}'s, not ${firstName(father.name)}'s.`;
+    p.paternityFactId = createFact('paternity', mother.id, trueFather.id, MARRIED_AFFAIR_SENSITIVITY, [mother.id], 'private',
+      { detail: father.name }) ?? existingFactId('paternity', mother.id, trueFather.id) ?? undefined;
+    fear = ` I'm afraid it may be ${firstName(trueFather.name)}'s, not ${firstName(father.name)}'s.`;
   }
   setPregnancy(p);
 
-  remember(mother.id, `I'm expecting a baby! I haven't told anyone yet.${fear}`, fear ? 0.1 : 0.8, 8, father.id);
-  addMood(mother.id, fear ? 3 : 10, 'expecting', MINUTES_PER_DAY, now);
+  if (unwed) {
+    remember(mother.id, "I'm expecting a baby, and I'm not married. I haven't told anyone yet.", -0.3, 8, father?.id);
+    addMood(mother.id, -3, 'expecting', MINUTES_PER_DAY, now);
+  } else {
+    remember(mother.id, `I'm expecting a baby! I haven't told anyone yet.${fear}`, fear ? 0.1 : 0.8, 8, father?.id);
+    addMood(mother.id, fear ? 3 : 10, 'expecting', MINUTES_PER_DAY, now);
+  }
   return p;
 }
 
@@ -362,9 +409,14 @@ export function familyTick(time: ClockTime, nowMinutes: number, rng: Rng = Math.
       continue;
     }
     const age = nowMinutes - p.conceivedAt;
-    if (!p.spouseTold && age >= SPOUSE_TOLD_AFTER_MINUTES) { tellSpouse(p, byId, nowMinutes); dirty = true; }
-    if (!p.announced && age >= ANNOUNCE_AFTER_MINUTES) { announce(p, byId, nowMinutes); dirty = true; }
-    if (p.trueFatherId != null && p.paternityFactId != null && !p.paternityRevealed && paternityOut(p.paternityFactId, p.fatherId, byId)) {
+    // An unwed pregnancy has its own timers (lib/intimacy/pregnancy.ts): who she tells,
+    // and whether the town whispers, is not the married couple's cheerful schedule.
+    if (!p.unwed) {
+      if (!p.spouseTold && age >= SPOUSE_TOLD_AFTER_MINUTES) { tellSpouse(p, byId, nowMinutes); dirty = true; }
+      if (!p.announced && age >= ANNOUNCE_AFTER_MINUTES) { announce(p, byId, nowMinutes); dirty = true; }
+    }
+    if (p.fatherId != null && p.trueFatherId != null && p.paternityFactId != null && !p.paternityRevealed
+      && paternityOut(p.paternityFactId, p.fatherId, byId)) {
       p.paternityRevealed = true;
       revealPaternity({ motherId: p.motherId, fatherId: p.fatherId, loverId: p.trueFatherId, childName: null }, byId, nowMinutes, rng);
       dirty = true;
@@ -437,7 +489,7 @@ function christeningBlocked(): boolean {
 
 function tellSpouse(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: number): void {
   p.spouseTold = true;
-  const father = byId.get(p.fatherId);
+  const father = p.fatherId != null ? byId.get(p.fatherId) : undefined;
   const mother = byId.get(p.motherId);
   if (!father?.is_active || !mother) return; // widowed while expecting: nobody to tell
   if (p.factId != null) addKnowers(p.factId, [father.id]);
@@ -456,7 +508,7 @@ function announce(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: number
   if (!p.spouseTold) tellSpouse(p, byId, now);
   p.announced = true;
   const mother = byId.get(p.motherId);
-  const father = byId.get(p.fatherId);
+  const father = p.fatherId != null ? byId.get(p.fatherId) : undefined;
   if (!mother) return;
   const town = [...byId.values()].filter((a) => a.is_active).map((a) => a.id);
   if (p.factId != null) {
@@ -478,8 +530,12 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
   endPregnancy(p.motherId);
   const mother = byId.get(p.motherId);
   if (!mother) return null;
-  const father = byId.get(p.fatherId);
-  const fatherHere = father?.is_active === true;
+  const father = p.fatherId != null ? byId.get(p.fatherId) : undefined;
+  // An unwed father who turned her away is not a parent of record (`fatherDenied`).
+  const fatherHere = father?.is_active === true && !p.fatherDenied;
+  // An unwed birth is worded neutrally: the town is told of the mother and the baby, and of a
+  // father only once he stands beside her as her husband (a shotgun wedding that did happen).
+  const named = fatherHere && (!p.unwed || relBetween(mother.id, father!.id)?.tags.includes(MARRIED_TAG) === true);
 
   const sex = rng() < 0.5 ? 'female' : 'male';
   const taken = new Set<string>([
@@ -492,7 +548,8 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
     sex,
     birth_game_minute: now,
     mother_id: mother.id,
-    father_id: p.fatherId,
+    // NULL for a father who denied it: never `true_father_id`, which drives the paternity drama.
+    father_id: p.fatherDenied ? null : p.fatherId,
     true_father_id: p.trueFatherId ?? null,
     home: mother.home,
     alive: true,
@@ -503,17 +560,17 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
   // The pregnancy is over; the birth is its own (public) fact.
   if (p.factId != null) db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, p.factId)).run();
   const kin = kinWord(sex);
-  const parents = fatherHere ? `${mother.name} and ${father!.name}` : mother.name;
+  const parents = named ? `${mother.name} and ${father!.name}` : mother.name;
   logActivity({
     type: 'drama',
     initiator: mother.id,
-    ...(fatherHere ? { target: father!.id } : {}),
+    ...(named ? { target: father!.id } : {}),
     location: mother.home,
     templateData: { description: `${parents} welcomed a baby ${kin}, ${name}!` },
     metadata: { beat: 'birth' },
   });
   const town = [...byId.values()].filter((a) => a.is_active).map((a) => a.id);
-  createFact('birth', mother.id, fatherHere ? father!.id : null, 1, town, 'event', { detail: `a ${sex === 'female' ? 'girl' : 'boy'} named ${name}` });
+  createFact('birth', mother.id, named ? father!.id : null, 1, town, 'event', { detail: `a ${sex === 'female' ? 'girl' : 'boy'} named ${name}` });
 
   // The parents: joy, a few days of mood lift, and memories.
   const parentIds = fatherHere ? [mother.id, father!.id] : [mother.id];
@@ -524,7 +581,8 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
   const fear = p.trueFatherId != null && !p.paternityRevealed
     ? ` When I look at ${sex === 'female' ? 'her' : 'his'} face I can't stop wondering whose ${kin} ${name} really is.`
     : '';
-  remember(mother.id, `I gave birth to our ${kin}, ${name}. I've never been so tired or so happy.${fear}`, fear ? 0.5 : 1, 10, fatherHere ? father!.id : undefined);
+  const own = p.unwed && !fatherHere ? 'my' : 'our';
+  remember(mother.id, `I gave birth to ${own} ${kin}, ${name}. I've never been so tired or so happy.${fear}`, fear ? 0.5 : 1, 10, fatherHere ? father!.id : undefined);
   if (fatherHere) remember(father!.id, `Our ${kin} ${name} was born today. I'm a father.`, 1, 10, mother.id);
 
   // Friends hear the news and mean to congratulate (decisions.ts picks the

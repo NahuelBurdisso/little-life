@@ -129,6 +129,10 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   tryst:  { category: 'relationship', base_importance: 0.5, retention: 'medium', template: '{agent1} and {agent2} spent the evening together at {venue}', newsworthy: false },
   caught: { category: 'drama', base_importance: 0.75, retention: 'long', template: '{witness} saw {agent1} slipping out of {agent2}\'s house at dawn' },
 
+  // ─── The scandal (lib/intimacy/pregnancy.ts, the adult layer) ─────────────
+  // An unwed pregnancy the town can see: a headline, worded discreetly (activityMessage.ts).
+  scandal: { category: 'drama', base_importance: 0.85, retention: 'long', template: 'Whispers follow {agent1} through town', newsworthy: true },
+
   // ─── The town calendar (lib/townCalendar.ts) ────────────────────────────────
   // "The Harvest Festival is in two days": town news the feed should carry, but
   // not the paper's material — the gazette gets its own "Coming up" section from

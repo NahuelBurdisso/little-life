@@ -77,6 +77,8 @@ export function alertTier(row: AlertCandidate, favoriteIds: ReadonlySet<number> 
   // (major) and is worth a quiet toast for anyone else.
   if (row.type === 'tryst') return involves(row, favoriteIds) ? 'minor' : null;
   if (row.type === 'caught') return involves(row, favoriteIds) ? 'major' : 'minor';
+  // The town noticing an unwed pregnancy (lib/intimacy/pregnancy.ts): headline news.
+  if (row.type === 'scandal') return 'major';
 
   if (row.type === 'relationship_status_change') {
     const status = String(row.template_data?.status ?? '');

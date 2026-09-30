@@ -37,7 +37,7 @@ function familyOf(agentId: number, nowMinute: number) {
   });
   const p = pregnancyInvolving(agentId);
   const expecting = p && (p.motherId === agentId || p.spouseTold)
-    ? { secret: !p.announced, dueInDays: Math.max(0, Math.ceil((p.conceivedAt + PREGNANCY_MINUTES - nowMinute) / MINUTES_PER_DAY)) }
+    ? { secret: !(p.announced || (p.unwed && p.showing)), dueInDays: Math.max(0, Math.ceil((p.conceivedAt + PREGNANCY_MINUTES - nowMinute) / MINUTES_PER_DAY)) }
     : null;
   return { spouse, children: kids, expecting };
 }
