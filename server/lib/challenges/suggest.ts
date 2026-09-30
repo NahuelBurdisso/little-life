@@ -63,7 +63,7 @@ function isActive(snap: TownSnapshot, id: number): boolean {
 }
 
 /** Engaged or married to someone (living) other than `except`. */
-function spokenFor(snap: TownSnapshot, id: number, except: number): boolean {
+export function spokenFor(snap: TownSnapshot, id: number, except: number): boolean {
   return snap.pairs.some((p) => {
     if (p.a !== id && p.b !== id) return false;
     const other = p.a === id ? p.b : p.a;

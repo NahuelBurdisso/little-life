@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { trpc } from "../../lib/trpc";
 import { useNudge } from "../../hooks/useNudge";
+import { useChallenges } from "../../hooks/useChallenges";
 import { COLORS } from "../../lib/constants";
 import { formatGameMinute, gameTimeAgo } from "../../lib/formatters";
 import type {
@@ -14,6 +15,8 @@ import type {
   PairDossier as PairDossierData,
 } from "../../../server/lib/pairDossier";
 import { arrangeButtonFor } from "../../lib/romanceUi";
+import { AIM_OPTIONS, goalForPair } from "../../lib/pairGoal";
+import { CHALLENGE_KINDS } from "../../../server/lib/challenges/catalog";
 import { EmptyState } from "./EmptyState";
 import { MiniPortrait } from "./MiniPortrait";
 import { Skeleton } from "./Skeleton";
@@ -473,6 +476,88 @@ function ArcRow({ arc, now }: { arc: DossierArc; now: number }) {
   );
 }
 
+// --- Set a goal ---------------------------------------------------------------------------------
+
+/**
+ * "🎯 Set a goal…" and the goal once it runs: the player points at this pair
+ * and asks for a wedding, a friendship or a falling-out. The server turns it
+ * into a challenge (lib/challenges/aim.ts), so progress, feed rows and the
+ * fanfare are the Journal's own; this shows the same card for this pair only.
+ *
+ * Its own component because it mounts `useChallenges` (the list query and the
+ * `challenges` channel subscription): rendered inside the modal, it costs
+ * nothing while the dossier is closed, and without the subscription the goal
+ * would stay stale unless the Journal happened to be open.
+ */
+function PairGoal({ pair, first, second }: { pair: { a: number; b: number }; first: string; second: string }) {
+  const { view, aimAtPair, abandon, busy } = useChallenges();
+  const [open, setOpen] = useState(false);
+  const goal = goalForPair(view?.active ?? [], pair.a, pair.b);
+  const p = goal?.progress;
+  const pct = p && p.target > 0 ? Math.max(0, Math.min(100, (p.value / p.target) * 100)) : 0;
+  return (
+    <>
+      <span className="relative">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-haspopup="menu"
+          disabled={busy}
+          onClick={() => setOpen((v) => !v)}
+          title={`Aim for something with ${first} and ${second}; it becomes a challenge with a deadline`}
+          className={`px-2.5 py-1 text-xs ${W.btn}`}
+        >
+          🎯 Set a goal…
+        </button>
+        {open && (
+          <div role="menu" className={`${W.card} absolute left-0 top-full mt-1 z-10 w-56 shadow-xl py-1`}>
+            {AIM_OPTIONS.map((o) => (
+              <button
+                key={o.aim}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  aimAtPair(pair.a, pair.b, o.aim);
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-ui-text hover:bg-ui-hover flex items-baseline gap-2"
+              >
+                {o.label}
+                {o.hint && <span className="text-[9px] text-ui-warn">{o.hint}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </span>
+      {goal && (
+        <div className="order-last basis-full border border-ui-gold/50 bg-ui-raised px-2.5 py-1.5 text-xs" aria-label="Your goal for them">
+          <div className="flex items-center gap-2">
+            <span aria-hidden="true">{CHALLENGE_KINDS[goal.kind].icon}</span>
+            <span className="text-ui-text min-w-0 flex-1">{goal.goal}</span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => abandon(goal)}
+              className="text-[10px] text-ui-muted hover:text-ui-bad underline underline-offset-2 shrink-0"
+              title="Give up on this goal"
+            >
+              Abandon
+            </button>
+          </div>
+          {p && (
+            <div className="mt-1">
+              <div className="h-1.5 bg-ui-deep border border-ui-line" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+                <div className="h-full bg-ui-gold" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="text-[10px] text-ui-muted mt-0.5">{p.label}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 // --- Modal --------------------------------------------------------------------------------------
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -581,6 +666,7 @@ export function PairDossier({ pair, watched, onToggleWatch, onClose, onFocusAgen
             >
               👁 {watched ? "Watching" : "Watch"}
             </button>
+            <PairGoal pair={pair} first={first} second={second} />
             <button
               type="button"
               disabled={talking}

@@ -68,10 +68,29 @@ export interface ChallengeBaseline {
   hands?: { actionId: number; handsOn: number };
 }
 
+/**
+ * Where a challenge came from: one of the day's three `offer`s, or an `aim` the
+ * player set for a pair from the pair dossier ("get them married"). An aim is
+ * the same kind, evaluator and feedback as an offer; the tag only lets the
+ * Journal say "your aim". Missing (a store written before aims) reads as an offer.
+ */
+export type ChallengeSource = 'offer' | 'aim';
+
+/** What a player can aim a pair at, and the existing kind that judges each. */
+export type PairAim = 'marry' | 'befriend' | 'sunder';
+
+export const AIM_KINDS: Readonly<Record<PairAim, 'matchmaker' | 'peacemaker' | 'feud'>> = {
+  marry: 'matchmaker',
+  befriend: 'peacemaker',
+  sunder: 'feud',
+};
+
 export interface Challenge {
   /** `c<n>`, unique within the world's store. */
   id: string;
   kind: ChallengeKind;
+  /** See `ChallengeSource`. */
+  source?: ChallengeSource;
   difficulty: Difficulty;
   /** The goal in one sentence with the residents' names: "Get Ada and Tom married". */
   goal: string;

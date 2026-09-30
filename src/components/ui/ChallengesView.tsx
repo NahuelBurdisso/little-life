@@ -45,6 +45,16 @@ function DifficultyChip({ d }: { d: Difficulty }) {
   return <span className={`text-[9px] uppercase tracking-wide border px-1 ${DIFFICULTY_STYLE[d]}`}>{d}</span>;
 }
 
+/** Marks a challenge the player set for a pair from the dossier, as opposed to one of the day's offers. */
+function AimTag({ c }: { c: Challenge }) {
+  if (c.source !== "aim") return null;
+  return (
+    <span className="text-[9px] uppercase tracking-wide border border-ui-gold/50 text-ui-gold px-1" title="You set this goal from the pair's page">
+      your aim
+    </span>
+  );
+}
+
 function People({ ids, names, onSelectAgent }: { ids: number[]; names: Map<string, string>; onSelectAgent: Props["onSelectAgent"] }) {
   if (ids.length === 0) return null;
   return (
@@ -165,6 +175,7 @@ export function ChallengesView({ agents, onSelectAgent }: Props) {
               <li key={c.id} className="flex gap-2 items-baseline">
                 <span aria-hidden="true">{ENDED_ICON[c.status] ?? "•"}</span>
                 <span className="font-bold shrink-0">{CHALLENGE_KINDS[c.kind].name}</span>
+                <AimTag c={c} />
                 <span className="text-ui-dim min-w-0 truncate" title={`${c.goal} — ${c.outcome ?? ""}`}>
                   {c.goal}{c.outcome ? ` — ${c.outcome}` : ""}
                 </span>
@@ -200,6 +211,7 @@ function ActiveCard({
         <span className="text-lg leading-none" aria-hidden="true">{def.icon}</span>
         <span className="font-bold">{def.name}</span>
         <DifficultyChip d={c.difficulty} />
+        <AimTag c={c} />
         <span className={`ml-auto ${left <= 1 ? "text-ui-warn" : "text-ui-muted"}`}>
           {left === 0 ? "ends this hour" : `${left} ${left === 1 ? "day" : "days"} left`}
         </span>

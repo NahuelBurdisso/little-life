@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, publicProcedure } from '../trpc';
 import { emitter } from '../engine/emitter';
-import { abandonChallenge, chooseChallenge, getChallengeView } from '../lib/challenges/service';
+import { abandonChallenge, aimAtPair, chooseChallenge, getChallengeView } from '../lib/challenges/service';
 
 /**
  * Optional player goals (lib/challenges/). `list` is the whole tab — offers,
@@ -18,6 +18,15 @@ export const challengesRouter = router({
   choose: publicProcedure
     .input(z.object({ id: z.string().min(1) }))
     .mutation(({ input }) => chooseChallenge(input.id)),
+
+  // The player's own goal for a pair, from the pair dossier (lib/challenges/aim.ts).
+  aimAtPair: publicProcedure
+    .input(z.object({
+      a: z.number().int(),
+      b: z.number().int(),
+      aim: z.enum(['marry', 'befriend', 'sunder']),
+    }))
+    .mutation(({ input }) => aimAtPair(input.a, input.b, input.aim)),
 
   abandon: publicProcedure
     .input(z.object({ id: z.string().min(1) }))

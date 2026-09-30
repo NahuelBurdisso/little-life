@@ -6,14 +6,16 @@ import {
   applyRows, loadAchievements, saveAchievements, takeNewRows,
   type AchievementRow, type AchievementState, type RowWatch,
 } from '../lib/achievements';
-import type { Challenge } from '../../server/lib/challenges/catalog';
+import type { Challenge, PairAim } from '../../server/lib/challenges/catalog';
 
 /**
  * The player's goals on the client.
  *
  * - `useChallenges` — the Journal's 🏆 tab: this world's offers, running
  *   challenges and history (`challenges.list`, refreshed by the `challenges`
- *   channel), plus accept / abandon with a toast either way.
+ *   channel), plus accept / abandon / aim-at-a-pair with a toast either way.
+ *   Also mounted by the pair dossier (its "Set a goal" menu), which is why it
+ *   subscribes itself rather than relying on the Journal being open.
  * - `useGoalWatcher` — mounted once in App: reads the activity rows the canvas
  *   already polls, fires the celebratory FX/sound on the canvas bus when a
  *   challenge settles, and folds every new row into the cross-world
@@ -42,6 +44,19 @@ export function useChallenges() {
     });
   }, [chooseM, utils]);
 
+  // "Set a goal" from the pair dossier: the server words every refusal.
+  const aimM = trpc.challenges.aimAtPair.useMutation();
+  const aimAtPair = useCallback((a: number, b: number, aim: PairAim) => {
+    aimM.mutate({ a, b, aim }, {
+      onSuccess: (r) => {
+        if (r.ok) pushToast(`Goal set: ${r.challenge.goal}`, 'success', '🎯');
+        else pushToast(r.reason, 'warning');
+        void utils.challenges.list.invalidate();
+      },
+      onError: (err) => pushToast(`Couldn't set that goal: ${err.message}`, 'error'),
+    });
+  }, [aimM, utils]);
+
   const abandon = useCallback((c: Challenge) => {
     abandonM.mutate({ id: c.id }, {
       onSuccess: (r) => {
@@ -57,8 +72,9 @@ export function useChallenges() {
     view: data ?? null,
     isLoading,
     choose,
+    aimAtPair,
     abandon,
-    busy: chooseM.isPending || abandonM.isPending,
+    busy: chooseM.isPending || abandonM.isPending || aimM.isPending,
   };
 }
 

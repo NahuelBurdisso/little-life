@@ -262,6 +262,42 @@ describe('feud', () => {
   });
 });
 
+/**
+ * A feud the player aims at ONE pair (service.ts `aimAtPair`, "tear them
+ * apart"): the offer names two residents, so the baseline watches just that pair.
+ * Watching every friendship in town would let a stranger's quarrel win the
+ * player's goal for them.
+ */
+describe('feud aimed at a pair', () => {
+  // 1-2 are the aimed pair (not friends yet, 30), 3-4 are the town's real friends.
+  const before = town({ pairs: [pair(1, 2, { friendship: 30 }), pair(3, 4, { friendship: 60, status: 'friends' })] });
+  const c = beginChallenge(offer('feud', { agentIds: [2, 1], durationDays: 6, source: 'aim' }), before);
+
+  it('baselines only the aimed pair, normalised lo-hi', () => {
+    expect(c.baseline?.friendPairs).toEqual([[1, 2]]);
+    expect(c.source).toBe('aim');
+  });
+
+  it('completes when the aimed pair reaches rivals', () => {
+    const v = evaluateChallenge(c, later(before, 2, { pairs: [pair(1, 2, { friendship: -40, status: 'rivals' })] }));
+    expect(v.status).toBe('completed');
+    expect(v.outcome).toBe('Name1 and Name2 fell out.');
+  });
+
+  it('a different pair falling out does not complete it', () => {
+    const v = evaluateChallenge(c, later(before, 2, {
+      pairs: [pair(1, 2, { friendship: 25 }), pair(3, 4, { friendship: -80, status: 'enemies' })],
+    }));
+    expect(v.status).toBe('active');
+    expect(v.progress.label).toMatch(/Name1 & Name2 at 25/);
+  });
+
+  it('an offer without a pair still watches every friendship in town', () => {
+    const open = beginChallenge(offer('feud', { durationDays: 6 }), before);
+    expect(open.baseline?.friendPairs).toEqual([[3, 4]]);
+  });
+});
+
 describe('recluse', () => {
   const before = town({ pairs: [pair(1, 2, { friendship: 20 })] });
   const c = beginChallenge(offer('recluse', { agentIds: [1], durationDays: 7 }), before);

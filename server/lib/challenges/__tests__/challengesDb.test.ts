@@ -14,7 +14,9 @@ import {
 import { readTownSnapshot } from '../snapshot';
 import { buildOffers, loneliest } from '../suggest';
 import { emptyStore, loadStore, parseStore, recordHandsOn, saveStore } from '../store';
+import { emitter } from '../../../engine/emitter';
 import { runChallengeChecks } from '../evaluate';
+import type { Challenge, ChallengeKind } from '../catalog';
 
 /**
  * Against a real (test) database: the snapshot reads what the evaluator and the
@@ -41,9 +43,9 @@ function setClock(totalMinutes: number): void {
   db.update(worldState).set({ time }).run();
 }
 
-function insertAgent(name: string, o: { age?: number; active?: boolean; action?: string } = {}): number {
+function insertAgent(name: string, o: { age?: number; active?: boolean; action?: string; gender?: string } = {}): number {
   return db.insert(agents).values({
-    name, bio: 'test', traits: [], personality: null, age: o.age ?? 30, gender: 'female',
+    name, bio: 'test', traits: [], personality: null, age: o.age ?? 30, gender: o.gender ?? 'female',
     sprite_sheet: 'x', portrait_sprite: 'x', position: { x: 0, y: 0 }, current_location: loc,
     current_action: { type: o.action ?? 'idle' }, action_started: 0, action_queue: [],
     schedule: { wakeTime: 6, sleepTime: 22, workStart: 9, workEnd: 17, lunchTime: 12, freeTimePreferences: [] },
@@ -82,7 +84,7 @@ beforeAll(() => {
   }).run();
 
   ids.ada = insertAgent('Ada Lark');
-  ids.tom = insertAgent('Tom Reed');
+  ids.tom = insertAgent('Tom Reed', { gender: 'male' });
   ids.bea = insertAgent('Bea Stone');
   ids.cal = insertAgent('Cal Moss');
   ids.kid = insertAgent('Kit Young', { age: 12 });
@@ -293,5 +295,163 @@ describe('router + hourly check', () => {
     expect(count()).toBe(start + 1);
     at('summer', 252); runChallengeChecks();  // not a winter
     expect(count()).toBe(start + 1);
+  });
+});
+
+/**
+ * "Set a goal" from the pair dossier (service.ts `aimAtPair`): an aim is stored
+ * like an accepted offer, tagged `source: 'aim'`, under the same cap and
+ * one-per-kind rules, and refuses what can never happen with a sentence the
+ * toast shows.
+ */
+describe('aimAtPair', () => {
+  const aims = challengesRouter.createCaller({} as any);
+  const sorted = (...xs: number[]) => [...xs].sort((x, y) => x - y);
+
+  function running(kind: ChallengeKind, id: string): Challenge {
+    return {
+      id, kind, difficulty: 'easy', goal: kind, agentIds: [], durationDays: 3, status: 'active',
+      offeredAt: 0, startedAt: 0, deadline: 99 * DAY, baseline: {},
+    };
+  }
+
+  beforeAll(() => {
+    ids.gina = insertAgent('Gina Wed', { gender: 'female' });
+    ids.hal = insertAgent('Hal Wed', { gender: 'male' });
+    ids.ivy = insertAgent('Ivy Free', { gender: 'female' });
+    ids.jon = insertAgent('Jon Pal', { gender: 'male' });
+    relate(ids.gina, ids.hal, { f: 80, r: 90, status: 'partners', tags: ['married'] });
+    relate(ids.ivy, ids.jon, { f: 60, status: 'friends' });
+    relate(ids.hal, ids.ivy, { f: 10, r: 30, status: 'acquaintances' });
+    relate(ids.ada, ids.jon, { f: 0, status: 'acquaintances' });
+  });
+
+  it("stores the aim as a running challenge tagged as the player's own", async () => {
+    const res = await aims.aimAtPair({ a: ids.tom, b: ids.ada, aim: 'marry' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.challenge).toMatchObject({
+      kind: 'matchmaker', source: 'aim', status: 'active', agentIds: sorted(ids.ada, ids.tom),
+      goal: 'Get Ada and Tom married (your aim)', durationDays: 14,
+    });
+    expect(res.challenge.progress).toBeDefined();
+    const stored = loadStore()!;
+    expect(stored.active).toHaveLength(1);
+    expect(stored.active[0]).toMatchObject({ id: res.challenge.id, source: 'aim' });
+    // The id never collides with an offer's.
+    expect(stored.nextId).toBeGreaterThan(Number(res.challenge.id.slice(1)));
+  });
+
+  it('keeps the tag through the stored blob', async () => {
+    await aims.aimAtPair({ a: ids.ada, b: ids.tom, aim: 'marry' });
+    expect(loadStore()!.active[0].source).toBe('aim');
+    expect(parseStore(JSON.parse(JSON.stringify(loadStore()))).active[0].source).toBe('aim');
+  });
+
+  it("drops the day's offer of the same kind, since it could no longer be accepted", async () => {
+    await aims.list();
+    const store = loadStore()!;
+    store.offers = [
+      { id: 'c60', kind: 'matchmaker', difficulty: 'hard', goal: 'Other', agentIds: [ids.ada, ids.tom], durationDays: 14, status: 'offered', offeredAt: 0 },
+      { id: 'c61', kind: 'hands_off', difficulty: 'easy', goal: 'Hands', agentIds: [], durationDays: 2, status: 'offered', offeredAt: 0 },
+    ];
+    store.offersDay = 5;
+    store.nextId = 70;
+    saveStore(store);
+    expect((await aims.aimAtPair({ a: ids.ada, b: ids.tom, aim: 'marry' })).ok).toBe(true);
+    expect(loadStore()!.offers.map((o) => o.id)).toEqual(['c61']);
+  });
+
+  it('marks the challenges channel dirty and announces it', async () => {
+    const seen: string[] = [];
+    const unsub = emitter.subscribe('challenges', (d) => seen.push(d.channel));
+    try {
+      await aims.aimAtPair({ a: ids.ada, b: ids.tom, aim: 'marry' });
+    } finally {
+      unsub();
+    }
+    expect(seen).toEqual(['challenges']);
+  });
+
+  it('a refusal changes nothing and stays quiet on the channel', async () => {
+    const seen: string[] = [];
+    const unsub = emitter.subscribe('challenges', (d) => seen.push(d.channel));
+    try {
+      expect((await aims.aimAtPair({ a: ids.bea, b: ids.kid, aim: 'marry' })).ok).toBe(false);
+    } finally {
+      unsub();
+    }
+    expect(seen).toEqual([]);
+    expect(loadStore()?.active ?? []).toEqual([]);
+  });
+
+  it('refuses a minor for marry', async () => {
+    const res = await aims.aimAtPair({ a: ids.bea, b: ids.kid, aim: 'marry' });
+    expect(res).toEqual({ ok: false, reason: 'Kit is too young to marry' });
+  });
+
+  it('refuses someone who is spoken for, and a couple already married', async () => {
+    const other = await aims.aimAtPair({ a: ids.hal, b: ids.ivy, aim: 'marry' });
+    expect(other).toEqual({ ok: false, reason: 'Hal is already engaged or married to someone else' });
+    const each = await aims.aimAtPair({ a: ids.gina, b: ids.hal, aim: 'marry' });
+    expect(each).toEqual({ ok: false, reason: 'Gina and Hal are already married' });
+  });
+
+  it('refuses a pair who could never fall for each other', async () => {
+    // Ada and Gina are both women drawn to men (orientation defaults to straight).
+    const res = await aims.aimAtPair({ a: ids.ada, b: ids.gina, aim: 'marry' });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/aren't drawn to each other/);
+  });
+
+  it('refuses an already-friends pair for befriend, and rivals for sunder', async () => {
+    expect(await aims.aimAtPair({ a: ids.ivy, b: ids.jon, aim: 'befriend' }))
+      .toEqual({ ok: false, reason: 'Ivy and Jon are already friends' });
+    expect(await aims.aimAtPair({ a: ids.bea, b: ids.cal, aim: 'sunder' }))
+      .toEqual({ ok: false, reason: 'Bea and Cal are already at odds' });
+  });
+
+  it('refuses two residents who are the same, gone, or dead', async () => {
+    expect((await aims.aimAtPair({ a: ids.ada, b: ids.ada, aim: 'befriend' })).ok).toBe(false);
+    expect(await aims.aimAtPair({ a: ids.ada, b: ids.dan, aim: 'befriend' }))
+      .toEqual({ ok: false, reason: "Dan isn't in town any more" });
+    expect((await aims.aimAtPair({ a: ids.eve, b: ids.ada, aim: 'sunder' })).ok).toBe(false);
+  });
+
+  it('aims a feud at just that pair, and befriend at a pair of enemies', async () => {
+    const sunder = await aims.aimAtPair({ a: ids.ivy, b: ids.jon, aim: 'sunder' });
+    expect(sunder.ok).toBe(true);
+    if (sunder.ok) expect(sunder.challenge.baseline?.friendPairs).toEqual([sorted(ids.ivy, ids.jon)]);
+    const peace = await aims.aimAtPair({ a: ids.cal, b: ids.bea, aim: 'befriend' });
+    expect(peace.ok).toBe(true);
+    if (peace.ok) expect(peace.challenge).toMatchObject({ kind: 'peacemaker', difficulty: 'hard', source: 'aim' });
+  });
+
+  it('a running challenge of the same kind blocks the aim', async () => {
+    const store = emptyStore();
+    store.active = [running('feud', 'c1')];
+    saveStore(store);
+    expect(await aims.aimAtPair({ a: ids.ivy, b: ids.jon, aim: 'sunder' }))
+      .toEqual({ ok: false, reason: 'You are already running one like it' });
+  });
+
+  it('refuses a fourth challenge beyond the cap', async () => {
+    const store = emptyStore();
+    store.active = [running('guardian', 'c1'), running('scandal', 'c2'), running('hands_off', 'c3')];
+    saveStore(store);
+    expect(await aims.aimAtPair({ a: ids.ada, b: ids.tom, aim: 'marry' }))
+      .toEqual({ ok: false, reason: 'You already have 3 challenges running' });
+    expect(loadStore()!.active).toHaveLength(3);
+  });
+
+  it('an aimed feud settles through the hourly check with a feed row', async () => {
+    await aims.aimAtPair({ a: ids.ivy, b: ids.jon, aim: 'sunder' });
+    expect(runChallengeChecks()).toEqual([]);
+    db.update(relationships).set({ friendship_ab: -60, friendship_ba: -60, status: 'rivals' })
+      .where(eq(relationships.agent_a, Math.min(ids.ivy, ids.jon))).run();
+    const ended = runChallengeChecks();
+    expect(ended.map((c) => [c.kind, c.status, c.source])).toEqual([['feud', 'completed', 'aim']]);
+    const row = db.select().from(activityLog).where(eq(activityLog.type, 'challenge_completed')).orderBy(desc(activityLog.id)).get()!;
+    expect(alertTier(row)).toBe('player');
   });
 });

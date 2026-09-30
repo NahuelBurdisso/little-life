@@ -36,7 +36,8 @@ export interface Verdict {
 
 type Check = (c: Challenge, snap: TownSnapshot) => Verdict;
 
-const HOSTILE = new Set(['rivals', 'enemies', 'estranged']);
+/** Statuses that count as "fallen out": feud's check, and what an aim to sunder refuses. */
+export const HOSTILE = new Set(['rivals', 'enemies', 'estranged']);
 
 const round = (n: number) => Math.round(n);
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -355,9 +356,14 @@ export function beginChallenge(offer: Challenge, snap: TownSnapshot): Challenge 
       baseline.childIds = (snap.children ?? []).map((k) => k.id);
       break;
     case 'feud':
-      baseline.friendPairs = snap.pairs
-        .filter((p) => p.friendship >= FRIENDS_AT && agentOf(snap, p.a)?.active && agentOf(snap, p.b)?.active)
-        .map((p) => [p.a, p.b] as [number, number]);
+      // A feud the player aimed at one pair watches only that pair (offers
+      // built from the town's friendships name nobody and watch them all).
+      // Otherwise a stranger's quarrel would win the player's goal for them.
+      baseline.friendPairs = offer.agentIds.length === 2
+        ? [[Math.min(offer.agentIds[0], offer.agentIds[1]), Math.max(offer.agentIds[0], offer.agentIds[1])]]
+        : snap.pairs
+          .filter((p) => p.friendship >= FRIENDS_AT && agentOf(snap, p.a)?.active && agentOf(snap, p.b)?.active)
+          .map((p) => [p.a, p.b] as [number, number]);
       break;
   }
   const started: Challenge = {
