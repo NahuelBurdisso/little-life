@@ -2,8 +2,8 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 325 files / 3819 tests passing, `npm run deadcode` 0/0 (intimacy & romance realism, Tasks 1-25, soaked and looked at live, the tuning pass I1-I4 + affair fixes, then the final review round: minors/rule-off leaks, partner exclusivity I8, re-soaked on two seeds plus a kept run; the live world was reset to the wizard earlier that day, backup in `data/backup-2026-09-30-pre-reset/`).
-Branch `feat/intimacy-realism` (off `feat/living-agents-phase1`, which carried the engine/gameplay fixes and the
+**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 327 files / 3843 tests passing, `npm run deadcode` 0/0 (playtest #4 fixes on `fix/playtest-findings`, A/B soaked 12 days on seed `playtest4`; see "Playtest #4 findings" below).
+Branch `fix/playtest-findings` (off `aa6ca8a`, where `feat/loop-features` started; before it `feat/intimacy-realism`, off `feat/living-agents-phase1`, which carried the engine/gameplay fixes and the
 worldgen v2 tracks, `docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
 
 ## Where the project is
@@ -327,6 +327,68 @@ Player-facing:
 
 Worktree note for agents: vitest excludes `.claude/**`, so inside `.claude/worktrees/*` tests need a
 temporary config without that exclude, plus a `data/` dir. `preview_start` always runs the MAIN repo.
+
+## Playtest #4 findings (2026-09-30, branch `fix/playtest-findings`)
+
+A 27-day run of the play copy (`little-life-play`, `data/play.db`, ~10.5 h real, 1x) read
+back from a read-only snapshot. Arc worth keeping: James dies on his birthday (day 6), his
+housemate Elena inherits, grieves, and leaves on day 24; Yuki takes the farm; a newcomer
+arrives the next day. Fixed on this branch, one commit each:
+
+- **Confided secrets** were the speaker's latest four-word line, so canned fallbacks ("Lucia
+  Fernandez smiled and nodded.") and goodbyes became sensitivity-3 secrets. Now the gist's most
+  loaded line (`conversationGist.ts pickLoadedLine`), fallbacks skipped.
+- **Dialogue tics**: the vanity hint quoted `"Well, I..."` (36/424 lines opened with it); the
+  mayor restated "twelve years" in 19 lines. Voice hints name styles only; self-facts are
+  "mention only when they come up"; the repetition hint names a span of years already said.
+- **Gossip**: 316/934 gossip lines were about drink (a rumor per onlooker + a drunk_incident,
+  uniform pick). One non-public drink story per person at a time, rumors dedup on their claim,
+  spreading picks a story family first (`gossip.ts storyFamily/pickByStoryFamily`), and
+  eavesdropping/discovery honour `mayBeToldTo` ("Marco overheard that he was…").
+- **Titles as first names**: 13 modules split `name.split(' ')[0]` ("Dr. has made up their
+  mind…"); all use `ai/names firstName`, pinned by a test.
+- **Gazette** headlined a day-6 death on day 26 (a newcomer hearing it logged a fresh row).
+  Gossip rows carry `metadata.factId`; `gatherMaterial` drops retellings of facts older than the
+  last edition.
+- **Hooded stranger** fired 10× in 27 days, never resolved, 9/30 goals chased it. Expiry now
+  logs "The Stranger Leaves" and completes those goals (`strangerDeparture.ts`);
+  `WorldEventDef.random.cooldownDays` (stranger 10, storm/merchant 4), honoured by autoplay.
+- **Goals** (94: 10 completed, 52 abandoned): review action `done`; `personal` category →
+  custom; untargeted person-types become custom; pivots no longer re-type; untargeted goals get
+  2× the stale window; repeats of an own/recent goal or a subject two others chase are skipped
+  (`goalOverlap.ts`); trigger cooldown runs from `completed_at`. Aspirations: wizard defaults
+  spread (7/13 were legacy), seeded rows get a description (`data/ambitions.ts`), the review is
+  told a life event can move an ambition.
+- **Invented people** ("the Miller boy" → memory → goal → plan → reflection):
+  `ai/names inventedPeople` + `helpers/knownPeople.ts`; goal creation, pivots, takeaways and
+  reflections drop text naming one; dialogue/summary/reflection prompts say not to invent anyone.
+- **Mood**: Omar (baseline 72) had 24 bad days in a row averaging ~48 and re-thought leaving
+  every 4th day. The bad-day bar is capped at a neutral baseline's; staying clears the streak
+  and halves its drag (`moodMomentum.freshStart`).
+
+A/B soak, 12 days, seed `playtest4`, tick-speed 4, LLM off (before = `aa6ca8a`, after = this
+branch): stranger visits 4 → 1 (and one "The Stranger Leaves"), storms 5 → 3, merchant 5 → 3;
+goals completed 20 → 22 of 24; "terrible days" logs 4 → 0, thoughts of leaving 2 → 1; "Dr."
+first-name lines 3 → 0; self-overheard 0 / 0. Neither run produced a witness drink rumor (the
+playtest's main source, which needs LLM-era density), so the drink numbers there (2 vs 4 facts)
+are noise; the gossip fixes are pinned by `gossipSharing.test.ts`. The LLM-side fixes (review
+`done`, invented people, dialogue tics) need a real-LLM playtest to measure.
+
+Open, found in the same run:
+- **P1 [M]** Ollama was down ~02:00–10:24; ~20 game days of LLM conversations were 100%
+  fallback lines, sentiment 0, no Gazette — and nothing in the UI said so. (Deliberately not
+  fixed on this branch.)
+- **P2 [M]** `fun` is bimodal (6 residents at 0–6, others 90+): it decays idle at home and only
+  leisure restores it (`needs.ts:95-118`); `comfort` sits at ~99 for everyone (home service
+  +5/h, `worldgen/stages/homes.ts:66`); stress is recomputed from needs every tick, so cascade
+  stress deltas are overwritten (`needs.ts:582-586` vs `RippleEngine.ts:894`, `SnapResolver.ts:175`).
+- **P3 [L]** `death` facts never expire and newcomers are never added to event/public facts'
+  `known_by`, so every newcomer "learns" old news (`lifeEventsEngine.ts:213`, `residents.ts`).
+- **P4 [L]** Goal registry leftovers: `investigate`'s `fact_confirmed` rule has no branch in
+  `evaluateAbandonment` (`goals.ts:255-307`); cascade `steal_from` goals have no target
+  (`rippleRules.ts:227,257`) so they can only be abandoned.
+- **P5 [L]** Social graph stays sparse: 50 of 88 pairs "acquaintances" near 0 friendship, two
+  residents still strangers after 27 days in a town of 13.
 
 ## Intimacy & romance realism (2026-09-30)
 
