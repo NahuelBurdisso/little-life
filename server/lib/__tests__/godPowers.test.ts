@@ -17,7 +17,7 @@ import { nudgeRouter } from '../../routers/nudge';
 import { gossipTick } from '../../engine/systems/gossipEngine';
 import { onPlanReplanned } from '../playerOutcomes';
 import { isHeld } from '../../engine/systems/states';
-import { rumorPredicate, sanitizePlayerText, STIR_HOLD_MINUTES } from '../godPowers';
+import { isRomanceText, rumorPredicate, sanitizePlayerText, STIR_HOLD_MINUTES } from '../godPowers';
 import { gameMinutesNow } from '../worldClock';
 import type { PersonalityProfile } from '../personality';
 
@@ -283,6 +283,101 @@ describe('start_rumor', () => {
       action: { type: 'start_rumor', seederId: listener, subjectId: seeder, detail: 'waters down the ale' },
     });
     expect(r).toMatchObject({ success: true, message: expect.stringContaining('upright') });
+  });
+});
+
+describe('romance text and minors', () => {
+  let adult: number;
+  let adult2: number;
+  let kid: number;
+  beforeAll(() => {
+    const yard = insertLocation('romance yard');
+    adult = insertAgent('Rom Adult', yard, GOSSIP);
+    adult2 = insertAgent('Rom Adult Two', yard, GOSSIP);
+    kid = insertAgent('Rom Kid', yard, GOSSIP);
+    db.update(agents).set({ age: 15 }).where(eq(agents.id, kid)).run();
+  });
+
+  it('recognises romance and night-together wording, not ordinary talk', () => {
+    for (const t of ['kissed the baker', 'is having an affair', 'is pregnant', 'spent the night with Rosa', 'a secret lover', 'seduced him']) {
+      expect(isRomanceText(t), t).toBe(true);
+    }
+    for (const t of ['is secretly broke', 'cheats at cards', 'waters down the ale', 'skipped church']) {
+      expect(isRomanceText(t), t).toBe(false);
+    }
+  });
+
+  it('will not whisper a romantic thought to a minor, but an ordinary one or an adult is fine', async () => {
+    const refused = await caller().execute({ action: { type: 'whisper_thought', agentId: kid, text: 'I want to kiss someone tonight' } });
+    expect(refused).toMatchObject({ success: false, reason: expect.stringContaining('adults') });
+    expect(record).not.toHaveBeenCalled();
+
+    const plain = await caller().execute({ action: { type: 'whisper_thought', agentId: kid, text: 'I should learn to bake' } });
+    expect(plain.success).toBe(true);
+    const grown = await caller().execute({ action: { type: 'whisper_thought', agentId: adult, text: 'I want to kiss someone tonight' } });
+    expect(grown.success).toBe(true);
+  });
+
+  it('will not start a romance rumor about, toward or through a minor', async () => {
+    const cases = [
+      { seederId: adult, subjectId: kid, detail: 'is secretly in love with the miller' },
+      { seederId: adult, subjectId: adult2, targetId: kid, detail: 'is having an affair' },
+      { seederId: kid, subjectId: adult2, detail: 'slept with the baker' },
+    ];
+    for (const c of cases) {
+      const r = await caller().execute({ action: { type: 'start_rumor', ...c } });
+      expect(r, c.detail).toMatchObject({ success: false, reason: expect.stringContaining('adults') });
+    }
+    expect(rumorsAbout(kid)).toHaveLength(0);
+    expect(rumorsAbout(adult2)).toHaveLength(0);
+  });
+
+  it('an ordinary rumor about a minor, and a romance rumor between adults, both still start', async () => {
+    const plain = await caller().execute({ action: { type: 'start_rumor', seederId: adult, subjectId: kid, detail: 'stole apples' } });
+    expect(plain.success).toBe(true);
+    const grown = await caller().execute({ action: { type: 'start_rumor', seederId: adult, subjectId: adult2, detail: 'is having an affair' } });
+    expect(grown.success).toBe(true);
+  });
+});
+
+describe('tell_secret: adults-only facts', () => {
+  let adult: number;
+  let adult2: number;
+  let kid: number;
+  beforeAll(() => {
+    const yard = insertLocation('tell yard');
+    adult = insertAgent('Tell Adult', yard, GOSSIP);
+    adult2 = insertAgent('Tell Adult Two', yard, GOSSIP);
+    kid = insertAgent('Tell Kid', yard, GOSSIP);
+    db.update(agents).set({ age: 15 }).where(eq(agents.id, kid)).run();
+  });
+
+  const factRow = (type: string, sensitivity: number, knownBy: number[]) => db.insert(shared_knowledge).values({
+    type, subject_id: adult, target_id: adult2, content: `test ${type}`, sensitivity,
+    known_by: knownBy, created_at: 0, source: 'test',
+  }).returning({ id: shared_knowledge.id }).get().id;
+
+  it('refuses to tell a romance fact to a minor, or to have a minor tell one', async () => {
+    const factId = factRow('affair', 3, [adult, kid]);
+    for (const [agentId, targetId] of [[adult, kid], [kid, adult]] as const) {
+      const r = await caller().execute({ action: { type: 'tell_secret', agentId, targetId, factId } });
+      expect(r).toMatchObject({ success: false, reason: expect.any(String) });
+    }
+    // The target list was not widened by a refused telling.
+    const after = db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get()!;
+    expect(after.known_by).toEqual([adult, kid]);
+  });
+
+  it('an ordinary secret still goes to a minor', async () => {
+    const factId = factRow('financial', 2, [adult]);
+    const r = await caller().execute({ action: { type: 'tell_secret', agentId: adult, targetId: kid, factId } });
+    expect(r.success).toBe(true);
+  });
+
+  it('a romance fact still goes between two adults', async () => {
+    const factId = factRow('kiss_seen', 2, [adult]);
+    const r = await caller().execute({ action: { type: 'tell_secret', agentId: adult, targetId: adult2, factId } });
+    expect(r.success).toBe(true);
   });
 });
 

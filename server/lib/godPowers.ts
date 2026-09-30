@@ -101,6 +101,27 @@ export function rumorPredicate(detail: string, subjectName: string): string {
   return d;
 }
 
+/**
+ * Words that turn a whisper or a rumor into something romantic or sexual. A small
+ * tripwire, like INJECTION_PATTERNS: the god powers take free player text, and the
+ * usual fact/gossip gates (`isAdultsOnlyFact`) only see typed facts, so a rumor typed
+ * as plain `rumor` text ("Anna is pregnant") would walk past them. Kept short on
+ * purpose; the point is that a minor is never the subject, the audience or the mouth
+ * of romance, not a moderation filter for everything else.
+ */
+const ROMANCE_TEXT = new RegExp(
+  String.raw`\b(?:kiss(?:ed|es|ing)?|lovers?|love affair|affairs?|in love|bed(?:room)?|night with|`
+  + String.raw`sleeps? with|slept with|sleeping with|pregnan(?:t|cy)|seduc(?:e|es|ed|ing|tion)|`
+  + String.raw`sex(?:ual|y)?|naked|mistress|adulter\w*|romanc(?:e|ed)|romantic(?:ally)?|`
+  + String.raw`courting|flirt(?:s|ed|ing)?|crush(?:es)? on|made love)\b`,
+  'i',
+);
+
+/** Whether a piece of player text is about romance or a night together. */
+export function isRomanceText(text: string): boolean {
+  return ROMANCE_TEXT.test(text);
+}
+
 function firstName(name: string): string {
   return name.split(' ')[0];
 }
@@ -128,6 +149,11 @@ export function whisperThought(agentId: number, rawText: string): GodPowerResult
   if (!agent) return { success: false, reason: 'Agent not found or inactive' };
   const text = sanitizePlayerText(rawText, WHISPER_MAX);
   if (!text) return { success: false, reason: "That doesn't read like a thought someone could have" };
+  // A whispered thought lands in a memory that conversation retrieval quotes back into
+  // dialogue: a romantic or sexual one must not be planted in a minor's head.
+  if (!isAdultAge(agent.age) && isRomanceText(text)) {
+    return { success: false, reason: 'Romantic thoughts can only be whispered to adults' };
+  }
 
   memoryService.record(
     agentId,
@@ -197,6 +223,14 @@ export function startRumor(
   const clean = sanitizePlayerText(rawDetail, RUMOR_MAX);
   const detail = clean ? rumorPredicate(clean, subject.name) : '';
   if (!detail) return { success: false, reason: "That doesn't read like something people would whisper" };
+  // A rumor about love or a night together may not involve a minor as its subject, its
+  // named partner, or the mouth that first tells it (typed facts have this gate in
+  // gossip.ts; free rumor text needs its own).
+  const involvesMinor = [subject, seeder, targetId != null ? activeAgent(targetId) : null]
+    .some((a) => a != null && !isAdultAge(a.age));
+  if (involvesMinor && isRomanceText(detail)) {
+    return { success: false, reason: 'Rumors about love or a night together are only for adults' };
+  }
 
   const factId = createFact('rumor', subjectId, targetId, RUMOR_SENSITIVITY, [seederId], 'fabricated', { detail });
   if (factId == null) {

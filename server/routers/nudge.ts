@@ -33,6 +33,7 @@ import { createResident, retireResident } from '../lib/residents';
 import { notePlayerCare } from '../lib/populationFlow';
 import { isSimOnlyTopic } from '../ai/prompts';
 import { arrangeRendezvous } from '../lib/intimacy/rendezvous';
+import { isAdultAge, isAdultsOnlyFact } from '../lib/intimacy/eligibility';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
@@ -501,6 +502,13 @@ export const nudgeRouter = router({
           const { shared_knowledge } = await import('../db/schema');
           const fact = db.select().from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();
           if (!fact) return { success: false, reason: 'Fact not found' };
+          // A secret about love or a night together never crosses a minor, in either
+          // direction (the gossip paths hold the same line: gossip.ts). The player's nudge
+          // is the one route that bypasses their gates, so it gets its own here, before the
+          // fact or the queued conversation are touched.
+          if (isAdultsOnlyFact(fact) && (!isAdultAge(agent.age) || !isAdultAge(target.age))) {
+            return { success: false, reason: 'That secret is only for adults to tell or hear' };
+          }
 
           const knownBy = fact.known_by as number[];
           if (!knownBy.includes(targetId)) {
