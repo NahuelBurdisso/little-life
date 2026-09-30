@@ -33,6 +33,8 @@ export interface AlertCandidate {
   initiator_id?: number | null;
   target_id?: number | null;
   template_data?: Record<string, unknown> | null;
+  /** The row's metadata (`beat`, `factId`…); only the gossip beat is read here. */
+  metadata?: Record<string, unknown> | null;
 }
 
 /** The old rule: categories whose ≥ 0.8 rows are headline material. */
@@ -120,6 +122,17 @@ export function alertTier(
     return involves(row, favoriteIds) ? 'minor' : null;
   }
   if (row.type === 'goal_completed') return 'minor';
+
+  // Gossip retellings ("X overheard / told / learned that…") are ~85% of the drama
+  // rows and each sits at the drama base 0.8, so they all used to toast as major
+  // with a chime and drown the rare real headline (and pull the Director's camera
+  // off a live scene). A retelling is texture: a quiet toast when it concerns
+  // someone the player follows, nothing otherwise — it is still in the feed. Gossip
+  // rows tagged `beat: 'gossip'` only; "The whole town now knows…" carries no beat
+  // and stays major, and a gossip row raised to ≥ 0.9 by severity keeps its major.
+  if (row.metadata?.beat === 'gossip' && row.importance < 0.9) {
+    return watched || involves(row, favoriteIds) ? 'minor' : null;
+  }
 
   if (MAJOR_CATEGORIES.has(row.category) && row.importance >= MAJOR_IMPORTANCE) return 'major';
 

@@ -56,6 +56,27 @@ describe('alertTier', () => {
   });
 });
 
+describe('alertTier: gossip retellings', () => {
+  const gossip = (over: Partial<Parameters<typeof alertTier>[0]> = {}) =>
+    row({ metadata: { beat: 'gossip', factId: 7 }, ...over });
+
+  it('is no toast at all for strangers to the player', () => {
+    expect(alertTier(gossip())).toBeNull();
+  });
+
+  it('is a quiet toast when a favourite or a watched pair is in it', () => {
+    expect(alertTier(gossip(), new Set([2]))).toBe('minor');
+    expect(alertTier(gossip({ initiator_id: 1, target_id: 2, agent_ids: null }), new Set(), new Set(['1-2']))).toBe('minor');
+    // One half of a watched pair says nothing about the pair.
+    expect(alertTier(gossip({ agent_ids: [1, 9] }), new Set(), new Set(['1-2']))).toBeNull();
+  });
+
+  it('keeps "the whole town now knows" (no beat) major, and a severe gossip row too', () => {
+    expect(alertTier(row({ metadata: null }))).toBe('major');
+    expect(alertTier(gossip({ importance: 0.95 }))).toBe('major');
+  });
+});
+
 describe('alertTier: a watched pair', () => {
   const pair = new Set(['1-2']);
   const none = new Set<number>();
