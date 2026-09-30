@@ -56,6 +56,7 @@ import { clamp } from '../../lib/utils';
 import { calculateCompatibility, PersonalityProfile } from '../../lib/personality';
 import { computeRelationshipDeltas, ConversationImpactContext } from '../../lib/relationshipImpact';
 import { currentWorldSeed } from '../../lib/intimacy/worldSeed';
+import { wandersToward } from '../../lib/intimacy/wandering';
 import { llmSocialGain, templateSocialGain } from '../../lib/socialGain';
 import { getAgentStates, getEffectivePersonality } from '../../lib/states';
 import { createFact, spreadGossip, getShareableFacts, getHiddenSinCount, getNegativeFactCount } from '../../lib/gossip';
@@ -1173,6 +1174,9 @@ async function finishCompletedConversation(
         // Same order as the personalities: `*AB` is orderedA -> orderedB.
         partyA: rowA,
         partyB: rowB,
+        // A neglected, weakly loyal person's eye wanders to anyone but their partner (wandering.ts).
+        neglectedA: wandersToward(rowA, rowB, gameMinutes(world.time)),
+        neglectedB: wandersToward(rowB, rowA, gameMinutes(world.time)),
         worldSeed,
       };
 
@@ -1880,6 +1884,8 @@ async function processTimedOutEntry(
     isTemplate: true,
     partyA: agentA,
     partyB: agentB,
+    neglectedA: wandersToward(agentA, agentB, nowGameMin),
+    neglectedB: wandersToward(agentB, agentA, nowGameMin),
     worldSeed: currentWorldSeed(),
   };
 

@@ -70,6 +70,11 @@ import {
   TRYST_SEEK_SCORE, sleepTargetFor, startSneakHome, trystStepFor,
 } from '../../lib/intimacy/tryst';
 import { isAdultContent } from '../../lib/worldRules';
+import { isIntimacyEligible } from '../../lib/intimacy/eligibility';
+import { partnerPullBonus, wanderScoreBonus } from '../../lib/intimacy/neglect';
+import { getAgentIntimacy } from '../../lib/intimacy/state';
+import { currentWorldSeed } from '../../lib/intimacy/worldSeed';
+import { neglectedPartnerOf } from '../../lib/intimacy/wandering';
 
 // --- Types ---
 
@@ -935,6 +940,14 @@ function scoreFreeTimeActions(
     socialCandidates.push(...sample);
   }
 
+  // The wandering eye and the partner pull (intimacy/neglect.ts). Adult layer only:
+  // with the rule off none of these terms exists, and `neglectedPartnerOf` is one
+  // cheap in-memory check for anybody who is not already aching.
+  const adultLayer = isAdultContent();
+  const neglectedBy = adultLayer ? neglectedPartnerOf(agent, gameMinutes(world.time)) : null;
+  const ownLonging = adultLayer ? (getAgentIntimacy(agent.id)?.longing ?? 0) : 0;
+  const intimacySeed = neglectedBy != null ? currentWorldSeed() : 0;
+
   // Socialize per agent
   for (const other of socialCandidates) {
     if (other.id === agent.id || !other.is_active) continue;
@@ -963,6 +976,19 @@ function scoreFreeTimeActions(
       if (personality && personality.sensuality > 45) {
         socScore += 10; // sensual agents love dates
       }
+    }
+    if (adultLayer) {
+      // A neglected, weakly loyal agent looks at attractive adults who are not their
+      // partner; anyone who aches (60+) is drawn home to their own partner or lover
+      // in the evening. Both live behind the adults-only line.
+      socScore += wanderScoreBonus({
+        neglected: neglectedBy != null, loyalty: personality?.loyalty, self: agent, other,
+        worldSeed: intimacySeed, isPartner: other.id === neglectedBy,
+      });
+      socScore += partnerPullBonus({
+        adultContent: true, evening, longing: ownLonging,
+        tags: relRow?.tags ?? [], status: relRow?.status ?? '', adults: isIntimacyEligible(agent, other),
+      });
     }
     // Lonely → remove negative-friendship penalty
     if (friendship < -30 && !agentStateTypes.includes('lonely')) socScore -= 25;

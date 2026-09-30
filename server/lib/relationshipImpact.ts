@@ -10,6 +10,7 @@
 
 import { PersonalityProfile } from './personality';
 import { romanceGainMultiplier, type RomanceParty } from './intimacy/attraction';
+import { WANDER_ROMANCE_MULTIPLIER, isWayward } from './intimacy/neglect';
 
 // --- Input: everything about the conversation ---
 
@@ -36,6 +37,14 @@ export interface ConversationImpactContext {
   partyA?: RomanceParty;
   partyB?: RomanceParty;
   worldSeed?: string | number;
+  /**
+   * A is (B is) neglected by their own partner AND B (A) is not that partner: the
+   * conversation phase sets these from `wandersToward` (intimacy/wandering.ts). They
+   * only matter with both parties present, and only for the weakly loyal (the loyalty
+   * line is applied below). Optional so hand-built contexts compile unchanged.
+   */
+  neglectedA?: boolean;
+  neglectedB?: boolean;
 }
 
 // --- Output: all relationship deltas ---
@@ -167,6 +176,12 @@ export function computeRelationshipDeltas(ctx: ConversationImpactContext): Relat
       const seed = ctx.worldSeed ?? 0;
       if (romanceAB > 0) romanceAB *= romanceGainMultiplier(ctx.partyA, ctx.partyB, seed);
       if (romanceBA > 0) romanceBA *= romanceGainMultiplier(ctx.partyB, ctx.partyA, seed);
+      // The wandering eye composes on top of the gate: a neglected, weakly loyal
+      // agent's finished gain toward somebody who is not their partner grows by half.
+      // Multiplying what the gate already let through means a minor or someone they
+      // are not drawn to (a gain of 0 by now) stays 0.
+      if (romanceAB > 0 && ctx.neglectedA && isWayward(personalityA?.loyalty)) romanceAB *= WANDER_ROMANCE_MULTIPLIER;
+      if (romanceBA > 0 && ctx.neglectedB && isWayward(personalityB?.loyalty)) romanceBA *= WANDER_ROMANCE_MULTIPLIER;
     }
   }
 
