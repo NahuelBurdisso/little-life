@@ -254,8 +254,8 @@ function triggerGrieving(ctx: DeathEffectContext): void {
 
 /**
  * The estate — money, belongings and the places they owned — goes to the
- * first heir (lib/heirs.ts: the spouse, then children once the town has them,
- * then the closest friend). It used to go to the closest friend whatever the
+ * first heir (lib/heirs.ts: the spouse, then the children — held in trust by
+ * their guardian — then the closest friend). It used to go to the closest friend whatever the
  * marriage, and the places to a friend by a second rule in residents.ts. With
  * no heir the money goes to the town, the belongings are lost and the places
  * stand unowned until someone takes up the trade (lib/careers.ts).
@@ -289,11 +289,15 @@ function processInheritance(ctx: DeathEffectContext): void {
       type: 'drama',
       initiator: ctx.agentId,
       target: heir.agentId,
-      templateData: { description: estateLine(ctx.agentName, heirRow?.name ?? 'someone', heir.kind, heirRow?.gender ?? null, money, items.length > 0, places) },
+      templateData: { description: estateLine(ctx.agentName, heirRow?.name ?? 'someone', heir.kind, heirRow?.gender ?? null, money, items.length > 0, places, heir.child?.name) },
       metadata: { beat: 'inheritance' },
     });
+    const left = [money > 0 ? 'their savings' : '', items.length > 0 ? 'their belongings' : '', ...places].filter(Boolean).join(', ') || 'what little they had';
     memoryService.record(heir.agentId, 'observation',
-      `${ctx.agentName} left me ${[money > 0 ? 'their savings' : '', items.length > 0 ? 'their belongings' : '', ...places].filter(Boolean).join(', ') || 'what little they had'}. I'd give it all back to have them here.`,
+      heir.child
+        // Held in trust: the guardian keeps it for the child, and knows it.
+        ? `${ctx.agentName} left ${left} to little ${heir.child.name}, and I am to keep it for the child. I'll do right by them.`
+        : `${ctx.agentName} left me ${left}. I'd give it all back to have them here.`,
       { subtype: 'inheritance', related_agents: [ctx.agentId] }, -0.3, 6);
   } else if (money > 0) {
     const world = db.select().from(worldState).get();
@@ -319,6 +323,7 @@ function estateLine(
   money: number,
   hasItems: boolean,
   places: readonly string[],
+  childName?: string,
 ): string {
   const parts = [
     money > 0 ? `savings ($${Math.round(money)})` : '',
@@ -326,9 +331,10 @@ function estateLine(
     ...places,
   ].filter(Boolean);
   const what = parts.length <= 1 ? parts[0] ?? '' : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  // A child heir's share goes to the guardian named in the heir row (lib/heirs.ts).
   const who = kind === 'spouse'
     ? `the ${heirGender === 'female' ? 'widow' : heirGender === 'male' ? 'widower' : 'surviving spouse'}`
-    : kind === 'child' ? 'their child' : 'a close friend';
+    : kind === 'child' ? `in trust for little ${childName ?? 'their child'}` : 'a close friend';
   return `${deceased}'s estate${what ? ` — ${what} —` : ''} went to ${heirName}, ${who}.`;
 }
 
