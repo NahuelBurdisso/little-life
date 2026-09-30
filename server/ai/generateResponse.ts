@@ -69,6 +69,7 @@ export async function generateResponse(
     goalStakes,
     townNames,
     newcomer,
+    otherJobTitle,
   } = context;
 
   // Everything the model says passes through the sanitiser before it is judged,
@@ -129,6 +130,7 @@ export async function generateResponse(
     situationalPrompt,
     enrichment,
     newcomer,
+    otherJobTitle,
   };
 
   const { system: baseSystem, messages: promptMessages } = buildConversationPrompt(promptParams);

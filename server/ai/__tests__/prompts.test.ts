@@ -172,7 +172,7 @@ describe('buildConversationPrompt', () => {
       expect(toNewcomer.at(-1)!.content).toContain("Carlos is new in town and you've never met. Introduce yourself");
       const asNewcomer = buildConversationPrompt({ ...friendly, newcomer: 'speaker', relationship: null }).messages;
       expect(asNewcomer.at(-1)!.content).toContain("You're new in town and have never met Carlos. Introduce yourself.");
-      expect(asNewcomer[0].content).toContain("You've never met Carlos Mendez.");
+      expect(asNewcomer[0].content).toContain("You've never met Carlos.");
     });
 
     it('stops framing a pair as a first meeting once they have talked', () => {
@@ -187,6 +187,26 @@ describe('buildConversationPrompt', () => {
       expect(last).not.toContain('Carlos Mendez');
       expect(last).toContain('Carlos');
     });
+  });
+
+  it('says who the listener is, so facts about their office are about them (playtest #3)', () => {
+    const mayor = buildConversationPrompt({
+      ...baseParams,
+      otherAgent: { ...mockOther, name: 'Thomas Park' },
+      otherJobTitle: 'Town Mayor',
+    }).messages[0].content;
+    expect(mayor).toContain("You're talking to Thomas Park (Thomas to you), the town mayor — whatever you know about the town mayor is about him.");
+    const noJob = buildConversationPrompt({ ...baseParams, otherJobTitle: null }).messages[0].content;
+    expect(noJob).toContain("You're talking to Carlos Mendez (Carlos to you).");
+  });
+
+  it('carries the stable self facts and drops the empty "neutral" reputation', () => {
+    const system = buildAgentSystemPrompt(mockAgent, mockNeeds, mockEcon, null, [], {
+      reputationLabel: 'neutral', reputationScore: 3, hobbies: [], moodMomentum: 0, drinkCount: 0,
+      selfFacts: 'Facts about you (keep them straight): Constable for 6 years; came to town 6 years ago.',
+    });
+    expect(system).toContain('Constable for 6 years');
+    expect(system).not.toContain('consider you neutral');
   });
 
   it('passes unknown topics through as a subject', () => {
@@ -212,7 +232,7 @@ describe('buildConversationPrompt', () => {
     const params = { ...baseParams, relationship: null };
     const { messages } = buildConversationPrompt(params);
     const userMsg = messages[0].content;
-    expect(userMsg).toContain('You know Carlos Mendez only by sight and reputation.');
+    expect(userMsg).toContain('You know Carlos only by sight and reputation.');
     expect(userMsg).not.toContain('grudge');
   });
 

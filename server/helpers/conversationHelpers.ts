@@ -15,6 +15,7 @@ import { gameMinutes } from '../lib/gameClock';
 import { goalClause } from '../lib/goalText';
 import { firstName } from '../ai/names';
 import { isNewcomer } from '../lib/newcomers';
+import { selfFactsFor } from './selfFactsStore';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -28,6 +29,7 @@ interface CachedIdentity {
   effectivePersonality: any;
   enrichment: any;
   speakerEcon: any;
+  otherJobTitle: string | null;
 }
 
 const identityCache = new Map<string, CachedIdentity>(); // key: `${conversationId}:${speakerId}`
@@ -119,13 +121,16 @@ export async function getConversationContext(conversationId: number, speakerId: 
       hobbies: getAgentHobbies(speakerId),
       moodMomentum: getMoodMomentum(speakerId),
       drinkCount: getDrinkCount(speakerId),
+      // Tenure, years in town, household — stable numbers the model must not reinvent.
+      selfFacts: selfFactsFor(speaker, speakerEcon?.job_title ?? null, world.time?.totalTicks ?? 0),
     };
 
-    cached = { speaker, otherAgent, relationship, location, effectivePersonality, enrichment, speakerEcon };
+    const otherJobTitle = db.select({ t: economy.job_title }).from(economy).where(eq(economy.agent_id, otherId)).get()?.t ?? null;
+    cached = { speaker, otherAgent, relationship, location, effectivePersonality, enrichment, speakerEcon, otherJobTitle };
     identityCache.set(cacheKey, cached);
   }
 
-  const { speaker, otherAgent, location, effectivePersonality, enrichment } = cached;
+  const { speaker, otherAgent, location, effectivePersonality, enrichment, otherJobTitle } = cached;
 
   // Needs and economy change every turn — always reload
   const speakerNeeds = db.select().from(needs).where(eq(needs.agent_id, speakerId)).get();
@@ -265,6 +270,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     goalStakes,
     townNames,
     newcomer,
+    otherJobTitle,
   };
 }
 

@@ -113,6 +113,8 @@ export interface AgentEnrichment {
   hobbies: Array<{ hobby: string; level: number }>;
   moodMomentum: number;
   drinkCount: number;
+  /** "Facts about you (keep them straight): …" — helpers/selfFactsStore.ts. */
+  selfFacts?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,11 +501,16 @@ export function buildAgentSystemPrompt(
   // Financial status
   const econLine = `Your financial situation: ${describeFinancialStatus(economy.money)} ($${Math.round(economy.money)}).`;
 
-  // Reputation
+  // Reputation. "…consider you neutral" said nothing in most prompts; its
+  // tokens now pay for the self-facts line below.
   let repLine = '';
-  if (enrichment && enrichment.reputationScore !== 0) {
+  if (enrichment && enrichment.reputationScore !== 0 && enrichment.reputationLabel !== 'neutral') {
     repLine = `The townspeople consider you ${enrichment.reputationLabel}.`;
   }
+  // Stable numbers (tenure, years in town, household): a self-description
+  // replaces the bio above and tends to drop them, and the model then invents
+  // new ones (Thomas: mayor "twelve years", next day "five years").
+  const factsLine = enrichment?.selfFacts ?? '';
 
   // Hobbies
   let hobbyLine = '';
@@ -514,7 +521,7 @@ export function buildAgentSystemPrompt(
 
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING}`;
-  const middle = [descriptionLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
+  const middle = [descriptionLine, factsLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
   let toneHint = '';
@@ -554,6 +561,21 @@ export interface ConversationPromptParams {
   enrichment?: AgentEnrichment | null;
   /** Which side, if either, arrived in town recently (lib/newcomers.ts). */
   newcomer?: 'speaker' | 'listener' | null;
+  /** The listener's job title ("Town Mayor"), for the "You're talking to" line. */
+  otherJobTitle?: string | null;
+}
+
+/**
+ * "You're talking to Thomas Park (Thomas to you), the mayor — whatever you
+ * know about the mayor is about him."
+ */
+export function buildListenerLine(other: Pick<AgentRow, 'name' | 'gender'>, jobTitle: string | null): string {
+  const spoken = addressName(other.name);
+  const who = spoken === other.name.trim() ? other.name : `${other.name} (${spoken} to you)`;
+  const title = jobTitle?.trim().toLowerCase();
+  if (!title || /^(?:unemployed|none)$/.test(title)) return `You're talking to ${who}.`;
+  const pronoun = other.gender === 'female' ? 'her' : other.gender === 'male' ? 'him' : 'them';
+  return `You're talking to ${who}, the ${title} — whatever you know about the ${title} is about ${pronoun}.`;
 }
 
 /**
@@ -631,8 +653,14 @@ export function buildConversationPrompt(
 
   const meeting = firstMeetingOf(relationship, params.newcomer);
 
+  // Who is in front of them. Playtest #3: Rosa, talking TO the mayor, spoke of
+  // "the Mayor's preoccupation with his own precision" — her memories named
+  // "the Mayor" and nothing tied that title to Thomas. The full name appears
+  // once here (memories use it); everything after uses the spoken name.
+  userParts.push(buildListenerLine(otherAgent, params.otherJobTitle ?? null));
+
   // Relationship tag
-  userParts.push(buildRelationshipTag(relationship, speaker.id, otherAgent.name, meeting));
+  userParts.push(buildRelationshipTag(relationship, speaker.id, addressName(otherAgent.name), meeting));
 
   // Context items with prefixes
   const contextPrefixes: Record<ContextItem['type'], string> = {

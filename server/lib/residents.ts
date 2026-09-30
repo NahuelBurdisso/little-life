@@ -262,6 +262,9 @@ export function createResident(opts: CreateResidentOptions): CreateResidentResul
       workplace: workplace ? workplace.id : null,
       created_at: now,
       is_active: true,
+      // Just arrived: "new in town" in their own prompt facts (lib/selfFacts.ts),
+      // for good — the years count from the game's start, not the calendar.
+      years_in_town: 0,
     }).run().lastInsertRowid);
 
     // A reused rowid (SQLite hands the highest id out again once its row is

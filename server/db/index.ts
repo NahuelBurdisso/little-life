@@ -116,6 +116,9 @@ function migrateSchema() {
   )`);
 
   // Goals table extensions
+  // Stable self facts for dialogue (lib/selfFacts.ts), derived lazily.
+  addColumnIfMissing('agents', 'years_in_town', 'INTEGER');
+  addColumnIfMissing('agents', 'job_years', 'INTEGER');
   addColumnIfMissing('goals', 'description', 'TEXT');
   addColumnIfMissing('goals', 'strategy', 'TEXT');
   addColumnIfMissing('goals', 'mapped_interactions', 'TEXT');
