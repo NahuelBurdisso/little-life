@@ -6,6 +6,9 @@ interface FloatingToolbarProps {
   onShowAutoplay: () => void;
   autoCut: boolean;
   onToggleAutoCut: () => void;
+  /** "Cinematic moments": the screen may fade to black on a watched couple's night. */
+  cinematic?: boolean;
+  onToggleCinematic?: () => void;
   /** First-run guide: the residents overview and the "?" help. */
   onMeetTheTown?: () => void;
   onShowHelp?: () => void;
@@ -78,6 +81,8 @@ export function FloatingToolbar({
   onShowAutoplay,
   autoCut,
   onToggleAutoCut,
+  cinematic,
+  onToggleCinematic,
   onMeetTheTown,
   onShowHelp,
   collapsed,
@@ -131,6 +136,17 @@ export function FloatingToolbar({
         active={autoCut}
         pressed={autoCut}
       />
+      {onToggleCinematic && (
+        <ToolButton
+          rail={rail}
+          icon="🕯️"
+          label="Cinematic"
+          title="Fade the screen to black when a couple you are watching spends the night together"
+          onClick={onToggleCinematic}
+          active={cinematic}
+          pressed={cinematic ?? false}
+        />
+      )}
       {onMeetTheTown && (
         <ToolButton rail={rail} icon="🏘️" label="Meet the Town" title="Who lives here: ties, rivals, secrets, stories" onClick={onMeetTheTown} />
       )}

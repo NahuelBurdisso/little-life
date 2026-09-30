@@ -47,6 +47,8 @@ import { HelpOverlay } from "./components/ui/HelpOverlay";
 import { useFirstRunGuide } from "./hooks/useFirstRunGuide";
 import { worldSeedKey } from "./lib/firstRun";
 import { useToolbarCollapsed } from "./hooks/useToolbarCollapsed";
+import { useCinematic } from "./hooks/useCinematic";
+import { FadeToBlack } from "./components/ui/FadeToBlack";
 import { toolbarClearance } from "./lib/toolbarLayout";
 import { useRecap } from "./hooks/useRecap";
 import { RecapCard } from "./components/ui/RecapCard";
@@ -107,6 +109,8 @@ export default function App() {
   }, [isNewSimulation]);
 
   const { collapsed: toolbarCollapsed, toggle: toggleToolbar } = useToolbarCollapsed();
+  // "Cinematic moments": whether the screen fades out on a watched couple's night (FadeToBlack).
+  const cinematic = useCinematic();
 
   // Resizable panel sizes. Starting sizes shrink on small windows (the sidebars
   // were 280 + 300 of a 1024 window, leaving a ~350px map); the handles still
@@ -476,6 +480,8 @@ export default function App() {
             onShowAutoplay={() => setShowAutoplay(true)}
             autoCut={autoCut}
             onToggleAutoCut={() => setAutoCut(v => !v)}
+            cinematic={cinematic.enabled}
+            onToggleCinematic={cinematic.toggle}
             onMeetTheTown={guide.openTour}
             onShowHelp={guide.openHelp}
             collapsed={toolbarCollapsed}
@@ -516,6 +522,14 @@ export default function App() {
           left={leftWidth + 24}
         />
       )}
+
+      {/* The camera looks away when a watched couple spends the night together */}
+      <FadeToBlack
+        enabled={!(isNewSimulation && !setupComplete)}
+        cinematic={cinematic.enabled}
+        selectedAgentId={selectedAgentId}
+        favorites={favorites}
+      />
 
       {/* Acknowledgements for player actions (lib/toast.ts) */}
       <Toasts />
