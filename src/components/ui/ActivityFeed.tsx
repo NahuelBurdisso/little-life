@@ -75,14 +75,16 @@ interface ActivityFeedProps {
 }
 
 /**
- * The live strip under the map: what is happening now (All) and the big beats
- * (Highlights). Stories, Brewing and the rest of the history live in the
+ * The live strip under the map: the big beats (Highlights, the default) and what is
+ * happening now (All). Stories, Brewing and the rest of the history live in the
  * Journal; the 🔥 chip is the way there when something is close to the boil.
  */
 export function ActivityFeed({ onSelectAgent, onOpenBrewing }: ActivityFeedProps) {
   const { activities, highlights, brewing } = useActivityFeed();
   const { world } = useWorldState();
-  const [tab, setTab] = useState<'all' | 'highlights'>('all');
+  // Highlights first: the All tab is mostly meals, moves and small talk, so opening on it
+  // buried the story beats one tab away. All is still one click off for the play-by-play.
+  const [tab, setTab] = useState<'all' | 'highlights'>('highlights');
   const [filters, setFilters] = useState<Record<EventCategory, boolean>>({
     conversation: true,
     economy: true,
