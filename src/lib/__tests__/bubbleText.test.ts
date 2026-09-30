@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bubbleOffsetX, bubbleText, speakerSentiment } from '../bubbleText';
+import { bubbleDurationMs, bubbleOffsetX, bubbleText, speakerSentiment } from '../bubbleText';
 
 describe('bubbleText', () => {
   it('keeps short lines whole', () => {
@@ -54,5 +54,26 @@ describe('speakerSentiment', () => {
     expect(speakerSentiment([{ speakerId: 1 }], 1, 0.3)).toBe(0.3);
     expect(speakerSentiment(undefined, 1, 0.2)).toBe(0.2);
     expect(speakerSentiment([], 1, undefined)).toBe(0);
+  });
+});
+
+describe('bubbleDurationMs', () => {
+  it('grows 55 ms a character from a 1.5 s base', () => {
+    expect(bubbleDurationMs(60)).toBe(1500 + 55 * 60);
+  });
+
+  it('never drops below 3.5 s, even for a two-word line', () => {
+    expect(bubbleDurationMs(0)).toBe(3500);
+    expect(bubbleDurationMs(8)).toBe(3500);
+  });
+
+  it('never exceeds 7 s', () => {
+    expect(bubbleDurationMs(84)).toBeLessThanOrEqual(7000);
+    expect(bubbleDurationMs(500)).toBe(7000);
+  });
+
+  it('tolerates junk input', () => {
+    expect(bubbleDurationMs(NaN)).toBe(3500);
+    expect(bubbleDurationMs(-5)).toBe(3500);
   });
 });

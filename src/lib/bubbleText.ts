@@ -58,3 +58,21 @@ export function speakerSentiment(
   }
   return fallback ?? 0;
 }
+
+/** Bounds and pace of a speech bubble's lifetime (see `bubbleDurationMs`). */
+const BUBBLE_BASE_MS = 1500;
+const BUBBLE_MS_PER_CHAR = 55;
+const BUBBLE_MIN_MS = 3500;
+const BUBBLE_MAX_MS = 7000;
+
+/**
+ * How long a bubble stays up for `chars` characters of text. It was a fixed 4 s,
+ * which cut a four-line line off mid-read while a two-word "Hi, Ana!" lingered as
+ * long. 55 ms a character is a slow-ish reading pace for a glance at a busy map;
+ * the floor keeps a short line visible long enough to notice, the cap stops a
+ * long one from parking over a head once the next speaker is due.
+ */
+export function bubbleDurationMs(chars: number): number {
+  const n = Number.isFinite(chars) ? Math.max(0, chars) : 0;
+  return Math.min(BUBBLE_MAX_MS, Math.max(BUBBLE_MIN_MS, BUBBLE_BASE_MS + BUBBLE_MS_PER_CHAR * n));
+}
