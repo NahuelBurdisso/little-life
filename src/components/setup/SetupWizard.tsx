@@ -11,21 +11,7 @@ import { DramaSliders } from './DramaSliders';
 import { SimulationPreview } from './SimulationPreview';
 import { getDefaultAgents, getDefaultRelationships } from './defaults';
 import { trpc } from '../../lib/trpc';
-
-const STEPS = [
-  { id: 'scenario', label: 'Scenario', icon: 'S' },
-  { id: 'preview', label: 'Preview', icon: 'P' },
-  // After agents and relationships: the layout places households by the
-  // relationship graph, so previewing it before the cast is settled showed a
-  // town that Start would then silently rearrange.
-  { id: 'agents', label: 'Agents', icon: 'A' },
-  { id: 'relationships', label: 'Relationships', icon: 'R' },
-  { id: 'worldlayout', label: 'World Layout', icon: 'L' },
-  { id: 'world', label: 'World', icon: 'W' },
-  { id: 'rules', label: 'Rules', icon: 'S' },
-] as const;
-
-type StepId = typeof STEPS[number]['id'];
+import { STEPS, type StepId } from './wizardSteps';
 
 /** Short, readable, and enough entropy that two towns never collide by accident. */
 function randomSeed(): string {
