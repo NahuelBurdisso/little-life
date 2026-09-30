@@ -44,3 +44,40 @@ export function isVeiled(agent: DiscretionAgent, veiled: ReadonlySet<number>): b
 export function roofCutAway(hovered: boolean, occupied: boolean, veiled: boolean): boolean {
   return !veiled && (hovered || occupied);
 }
+
+/** A sprite as the hit test sees it: where it stands and whether it is off camera. */
+export interface HitCandidate {
+  id: string;
+  x: number;
+  y: number;
+  veiled: boolean;
+}
+
+/**
+ * The agent nearest a world-pixel point within `radius`, or null. A veiled sprite is never a
+ * hit: hiding the container only removes it from the picture, and the hit test is coordinate math
+ * over the pool (not Pixi events), so without this check hovering the closed house would show a
+ * tooltip, and clicking it select someone, at exactly the spot the town is meant not to see.
+ * The cast bar still selects them.
+ */
+export function pickAgentAt(
+  candidates: Iterable<HitCandidate>,
+  worldX: number,
+  worldY: number,
+  radius: number,
+): string | null {
+  const radiusSq = radius * radius;
+  let bestId: string | null = null;
+  let bestDistSq = Infinity;
+  for (const c of candidates) {
+    if (c.veiled) continue;
+    const dx = worldX - c.x;
+    const dy = worldY - c.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < radiusSq && distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestId = c.id;
+    }
+  }
+  return bestId;
+}

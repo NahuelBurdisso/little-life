@@ -126,6 +126,12 @@ export class BubbleSystem {
   private prevEmoteStampMap: Map<string, number> = new Map();
   private shownMessageCounts = new Map<string, number>(); // agentId → message count when last bubble shown
   private lyingBlendMap = new Map<string, number>(); // agentId → 0 upright .. 1 lying down
+  /**
+   * Agents whose sprite is veiled this frame (a couple's private evening, discretion.ts). Their
+   * speech, thought and emote bubbles would float over the closed roof and point at exactly who
+   * is inside, so none is shown for them and any that was already up is hidden.
+   */
+  private veiledIds = new Set<string>();
   /** Finished atlas emotes, kept for reuse: an emote per state change would churn allocations. */
   private emotePool: PIXI.Container[] = [];
 
@@ -188,6 +194,7 @@ export class BubbleSystem {
 
   /** Show a speech bubble with text above the agent. Auto-dismisses. */
   showSpeechBubble(agentId: string, text: string, position: { x: number; y: number }, sentiment = 0, offsetX = 0) {
+    if (this.veiledIds.has(agentId)) return;
     this.removeBubble(agentId);
 
     const truncated = bubbleText(text, BUBBLE_MAX_CHARS);
@@ -241,6 +248,7 @@ export class BubbleSystem {
 
   /** Show thinking dots above the agent. Stays until removed. */
   showThoughtBubble(agentId: string, position: { x: number; y: number }) {
+    if (this.veiledIds.has(agentId)) return;
     // Don't replace a speech bubble with a thought bubble
     const existing = this.bubbles.get(agentId);
     if (existing?.type === "speech") return;
@@ -320,6 +328,7 @@ export class BubbleSystem {
 
   /** Show a small emote that floats up and fades out. */
   showEmote(agentId: string, emoteType: string, position: { x: number; y: number }) {
+    if (this.veiledIds.has(agentId)) return;
     // Emotes use a separate key so they don't replace speech bubbles. Looped
     // pose emotes get a slot of their own — see LOOPED_EMOTES. The key still
     // contains `__emote`, which the lifetime sweep in `update` keys off.
@@ -400,10 +409,12 @@ export class BubbleSystem {
     // Entries persist between frames and are restamped; `posOf` hides the ones this frame skipped.
     const stamp = ++this.frameStamp;
     const posMap = this.posMap;
+    this.veiledIds.clear();
     for (let i = 0; i < agents.length; i++) {
       const a = agents[i];
       const aid = idString(a.id);
       const sprite = spritePool?.getSprite(aid);
+      if (sprite?.isVeiled) this.veiledIds.add(aid);
       let entry = posMap.get(aid);
       if (!entry) {
         entry = { x: 0, y: 0, stamp };
@@ -581,6 +592,9 @@ export class BubbleSystem {
         continue;
       }
 
+      // A bubble already up when the veil came down stays off camera until it lifts (or expires).
+      entry.container.visible = !this.veiledIds.has(entry.agentId);
+
       // Float emotes upward and fade
       if (entry.type === "emote") {
         entry.container.y -= EMOTE_FLOAT_SPEED * deltaTime;
@@ -616,6 +630,7 @@ export class BubbleSystem {
     this.prevMoodMap.clear();
     this.shownMessageCounts.clear();
     this.posMap.clear();
+    this.veiledIds.clear();
     this.convoAgents.clear();
     this.latestMessages.clear();
     this.latestIsAction.clear();

@@ -789,10 +789,17 @@ export class AgentSprite {
   /**
    * Hidden while a couple's private evening is under way (discretion.ts): the building keeps its
    * roof on, and sprites are drawn above buildings, so they would otherwise float over it. A
-   * hidden container is also skipped by hit-testing; the cast bar still selects them.
+   * hidden container is NOT skipped by hit-testing (InteractionLayer does coordinate math over
+   * the pool, not Pixi events), so it asks `isVeiled` and skips them itself, as do the bubble
+   * and emote systems; the cast bar still selects them.
    */
   setVeiled(veiled: boolean): void {
     this.container.visible = !veiled;
+  }
+
+  /** Whether this sprite is currently hidden by `setVeiled`. */
+  get isVeiled(): boolean {
+    return !this.container.visible;
   }
 
   get x(): number {

@@ -1,5 +1,6 @@
 import { SpritePool } from "./SpritePool";
 import { Container, Application } from "pixi.js";
+import { pickAgentAt, type HitCandidate } from "./discretion";
 
 interface InteractionCallbacks {
   onAgentSelect: (agentId: string) => void;
@@ -166,27 +167,15 @@ export class InteractionLayer {
     if (!world) return null;
     const { x: worldX, y: worldY } = world;
 
-    // Check all sprites — find closest within hit radius
+    // Closest sprite within the hit radius; veiled ones (a couple's private evening) are not hittable.
     const HIT_RADIUS = 20; // pixels in world space
-    const HIT_RADIUS_SQ = HIT_RADIUS * HIT_RADIUS;
-    let bestId: string | null = null;
-    let bestDistSq = Infinity;
-
+    const candidates: HitCandidate[] = [];
     for (const id of this.spritePool.getAllIds()) {
       const sprite = this.spritePool.getSprite(id);
       if (!sprite) continue;
-
-      const dx = worldX - sprite.container.x;
-      const dy = worldY - sprite.container.y;
-      const distSq = dx * dx + dy * dy;
-
-      if (distSq < HIT_RADIUS_SQ && distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestId = id;
-      }
+      candidates.push({ id, x: sprite.container.x, y: sprite.container.y, veiled: sprite.isVeiled });
     }
-
-    return bestId;
+    return pickAgentAt(candidates, worldX, worldY, HIT_RADIUS);
   }
 
   /** No-op — native events don't need per-sprite rebinding. */

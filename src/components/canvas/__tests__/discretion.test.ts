@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isVeiled, roofCutAway, veiledBuildingIds } from '../discretion';
+import { isVeiled, pickAgentAt, roofCutAway, veiledBuildingIds } from '../discretion';
 
 const tryst = { type: 'idle', zoneActivity: 'tryst', partnerId: 2 };
 const home = (id: number, current_location: number | null, current_action?: unknown) => ({
@@ -67,5 +67,20 @@ describe('roofCutAway', () => {
     expect(roofCutAway(false, true, true)).toBe(false);
     expect(roofCutAway(true, true, true)).toBe(false);
     expect(roofCutAway(true, false, true)).toBe(false);
+  });
+});
+
+describe('pickAgentAt', () => {
+  const at = (id: string, x: number, y: number, veiled = false) => ({ id, x, y, veiled });
+
+  it('picks the nearest agent inside the radius, and none outside it', () => {
+    const c = [at('1', 100, 100), at('2', 108, 100)];
+    expect(pickAgentAt(c, 106, 100, 20)).toBe('2');
+    expect(pickAgentAt(c, 300, 300, 20)).toBeNull();
+  });
+
+  it('never hits a veiled sprite, even under the cursor, and falls through to a visible neighbour', () => {
+    expect(pickAgentAt([at('1', 100, 100, true)], 100, 100, 20)).toBeNull();
+    expect(pickAgentAt([at('1', 100, 100, true), at('2', 112, 100)], 100, 100, 20)).toBe('2');
   });
 });
