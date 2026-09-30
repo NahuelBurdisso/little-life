@@ -39,6 +39,15 @@ describe('isIntimacyEligible: the adults-only boundary', () => {
     }
   });
 
+  it('fails closed on a missing or non-numeric age', () => {
+    const adult = person({ id: 1, gender: 'male' });
+    for (const age of [undefined, null, NaN, '30']) {
+      const unknown = { ...person({ id: 2, gender: 'female' }), age } as unknown as IntimacyParty;
+      expect(isIntimacyEligible(adult, unknown)).toBe(false);
+      expect(isIntimacyEligible(unknown, adult)).toBe(false);
+    }
+  });
+
   it('two minors are not eligible either', () => {
     expect(isIntimacyEligible(person({ id: 1, age: 16, gender: 'male' }), person({ id: 2, age: 16, gender: 'female' }))).toBe(false);
   });

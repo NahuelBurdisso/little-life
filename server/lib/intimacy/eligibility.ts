@@ -47,7 +47,15 @@ export function canBeAttractedTo(
  */
 export function isIntimacyEligible(a: IntimacyParty, b: IntimacyParty): boolean {
   if (a.id === b.id) return false;
-  if (a.age < INTIMACY_MIN_AGE || b.age < INTIMACY_MIN_AGE) return false;
+  // Fail closed: a missing or non-numeric age (partial row, NULL column) is
+  // never read as adult. `undefined < 18` is false and `"30" >= 18` is true, so
+  // plain comparisons would let both through.
+  if (!isAdultAge(a.age) || !isAdultAge(b.age)) return false;
   if (a.is_active === false || b.is_active === false) return false;
   return canBeAttractedTo(a, b) && canBeAttractedTo(b, a);
+}
+
+/** A real, finite number of years at or above the line. Anything else is not an adult. */
+function isAdultAge(age: unknown): boolean {
+  return typeof age === 'number' && Number.isFinite(age) && age >= INTIMACY_MIN_AGE;
 }
