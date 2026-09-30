@@ -33,6 +33,7 @@ import { gameMinutes } from './gameClock';
 import { isPivotalEvent } from './storyBeats';
 import { CONFIG } from './constants';
 import { clamp } from './utils';
+import { childAgeDays, childrenOfAny } from './familyState';
 
 /** How many past conversations the dossier lists. */
 export const DOSSIER_CONVERSATIONS = 10;
@@ -136,6 +137,15 @@ export interface HistoryPoint {
   bToA: number;
 }
 
+export interface DossierChild {
+  id: number;
+  name: string;
+  sex: string;
+  ageDays: number;
+  /** The pair are the mother and the rumoured (revealed) true father, not the husband. */
+  rumoured: boolean;
+}
+
 export interface PairDossier {
   a: { id: number; name: string };
   b: { id: number; name: string };
@@ -149,6 +159,11 @@ export interface PairDossier {
   conversations: DossierConversation[];
   secrets: DossierSecret[];
   arcs: DossierArc[];
+  /**
+   * Children the two share (lib/family.ts): their own, or — once the town
+   * knows — the one the paternity secret says is the other's. Eldest first.
+   */
+  children: DossierChild[];
   history: {
     friendship: HistoryPoint[];
     romance: HistoryPoint[];
@@ -510,6 +525,17 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
       beats: arc.beats,
     }));
 
+  // --- Children they share --------------------------------------------------------
+  const pair = [aId, bId];
+  const sharedChildren = childrenOfAny(pair)
+    .flatMap((c): DossierChild[] => {
+      const own = pair.includes(c.mother_id) && c.father_id != null && pair.includes(c.father_id);
+      const rumoured = !own && c.paternity_revealed && pair.includes(c.mother_id)
+        && c.true_father_id != null && pair.includes(c.true_father_id);
+      if (!own && !rumoured) return [];
+      return [{ id: c.id, name: c.name, sex: c.sex, ageDays: childAgeDays(c.birth_game_minute, nowMinute), rumoured }];
+    });
+
   return {
     a,
     b,
@@ -519,6 +545,7 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
     conversations: dossierConversations,
     secrets,
     arcs,
+    children: sharedChildren,
     history,
   };
 }

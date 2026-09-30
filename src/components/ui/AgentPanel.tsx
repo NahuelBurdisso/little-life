@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useSelectedAgent } from "../../hooks/useSelectedAgent";
 import { useConversations } from "../../hooks/useConversations";
 import { useAgents } from "../../hooks/useAgents";
@@ -62,6 +62,59 @@ function PersonalityAxes({ personality }: { personality: PersonalityProfile | nu
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** The `family` block of `agents.getAgentSummary` (server/routers/agents.ts `familyOf`). */
+interface FamilyInfo {
+  spouse: { id: number; name: string } | null;
+  children: Array<{ id: number; name: string; sex: string; ageDays: number; stage: string }>;
+  expecting: { secret: boolean; dueInDays: number } | null;
+}
+
+/** "baby daughter Ana (2 days)" — the agent panel's shorter cousin of familyState `describeChild`. */
+function childLabel(c: FamilyInfo["children"][number]): string {
+  const kin = c.sex === "female" ? "daughter" : "son";
+  const noun = c.stage === "baby" ? `baby ${kin}` : c.stage === "toddler" ? `little ${kin}` : kin;
+  const age = c.ageDays <= 0 ? "newborn" : `${c.ageDays} day${c.ageDays === 1 ? "" : "s"}`;
+  return `${noun} ${c.name} (${age})`;
+}
+
+/**
+ * "Family: married to Tom · daughter Ana (2 days) · expecting 🤫". Nothing for
+ * someone single and childless. A pregnancy still kept secret shows to the
+ * player (the god of the town) with a hush mark, like the secrets list.
+ */
+function FamilyLine({ family, onSelectAgent }: { family: FamilyInfo | undefined; onSelectAgent?: (id: string) => void }) {
+  if (!family || (!family.spouse && family.children.length === 0 && !family.expecting)) return null;
+  const parts: ReactNode[] = [];
+  if (family.spouse) {
+    const s = family.spouse;
+    parts.push(
+      <span key="spouse">
+        married to{" "}
+        {onSelectAgent ? (
+          <button className="underline decoration-dotted hover:text-ui-text" onClick={() => onSelectAgent(String(s.id))}>{s.name}</button>
+        ) : s.name}
+      </span>,
+    );
+  }
+  for (const c of family.children) parts.push(<span key={`c${c.id}`}>{childLabel(c)}</span>);
+  if (family.expecting) {
+    const due = family.expecting.dueInDays <= 1 ? "any day now" : `in ~${family.expecting.dueInDays} days`;
+    parts.push(
+      <span key="expecting" title={family.expecting.secret ? "Still a secret in town" : undefined}>
+        expecting a baby {due}{family.expecting.secret ? " 🤫" : ""}
+      </span>,
+    );
+  }
+  return (
+    <div className="px-3 py-2 border-b border-ui-line text-xs text-ui-dim">
+      <span className="font-medium">Family:</span>{" "}
+      {parts.map((p, i) => (
+        <span key={i}>{i > 0 && " · "}{p}</span>
+      ))}
     </div>
   );
 }
@@ -209,6 +262,9 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
                 </span>
               </div>
             )}
+
+            {/* Family (server/lib/family.ts via agents.getAgentSummary) */}
+            <FamilyLine family={(data as any).family} onSelectAgent={onSelectAgent} />
 
             {/* Traits */}
             {agent.traits && agent.traits.length > 0 && (

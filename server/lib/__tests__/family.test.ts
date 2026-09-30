@@ -16,6 +16,7 @@ import {
   christeningTriggeredBy, parseChristeningTrigger, parentsOfChild,
 } from '../familyState';
 import { heirsOf } from '../heirs';
+import { getPairDossier } from '../pairDossier';
 import { buildAgentSystemPrompt, topicIntent, congratsTopic, PATERNITY_TOPIC } from '../../ai/prompts';
 import { buildDailyPlanPrompt } from '../planning/planPrompts';
 import { gameMinutes } from '../gameClock';
@@ -435,6 +436,18 @@ describe('family against the DB', () => {
       expect(feedOf('moved_in', friend)).toHaveLength(1);
       db.delete(children).run();
       db.delete(locations).where(eq(locations.id, nursery)).run();
+    });
+
+    it('shows the children a pair shares in their dossier', () => {
+      const { wife, husband } = marriedCouple();
+      db.insert(children).values({
+        name: 'Ada', sex: 'female', birth_game_minute: NOW - DAY, mother_id: wife, father_id: husband, home: homeId,
+      }).run();
+      expect(getPairDossier(wife, husband)!.children).toEqual([
+        expect.objectContaining({ name: 'Ada', sex: 'female', ageDays: 1, rumoured: false }),
+      ]);
+      const stranger = insertAgent('Stranger', { gender: 'male' });
+      expect(getPairDossier(wife, stranger)!.children).toEqual([]);
     });
 
     it('a child whose last parent leaves town goes with them', () => {
