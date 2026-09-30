@@ -61,8 +61,8 @@ Never run the dev server against `data/little-life.db` for testing — the tick 
 ```
 server/
   index.ts            Express + WS tRPC server; side-effect imports giftEngine, secretSharing
-  router.ts           12 routers: world agents conversations relationships economy knowledge
-                      locations activity chronicle nudge setup autoplay
+  router.ts           16 routers: world agents conversations relationships economy locations
+                      activity chronicle nudge knowledge setup autoplay gazette saves challenges intimacy
   engine/tick.ts      1 tick = 1 game minute, setTimeout loop (1000 ms / tick_speed)
   engine/systems/     11 phases in order: needs → states → economy → relationships →
                       conversations → goals → decisions → movement → events → gossip → cascade
@@ -70,6 +70,8 @@ server/
   engine/emitter.ts   "channel dirty" pub/sub → client invalidates React Query caches
   lib/                *Engine.ts subsystems, cascade/ (Ripple/Tension/Snap), memory/,
                       goals/, planning/, perception/, worldgen/ (procedural town pipeline)
+  lib/intimacy/       opt-in adult layer (kiss, longing, rendezvous, tryst, suspicion, unwed pregnancy);
+                      adults only via isIntimacyEligible, implied never explicit — see docs/STATUS.md
   lib/simEvents.ts    sync EventEmitter; listeners run INSIDE the emitting phase's transaction
   ai/                 ollama.ts client (format/JSON schema, metrics, LLM_TRACE), llmSemaphore
                       (LLM_PARALLEL slots = OLLAMA_NUM_PARALLEL, 1 reserved for dialogue),
