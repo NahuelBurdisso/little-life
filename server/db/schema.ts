@@ -88,6 +88,12 @@ export const agents = sqliteTable(
     workplace: integer('workplace').references(() => locations.id),
     created_at: integer('created_at').notNull(),
     is_active: integer('is_active', { mode: 'boolean' }).notNull(),
+    // Stable life facts for the dialogue prompt (lib/selfFacts.ts): years lived
+    // in town and years in the current trade. Null until first needed, then
+    // derived once from the bio/age and kept, so the model can't have the
+    // mayor in office twelve years in one breath and five in the next.
+    years_in_town: integer('years_in_town'),
+    job_years: integer('job_years'),
   },
   (table) => [index('idx_agents_is_active').on(table.is_active)]
 );

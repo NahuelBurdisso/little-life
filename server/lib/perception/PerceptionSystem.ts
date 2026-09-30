@@ -10,6 +10,7 @@ import { CONFIG } from '../constants';
 import { queueMaxWait } from '../conversationPacing';
 import { isAnyWatched } from '../spotlight';
 import { TIER_BUDGET, watchedPriority } from '../conversationTier';
+import { openedTopicCount } from '../topicMemory';
 
 // ─── Internal Types ───────────────────────────────────────────────────────────
 
@@ -144,6 +145,25 @@ export function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
+/**
+ * Topic diversity (playtest #3: during a sickness wave 34 of 57 LLM
+ * conversations were "offering help"). Two brakes:
+ *  - per observer: a reaction whose topic they already opened today scores
+ *    TOPIC_REPEAT_DECAY times less per repeat (lib/topicMemory.ts), so the
+ *    third offer of help loses to a wave or to nothing at all;
+ *  - town-wide: once a topic has TOPIC_SHARE_FLOOR perception conversations
+ *    this game day, it may not grow past TOPIC_SHARE_MAX of all of them.
+ */
+export const TOPIC_REPEAT_DECAY = 0.6;
+export const TOPIC_SHARE_FLOOR = 4;
+export const TOPIC_SHARE_MAX = 0.4;
+
+/** Whether one more perception conversation on a topic keeps it under the day's share. */
+export function topicShareAllowed(topicCount: number, totalCount: number): boolean {
+  if (topicCount < TOPIC_SHARE_FLOOR) return true;
+  return (topicCount + 1) / (totalCount + 1) <= TOPIC_SHARE_MAX;
+}
+
 interface KindStamp {
   at: number;
   /** romance_ab + romance_ba when the conversation was queued. */
@@ -168,6 +188,14 @@ export class PerceptionSystem {
   private pairCooldowns: Map<string, number> = new Map();
   /** `${pairKey}|${kind}` → when that kind of conversation was last queued for the pair */
   private kindCooldowns: Map<string, KindStamp> = new Map();
+  /** Perception conversations queued this game day, by topic (TOPIC_SHARE_MAX). */
+  private topicDay = { day: -1, counts: new Map<string, number>(), total: 0 };
+
+  private topicCounts(nowMinutes: number) {
+    const day = Math.floor(nowMinutes / 1440);
+    if (this.topicDay.day !== day) this.topicDay = { day, counts: new Map(), total: 0 };
+    return this.topicDay;
+  }
 
   /**
    * Remove expired cooldown entries to prevent unbounded Map growth.
@@ -399,7 +427,14 @@ export class PerceptionSystem {
             vanity: 50, curiosity: 50, loyalty: 50, morality: 50,
             sensuality: 50, neuroticism: 50,
           };
-          const score = scorePerception(rule, personality, friendship, romance);
+          let score = scorePerception(rule, personality, friendship, romance);
+
+          const topic = REACTION_TYPES[rule.reaction]?.conversation_topic;
+          if (topic && REACTION_TYPES[rule.reaction]?.action === 'approach') {
+            const day = this.topicCounts(nowMinutes);
+            if (!topicShareAllowed(day.counts.get(topic) ?? 0, day.total)) continue;
+            score *= TOPIC_REPEAT_DECAY ** openedTopicCount(observer.id, topic, nowMinutes);
+          }
 
           if (score > bestScore) {
             bestScore = score;
@@ -458,6 +493,9 @@ export class PerceptionSystem {
 
             // Mark this pair as busy so subsequent perception pairs don't double-queue
             addBusy([observer.id, target.id]);
+            const day = this.topicCounts(nowMinutes);
+            day.counts.set(reaction.conversation_topic, (day.counts.get(reaction.conversation_topic) ?? 0) + 1);
+            day.total++;
 
             const kindRule = CONVERSATION_KIND_COOLDOWNS[bestRule.reaction];
             if (kindRule) {
@@ -526,5 +564,6 @@ export class PerceptionSystem {
     this.cooldowns.clear();
     this.pairCooldowns.clear();
     this.kindCooldowns.clear();
+    this.topicDay = { day: -1, counts: new Map(), total: 0 };
   }
 }

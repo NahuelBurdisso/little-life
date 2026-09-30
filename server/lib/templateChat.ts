@@ -105,6 +105,9 @@ function slotsFor(c: ChatContext, speakerIdx: 0 | 1): Record<string, string | un
     mutual: c.mutual?.first,
     event: c.event?.phrase,
     Event: c.event ? capitalize(c.event.phrase) : undefined,
+    eventAsk: c.event?.ask?.[0],
+    eventYes: c.event?.ask?.[1],
+    eventNo: c.event?.ask?.[2],
     work: c.people[1].workplace ?? undefined,
     job: c.people[1].job ?? undefined,
     tavern: c.roles.tavern,
@@ -151,6 +154,8 @@ function pickLine<L extends ScriptLine>(
   speakerIdx: 0 | 1,
   used: Set<string>,
   rng: Rng,
+  /** Lines to avoid when anything else fits (said elsewhere in town this hour). */
+  avoid?: ReadonlySet<string>,
 ): Picked<L> | null {
   if (!pool?.length) return null;
   const me: ChatPerson = c.people[speakerIdx];
@@ -166,6 +171,10 @@ function pickLine<L extends ScriptLine>(
     candidates.push({ line, text });
   }
   if (candidates.length === 0) return null;
+  if (avoid?.size) {
+    const unsaid = candidates.filter((x) => !avoid.has(x.text));
+    if (unsaid.length > 0) candidates.splice(0, candidates.length, ...unsaid);
+  }
   const tempered = me.tone === 'cool' ? candidates.filter((x) => x.line.s <= 0.1) : candidates;
   const pool2 = tempered.length > 0 ? tempered : candidates;
   const voiced = pool2.filter((x) => x.line.voice?.includes(me.voice));
@@ -178,11 +187,17 @@ function pickLine<L extends ScriptLine>(
 const FOLLOW_CHANCE = 0.6;
 
 /** Play one script, or null when this context can't voice it (no opener/reply/close fits). */
-export function playScript(script: TopicScript, c: ChatContext, rng: Rng = Math.random): TemplateChat | null {
+export function playScript(
+  script: TopicScript,
+  c: ChatContext,
+  rng: Rng = Math.random,
+  /** Opening lines already heard in town this game hour (ComposeOptions.townRecent). */
+  avoidOpeners?: ReadonlySet<string>,
+): TemplateChat | null {
   const tried = new Set<OpenerLine>();
   for (let attempt = 0; attempt < script.openers.length; attempt++) {
     const used = new Set<string>();
-    const opener = pickLine(script.openers.filter((o) => !tried.has(o)), c, 0, used, rng);
+    const opener = pickLine(script.openers.filter((o) => !tried.has(o)), c, 0, used, rng, avoidOpeners);
     if (!opener) return null;
     tried.add(opener.line);
 
@@ -248,6 +263,35 @@ export interface ComposeOptions {
   lastUsed?: ReadonlyMap<string, number>;
   nowGameMin?: number;
   scripts?: readonly TopicScript[];
+  /**
+   * What other pairs said this game hour (lib/templateVariety.ts). Playtest #3:
+   * two pairs the same night both got "What do you make of the full moon?"
+   * word for word. A script another pair just played weighs TOWN_REPEAT_FACTOR
+   * as much, and an opening line already heard is skipped when another fits.
+   */
+  townRecent?: { scripts: ReadonlySet<string>; openers: ReadonlySet<string> };
+}
+
+/** Weight multiplier for a script written for the reason the pair is talking. */
+export const PREFERRED_FACTOR = 20;
+/** Weight multiplier for a script another pair played this game hour. */
+export const TOWN_REPEAT_FACTOR = 0.2;
+
+/**
+ * Scripts written for why the conversation was queued (`ChatContext.intent`):
+ * a flirt → the shy flirt (a couple → sweethearts), an offer of help → the
+ * helping hand, comfort → the rough-day script first, a couple's "catching
+ * up" → sweethearts.
+ */
+export function preferredScripts(c: ChatContext): Set<string> {
+  const intent = (c.intent ?? '').trim().toLowerCase();
+  const couple = c.status === 'partners' || c.status === 'engaged' || c.status === 'married';
+  const out = new Set<string>();
+  if (intent === 'flirting' || intent === 'romance') out.add(couple ? 'sweethearts' : 'shy_flirt');
+  if (intent === 'offering help' || intent === 'checking in') out.add('help');
+  if (intent === 'offering comfort') { out.add('rough_day'); out.add('help'); }
+  if (couple && (intent === 'catching up' || intent === '')) out.add('sweethearts');
+  return out;
 }
 
 /**
@@ -272,7 +316,14 @@ export function composeTemplateChat(c: ChatContext, opts: ComposeOptions = {}): 
 
   // Weighted order without replacement over the fresh scripts.
   const order: TopicScript[] = [];
-  const pool = fresh.map((s) => ({ s, w: Math.max(0.01, s.weight(c)) }));
+  const preferred = preferredScripts(c);
+  const townScripts = opts.townRecent?.scripts;
+  const pool = fresh.map((s) => {
+    let w = Math.max(0.01, s.weight(c));
+    if (preferred.has(s.id)) w *= PREFERRED_FACTOR;
+    if (townScripts?.has(s.id)) w *= TOWN_REPEAT_FACTOR;
+    return { s, w };
+  });
   while (pool.length > 0) {
     const total = pool.reduce((sum, p) => sum + p.w, 0);
     let roll = rng() * total;
@@ -287,7 +338,7 @@ export function composeTemplateChat(c: ChatContext, opts: ComposeOptions = {}): 
   order.push(...stale);
 
   for (const script of order) {
-    const chat = playScript(script, c, rng);
+    const chat = playScript(script, c, rng, opts.townRecent?.openers);
     if (chat) return chat;
   }
   return null;

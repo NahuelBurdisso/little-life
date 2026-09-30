@@ -9,7 +9,7 @@ import { PersonalityProfile } from '../lib/personality';
 import { generateVoiceDirective } from './voiceDirective';
 import { selectConversationContext, ContextItem } from './contextSelector';
 import { BANNED_OPENERS, isFallbackMessage } from './sanitizeDialogue';
-import { firstName } from './names';
+import { addressName, firstName } from './names';
 import { TOWN_SETTING } from './setting';
 
 /**
@@ -131,6 +131,8 @@ export interface AgentEnrichment {
    * (lib/familyState.ts `familyPromptLine`); '' or absent for everyone else.
    */
   family?: string;
+  /** "Facts about you (keep them straight): …" — helpers/selfFactsStore.ts. */
+  selfFacts?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,12 +201,54 @@ function buildSettingLine(world: WorldStateRow, locationName: string): string {
   return `${timeOfDay}, day ${world.time.day}. ${season}, ${world.weather}. At ${locationName}.`;
 }
 
+/**
+ * How the two stand on a first real conversation. `by-sight`: townsfolk who
+ * have never really talked but know each other by sight and reputation — in a
+ * town this small that is everyone. `speaker-new` / `listener-new`: one of them
+ * arrived recently (lib/newcomers.ts), the only case where anyone introduces
+ * themselves. Null once they have properly talked.
+ */
+export type FirstMeeting = 'by-sight' | 'speaker-new' | 'listener-new' | null;
+
+export type RomanceLevel = 'none' | 'spark' | 'courting' | 'in love' | 'partners' | 'engaged' | 'married';
+
+/** The speaker's romantic standing with the listener: their own feeling, or the couple's tags. */
+export function romanceLevel(romance: number, tags: readonly string[]): RomanceLevel {
+  if (tags.includes('married')) return 'married';
+  if (tags.includes('engaged')) return 'engaged';
+  if (tags.includes('partner')) return 'partners';
+  if (romance > 60) return 'in love';
+  if (romance > 35) return 'courting';
+  if (romance > 15) return 'spark';
+  return 'none';
+}
+
+const NO_PET_NAMES = 'no pet names like "my love", "my dear" or "darling"';
+
+function buildRomanceLine(level: RomanceLevel, otherName: string, romanticScene: boolean): string {
+  switch (level) {
+    // Couples: the tag line already says so, and endearments are theirs.
+    case 'married': case 'engaged': case 'partners': return '';
+    case 'in love': return `You're in love with ${otherName}, but you're not a couple — ${NO_PET_NAMES}.`;
+    case 'courting': return `You're sweet on ${otherName}, nothing declared — ${NO_PET_NAMES}.`;
+    case 'spark': return `A spark of attraction to ${otherName}, nothing more — ${NO_PET_NAMES}.`;
+    default: return romanticScene ? `No romance on your side — ${NO_PET_NAMES}.` : '';
+  }
+}
+
 function buildRelationshipTag(
   relationship: RelationshipRow | null,
   speakerId: number,
   otherName: string,
+  meeting: FirstMeeting = null,
+  /** A flirt topic or feelings from the other side: worth saying there are none here. */
+  romanticScene = false,
 ): string {
-  if (!relationship) return `You don't know ${otherName}.`;
+  if (!relationship) {
+    return meeting === 'speaker-new' || meeting === 'listener-new'
+      ? `You've never met ${otherName}.`
+      : `You know ${otherName} only by sight and reputation.`;
+  }
 
   const isA = relationship.agent_a === speakerId;
   const friendship = isA ? relationship.friendship_ab : relationship.friendship_ba;
@@ -242,19 +286,18 @@ function buildRelationshipTag(
     engaged: "You're engaged to be married.",
     married: "You're married to them.",
   };
-  for (const tag of relationship.tags) {
-    const mapped = tagMap[tag];
-    if (mapped) parts.push(mapped);
+  // A set: `housemate` and `roommate` both mapped to "You live together." and
+  // playtest #3 prompts said it twice.
+  for (const mapped of new Set(relationship.tags.map((t) => tagMap[t]).filter(Boolean))) {
+    parts.push(mapped);
   }
 
-  // Romance
-  if (romance > 60) {
-    parts.push(`You have deep feelings for ${otherName}.`);
-  } else if (romance > 40) {
-    parts.push(`You're attracted to ${otherName}.`);
-  } else if (romance > 20) {
-    parts.push(`You find ${otherName} appealing.`);
-  }
+  // Romance, as a level the model can't overshoot. Playtest #3: Rosa and Yuki
+  // called each other "my love" and "my dear" while Yuki's romance was 26.6
+  // and they weren't a couple — "You have deep feelings for Yuki" read as
+  // licence. Pet names belong to couples; below that the line says so.
+  const romanceLine = buildRomanceLine(romanceLevel(romance, relationship.tags), otherName, romanticScene);
+  if (romanceLine) parts.push(romanceLine);
 
   // Trust
   if (trust > 50) {
@@ -363,7 +406,7 @@ function buildTurnInstruction(
   otherName: string,
   topic: string | null,
   friendship: number,
-  isFirstMeeting: boolean,
+  meeting: FirstMeeting,
   romance?: number,
   lastMessageSentiment?: number,
   goalContext?: string | null,
@@ -384,11 +427,20 @@ function buildTurnInstruction(
     }
   } else if (messageCount === 0) {
     // Opening turn
-    if (isFirstMeeting) {
-      const approach = friendship >= 0
-        ? `Introduce yourself to ${otherName}. You haven't really talked before. Be curious but cautious — first impressions matter.`
-        : `You're meeting ${otherName} for the first time. Size them up. Your personality decides how open you are.`;
-      parts.push(approach);
+    const introducing = meeting === 'speaker-new' || meeting === 'listener-new';
+    if (meeting === 'listener-new') {
+      parts.push(`${otherName} is new in town and you've never met. Introduce yourself and welcome them, in your own way.`);
+    } else if (meeting === 'speaker-new') {
+      parts.push(`You're new in town and have never met ${otherName}. Introduce yourself.`);
+    } else if (meeting === 'by-sight') {
+      // Playtest #3: "Introduce yourself… You haven't really talked before"
+      // on pairs who had lived in the same dozen houses for years gave "Well,
+      // I am Thomas Park, the Mayor" and "I am Yuki Tanaka, though I think you
+      // knew that already". They know each other; they just haven't talked.
+      parts.push(friendship >= 0
+        ? `You and ${otherName} know each other by sight and reputation, as everyone in a small town does, but have never really talked. Don't introduce yourself — they know who you are.`
+        : `You know ${otherName} by sight and reputation but have never really talked, and what you've heard doesn't impress you. Don't introduce yourself — size them up.`);
+      if (topic) parts.push(topicIntent(topic, otherName));
     } else if (topic) {
       parts.push(`Start talking to ${otherName}. ${topicIntent(topic, otherName)}`);
     } else {
@@ -401,8 +453,10 @@ function buildTurnInstruction(
     // Playtest #2 (G6): openers still led with "how are you doing today" even
     // with a concrete topic. Named outright, the model stops reaching for them;
     // generateResponse strips any that slip through (stripGenericOpener).
-    // A first meeting keeps its greeting: introducing yourself IS the topic.
-    if (!isFirstMeeting) {
+    // Only a newcomer's introduction keeps its greeting: introducing yourself
+    // IS the topic there. Townsfolk meeting properly for the first time open
+    // with "Good morning, how are you?" as readily as anyone (playtest #3).
+    if (!introducing) {
       parts.push(`Skip the small talk: don't open with ${BANNED_OPENERS.map((o) => `"${o}"`).join(', ')} or the like — start with the thing itself.`);
     }
   } else if (messageCount >= maxTurns - 2) {
@@ -496,11 +550,16 @@ export function buildAgentSystemPrompt(
   // Financial status
   const econLine = `Your financial situation: ${describeFinancialStatus(economy.money)} ($${Math.round(economy.money)}).`;
 
-  // Reputation
+  // Reputation. "…consider you neutral" said nothing in most prompts; its
+  // tokens now pay for the self-facts line below.
   let repLine = '';
-  if (enrichment && enrichment.reputationScore !== 0) {
+  if (enrichment && enrichment.reputationScore !== 0 && enrichment.reputationLabel !== 'neutral') {
     repLine = `The townspeople consider you ${enrichment.reputationLabel}.`;
   }
+  // Stable numbers (tenure, years in town, household): a self-description
+  // replaces the bio above and tends to drop them, and the model then invents
+  // new ones (Thomas: mayor "twelve years", next day "five years").
+  const factsLine = enrichment?.selfFacts ?? '';
 
   // Hobbies
   let hobbyLine = '';
@@ -514,7 +573,7 @@ export function buildAgentSystemPrompt(
 
   // Build prompt parts, filtering empties
   const header = [identity, traitsLine, voiceDirective].filter(Boolean).join(' ') + `\n${TOWN_SETTING}`;
-  const middle = [descriptionLine, familyLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
+  const middle = [descriptionLine, factsLine, familyLine, moodLine, momentumLine, stateLines, drinkLine, criticalNeedsLine, econLine, repLine, hobbyLine].filter(Boolean).join('\n');
   // Adaptive instruction based on personality extremes
   const p = resolvedPersonality as { impulsiveness?: number; warmth?: number; aggression?: number } | null;
   let toneHint = '';
@@ -552,6 +611,40 @@ export interface ConversationPromptParams {
   gossipFacts?: Array<{ content: string; sensitivity: number }>;
   situationalPrompt?: string | null;
   enrichment?: AgentEnrichment | null;
+  /** Which side, if either, arrived in town recently (lib/newcomers.ts). */
+  newcomer?: 'speaker' | 'listener' | null;
+  /** The listener's job title ("Town Mayor"), for the "You're talking to" line. */
+  otherJobTitle?: string | null;
+  /** Words the speaker kept returning to in other conversations today (lib/topicMemory.ts). */
+  recentSubjects?: string[];
+}
+
+/**
+ * "You're talking to Thomas Park (Thomas to you), the mayor — whatever you
+ * know about the mayor is about him."
+ */
+export function buildListenerLine(other: Pick<AgentRow, 'name' | 'gender'>, jobTitle: string | null): string {
+  const spoken = addressName(other.name);
+  const who = spoken === other.name.trim() ? other.name : `${other.name} (${spoken} to you)`;
+  const title = jobTitle?.trim().toLowerCase();
+  if (!title || /^(?:unemployed|none)$/.test(title)) return `You're talking to ${who}.`;
+  const pronoun = other.gender === 'female' ? 'her' : other.gender === 'male' ? 'him' : 'them';
+  return `You're talking to ${who}, the ${title} — whatever you know about the ${title} is about ${pronoun}.`;
+}
+
+/**
+ * The first-meeting framing for this pair (see FirstMeeting). Shared with
+ * generateResponse, whose opener check exempts only a newcomer's introduction.
+ */
+export function firstMeetingOf(
+  relationship: Pick<RelationshipRow, 'familiarity'> | null | undefined,
+  newcomer: 'speaker' | 'listener' | null | undefined,
+): FirstMeeting {
+  const neverTalked = relationship ? relationship.familiarity < 5 : true;
+  if (!neverTalked) return null;
+  if (newcomer === 'speaker') return 'speaker-new';
+  if (newcomer === 'listener') return 'listener-new';
+  return 'by-sight';
 }
 
 export function buildConversationPrompt(
@@ -612,8 +705,20 @@ export function buildConversationPrompt(
   // Setting line
   userParts.push(buildSettingLine(world, location.name));
 
+  const meeting = firstMeetingOf(relationship, params.newcomer);
+
+  // Who is in front of them. Playtest #3: Rosa, talking TO the mayor, spoke of
+  // "the Mayor's preoccupation with his own precision" — her memories named
+  // "the Mayor" and nothing tied that title to Thomas. The full name appears
+  // once here (memories use it); everything after uses the spoken name.
+  userParts.push(buildListenerLine(otherAgent, params.otherJobTitle ?? null));
+
   // Relationship tag
-  userParts.push(buildRelationshipTag(relationship, speaker.id, otherAgent.name));
+  const otherRomance = relationship
+    ? (relationship.agent_a === speaker.id ? relationship.romance_ba : relationship.romance_ab)
+    : 0;
+  const romanticScene = otherRomance > 15 || /^(?:flirting|romance)$/i.test(conversation.topic ?? '');
+  userParts.push(buildRelationshipTag(relationship, speaker.id, addressName(otherAgent.name), meeting, romanticScene));
 
   // Context items with prefixes
   const contextPrefixes: Record<ContextItem['type'], string> = {
@@ -629,7 +734,6 @@ export function buildConversationPrompt(
   // Turn instruction with enriched context
   const messageCount = conversation.messages.length;
   const maxTurns = conversation.max_turns ?? 6;
-  const isFirstMeeting = relationship ? relationship.familiarity < 5 : true;
   const romance = relationship
     ? (relationship.agent_a === speaker.id ? relationship.romance_ab : relationship.romance_ba)
     : 0;
@@ -639,9 +743,12 @@ export function buildConversationPrompt(
     : null;
   const lastSentiment = lastMsg?.sentiment as number | undefined;
 
+  // The listener by the name the speaker calls them: the model echoes the form
+  // the instruction uses, and "Start talking to Priya Sharma" came back as
+  // "Good morning, Priya Sharma" (the sanitiser shortens what still slips by).
   const turnInstruction = buildTurnInstruction(
-    messageCount, maxTurns, otherAgent.name, conversation.topic,
-    friendship, isFirstMeeting, romance, lastSentiment,
+    messageCount, maxTurns, addressName(otherAgent.name), conversation.topic,
+    friendship, meeting, romance, lastSentiment,
   );
   const repetitionHint = buildRepetitionHint(
     conversation.messages as Array<{ speakerId: number; text: string; fallback?: boolean }>,
@@ -693,9 +800,26 @@ export function buildConversationPrompt(
   // the first message above the history, where later-turn guidance ("wrap up",
   // "they seem upset") drowned under six lines of chat — conversations looped on
   // the same openers and questions.
-  push("user", `[Your turn] ${[turnInstruction, repetitionHint].filter(Boolean).join(' ')} Reply with only your spoken words.`);
+  // What they already said to others today (lib/topicMemory.ts). Not during a
+  // proposal: that question has one subject.
+  const subjectsHint = conversation.topic === PROPOSAL_TOPIC ? '' : buildSubjectsHint(params.recentSubjects);
+  push("user", `[Your turn] ${[turnInstruction, repetitionHint, subjectsHint].filter(Boolean).join(' ')} Reply with only your spoken words.`);
 
   return { system, messages };
+}
+
+/**
+ * "You've already talked about foundation and flour today — bring up something
+ * else unless asked." Playtest #3: Yuki raised the old stone foundation (one of
+ * her goals) in six conversations, Rosa offered extra flour twice; each
+ * conversation started from the same goals with no memory of the last.
+ */
+export function buildSubjectsHint(subjects: readonly string[] | undefined): string {
+  if (!subjects?.length) return '';
+  const list = subjects.length === 1
+    ? subjects[0]
+    : `${subjects.slice(0, -1).join(', ')} and ${subjects[subjects.length - 1]}`;
+  return `You've already talked about ${list} today — bring up something else unless asked.`;
 }
 
 /**

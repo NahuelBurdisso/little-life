@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { firstName, nameVariants, withoutHonorific } from '../names';
+import { addressName, firstName, nameVariants, withoutHonorific } from '../names';
 import { sanitizeDialogue } from '../sanitizeDialogue';
 import { buildConversationPrompt } from '../prompts';
 import { pickConversationGist } from '../../lib/memory/conversationGist';
@@ -13,6 +13,15 @@ describe('names — honorifics', () => {
     expect(firstName('Sir')).toBe('Sir');
     expect(withoutHonorific('Miss Yuki Tanaka')).toBe('Yuki Tanaka');
     expect(nameVariants('Dr. Sofia Petrov')).toEqual(['Dr. Sofia Petrov', 'Sofia Petrov', 'Sofia']);
+  });
+
+  it('addresses people the way the town does: first name, or title and surname', () => {
+    expect(addressName('Priya Sharma')).toBe('Priya');
+    expect(addressName('Dr. Sofia Petrov')).toBe('Dr. Petrov');
+    expect(addressName('Mrs Rosa Delgado')).toBe('Mrs. Delgado');
+    expect(addressName('Miss Yuki Tanaka')).toBe('Miss Tanaka');
+    expect(addressName('Sir John Moss')).toBe('Sir John');
+    expect(addressName('Omar')).toBe('Omar');
   });
 });
 

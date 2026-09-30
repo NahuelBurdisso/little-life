@@ -13,7 +13,8 @@ import { eq, inArray, like, sql } from 'drizzle-orm';
  */
 
 vi.mock('../../../ai/ollama', () => ({ callOllamaChat: vi.fn() }));
-vi.mock('../../../ai/prompts', () => ({
+vi.mock('../../../ai/prompts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../ai/prompts')>()),
   buildConversationPrompt: () => ({ system: 'sys', messages: [{ role: 'user', content: 'hi' }] }),
 }));
 // Real addMessage / markConversationEnded / caches; only the context builder

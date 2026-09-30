@@ -35,6 +35,8 @@ import { taskRunner } from '../../ai/taskRunner';
 import { recordScriptUsage, scriptLastUsed } from '../../ai/templates';
 import { WRAP_UP_FAREWELLS, farewellText } from '../../data/wrapUpFarewells';
 import { composeTemplateChat } from '../../lib/templateChat';
+import { recordConversationTopics } from '../../lib/topicMemory';
+import { recordTownTemplate, townRecentTemplates } from '../../lib/templateVariety';
 import { buildTemplateChatContext } from '../../helpers/templateChatContext';
 import {
   conversationBudgetGameMinutes,
@@ -1104,6 +1106,18 @@ async function finishCompletedConversation(
     return;
   }
 
+  // What each side said, so their next conversations today can be steered
+  // off it (lib/topicMemory.ts: perception penalty + prompt hint). LLM
+  // conversations only — template lines are canned and repeat by design.
+  recordConversationTopics({
+    conversationId: fresh.id,
+    participants: participantIds,
+    participantNames: participants.map((p) => p.name),
+    topic: fresh.topic,
+    messages: messages.map((m) => ({ speakerId: m.speakerId, text: m.text, fallback: isFallback(m) })),
+    gameMinute: gameMinutes(world.time),
+  });
+
   // Accumulate relationship deltas across all pairs for quality evaluation
   let totalFriendshipDelta = 0;
   let totalRomanceDelta = 0;
@@ -1774,14 +1788,21 @@ async function processTimedOutEntry(
   // a different category, so "Glad to be in out of the rain" was answered with
   // "I've got so much to do today" (playtest #2).
   const nowGameMin = gameMinutes(world.time);
-  const chatContext = buildTemplateChatContext(agentList, locationId, world);
+  // The reason it was queued ("flirting", "offering help"…) picks scripts
+  // written for it, and what other pairs just said is avoided (playtest #3:
+  // partners fell back to the same full-moon line as another pair that night).
+  const chatContext = { ...buildTemplateChatContext(agentList, locationId, world), intent: entry.topic ?? null };
   const chat = composeTemplateChat(chatContext, {
     lastUsed: scriptLastUsed(orderedA, orderedB),
     nowGameMin,
+    townRecent: townRecentTemplates(nowGameMin),
   });
   // The per-pair cooldown is per topic: this pair won't rehash the same one
   // for the script's cooldown hours (template_usage, game time).
-  if (chat) recordScriptUsage(orderedA, orderedB, chat.scriptId, nowGameMin);
+  if (chat) {
+    recordScriptUsage(orderedA, orderedB, chat.scriptId, nowGameMin);
+    recordTownTemplate(chat.scriptId, chat.turns[0].text, nowGameMin);
+  }
 
   // No speaker name in the text: the UI already labels every message with its
   // speaker. `composeTemplateChat` only returns null if no script at all can

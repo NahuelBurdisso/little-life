@@ -1,5 +1,5 @@
 import { callOllamaChat } from './ollama';
-import { buildConversationPrompt, ConversationPromptParams, hasConcreteTopic, topicIntent } from './prompts';
+import { buildConversationPrompt, ConversationPromptParams, firstMeetingOf, hasConcreteTopic, topicIntent } from './prompts';
 import { analyzeSentiment } from './sentiment';
 import { extractTopics } from './topics';
 import { sanitizeDialogue, fallbackReply, stripGenericOpener } from './sanitizeDialogue';
@@ -68,6 +68,9 @@ export async function generateResponse(
     enrichment,
     goalStakes,
     townNames,
+    newcomer,
+    otherJobTitle,
+    recentSubjects,
   } = context;
 
   // Everything the model says passes through the sanitiser before it is judged,
@@ -87,10 +90,12 @@ export async function generateResponse(
   // pleasantry trimmed (free) when something concrete follows it. When the
   // WHOLE line is pleasantry and the conversation has a real topic, the line is
   // regenerated once through the nudge retry below — the only extra call, and
-  // only on openers. A first meeting keeps its greeting: that is the scene.
+  // only on openers. A newcomer's introduction keeps its greeting: that is the
+  // scene. Townsfolk who merely haven't talked before know each other already
+  // (prompts.ts `firstMeetingOf`), so their opener is held to the same rule.
   const isOpener = conversation.messages.length === 0;
-  const firstMeeting = relationship ? relationship.familiarity < 5 : true;
-  const checkOpener = isOpener && !firstMeeting;
+  const meeting = firstMeetingOf(relationship, newcomer);
+  const checkOpener = isOpener && meeting !== 'speaker-new' && meeting !== 'listener-new';
   let genericOpener = false;
   const trimOpener = (text: string): string => {
     if (!checkOpener || !text) return text;
@@ -125,6 +130,9 @@ export async function generateResponse(
     gossipFacts,
     situationalPrompt,
     enrichment,
+    newcomer,
+    otherJobTitle,
+    recentSubjects,
   };
 
   const { system: baseSystem, messages: promptMessages } = buildConversationPrompt(promptParams);

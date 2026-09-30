@@ -58,6 +58,8 @@ import { clearSpotlight } from '../lib/spotlight';
 import { nightSkip } from './nightSkip';
 import { clearPerceptionDedup } from '../lib/memory/MemoryObserver';
 import { clearRulesCache } from '../lib/worldRules';
+import { clearTopicMemory } from '../lib/topicMemory';
+import { clearTownTemplates } from '../lib/templateVariety';
 import { loadAutoplayConfig } from '../lib/autoplaySettings';
 import { statesTrackersSnapshotStore } from './systems/states';
 import { hobbySnapshotStore } from '../lib/hobbyEngine';
@@ -148,6 +150,10 @@ export function clearPerWorldCaches(): void {
   // town's drama and sickness settings would keep ruling the new one until the
   // server restarted.
   clearRulesCache();
+  // What each resident talked about today (game-minute stamps, agent ids).
+  clearTopicMemory();
+  // Template chats heard town-wide this game hour (lib/templateVariety.ts).
+  clearTownTemplates();
   // Tick-valued trackers
   clearStatesTrackers();
   clearLonelinessTracking();

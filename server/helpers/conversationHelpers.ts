@@ -15,6 +15,9 @@ import { gameMinutes } from '../lib/gameClock';
 import { goalClause } from '../lib/goalText';
 import { firstName } from '../ai/names';
 import { familyPromptLine } from '../lib/familyState';
+import { isNewcomer } from '../lib/newcomers';
+import { selfFactsFor } from './selfFactsStore';
+import { repeatedSubjects } from '../lib/topicMemory';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
@@ -28,6 +31,7 @@ interface CachedIdentity {
   effectivePersonality: any;
   enrichment: any;
   speakerEcon: any;
+  otherJobTitle: string | null;
 }
 
 const identityCache = new Map<string, CachedIdentity>(); // key: `${conversationId}:${speakerId}`
@@ -120,13 +124,16 @@ export async function getConversationContext(conversationId: number, speakerId: 
       moodMomentum: getMoodMomentum(speakerId),
       drinkCount: getDrinkCount(speakerId),
       family: familyPromptLine(speakerId, gameMinutes(world.time)),
+      // Tenure, years in town, household — stable numbers the model must not reinvent.
+      selfFacts: selfFactsFor(speaker, speakerEcon?.job_title ?? null, world.time?.totalTicks ?? 0),
     };
 
-    cached = { speaker, otherAgent, relationship, location, effectivePersonality, enrichment, speakerEcon };
+    const otherJobTitle = db.select({ t: economy.job_title }).from(economy).where(eq(economy.agent_id, otherId)).get()?.t ?? null;
+    cached = { speaker, otherAgent, relationship, location, effectivePersonality, enrichment, speakerEcon, otherJobTitle };
     identityCache.set(cacheKey, cached);
   }
 
-  const { speaker, otherAgent, location, effectivePersonality, enrichment } = cached;
+  const { speaker, otherAgent, location, effectivePersonality, enrichment, otherJobTitle } = cached;
 
   // Needs and economy change every turn — always reload
   const speakerNeeds = db.select().from(needs).where(eq(needs.agent_id, speakerId)).get();
@@ -241,6 +248,15 @@ export async function getConversationContext(conversationId: number, speakerId: 
   // greeting the dead by name is just as wrong.
   const townNames = db.select({ name: agents.name }).from(agents).all().map((a) => a.name);
 
+  // Only a recent arrival is met for the first time; everyone else in town is
+  // known by sight and reputation (prompts.ts `firstMeetingOf`).
+  // Subjects the speaker kept returning to in other conversations today.
+  const recentSubjects = world.time ? repeatedSubjects(speakerId, gameMinutes(world.time)) : [];
+
+  const newcomer: 'speaker' | 'listener' | null = isNewcomer(speaker.created_at, currentTick)
+    ? 'speaker'
+    : isNewcomer(otherAgent.created_at, currentTick) ? 'listener' : null;
+
   return {
     conversation,
     speaker,
@@ -259,6 +275,9 @@ export async function getConversationContext(conversationId: number, speakerId: 
     enrichment,
     goalStakes,
     townNames,
+    newcomer,
+    otherJobTitle,
+    recentSubjects,
   };
 }
 

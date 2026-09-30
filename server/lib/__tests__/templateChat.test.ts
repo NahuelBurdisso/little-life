@@ -56,6 +56,7 @@ const PHASES = ['dawn', 'morning', 'afternoon', 'evening', 'night'];
 const VOICES: Voice[] = ['warm', 'gruff', 'shy', 'bubbly', 'plain'];
 const STATUSES = ['strangers', 'acquaintances', 'friends', 'close_friends', 'rivals', 'enemies', 'romantic_interest', 'partners'];
 const JOBS = Object.values(JOB_NOUNS);
+const INTENTS = ['flirting', 'offering help', 'offering comfort', 'catching up', 'town news'];
 
 function randomContext(rng: Rng): ChatContext {
   const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rng() * xs.length)];
@@ -104,6 +105,7 @@ function randomContext(rng: Rng): ChatContext {
       baker: rng() < 0.6 ? 'Ines' : undefined,
       bartender: rng() < 0.6 ? 'Pablo' : undefined,
     },
+    intent: rng() < 0.35 ? pick(INTENTS) : null,
   };
 }
 
@@ -257,6 +259,7 @@ describe('template chats are coherent mini-exchanges (G5)', () => {
     const slots: Record<string, string> = {
       you: 'Yuki', place: 'Willow Park', mutual: 'Omar', event: 'the festival', Event: 'The festival',
       work: 'Golden Crust Bakery', job: 'baker', tavern: 'The Rusty Lantern', baker: 'Ines', bartender: 'Pablo',
+      eventAsk: EVENT_TALK.festival.ask![0], eventYes: EVENT_TALK.festival.ask![1], eventNo: EVENT_TALK.festival.ask![2],
     };
     for (const script of SMALL_TALK_SCRIPTS) {
       const anchors = script.anchors(c);
@@ -269,6 +272,74 @@ describe('template chats are coherent mini-exchanges (G5)', () => {
         expect(anchors.some((a) => text.includes(a)), `${script.id}: "${line.text}"`).toBe(true);
       }
     }
+  });
+
+  describe('why they are talking (playtest #3: partners got the full-moon line)', () => {
+    const friendly = (rng: Rng): ChatContext => {
+      const c = randomContext(rng);
+      c.people[0] = { ...c.people[0], friendship: 60, mood: 70, tone: 'warm' };
+      c.people[1] = { ...c.people[1], friendship: 60, mood: 70, tone: 'warm' };
+      // A friendly pair can't carry a hostile status (the random context may draw one).
+      if (c.status === 'rivals' || c.status === 'enemies') c.status = 'friends';
+      return c;
+    };
+
+    it('plays the script written for the reason most of the time', () => {
+      const rng = mulberry32(314);
+      const hits = { flirt: 0, help: 0, couple: 0 };
+      for (let n = 0; n < 300; n++) {
+        const flirt = { ...friendly(rng), intent: 'flirting', status: 'acquaintances' };
+        if (composeTemplateChat(flirt, { rng })!.scriptId === 'shy_flirt') hits.flirt++;
+        const help = { ...friendly(rng), intent: 'offering help' };
+        if (composeTemplateChat(help, { rng })!.scriptId === 'help') hits.help++;
+        const couple = { ...friendly(rng), intent: 'catching up', status: 'partners', event: { key: 'full_moon', ...EVENT_TALK.full_moon }, dayPhase: 'night' };
+        const chat = composeTemplateChat(couple, { rng })!;
+        assertCoherent(chat, couple);
+        if (chat.scriptId === 'sweethearts') hits.couple++;
+      }
+      expect(hits.flirt).toBeGreaterThan(200);
+      expect(hits.help).toBeGreaterThan(200);
+      expect(hits.couple).toBeGreaterThan(200);
+    });
+
+    it('never flirts with someone unasked, nor plans supper at midnight', () => {
+      const rng = mulberry32(2718);
+      for (let n = 0; n < 500; n++) {
+        const c = randomContext(rng);
+        const chat = composeTemplateChat(c, { rng })!;
+        if (chat.scriptId === 'shy_flirt') expect(c.intent).toBe('flirting');
+        if (c.dayPhase === 'night') expect(chat.turns.map((t) => t.text).join(' ')).not.toMatch(/Supper together|Until tonight/);
+      }
+    });
+
+    it('asks each event its own question, and only wishes joy of what can be enjoyed', () => {
+      const event = SMALL_TALK_SCRIPTS.find((s) => s.id === 'event')!;
+      const rng = mulberry32(55);
+      const seen = new Set<string>();
+      for (let n = 0; n < 300; n++) {
+        const c = { ...friendly(rng), event: { key: 'bountiful_catch', ...EVENT_TALK.bountiful_catch } };
+        const chat = playScript(event, c, rng)!;
+        assertCoherent(chat, c);
+        seen.add(chat.turns[0].text);
+        expect(chat.turns.at(-1)!.text).not.toMatch(/^Enjoy the big catch/);
+      }
+      expect(seen).toContain('Did you see the size of the catch the boats brought in?');
+      for (const [key, talk] of Object.entries(EVENT_TALK)) {
+        for (const line of talk.ask ?? []) expect(line.toLowerCase(), key).toContain(talk.anchor);
+      }
+    });
+
+    it('does not repeat an opening line another pair used this game hour', () => {
+      const rng = mulberry32(99);
+      const c = { ...friendly(rng), intent: null, event: { key: 'full_moon', ...EVENT_TALK.full_moon } };
+      const first = composeTemplateChat(c, { rng })!;
+      for (let n = 0; n < 100; n++) {
+        const again = composeTemplateChat(c, {
+          rng, townRecent: { scripts: new Set([first.scriptId]), openers: new Set([first.turns[0].text]) },
+        })!;
+        expect(again.turns[0].text).not.toBe(first.turns[0].text);
+      }
+    });
   });
 
   it('speaks place names only when they can be said', () => {

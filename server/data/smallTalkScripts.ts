@@ -28,7 +28,8 @@
  *
  * Slots: `{you}` is the LISTENER's first name for that line (never the
  * speaker's own), `{place}`, `{mutual}`, `{event}` / `{Event}`, `{work}`,
- * `{job}`, `{tavern}`, `{baker}`, `{bartender}`. A line whose slot has no value
+ * `{job}`, `{tavern}`, `{baker}`, `{bartender}`, `{eventAsk}` / `{eventYes}` /
+ * `{eventNo}` (the event's own question, EVENT_TALK `ask`). A line whose slot has no value
  * in this town is skipped, never rendered with a raw `{...}`.
  *
  * Lines can be flavoured by the speaker's `voice` (from personality, see
@@ -73,6 +74,14 @@ export interface ChatEvent {
   /** The word every event line contains. */
   anchor: string;
   mood: 'good' | 'bad' | 'odd';
+  /**
+   * A question written for this event, with a yes-ish and an other answer.
+   * "What do you make of the full moon?" fitted every event and so was said by
+   * every pair on the same night (playtest #3); each event asks its own thing.
+   */
+  ask?: readonly [question: string, answer: string, otherAnswer: string];
+  /** Something one can be told to enjoy: "Enjoy the big catch, Elena." read wrong. */
+  enjoy?: boolean;
 }
 
 export interface ChatContext {
@@ -95,7 +104,22 @@ export interface ChatContext {
   /** A third person both know, and whether each likes them. */
   mutual: { first: string; openerLikes: boolean; listenerLikes: boolean } | null;
   roles: { baker?: string; bartender?: string; tavern?: string };
+  /**
+   * Why the pair is talking: the queued conversation topic ("flirting",
+   * "offering help", "offering comfort", "catching up"…). A template chat is
+   * the fallback for a conversation that was ASKED for — a crush spotted, a
+   * partner nearby, someone sick — and playtest #3 had partners Lucia and
+   * Diego fall back to "What do you make of the full moon?". Scripts written
+   * for the reason are preferred (templateChat.ts `preferredScripts`).
+   */
+  intent?: string | null;
 }
+
+/** The queued topic is a flirt (perception crush / infatuation, personality pick). */
+export const isFlirtIntent = (c: ChatContext) => /^(?:flirting|romance)$/i.test(c.intent ?? '');
+/** The queued topic is an offer of help or comfort. */
+export const isHelpIntent = (c: ChatContext) => /^(?:offering help|offering comfort|checking in)$/i.test(c.intent ?? '');
+const COUPLE = new Set(['partners', 'engaged', 'married']);
 
 export interface ScriptLine {
   text: string;
@@ -990,6 +1014,14 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
     topic: (c) => c.event!.phrase,
     anchors: (c) => [c.event!.anchor],
     openers: [
+      // The event's own question (EVENT_TALK `ask`), with answers written for it.
+      {
+        kind: 'ask', text: '{eventAsk}', s: 0.2,
+        replies: [
+          { text: '{eventYes}', s: 0.3, stance: 'agree' },
+          { text: '{eventNo}', s: 0, stance: 'neutral' },
+        ],
+      },
       {
         kind: 'ask', text: 'What do you make of {event}, {you}?', s: 0.1,
         replies: [
@@ -1026,7 +1058,7 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
     ],
     close: [
       { text: "Let's talk more about {event} another time.", s: 0.1 },
-      { text: 'Enjoy {event}, {you}.', s: 0.4, when: (c) => c.event!.mood === 'good' },
+      { text: 'Enjoy {event}, {you}.', s: 0.4, when: (c) => c.event!.mood === 'good' && !!c.event!.enjoy },
       { text: 'Stay safe until {event} is over, {you}.', s: 0.1, when: (c) => c.event!.mood === 'bad' },
     ],
   },
@@ -1036,16 +1068,18 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
     id: 'sweethearts',
     cooldownHours: 8,
     when: (c) =>
-      (c.status === 'partners' || c.status === 'romantic_interest' || c.romance >= 40)
+      (COUPLE.has(c.status ?? '') || c.status === 'romantic_interest' || c.romance >= 40)
       && c.people[0].friendship >= 20 && c.people[1].friendship >= 20
-      // "Supper tonight?" at midnight is not a plan.
-      && c.dayPhase !== 'night',
+      // At night only a real couple: "Supper tonight?" at midnight is not a
+      // plan, and the night lines below are a couple's.
+      && (c.dayPhase !== 'night' || COUPLE.has(c.status ?? '')),
     weight: () => 5,
-    topic: () => 'plans for tonight',
-    anchors: () => ['tonight', 'supper', 'walk', 'evening', 'later'],
+    topic: (c) => (c.dayPhase === 'night' ? 'a walk home' : 'plans for tonight'),
+    anchors: () => ['tonight', 'supper', 'walk', 'evening', 'later', 'night', 'tomorrow'],
     openers: [
       {
         kind: 'ask', text: 'Walk with me later, {you}? Just the two of us.', s: 0.6,
+        when: (c) => c.dayPhase !== 'night',
         replies: [
           { text: "I'd like nothing better than a walk with you.", s: 0.7, stance: 'agree' },
           { text: "Not tonight. I'm not fit company this evening.", s: -0.1, stance: 'disagree', tone: ['cool'] },
@@ -1054,6 +1088,7 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
       },
       {
         kind: 'ask', text: 'Supper together tonight?', s: 0.6,
+        when: (c) => c.dayPhase !== 'night',
         replies: [
           { text: "I've been hoping you'd ask. Supper it is.", s: 0.7, stance: 'agree' },
           { text: "Only if I'm allowed to cook supper this time.", s: 0.6, stance: 'neutral' },
@@ -1062,20 +1097,157 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
       },
       {
         kind: 'tell', text: 'I was hoping I would see you before this evening.', s: 0.6,
+        when: (c) => c.dayPhase !== 'night' && c.dayPhase !== 'evening',
         replies: [
           { text: 'And here I am, a whole evening early.', s: 0.6, stance: 'agree' },
           { text: "You'll have me all to yourself later, I promise.", s: 0.6, stance: 'neutral' },
           { text: "I'm not much company this evening, I'm afraid.", s: -0.1, stance: 'disagree', tone: ['cool'] },
         ],
       },
+      // A couple at night (playtest #3: partners fell back to "What do you
+      // make of the full moon?", word for word the same as another pair).
+      {
+        kind: 'ask', text: 'Walk me home tonight, {you}?', s: 0.6,
+        when: (c) => c.dayPhase === 'night',
+        replies: [
+          { text: 'Of course. I was hoping for a walk with you tonight.', s: 0.7, stance: 'agree' },
+          { text: 'Only as far as the gate tonight, then.', s: 0.4, stance: 'neutral' },
+          { text: "Not tonight. I'd rather walk alone.", s: -0.1, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "I didn't want the night to end without seeing you.", s: 0.6,
+        when: (c) => c.dayPhase === 'night',
+        replies: [
+          { text: "Nor did I. It's a better night now.", s: 0.7, stance: 'agree' },
+          { text: "It's late, but I'm glad of it. Tomorrow will come soon enough.", s: 0.5, stance: 'neutral' },
+          { text: "It's late. I only want my bed tonight.", s: -0.1, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
     ],
     follow: [
-      { text: "I'll count the hours until tonight.", s: 0.6 },
-      { text: "Don't be late this evening.", s: 0.4 },
+      { text: "I'll count the hours until tonight.", s: 0.6, when: (c) => c.dayPhase !== 'night' && c.dayPhase !== 'evening' },
+      { text: "Don't be late this evening.", s: 0.4, when: (c) => c.dayPhase !== 'night' },
+      { text: "I'd stay out half the night if the cold would let us.", s: 0.5, when: (c) => c.dayPhase === 'night' },
     ],
     close: [
-      { text: 'Until tonight, {you}.', s: 0.6 },
-      { text: 'See you this evening, then.', s: 0.5 },
+      { text: 'Until tonight, {you}.', s: 0.6, when: (c) => c.dayPhase !== 'night' && c.dayPhase !== 'evening' },
+      { text: 'See you this evening, then.', s: 0.5, when: (c) => c.dayPhase !== 'night' && c.dayPhase !== 'evening' },
+      { text: "I'll see you later this evening, {you}.", s: 0.5, when: (c) => c.dayPhase === 'evening' },
+      { text: 'Good night, {you}. Until tomorrow.', s: 0.6, when: (c) => c.dayPhase === 'night' },
+      { text: 'Sleep well tonight, {you}.', s: 0.5, when: (c) => c.dayPhase === 'night' },
+    ],
+  },
+
+  // ===== a shy flirt (a crush spotted, not yet a couple) =====
+  {
+    id: 'shy_flirt',
+    cooldownHours: 8,
+    // Only when the conversation was queued AS a flirt: nobody flirts with the
+    // baker because it happens to be sunny. A couple gets `sweethearts`.
+    when: (c) => isFlirtIntent(c) && civil(c) && !COUPLE.has(c.status ?? ''),
+    weight: () => 5,
+    topic: () => 'a bit of flirting',
+    anchors: () => ['hat', 'walk', 'hoping', 'smile', 'glad', 'company', 'blush', 'flatter'],
+    openers: [
+      {
+        kind: 'ask', text: 'Is that a new hat, {you}? It suits you.', s: 0.5,
+        replies: [
+          { text: "It is. I'm glad somebody noticed the hat.", s: 0.5, stance: 'agree' },
+          { text: "This old hat? You flatter me.", s: 0.4, stance: 'neutral' },
+          { text: 'Oh — thank you. Nobody ever notices my hat.', s: 0.4, stance: 'agree', voice: ['shy'] },
+          { text: "It's the same hat as always.", s: -0.1, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'ask', text: 'Would you walk with me a while, {you}?', s: 0.5,
+        replies: [
+          { text: "I'd like that walk very much.", s: 0.6, stance: 'agree' },
+          { text: 'Only a short walk. People will talk.', s: 0.3, stance: 'neutral', voice: ['shy', 'plain'] },
+          { text: "Not today. I'm in no mood for a walk.", s: -0.1, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "I was hoping I'd run into you today.", s: 0.5,
+        replies: [
+          { text: "I was hoping the same, if I'm honest.", s: 0.6, stance: 'agree' },
+          { text: 'Hoping, were you? You flatter me.', s: 0.4, stance: 'neutral' },
+          { text: "I can't think why you'd be hoping for that.", s: -0.1, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'tell', text: 'You have a lovely smile, {you}.', s: 0.6,
+        replies: [
+          { text: "And you've made me smile twice now.", s: 0.6, stance: 'agree' },
+          { text: "Oh, stop. You'll make me blush.", s: 0.5, stance: 'neutral', voice: ['shy', 'warm'] },
+          { text: "Save your flattery for someone who needs it.", s: -0.2, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+    ],
+    follow: [
+      { text: "I don't mind admitting I enjoy your company.", s: 0.5 },
+      { text: 'Perhaps we could walk to the square some evening.', s: 0.5 },
+      { text: "I'll be hoping to see that smile again.", s: 0.5 },
+    ],
+    close: [
+      { text: "Until next time, {you}. I'll be hoping it's soon.", s: 0.5 },
+      { text: "I'm glad I found you, {you}.", s: 0.4 },
+      { text: 'Good day. Thank you for the company.', s: 0.2, when: (c, me) => !byOpener(c, me) },
+    ],
+  },
+
+  // ===== offering a hand (someone sick, tired or struggling) =====
+  {
+    id: 'help',
+    cooldownHours: 6,
+    when: (c) => isHelpIntent(c) && civil(c),
+    weight: () => 5,
+    topic: () => 'a helping hand',
+    anchors: () => ['help', 'hand', 'need', 'fetch', 'soup', 'kind', 'manag'],
+    openers: [
+      {
+        kind: 'ask', text: 'Can I lend you a hand with anything, {you}?', s: 0.4,
+        replies: [
+          { text: "That's kind. I could use a hand carrying water.", s: 0.4, stance: 'agree' },
+          { text: "I'm managing, but thank you for the kind offer.", s: 0.2, stance: 'neutral' },
+          { text: "I don't need help. I'm not an invalid.", s: -0.2, stance: 'disagree', voice: ['gruff'] },
+          { text: 'I can manage without your help.', s: -0.2, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'ask', text: 'You look poorly, {you}. Shall I fetch you something from the shop?', s: 0.3,
+        when: (_c, _me, you) => you.mood < 45 || you.energy < 35,
+        replies: [
+          { text: 'Would you? A little broth would help.', s: 0.4, stance: 'agree' },
+          { text: "That's kind, but I'll be all right.", s: 0.1, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'tell', text: 'If you need anything fetched, you only have to ask.', s: 0.4,
+        replies: [
+          { text: "I'll remember that. It's kind of you.", s: 0.4, stance: 'agree' },
+          { text: "I'll manage, but thank you for the help all the same.", s: 0.2, stance: 'neutral' },
+          { text: "I don't need anything fetched, thank you.", s: -0.1, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "I've made too much soup. I'll bring some round for you.", s: 0.5,
+        when: (c) => c.people[0].friendship >= 20,
+        replies: [
+          { text: 'Soup would be a kindness, thank you.', s: 0.5, stance: 'agree' },
+          { text: "No need, but it's kind of you.", s: 0.2, stance: 'neutral' },
+          { text: "No soup for me. I don't need looking after.", s: -0.2, stance: 'disagree', tone: ['cool'] },
+        ],
+      },
+    ],
+    follow: [
+      { text: 'Folk have to help each other in a town this size.', s: 0.3 },
+      { text: 'Send word if you need a hand later.', s: 0.3 },
+    ],
+    close: [
+      { text: 'Take care of yourself, {you}. Send for me if you need a hand.', s: 0.4, when: byOpener },
+      { text: "Mind you rest. I'll help if I can.", s: 0.3, when: byOpener },
+      { text: 'Thank you for the kind offer, {you}.', s: 0.3, when: (c, me) => !byOpener(c, me) },
     ],
   },
 
@@ -1087,8 +1259,10 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
   {
     id: 'flirting',
     cooldownHours: 10,
+    // Unprompted: a chat queued AS a flirt gets `shy_flirt`, written for that
+    // moment; this one is a crush trying their luck in an ordinary chat.
     when: (c) =>
-      civil(c) && c.romance >= 20 && c.people[0].friendship >= 0
+      civil(c) && !isFlirtIntent(c) && c.romance >= 20 && c.people[0].friendship >= 0
       && c.status !== 'partners' && c.dayPhase !== 'night',
     weight: () => 4,
     topic: () => 'a bit of flirting',
@@ -1228,29 +1402,95 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
  * "beautiful day" blessing) means the event is not chat material.
  */
 export const EVENT_TALK: Record<string, Omit<ChatEvent, 'key'>> = {
-  festival: { phrase: 'the festival', anchor: 'festival', mood: 'good' },
-  market_day: { phrase: 'market day', anchor: 'market', mood: 'good' },
-  storm: { phrase: 'this storm', anchor: 'storm', mood: 'bad' },
-  sickness: { phrase: 'this flu', anchor: 'flu', mood: 'bad' },
-  harvest: { phrase: 'the harvest', anchor: 'harvest', mood: 'good' },
-  traveling_merchant: { phrase: 'the travelling merchant', anchor: 'merchant', mood: 'odd' },
-  town_meeting: { phrase: 'the town meeting', anchor: 'meeting', mood: 'odd' },
-  wedding: { phrase: 'the wedding', anchor: 'wedding', mood: 'good' },
-  fire_outbreak: { phrase: 'the fire', anchor: 'fire', mood: 'bad' },
-  mysterious_stranger: { phrase: 'the stranger in town', anchor: 'stranger', mood: 'odd' },
-  competition: { phrase: 'the competition', anchor: 'competition', mood: 'good' },
-  full_moon: { phrase: 'the full moon', anchor: 'moon', mood: 'odd' },
-  heatwave: { phrase: 'this heatwave', anchor: 'heatwave', mood: 'bad' },
-  bountiful_catch: { phrase: 'the big catch', anchor: 'catch', mood: 'good' },
-  starry_night: { phrase: 'the starry sky', anchor: 'starry', mood: 'good' },
-  scandal: { phrase: 'the scandal', anchor: 'scandal', mood: 'odd' },
-  new_arrival: { phrase: 'the newcomer', anchor: 'newcomer', mood: 'odd' },
+  festival: {
+    phrase: 'the festival', anchor: 'festival', mood: 'good', enjoy: true,
+    ask: ['Will you be at the festival later?', "I wouldn't miss the festival for anything.", "Maybe. Festivals aren't really for me."],
+  },
+  market_day: {
+    phrase: 'market day', anchor: 'market', mood: 'good', enjoy: true,
+    ask: ['Did you find anything good at the market?', "A few things. The market's busier than ever.", 'Nothing I could afford at the market, sadly.'],
+  },
+  storm: {
+    phrase: 'this storm', anchor: 'storm', mood: 'bad',
+    ask: ['Is your roof holding up in this storm?', 'Just about. This storm is a fierce one.', "It's leaking. This storm found every crack."],
+  },
+  sickness: {
+    phrase: 'this flu', anchor: 'flu', mood: 'bad',
+    ask: ['Has this flu reached your house yet?', 'Not yet, touch wood. The flu is everywhere.', 'It has. Half my household has the flu.'],
+  },
+  harvest: {
+    phrase: 'the harvest', anchor: 'harvest', mood: 'good', enjoy: true,
+    ask: ['How is the harvest coming in?', "Well, so far. It'll be a good harvest.", 'Slowly. The harvest needs more hands.'],
+  },
+  traveling_merchant: {
+    phrase: 'the travelling merchant', anchor: 'merchant', mood: 'odd',
+    ask: ['Have you seen what the merchant is selling?', 'I have. That merchant wants a fortune for everything.', 'Not yet, but I hear the merchant drives a hard bargain.'],
+  },
+  town_meeting: {
+    phrase: 'the town meeting', anchor: 'meeting', mood: 'odd',
+    ask: ['Will you speak up at the town meeting?', 'I will. Someone has to at these meetings.', "Not me. I'll just listen at the meeting."],
+  },
+  wedding: {
+    phrase: 'the wedding', anchor: 'wedding', mood: 'good', enjoy: true,
+    ask: ['Will you be at the wedding?', "Of course. I wouldn't miss the wedding.", "If I'm asked. Weddings make me weepy."],
+  },
+  fire_outbreak: {
+    phrase: 'the fire', anchor: 'fire', mood: 'bad',
+    ask: ['Was anyone hurt in the fire?', 'Thank heaven, no. But the fire gave us all a fright.', "I don't know yet. I only saw the smoke from the fire."],
+  },
+  mysterious_stranger: {
+    phrase: 'the stranger in town', anchor: 'stranger', mood: 'odd',
+    ask: ['Have you seen the stranger in town?', 'I have. That stranger gives me a funny feeling.', "No. I've only heard talk of the stranger."],
+  },
+  competition: {
+    phrase: 'the competition', anchor: 'competition', mood: 'good', enjoy: true,
+    ask: ['Are you entering the competition?', 'I am. I mean to win the competition this year.', "Not me. I'd rather watch the competition."],
+  },
+  full_moon: {
+    phrase: 'the full moon', anchor: 'moon', mood: 'odd',
+    ask: ['Have you seen how bright the moon is tonight?', 'I have. That moon lights the whole road home.', "I hadn't looked up. I'll see the moon on my way home."],
+  },
+  heatwave: {
+    phrase: 'this heatwave', anchor: 'heatwave', mood: 'bad',
+    ask: ['How are you bearing up in this heatwave?', 'Barely. This heatwave has no end.', "I keep to the shade. The heatwave can't last."],
+  },
+  bountiful_catch: {
+    phrase: 'the big catch', anchor: 'catch', mood: 'good',
+    ask: ['Did you see the size of the catch the boats brought in?', "I did. There'll be fish on every table from that catch.", "Not yet, but everyone's talking about the catch."],
+  },
+  starry_night: {
+    phrase: 'the starry sky', anchor: 'starry', mood: 'good',
+    ask: ['Have you ever seen the sky so starry?', "Never. It's a starry night to remember.", "Starry or not, I'm too tired to look up."],
+  },
+  scandal: {
+    phrase: 'the scandal', anchor: 'scandal', mood: 'odd',
+    ask: ['Have you heard the latest about the scandal?', "Who hasn't? The scandal is all over town.", 'I try not to listen to scandal.'],
+  },
+  new_arrival: {
+    phrase: 'the newcomer', anchor: 'newcomer', mood: 'odd',
+    ask: ['Have you met the newcomer yet?', 'Only in passing. The newcomer seems pleasant enough.', "Not yet. I'm curious about the newcomer."],
+  },
   // The town calendar (data/calendar.ts): named, because everyone knows which one it is.
-  spring_fair: { phrase: 'the Spring Fair', anchor: 'fair', mood: 'good' },
-  midsummer: { phrase: 'Midsummer', anchor: 'midsummer', mood: 'good' },
-  harvest_festival: { phrase: 'the Harvest Festival', anchor: 'harvest', mood: 'good' },
-  winter_lights: { phrase: 'Winter Lights', anchor: 'lights', mood: 'good' },
-  election_day: { phrase: 'the election', anchor: 'election', mood: 'odd' },
+  spring_fair: {
+    phrase: 'the Spring Fair', anchor: 'fair', mood: 'good', enjoy: true,
+    ask: ['Are you going to the Spring Fair?', "I am. The fair is the best day of spring.", "Maybe for an hour. Fairs tire me out."],
+  },
+  midsummer: {
+    phrase: 'Midsummer', anchor: 'midsummer', mood: 'good', enjoy: true,
+    ask: ['Will you sing at Midsummer this year?', "I might. Midsummer brings out the song in everyone.", "Not me. I'll listen at Midsummer."],
+  },
+  harvest_festival: {
+    phrase: 'the Harvest Festival', anchor: 'harvest', mood: 'good', enjoy: true,
+    ask: ['Are you baking for the Harvest Festival?', "I am. I mean to win at the harvest this year.", "No, I'll just eat my way through the harvest tables."],
+  },
+  winter_lights: {
+    phrase: 'Winter Lights', anchor: 'lights', mood: 'good', enjoy: true,
+    ask: ['Have you seen the Winter Lights on the square?', "I have. The lights make the cold bearable.", "Not yet. I'll see the lights tonight."],
+  },
+  election_day: {
+    phrase: 'the election', anchor: 'election', mood: 'odd',
+    ask: ['Who will you vote for in the election?', "I've made up my mind about the election.", "I haven't decided. The election is a hard call."],
+  },
 };
 
 /** How people name a job in passing. Unlisted jobs (retired, unemployed) have none. */

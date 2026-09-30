@@ -11,7 +11,7 @@
  *   - a hostile standoff can boil over: the more aggressive one insults the other, and an
  *     aggressive, angry or drunk one may take it further (a fight);
  *   - a sour exchange between merely cool people can end in an insult from a hothead;
- *   - someone sweet on the listener (the `flirting` or `sweethearts` script) flirts, if the
+ *   - someone sweet on the listener (the `flirting`, `shy_flirt` or `sweethearts` script) flirts, if the
  *     listener didn't rebuff them;
  *   - an honest person with a secret on their conscience confides in someone they trust;
  *   - a pair with a grudge or a rivalry behind them who manage a warm exchange may make up,
@@ -80,7 +80,7 @@ const hasState = (p: BeatPerson, type: string, targetId?: number) =>
   p.states.some((s) => s.type === type && (targetId == null || s.target == null || s.target === targetId));
 
 /** Scripts a crush plays out on: the one written for it and the established couple's. */
-const FLIRT_SCRIPTS = new Set(['flirting', 'sweethearts']);
+const FLIRT_SCRIPTS = new Set(['flirting', 'shy_flirt', 'sweethearts']);
 const HOSTILE_SCRIPT = 'standoff';
 
 /**

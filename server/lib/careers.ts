@@ -127,6 +127,8 @@ export function changeJob(
       .where(eq(economy.agent_id, agentId)).run();
     db.update(agents).set({
       workplace: workplace?.id ?? null,
+      // A new trade starts its own count ("Facts about you", lib/selfFacts.ts).
+      job_years: 0,
       schedule: {
         wakeTime: hours.wakeTime,
         sleepTime: hours.sleepTime,
