@@ -24,6 +24,7 @@ const GOAL_PHRASES: Record<string, string> = {
   get_sober: 'getting sober',
   befriend: 'making a friend',
   comfort_grieving: 'comforting someone grieving',
+  campaign: 'winning the election for mayor',
 };
 
 /** A bare registry-style key: lowercase words joined by underscores. */

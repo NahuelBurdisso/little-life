@@ -23,6 +23,7 @@ import { detectStoryArcs } from './chronicle';
 import { emitter } from '../engine/emitter';
 import { ACTIVITY_REGISTRY } from '../data/activityRegistry';
 import { currentWorldEpoch, isStaleWorldEpoch } from './worldEpoch';
+import { comingUpLines } from './townCalendar';
 
 export const GAZETTE_NAME = 'The Town Crier';
 
@@ -40,6 +41,13 @@ export interface GazetteMaterial {
   /** Town-wide happenings (festivals, storms, markets). */
   events: string[];
   arcs: Array<{ title: string; summary: string }>;
+  /**
+   * The town calendar's next few days (lib/townCalendar.ts `comingUpLines`):
+   * the festival two days off, who is standing for mayor. A small-town paper
+   * always ran its notices, and residents read what the paper says is coming.
+   * Optional: fixtures written before it need no change.
+   */
+  upcoming?: string[];
 }
 
 /** Newsworthy lines logged after `sinceTick`, oldest first, deduplicated. */
@@ -105,7 +113,7 @@ export function buildGazettePrompt(material: GazetteMaterial, day: number, seaso
   const system = `You are the editor of ${GAZETTE_NAME}, the local paper of a small town. ${TOWN_SETTING}
 
 Write the edition for day ${day} (${season}, ${weather}) from these reports — they are the ONLY facts you may use. Do not invent events, people or places; you may add period colour, opinion and wit.
-${section('What residents did', material.items)}${section('Ongoing stories', material.arcs.map((a) => `${a.title}: ${a.summary}`))}${section('Town happenings', material.events)}
+${section('What residents did', material.items)}${section('Ongoing stories', material.arcs.map((a) => `${a.title}: ${a.summary}`))}${section('Town happenings', material.events)}${section('Coming up (end the paper with a short notice of these)', material.upcoming ?? [])}
 Write like a small-town paper of the time: a punchy headline, 2-4 short articles (2-4 sentences each) and a gossip column of 3-4 sentences hinting at rumours, naming names. The headline and the first article are about residents — who did what to whom (scandal, romance, crime, feuds, loss). Town happenings and weather share one short article at most. Use residents' full names the first time.
 
 Reply with JSON: {"headline":"...","articles":[{"headline":"...","body":"..."}],"gossip":"..."}`;
@@ -191,6 +199,12 @@ async function doWrite(): Promise<number | null> {
   // The edition is dated for the day it reports on: at the day change that is
   // yesterday.
   const day = world.time.hour < 6 && world.time.day > 1 ? world.time.day - 1 : world.time.day;
+  // Notices run from the day the paper comes out (today), not the day it covers.
+  try {
+    material.upcoming = comingUpLines(world.time.day);
+  } catch (err) {
+    console.warn('[gazette] calendar notices failed:', (err as Error).message);
+  }
   const prompt = buildGazettePrompt(material, day, world.time.season, world.weather);
 
   let parsed: ParsedIssue | null = null;

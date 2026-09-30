@@ -19,7 +19,8 @@ export type DramaBeat =
   | 'arrest' | 'death' | 'birthday'
   | 'theft'                                     // tagged so it is not mistaken for a beat; no canvas FX
   | 'arrival' | 'departure'                     // the town's population changing (lib/populationFlow.ts); no canvas FX yet
-  | 'new_job' | 'help_wanted' | 'inheritance';  // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
+  | 'new_job' | 'help_wanted' | 'inheritance'   // a trade changing hands (lib/careers.ts, vacancies.ts, the estate); no canvas FX yet
+  | 'contest_win';                              // a festival contest decided (lib/townCalendar.ts)
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday';
 
@@ -48,6 +49,9 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   new_job: null,
   help_wanted: null,
   inheritance: null,
+  // The winner's moment in front of the crowd: the birthday family's burst of
+  // cheer is the right picture (and sound) for it.
+  contest_win: 'birthday',
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

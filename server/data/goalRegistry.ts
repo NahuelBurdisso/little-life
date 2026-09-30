@@ -175,6 +175,24 @@ export const GOAL_REGISTRY: Record<string, GoalDef> = {
       'base(0.3) + personality.warmth(0.1) + personality.loyalty(0.1)',
   },
 
+  // Standing for mayor (lib/townCalendar.ts gives it to every candidate when a
+  // campaign opens and settles it at the count: completed for the winner,
+  // failed for the rest). Passive — no interaction advances it; what it does
+  // is make the candidate seek out company (decisions.ts boosts their
+  // socializing and turns their talk to the election) and put the vote in
+  // their plan prompt through its description. The time limit is a safety
+  // net for a count that never ran (world paused past it, then replaced).
+  campaign: {
+    category: 'social',
+    requires_target: false,
+    valid_interactions: [],
+    strategy: 'none',
+    progress_events: [],
+    completion_at: 1.0,
+    abandonment: [{ condition: 'minutes_elapsed > 7200', auto: true }],
+    priority_formula: 'base(0.8)',
+  },
+
   comfort_grieving: {
     category: 'prosocial',
     requires_target: true,

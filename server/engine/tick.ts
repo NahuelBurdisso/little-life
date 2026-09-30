@@ -32,6 +32,7 @@ import { milestonesTick } from '../lib/milestonesEngine';
 import { populationFlowDaily, populationFlowTick } from '../lib/populationFlow';
 import { runChallengeChecks } from '../lib/challenges/evaluate';
 import { careerMovesTick, vacanciesDaily } from '../lib/vacancies';
+import { townCalendarTick } from '../lib/townCalendar';
 import { saveWorldCaches } from './worldCaches';
 import { tickHealth } from './tickHealth';
 import { refreshHealth } from '../lib/health';
@@ -353,6 +354,10 @@ export async function gameTick(): Promise<void> {
     runGuarded('populationFlowTick', () => db.transaction(() => populationFlowTick(newTime, nowMinutes)));
     // Residents taking up the trade their new ambition named (lib/vacancies.ts).
     runGuarded('careerMoves', () => db.transaction(() => careerMovesTick(nowMinutes)));
+    // The town calendar: notices two days ahead, the day's festival or market,
+    // its contest, the election campaign and the count (lib/townCalendar.ts).
+    // After career moves, so a vacancy filled this pass isn't swapped under the count.
+    runGuarded('townCalendar', () => db.transaction(() => townCalendarTick(newTime, nowMinutes)));
   }
   // Loneliness and confrontation once per game hour.
   if (hourChanged(transitions)) {

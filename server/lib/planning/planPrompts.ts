@@ -94,6 +94,13 @@ export interface DailyPlanPromptParams {
   hobbies?: Array<{ hobby: string; level: number }>;
   reputationLabel?: string;
   moodMomentum?: number;
+  /**
+   * The town calendar for today and tomorrow ("Tomorrow is the Harvest
+   * Festival at Town Square…") and a candidate's campaign
+   * (lib/townCalendar.ts `planCalendarNote`). Without it residents planned an
+   * ordinary day and walked past the fair.
+   */
+  calendar?: string[];
 }
 
 export interface DecompositionPromptParams {
@@ -165,6 +172,10 @@ export function buildDailyPlanPrompt(params: DailyPlanPromptParams): PlanPrompt 
     ? `\nYesterday: ${yesterdayPlan}\n`
     : '';
 
+  const calendarSection = params.calendar && params.calendar.length > 0
+    ? `\nIn town: ${params.calendar.join(' ')}\n`
+    : '';
+
   const extras = [
     params.economy
       ? `Money: $${Math.round(params.economy.money)} (${describeMoneyLevel(params.economy.money)})${params.economy.jobTitle ? `; ${params.economy.jobTitle}, $${params.economy.salary}/day` : '; unemployed'}.`
@@ -187,7 +198,7 @@ ${extras}
 
 Your goals:
 ${goalsList}
-${reflectionsList}${yesterdaySection}
+${reflectionsList}${yesterdaySection}${calendarSection}
 Places in town: ${validLocations.join(', ')}
 
 Plan your day from ${wakeTime}:00 to ${sleepTime}:00 in 5-8 back-to-back blocks of whole hours. Include your work hours if you work, meals, and time for what you need or want today, true to your personality. ${ACTION_STYLE}

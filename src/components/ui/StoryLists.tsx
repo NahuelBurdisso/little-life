@@ -34,6 +34,7 @@ const BREWING_KINDS: Partial<Record<BrewingKind, { icon: string; label: string }
   goal:          { icon: '▶', label: 'Goal within reach' },
   relationship:  { icon: '♥', label: 'About to change' },
   leaving:       { icon: '🧳', label: 'Thinking of leaving' },
+  election:      { icon: '🗳', label: 'Election campaign' },
 };
 const BREWING_FALLBACK = { icon: '•', label: 'Brewing' };
 const brewingKind = (kind: string) => BREWING_KINDS[kind as BrewingKind] ?? BREWING_FALLBACK;

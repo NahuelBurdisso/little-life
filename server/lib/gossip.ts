@@ -124,6 +124,11 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
     `${s} asked ${t ?? 'someone'} to marry them and was turned down`,
   wedding: (s, t) =>
     `${s} and ${t ?? 'someone'} got married`,
+  // Festival contests (lib/townCalendar.ts); detail is the prize ("the best pie
+  // at the Harvest Festival"). Public from the start: the whole crowd saw it.
+  contest_win: (s, _t, ctx) =>
+    ctx?.detail ? `${s} won ${ctx.detail}` :
+    `${s} won a contest at the festival`,
 };
 
 /**

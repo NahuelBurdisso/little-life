@@ -41,6 +41,10 @@ const FACT_TYPE_REPUTATION: Record<string, number> = {
   generous:         +10,
   honest:           +8,
   helpful:          +5,
+  // A festival contest won in front of the town (lib/townCalendar.ts). A fact
+  // rather than an `adjustReputation` bump because the daily refresh recomputes
+  // reputation from facts and would erase a bare bump by the next morning.
+  contest_win:      +6,
 };
 
 // ─── Core functions ───────────────────────────────────────────────────────────

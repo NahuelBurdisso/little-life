@@ -40,6 +40,8 @@ import { simEvents } from '../../lib/simEvents';
 import { planExecutor, planGenerator } from '../../lib/planning/instance';
 import { getReputationSocialModifier } from '../../lib/reputationEngine';
 import { getSharedHobbies } from '../../lib/hobbyEngine';
+import { withFamilies } from '../../data/worldEventCatalog';
+import { campaignCandidates } from '../../lib/townCalendar';
 import { getFavorSocialModifier } from '../../lib/favorEngine';
 import { getComfortVisit, completeComfortVisit } from '../../lib/lonelinessEngine';
 import { quoteMeal, pantryWouldServe } from './economy';
@@ -1522,7 +1524,13 @@ export function tick(world: WorldRow): void {
   const activeWorldEvents = db.select().from(worldEvents)
     .where(eq(worldEvents.is_active, true))
     .all();
-  const activeEventTypes = new Set(activeWorldEvents.map(e => e.type));
+  // With each event's family (worldEventCatalog EVENT_FAMILY): the Spring Fair
+  // pulls the town to the square and boosts socializing exactly like the
+  // `festival` rules below, which were all written against the generic type.
+  const activeEventTypes = withFamilies(activeWorldEvents.map(e => e.type));
+  // Candidates in a running mayoral campaign (lib/townCalendar.ts): they seek
+  // company and talk about the vote.
+  const campaigners = campaignCandidates();
 
   // Cache current weather for activity availability
   const worldRow = db.select({ weather: worldState.weather }).from(worldState).limit(1).get();
@@ -1703,9 +1711,11 @@ export function tick(world: WorldRow): void {
       // A couple's wedding names its venue; go there rather than to whichever
       // square is nearest (a town can have more than one open area).
       if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')) {
-        const weddingVenue = activeWorldEvents.find((e) => e.type === 'wedding' && e.location_id != null)?.location_id;
-        const venue = weddingVenue != null
-          ? allLocations.find((l) => l.id === weddingVenue)
+        // The calendar's festivals name their venue too (Midsummer is in the park).
+        const namedVenue = activeWorldEvents.find((e) =>
+          e.location_id != null && (e.type === 'wedding' || withFamilies([e.type]).has('festival')))?.location_id;
+        const venue = namedVenue != null
+          ? allLocations.find((l) => l.id === namedVenue)
           : nearestLocation(agent.position, allLocations, 'town_square');
         if (venue && agent.current_location !== venue.id && Math.random() < chancePerTick(0.4, world.tick_speed)) {
           decision = { action: 'socializing', score: 3800, targetLocationId: venue.id };
@@ -1772,6 +1782,16 @@ export function tick(world: WorldRow): void {
               targetLocationId: target.current_location ?? undefined,
               source: `goal:seek_target`,
             });
+          }
+        }
+
+        // Campaigning: a candidate's free time goes to meeting people. Every
+        // socializing option is worth more, and one to a voter they haven't
+        // yet canvassed more still — the support score counts heads.
+        if (campaigners.has(agent.id)) {
+          for (const s of scored) {
+            if (s.action !== 'socializing') continue;
+            s.score *= s.targetAgentId != null && !campaigners.has(s.targetAgentId) ? 1.8 : 1.4;
           }
         }
 
@@ -2158,6 +2178,15 @@ export function tick(world: WorldRow): void {
         } else if (agentEcon.money > 80 && friendship > 40 && Math.random() < 0.15) {
           topic = 'the town economy';
         }
+      }
+
+      // The campaign: a candidate asks for votes, and the town talks about
+      // little else in the last days (lib/townCalendar.ts reads the topic to
+      // weigh the chat's support).
+      if (!topic && campaigners.size > 0) {
+        const candidateTalking = campaigners.has(agentId) || campaigners.has(targetId);
+        if (candidateTalking && Math.random() < 0.6) topic = 'the upcoming election for mayor';
+        else if (!candidateTalking && Math.random() < 0.15) topic = 'who to vote for in the election';
       }
 
       // Date topic override: romantic conversations
