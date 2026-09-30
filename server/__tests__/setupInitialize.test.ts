@@ -3,6 +3,7 @@ import { db } from '../db';
 import { agents, economy, locations, relationships, shared_knowledge, worldState } from '../db/schema';
 import { generateWorld } from '../lib/worldgen';
 import { stopTickLoopAndWait } from '../engine/tick';
+import { eq } from 'drizzle-orm';
 
 // ─── Minimal valid agent fixture ─────────────────────────────────────────────
 // AgentConfigSchema requires: id, name, age, gender, bio, traits, job,
@@ -571,5 +572,79 @@ describe('starting relationships and secrets through initialize', () => {
       }
     }
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The default start (the wizard's Quick Start: default cast, relationships,
+ * world, rules and preset) opens with its hooks already in the database
+ * (lib/dramaHooks.ts). Here for the same reason as the blocks above.
+ */
+describe('opening drama hooks through initialize', () => {
+  afterAll(async () => {
+    await stopTickLoopAndWait();
+  });
+
+  it('seeds the triangle, the feud, the debt and the challenger, with a history the Chronicle can show', async () => {
+    const { setupRouter } = await import('../routers/setup');
+    const { getDefaultAgents, getDefaultRelationships } = await import('../../src/components/setup/defaults');
+    const { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } = await import('../../src/components/setup/types');
+    const { goals, aspirations, relationshipEvents } = await import('../db/schema');
+    const { detectStoryArcs, resetChronicleCache } = await import('../lib/chronicle');
+    const caller = setupRouter.createCaller({} as any);
+    await caller.initialize({
+      agents: getDefaultAgents(),
+      relationships: getDefaultRelationships(),
+      world: DEFAULT_WORLD,
+      rules: DEFAULT_RULES,
+      worldgen: { ...DEFAULT_WORLDGEN, seed: 'hooks-db' },
+      scenario: { ...DEFAULT_PRESET.values, seed: 'hooks-db' },
+    } as any);
+    await stopTickLoopAndWait();
+
+    const people = db.select({ id: agents.id, name: agents.name, gender: agents.gender, home: agents.home }).from(agents).all();
+    const byId = new Map(people.map((p) => [p.id, p]));
+    const rels = db.select().from(relationships).all();
+
+    const married = rels.filter((r) => r.tags.includes('married'));
+    expect(married).toHaveLength(1);
+    const [couple] = married;
+    expect(couple.status).toBe('partners');
+    expect(couple.tags).toContain('partner');
+    expect(byId.get(couple.agent_a)!.home).toBe(byId.get(couple.agent_b)!.home);
+    expect(byId.get(couple.agent_a)!.gender).not.toBe(byId.get(couple.agent_b)!.gender);
+
+    const feud = rels.find((r) => r.tags.includes('grudge') && r.tags.includes('rival'))!;
+    expect(feud.status).toBe('rivals');
+    expect(Math.max(feud.friendship_ab, feud.friendship_ba)).toBeLessThanOrEqual(-45);
+
+    const facts = db.select().from(shared_knowledge).all();
+    const debt = facts.find((f) => f.type === 'debt')!;
+    expect(debt.sensitivity).toBe(3);
+    expect(debt.known_by).toEqual(expect.arrayContaining([debt.subject_id, debt.target_id]));
+    expect(debt.known_by.length).toBe(3);
+    const debtorMoney = db.select({ money: economy.money }).from(economy).all();
+    expect(debtorMoney.some((m) => m.money <= 12)).toBe(true);
+    expect(facts.some((f) => f.type === 'romantic' && f.sensitivity === 3)).toBe(true);
+
+    const plot = facts.find((f) => f.type === 'secret_ambition')!;
+    const mayor = db.select({ id: economy.agent_id }).from(economy).where(eq(economy.job, 'mayor')).get()!;
+    expect(plot.target_id).toBe(mayor.id);
+    const ambition = db.select().from(aspirations).where(eq(aspirations.agent_id, plot.subject_id)).get()!;
+    expect(ambition.type).toBe('power');
+    expect(ambition.description).toMatch(/mayor/i);
+    const goal = db.select().from(goals).where(eq(goals.agent_id, plot.subject_id)).get()!;
+    expect(goal.target_id).toBe(mayor.id);
+    expect(goal.status).toBe('active');
+
+    const history = db.select().from(relationshipEvents).all();
+    expect(history.length).toBeGreaterThanOrEqual(4);
+    for (const e of history) {
+      expect(e.processed).toBe(true);
+      expect(e.game_minute).not.toBeNull();
+    }
+    resetChronicleCache();
+    const kinds = new Set(detectStoryArcs().map((a) => a.kind));
+    expect([...kinds]).toEqual(expect.arrayContaining(['romance', 'love_triangle', 'rivalry']));
   });
 });

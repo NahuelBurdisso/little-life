@@ -51,10 +51,13 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
     ? agents.map((a, i) => ({ name: a.name, ...(data.moodAdjustments[i] ?? { mood: 60, stress: 15 }) }))
     : [];
 
-  // Romance threads carry their own optional secret, and those are seeded too.
+  // Romance threads carry their own optional secret, and those are seeded too,
+  // as are the opening hooks' facts (server/lib/dramaHooks.ts).
   const secrets = data
-    ? [...data.secrets, ...data.romanceThreads.flatMap((t) => (t.secret ? [t.secret] : []))]
+    ? [...data.secrets, ...data.romanceThreads.flatMap((t) => (t.secret ? [t.secret] : [])), ...data.hooks.secrets]
     : [];
+  // The hooks' trade feud is a rival pair like the trust slider's.
+  const rivals = data ? [...data.rivalPairs, ...(data.hooks.rivalry ? [data.hooks.rivalry.pair] : [])] : [];
 
   const money = data ? Object.values(data.economyAdjustments) : [];
 
@@ -85,8 +88,8 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
         <>
           <div className="grid grid-cols-4 gap-2 mb-4">
             <Stat label="Secrets" value={secrets.length} colour="text-amber-400" />
-            <Stat label="Romances" value={data.romanceThreads.length} colour="text-pink-400" />
-            <Stat label="Rivals" value={data.rivalPairs.length} colour="text-red-400" />
+            <Stat label="Romances" value={data.romanceThreads.length + (data.hooks.triangle ? 1 : 0)} colour="text-pink-400" />
+            <Stat label="Rivals" value={rivals.length} colour="text-red-400" />
             <Stat
               label="Trust δ"
               value={(data.trustDelta >= 0 ? '+' : '') + data.trustDelta}
@@ -177,10 +180,10 @@ export function SimulationPreview({ scenario, agents, onRegenerate }: Simulation
             </Section>
           )}
 
-          {data.rivalPairs.length > 0 && (
+          {rivals.length > 0 && (
             <Section title="Rival Pairs">
               <div className="space-y-1.5">
-                {data.rivalPairs.map(([a, b], i) => (
+                {rivals.map(([a, b], i) => (
                   <div
                     key={i}
                     className="flex items-center gap-2 bg-ui-panel rounded-lg p-2.5 border border-ui-line"

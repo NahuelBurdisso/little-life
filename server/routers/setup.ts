@@ -1,6 +1,8 @@
 import { router, publicProcedure } from '../trpc';
 import { db, sqlite } from '../db';
 import { generateFromSliders } from '../lib/setupGenerator';
+import { HOOK_VALUES, type DramaHooks } from '../lib/dramaHooks';
+import { firstName } from '../ai/names';
 import { forkRng } from '../lib/worldgen/rng';
 import { clamp } from '../lib/utils';
 import { AGENT_SEEDS } from '../data/agents';
@@ -17,6 +19,8 @@ import {
   worldState,
   shared_knowledge,
   aspirations,
+  goals,
+  relationshipEvents,
 } from '../db/schema';
 import { ALL_TABLES } from '../db/worldTables';
 import { MIN_WIDTH, MIN_HEIGHT, MAX_AGENTS } from '../lib/worldgen/config';
@@ -172,6 +176,10 @@ const ScenarioAgentSchema = PlacementAgentSchema.extend({
   salary: z.number(),
   job: z.string(),
   personality: PersonalityConfigSchema,
+  // Optional: the opening hooks read it (a married couple is a man and a
+  // woman), but they only shape the scenario, never the home placement this
+  // preview is for, so a cast without it still previews the same map.
+  gender: z.string().optional(),
 });
 /**
  * The wire shape: `homeName` (the homes-only fallback needs it) plus every field
@@ -186,6 +194,7 @@ const PreviewAgentInputSchema = z.object({
   salary: z.unknown(),
   job: z.unknown(),
   personality: z.unknown(),
+  gender: z.unknown(),
 });
 /** What `buildSocialEdges` reads from a relationship row. */
 const PlacementRelationshipSchema = RelationshipConfigSchema.pick({
@@ -285,6 +294,8 @@ function buildScenario(
       personality: a.personality as unknown as Record<string, number>,
       salary: a.salary,
       job: a.job,
+      homeName: a.homeName,
+      gender: a.gender,
     })),
     forkRng(scenario.seed, 'scenario').next,
   );
@@ -308,6 +319,74 @@ function buildWorldgenSocial(
 function hasSocialPlacementKey(raw: unknown): boolean {
   const worldgen = (raw as { worldgen?: unknown } | null)?.worldgen;
   return typeof worldgen === 'object' && worldgen !== null && 'socialPlacement' in worldgen;
+}
+
+// ─── Helper: the opening hooks' history ──────────────────────────────────────
+
+/** A seeded pair's past as one `relationship_events` row (already applied: the values are in the row). */
+const HOOK_HISTORY_EVENT = 'history';
+
+/**
+ * What the opening hooks leave behind besides relationships and facts: the
+ * challenger's goal, and one already-processed `relationship_events` row per
+ * hook pair. Story arcs are built from those events (chronicle.ts drops a pair
+ * with none), so without them a town opened with a marriage in trouble and a
+ * feud showed an empty Chronicle and no arcs on the Meet-the-town cards until
+ * something happened on screen.
+ */
+function seedHookHistory(
+  config: z.infer<typeof SetupConfigSchema>,
+  hooks: DramaHooks,
+  agentMap: ReadonlyMap<string, number>,
+  now: number,
+  startMinute: number,
+): void {
+  const idOf = (i: number) => agentMap.get(config.agents[i]?.name ?? '');
+  const first = (i: number) => firstName(config.agents[i]?.name ?? '');
+  const history = (x: number, y: number, description: string, sentiment: number) => {
+    const a = idOf(x);
+    const b = idOf(y);
+    if (a === undefined || b === undefined || a === b) return;
+    db.insert(relationshipEvents).values({
+      agent_a: Math.min(a, b), agent_b: Math.max(a, b), event_type: HOOK_HISTORY_EVENT, description,
+      friendship_delta_ab: 0, friendship_delta_ba: 0, romance_delta_ab: 0, romance_delta_ba: 0,
+      trust_delta_ab: 0, trust_delta_ba: 0, sentiment, processed: true, timestamp: now,
+    }).run();
+  };
+
+  const { triangle, rivalry, debt, campaign } = hooks;
+  if (triangle) {
+    const [a, b] = triangle.spouses;
+    history(a, b, triangle.bond === 'married'
+      ? `${first(a)} and ${first(b)} have been married for years`
+      : `${first(a)} and ${first(b)} are engaged to be married`, 0.4);
+    history(triangle.straying, triangle.admirer,
+      `${first(triangle.admirer)} and ${first(triangle.straying)} keep finding reasons to be in the same room`, 0.3);
+  }
+  if (rivalry) {
+    const [a, b] = rivalry.pair;
+    history(a, b, `${first(a)} and ${first(b)} have not had a civil word since ${rivalry.reason}`, -0.6);
+  }
+  if (debt) {
+    history(debt.debtor, debt.creditor, `${first(debt.debtor)} owes ${first(debt.creditor)} money and has stopped coming round`, -0.4);
+  }
+  if (campaign) {
+    const challengerId = idOf(campaign.challenger);
+    const mayorId = idOf(campaign.mayor);
+    if (challengerId !== undefined && mayorId !== undefined) {
+      // A custom goal: nothing in the registry abandons it by rule, so it
+      // stands until the morning review or the election settles it (the
+      // campaign itself opens on its own, townCalendar.ts).
+      db.insert(goals).values({
+        agent_id: challengerId, type: 'custom', target_id: mayorId,
+        motivation: 'ambition:unseat_mayor', priority: 0.8, progress: 0, status: 'active',
+        created_at: startMinute, description: campaign.goal,
+        strategy: 'Win people over one by one: buy a round, lend a hand, listen for what the mayor gets wrong',
+        mapped_interactions: JSON.stringify(['befriend', 'buy_drinks', 'eavesdrop']),
+        pivot_count: 0, source: 'backstory',
+      }).run();
+    }
+  }
 }
 
 // ─── Helper: seed world from config ──────────────────────────────────────────
@@ -449,8 +528,14 @@ function seedWorld(
       inserted.id,
     ]);
 
-    // Insert aspiration for this agent
-    const aspConfig = agentCfg.aspiration ?? { type: 'freedom', intensity: 0.5 };
+    // Insert aspiration for this agent. The opening hooks' challenger wants the
+    // mayor's chair: a `power` ambition whose words (election.ts MAYOR_WORDS)
+    // put them on the ballot when the campaign opens.
+    const campaign = scenario?.hooks.campaign;
+    const challenger = campaign != null && config.agents[campaign.challenger]?.name === agentCfg.name;
+    const aspConfig = challenger
+      ? { type: 'power', intensity: 0.9 }
+      : agentCfg.aspiration ?? { type: 'freedom', intensity: 0.5 };
     db.insert(aspirations).values({
       agent_id: inserted.id,
       type: aspConfig.type,
@@ -458,7 +543,7 @@ function seedWorld(
       status: 'active',
       adopted_at: 0,
       trigger: 'initial',
-      description: ambitionText(aspConfig.type),
+      description: challenger ? campaign!.ambition : ambitionText(aspConfig.type),
     }).run();
   }
 
@@ -479,6 +564,15 @@ function seedWorld(
 
   // 4. Insert needs + economy for each agent
   const startMinute = gameMinutes({ day: config.world.startDay, hour: config.world.startHour, minute: 0 });
+  // The crime slider decides inequality: it flattens everyone toward 60-80 at
+  // low crime and pulls the tails apart at high crime. Falls back to the job
+  // table when no scenario was posted. A hook debtor starts nearly broke: the
+  // debt is real, and `in_debt` (then `pay_debt`) is a few days away.
+  const startingMoneyFor = (agentIdx: number): number => {
+    const money = scenario?.economyAdjustments[agentIdx]
+      ?? getJobStartingMoney(config.agents[agentIdx].job, (config.rules.startingMoney as number) ?? 50);
+    return scenario?.hooks.debt?.debtor === agentIdx ? Math.min(money, HOOK_VALUES.debtorMoney) : money;
+  };
   for (let agentIdx = 0; agentIdx < config.agents.length; agentIdx++) {
     const agentCfg = config.agents[agentIdx];
     const agentId = agentMap.get(agentCfg.name)!;
@@ -487,6 +581,8 @@ function seedWorld(
     db.insert(needs).values({
       agent_id: agentId,
       ...startingNeeds(),
+      // The hooks' lonely and bored residents (lib/dramaHooks.ts).
+      ...scenario?.hooks.needs[agentIdx],
       mood: scenarioMood?.mood ?? 55 + Math.floor(Math.random() * 25),
       stress: scenarioMood?.stress ?? 10 + Math.floor(Math.random() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
@@ -503,12 +599,7 @@ function seedWorld(
       job_title: agentCfg.jobTitle,
       salary: agentCfg.salary,
       work_performance: 70 + Math.floor(Math.random() * 20),
-      // The crime slider decides inequality: it flattens everyone toward 60-80
-      // at low crime and pulls the tails apart at high crime. Falls back to the
-      // job table when no scenario was posted.
-      money:
-        scenario?.economyAdjustments[agentIdx] ??
-        getJobStartingMoney(agentCfg.job, (config.rules.startingMoney as number) ?? 50),
+      money: startingMoneyFor(agentIdx),
       daily_expenses:
         CONFIG.ECONOMY.DAILY_EXPENSES.min +
         Math.floor(
@@ -710,6 +801,80 @@ function seedWorld(
       row.status = 'rival';
       if (!row.tags.includes('rival')) row.tags.push('rival');
     }
+
+    // The opening hooks (lib/dramaHooks.ts). Applied last so they win over
+    // the authored rows and the slider's threads for the pairs they name.
+    const { triangle, rivalry, debt, campaign } = scenario.hooks;
+    const V = HOOK_VALUES;
+    const addTags = (row: StagedRel, ...tags: string[]) => {
+      for (const t of tags) if (!row.tags.includes(t)) row.tags.push(t);
+    };
+    if (triangle) {
+      const [a, b] = triangle.spouses.map(idOf);
+      const s = idOf(triangle.straying);
+      const t = idOf(triangle.admirer);
+      if (a !== undefined && b !== undefined && s !== undefined && t !== undefined) {
+        // The couple: a marriage (or engagement) is a pair of tags the relationship
+        // pass never derives or strips (lib/marriage.ts); `partner` is what code
+        // asking "are they together?" reads. Romance over the partnership line so
+        // an engaged pair also reads as partners on its numbers.
+        const couple = relFor(a, b);
+        setDirectional(couple, a, 'romance', (c) => Math.max(c, V.spouseRomance[0]));
+        setDirectional(couple, b, 'romance', (c) => Math.max(c, V.spouseRomance[1]));
+        setDirectional(couple, a, 'friendship', (c) => Math.max(c, V.spouseMinFriendship));
+        setDirectional(couple, b, 'friendship', (c) => Math.max(c, V.spouseMinFriendship));
+        couple.familiarity = Math.max(couple.familiarity, 85);
+        couple.status = 'partners';
+        addTags(couple, triangle.bond, 'partner', 'romantic');
+        // The pull outside it: half returned, below the partnership line, so the
+        // exclusivity rule leaves them a crush (relationships.ts updateTags).
+        const pull = relFor(s, t);
+        setDirectional(pull, s, 'romance', (c) => Math.max(c, V.strayRomance));
+        setDirectional(pull, t, 'romance', (c) => Math.max(c, V.admirerRomance));
+        setDirectional(pull, s, 'friendship', (c) => clamp(Math.max(c + 10, 15), -100, 100));
+        setDirectional(pull, t, 'friendship', (c) => clamp(Math.max(c + 10, 15), -100, 100));
+        pull.familiarity = Math.max(pull.familiarity, 45);
+        pull.status = 'romantic_interest';
+        addTags(pull, 'romantic');
+      }
+    }
+    if (rivalry) {
+      const [a, b] = rivalry.pair.map(idOf);
+      if (a !== undefined && b !== undefined) {
+        const row = relFor(a, b);
+        for (const from of [a, b]) {
+          setDirectional(row, from, 'friendship', (c) => Math.min(c, V.rivalFriendship));
+          setDirectional(row, from, 'trust', (c) => Math.min(c, V.rivalTrust));
+        }
+        row.familiarity = Math.max(row.familiarity, 60);
+        row.status = 'rivals';
+        // `rival` lapses above −50 (relationships.ts updateTags); `grudge` is
+        // never derived, so the feud outlives a thaw until a real reconciliation
+        // (conversationBeats.ts) lifts it. confrontationEngine reads both.
+        addTags(row, 'rival', 'grudge');
+      }
+    }
+    if (debt) {
+      const d = idOf(debt.debtor);
+      const c = idOf(debt.creditor);
+      if (d !== undefined && c !== undefined) {
+        const row = relFor(d, c);
+        setDirectional(row, c, 'friendship', (v) => clamp(Math.min(v + V.creditorFriendshipDelta, V.creditorFriendshipMax), -100, 100));
+        setDirectional(row, c, 'trust', (v) => clamp(Math.min(v + V.creditorTrustDelta, V.creditorTrustMax), -100, 100));
+        setDirectional(row, d, 'friendship', (v) => clamp(v - 5, -100, 100));
+        row.familiarity = Math.max(row.familiarity, 40);
+      }
+    }
+    if (campaign) {
+      const x = idOf(campaign.challenger);
+      const m = idOf(campaign.mayor);
+      if (x !== undefined && m !== undefined) {
+        const row = relFor(x, m);
+        setDirectional(row, x, 'friendship', (v) => clamp(v + V.challengerFriendshipDelta, -100, 100));
+        setDirectional(row, x, 'trust', (v) => clamp(v + V.challengerTrustDelta, -100, 100));
+        row.familiarity = Math.max(row.familiarity, 40);
+      }
+    }
   }
 
   // The adults-only rule at seed time: whatever fed the staged rows (the wizard's
@@ -748,14 +913,17 @@ function seedWorld(
     db.update(agents).set({ orientation }).where(eq(agents.id, agentId)).run();
   }
 
-  // 7. Insert backstory memories from each agent's backstoryMemories
-  for (const agentCfg of config.agents) {
+  // 7. Insert backstory memories from each agent's backstoryMemories, plus the
+  //    lines the opening hooks add (a marriage, a debt, a grudge the authored
+  //    backstory does not know about), so the model plays them from turn one.
+  for (const [agentIdx, agentCfg] of config.agents.entries()) {
     const agentId = agentMap.get(agentCfg.name)!;
-    const memCount = agentCfg.backstoryMemories.length;
+    const lines = [...agentCfg.backstoryMemories, ...(scenario?.hooks.memories[agentIdx] ?? [])];
+    const memCount = lines.length;
     for (let i = 0; i < memCount; i++) {
       db.insert(memories).values({
         agent_id: agentId,
-        description: agentCfg.backstoryMemories[i],
+        description: lines[i],
         type: 'experience',
         importance: 8,
         emotional_valence: 0.3,
@@ -823,6 +991,7 @@ function seedWorld(
     const scenarioSecrets = [
       ...scenario.secrets,
       ...scenario.romanceThreads.flatMap((t) => (t.secret ? [t.secret] : [])),
+      ...scenario.hooks.secrets,
     ];
 
     for (const secret of scenarioSecrets) {
@@ -925,12 +1094,16 @@ function seedWorld(
     },
   }).run();
 
+  // 10b. The opening hooks' history, after the world row: the relationship_events
+  //      trigger stamps each row with the world clock's game minute.
+  if (scenario) seedHookHistory(config, scenario.hooks, agentMap, now, startMinute);
+
   // 11. Create initial activity log entry
   const seasonLabel =
     config.world.season.charAt(0).toUpperCase() + config.world.season.slice(1);
   logActivity({
     type: 'system',
-    templateData: { message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents start their day.` },
+    templateData: { message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents ${startHour >= 17 || startHour < 5 ? 'go about their evening' : 'start their day'}.` },
   });
 
   return { agentCount: agentMap.size, locationCount: locationMap.size };
