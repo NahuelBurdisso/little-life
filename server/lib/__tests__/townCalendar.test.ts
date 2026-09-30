@@ -140,10 +140,12 @@ describe('the election', () => {
     expect(result[0]).toMatch(/Rex Rival is elected mayor — Rex Rival 4, Mae Mayor 1/);
     const job = (id: number) => db.select().from(economy).where(eq(economy.agent_id, id)).get()!.job;
     expect(job(rival)).toBe('mayor');
-    expect(job(mayor)).toBe('unemployed');
+    // The ousted mayor is not left with nothing: she takes the trade the winner left (Rex was a farmer).
+    expect(job(mayor)).toBe('farmer');
     expect(db.select().from(agents).where(eq(agents.id, rival)).get()!.workplace).toBe(town.hall);
-    expect(beatRows('new_job').map((r) => (r.template_data as { description: string }).description).join(' '))
-      .toMatch(/Mae Mayor has cleared out the mayor's office now that Rex Rival won the election/);
+    const feed = beatRows('new_job').map((r) => (r.template_data as { description: string }).description).join(' ');
+    expect(feed).toMatch(/Mae Mayor has cleared out the mayor's office now that Rex Rival won the election/);
+    expect(feed).toMatch(/Mae Mayor is the town's new farmer now that Rex Rival has left the trade to be mayor/);
     const civic = loadCivic();
     expect(civic.election).toBeNull();
     expect(civic.lastElection).toMatchObject({ electionDay: 24, winnerId: rival, incumbentId: mayor });
@@ -153,6 +155,56 @@ describe('the election', () => {
 
     tick(24, 19);
     expect(rows('election_result')).toHaveLength(1);
+  });
+
+  describe('the ousted mayor keeps a trade', () => {
+    const jobOf = (id: number) => db.select().from(economy).where(eq(economy.agent_id, id)).get()!;
+    const agentOf = (id: number) => db.select().from(agents).where(eq(agents.id, id)).get()!;
+
+    /** Rex wins the count; `rivalJob` is what he did before (`prep` sets the rest of his life up). */
+    function electRival(rivalJob: string, prep: (rival: number) => void = () => undefined) {
+      const { mayor, rival, voters } = cast();
+      db.update(economy).set({ job: rivalJob }).where(eq(economy.agent_id, rival)).run();
+      prep(rival);
+      tick(21, 8);
+      for (const v of voters) {
+        relate(rival, v, { friendship_ab: 20, friendship_ba: 20 });
+        onCampaignConversation({ agentId: rival, perpetratorId: v, sentiment: 0.8, summary: 'the upcoming election for mayor' });
+      }
+      tick(24, 18);
+      expect(jobOf(rival).job).toBe('mayor');
+      return { mayor, rival };
+    }
+
+    it("takes over the winner's old trade with its workplace, wage and the building it ran", () => {
+      // Rex baked and ran the bakery; the mayor's chair pulls him away from it.
+      const { mayor, rival } = electRival('baker', (rex) => {
+        db.update(agents).set({ workplace: town.bakery }).where(eq(agents.id, rex)).run();
+        db.update(locations).set({ owner: rex }).where(eq(locations.id, town.bakery)).run();
+      });
+      expect(jobOf(mayor).job).toBe('baker');
+      expect(jobOf(mayor).salary).toBeGreaterThan(0);
+      expect(agentOf(mayor).workplace).toBe(town.bakery);
+      expect(db.select().from(locations).where(eq(locations.id, town.bakery)).get()!.owner).toBe(mayor);
+      // ...and the winner sits in the town hall, which the old mayor ran.
+      expect(agentOf(rival).workplace).toBe(town.hall);
+      expect(db.select().from(locations).where(eq(locations.id, town.hall)).get()!.owner).toBe(rival);
+    });
+
+    it('a winner with no trade leaves the ousted mayor an open essential trade instead', () => {
+      // The bakery stands with nobody baking; the winner was unemployed.
+      const { mayor } = electRival('unemployed');
+      expect(jobOf(mayor).job).toBe('baker');
+      expect(agentOf(mayor).workplace).toBe(town.bakery);
+    });
+
+    it('leaves her unemployed only when there is truly nothing to take', () => {
+      // Put a baker and a bartender in place: no essential trade is open, and the winner had no trade.
+      insertResident('Bob Baker', town.homes[2], {}, { job: 'baker' });
+      insertResident('Tess Tapster', town.homes[2], {}, { job: 'bartender' });
+      const { mayor } = electRival('unemployed');
+      expect(jobOf(mayor).job).toBe('unemployed');
+    });
   });
 
   it('re-elects a well-liked mayor and counts a missed evening late', () => {

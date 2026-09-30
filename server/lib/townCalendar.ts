@@ -45,7 +45,8 @@ import { createFact } from './gossip';
 import { getHobbyLevel } from './hobbyEngine';
 import { adjustReputation, getReputation } from './reputationEngine';
 import { getAgentStates } from './states';
-import { changeJob } from './careers';
+import { JOBLESS, changeJob, jobFit, jobTitleOf } from './careers';
+import { VACANCIES, openVacancies } from './vacancies';
 import { envyChance, judgeContest, type Entrant } from './contest';
 import {
   SUPPORT_CAP, endorsementDelta, pickCandidates, tallyElection, tieKey,
@@ -500,8 +501,11 @@ function countVotes(civic: CivicState, now: number): void {
   // The chair changes hands. The old mayor goes first so the town hall is free
   // for the winner to take over (careers.ts `takesOverWorkplace`).
   if (!reelected) {
+    // Read BEFORE the winner's job changes: it is the trade he leaves behind.
+    const winnerTrade = db.select({ job: economy.job }).from(economy).where(eq(economy.agent_id, winner.id)).get()?.job ?? null;
     if (incumbent) changeJob(incumbent.id, 'unemployed', 'election', { because: `${winner.name} won the election` });
     changeJob(winner.id, 'mayor', 'election', { because: 'the town has voted' });
+    if (incumbent) resettleOustedMayor(incumbent, winner, winnerTrade);
   }
 
   // The campaign goals settle with the count.
@@ -532,6 +536,33 @@ function countVotes(civic: CivicState, now: number): void {
     simEvents.emit('event:world', { agentId: a.id, name: 'Election result', description: `${headline} ${how}`.trim() });
   }
   emitter.markDirty('agents.all');
+}
+
+/**
+ * The ousted mayor is a person with a living to make, not an "unemployed": she
+ * takes the trade the winner just left (his workplace, wage and the building he
+ * ran come with it, careers.ts `changeJob`), or, when the winner had none, an
+ * essential trade nobody holds (the same openings lib/vacancies.ts fills, the
+ * best fit for her first). Unemployed is the last resort: nothing is open, or she
+ * is too old to be hired (`VACANCIES.MAX_AGE`).
+ */
+function resettleOustedMayor(
+  incumbent: Pick<AgentRow, 'id' | 'age' | 'personality'>,
+  winner: Pick<AgentRow, 'name'>,
+  winnerTrade: string | null,
+): string | null {
+  if (incumbent.age >= VACANCIES.MAX_AGE) return null;
+  let trade: string | null = winnerTrade != null && !JOBLESS.has(winnerTrade) && winnerTrade !== 'mayor' ? winnerTrade : null;
+  let because = `${winner.name} has left the trade to be mayor`;
+  if (trade == null) {
+    const personality = incumbent.personality as Record<string, number> | null;
+    trade = openVacancies()
+      .filter((j) => j !== 'mayor')
+      .sort((a, b) => jobFit(personality, b) - jobFit(personality, a))[0] ?? null;
+    if (trade != null) because = `the town had no ${jobTitleOf(trade).toLowerCase()}`;
+  }
+  if (trade == null) return null;
+  return changeJob(incumbent.id, trade, 'vacancy', { because }) ? trade : null;
 }
 
 /**
