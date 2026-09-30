@@ -41,6 +41,7 @@ describe('emote frame table', () => {
       'heart', 'anger', 'laugh', 'wave', 'question', 'exclaim', 'zzz', 'cry', 'sparkle', 'fish',
       'flower', 'music', 'sweat', 'money', 'skull', 'fire', 'star', 'drink', 'sick', 'think',
       'work', 'gift', 'handcuffs', 'whisper', 'levelup', 'candle', 'cake', 'broken_heart', 'dizzy',
+      'blush', 'kiss', 'wink',
     ];
     expect([...EMOTE_NAMES].sort()).toEqual([...required].sort());
   });

@@ -7,7 +7,7 @@
 -- of 16x16 cells. Cells are packed back to back in the order below — keep in sync with SPEC in
 -- src/components/canvas/emoteFrames.ts (a vitest test parses this line):
 --
--- ORDER: heart:3 anger:3 laugh:2 wave:2 question:2 exclaim:2 zzz:4 cry:3 sparkle:3 fish:2 flower:2 music:3 sweat:3 money:2 skull:2 fire:3 star:3 drink:2 sick:2 think:3 work:3 gift:2 handcuffs:2 whisper:3 levelup:4 candle:3 cake:2 broken_heart:3 dizzy:3
+-- ORDER: heart:3 anger:3 laugh:2 wave:2 question:2 exclaim:2 zzz:4 cry:3 sparkle:3 fish:2 flower:2 music:3 sweat:3 money:2 skull:2 fire:3 star:3 drink:2 sick:2 think:3 work:3 gift:2 handcuffs:2 whisper:3 levelup:4 candle:3 cake:2 broken_heart:3 dizzy:3 blush:3 kiss:3 wink:3
 --
 -- Emotes are the foreground: brighter and more saturated than terrain, but they share the agents'
 -- universal 1px #1a1510 outline. Only the fills are authored (ASCII grids below, one char per
@@ -840,6 +840,88 @@ emote("dizzy", {
   function(c) dizzy(c, 0.0) end,
   function(c) dizzy(c, 0.33) end,
   function(c) dizzy(c, 0.66) end,
+})
+
+-- blush: a pair of rosy cheek ovals, hatched, that swell and settle. Deliberately face-less — the
+-- emote floats over an agent's head, and two warm patches read as "flustered" at 16 px.
+local CHEEK_S = A [[
+  .ppp.
+  pRpRp
+  .ppp.
+]]
+local CHEEK_M = A [[
+  .ppp.
+  ppppp
+  pRpRp
+  .ppp.
+]]
+local CHEEK_L = A [[
+  .ppp.
+  ppppp
+  pRpRp
+  ppppp
+  .ppp.
+]]
+local function cheeks(c, shape, dy)
+  c:spr(shape, -4, dy); c:spr(shape, 4, dy)
+end
+emote("blush", {
+  function(c) cheeks(c, CHEEK_S, 0) end,
+  function(c) cheeks(c, CHEEK_M, 0) end,
+  function(c) cheeks(c, CHEEK_L, 0); c:px(8, 3, "p"); c:px(7, 2, "R"); c:px(9, 2, "R") end,
+})
+
+-- kiss: red lips puckering, a little heart popping off them.
+local LIPS = A [[
+  ..RRR.RRR..
+  .RpRRRRRRR.
+  RRRRRRRRRRr
+  rrrKKKKKrrr
+  .rrrrrrrrr.
+  ..rrrrrrr..
+]]
+local LIPS_PUCKER = A [[
+  ..RRRRR..
+  .RpRRRRR.
+  RRRRRRRRr
+  rrrrKrrrr
+  .rrrrrrr.
+  ..rrrrr..
+]]
+local KISS_HEART_S = A [[
+  R.R
+  RRR
+  .R.
+]]
+local KISS_HEART_M = A [[
+  .R.R.
+  RpRRR
+  .RRR.
+  ..R..
+]]
+emote("kiss", {
+  function(c) c:spr(LIPS, -1, 2) end,
+  function(c) c:spr(LIPS_PUCKER, -1, 2); c:spr(KISS_HEART_S, 4, -5) end,
+  function(c) c:spr(LIPS, -1, 2); c:spr(KISS_HEART_M, 5, -5) end,
+})
+
+-- wink: two stylised eyes, the right one closing to a happy arc while a sparkle catches the light.
+local EYE_OPEN = A [[
+  .WWW.
+  WBBBW
+  WBKBW
+  WBBBW
+  .WWW.
+]]
+local EYE_SHUT = A [[
+  ..m..
+  .m.m.
+  m...m
+]]
+emote("wink", {
+  function(c) c:spr(EYE_OPEN, -4, 2); c:spr(EYE_OPEN, 4, 2) end,
+  function(c) c:spr(EYE_OPEN, -4, 2); c:spr(EYE_SHUT, 4, 3); c:spr(STAR_TINY, 5, -4) end,
+  function(c) c:spr(EYE_OPEN, -4, 2); c:spr(EYE_SHUT, 4, 3); c:spr(STAR_SMALL, 5, -4) end,
 })
 
 -- ── Output ──────────────────────────────────────────────────────────────────────────────────

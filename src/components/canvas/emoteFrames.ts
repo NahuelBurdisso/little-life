@@ -39,6 +39,10 @@ const SPEC = [
   ['cake', 2, 4],
   ['broken_heart', 3, 4],
   ['dizzy', 3, 6],
+  // Suggestive-only romance emotes (adult-content layer, Phase 4): flushed cheeks, lips, an eye.
+  ['blush', 3, 4],
+  ['kiss', 3, 5],
+  ['wink', 3, 4],
 ] as const;
 
 export type EmoteName = (typeof SPEC)[number][0];
@@ -115,4 +119,7 @@ export const EMOTE_EMOJI_FALLBACK: Record<string, string> = {
   cake: '🎂',
   broken_heart: '💔',
   dizzy: '😵',
+  blush: '😊',
+  kiss: '💋',
+  wink: '😉',
 };

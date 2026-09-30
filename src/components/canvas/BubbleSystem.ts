@@ -21,7 +21,7 @@ const STATE_EMOTES: Record<string, string> = {
   drunk: 'dizzy', hungover: 'dizzy', heartbroken: 'cry', angry: 'anger', euphoric: 'sparkle',
   confident: 'star', jealous: 'fire', sick: 'sick', stressed: 'sweat',
   infatuated: 'heart', lonely: 'think', depressed: 'cry', in_debt: 'money',
-  afterglow: 'heart', guilty: 'sweat', suspicious: 'question',
+  afterglow: 'blush', guilty: 'sweat', suspicious: 'question',
 };
 // Emote when a zone verb (`current_action.zoneActivity`) begins. Plan-driven verbs (speech, scheme,
 // cook...) arrive here since decisions.ts keeps them; ActivityFxSystem adds the repeats and the
