@@ -17,6 +17,9 @@ import { clearGatherings, forgetInvitee, gatheringsPass, registerGatheringKind }
 import { FUNERAL, WAKE, onDeath } from './kinds/funeral';
 import { SEND_OFF, onLeavingDecided } from './kinds/sendOff';
 import { MARKET, onMarketStarted } from './kinds/market';
+import { FIRE, onFireStarted, registerFireVenue } from './kinds/fire';
+import { CHRISTENING, WEDDING, onCelebrationStarted } from './kinds/celebration';
+import { TAVERN_ROUND, clearTavernRoundState, noteCelebrating } from './kinds/tavernRound';
 import type { GatheringKind } from './types';
 
 export {
@@ -25,17 +28,20 @@ export {
 export type { Gathering, GatheringKind, GatheringRecord, InviteLevel, Attendance } from './types';
 
 /** The built-in kinds. Later passes register their own (`registerGatheringKind`). */
-export const GATHERING_KINDS: readonly GatheringKind[] = [FUNERAL, WAKE, SEND_OFF, MARKET];
+export const GATHERING_KINDS: readonly GatheringKind[] = [FUNERAL, WAKE, SEND_OFF, MARKET, FIRE, WEDDING, CHRISTENING, TAVERN_ROUND];
 
 function registerBuiltInKinds(): void {
   for (const k of GATHERING_KINDS) registerGatheringKind(k);
+  // The fire also places the event: a fire has to burn some building.
+  registerFireVenue();
 }
 
 registerBuiltInKinds();
 
-/** Forget every gathering (a world replace; worldCaches.ts). */
+/** Forget every gathering and the rounds' cooldowns (a world replace; worldCaches.ts). */
 export function clearGatheringState(): void {
   clearGatherings();
+  clearTavernRoundState();
 }
 
 /**
@@ -81,6 +87,11 @@ function initGatherings(): void {
   simEvents.on('world:event_started', guarded<SimEventPayloads['world:event_started']>('world:event_started', (p) => {
     switch (p.type) {
       case 'market_day': onMarketStarted(p.eventId, p.locationId, p.startedAtMin, p.durationHours); break;
+      case 'fire_outbreak': onFireStarted(p.eventId, p.locationId, p.startedAtMin, p.durationHours); break;
+      case 'wedding':
+      case 'christening':
+        onCelebrationStarted(p.type, p.eventId, p.triggeredBy, p.locationId, p.startedAtMin, p.durationHours, p.name);
+        break;
     }
   }));
   simEvents.on('life:leaving_decided', guarded<SimEventPayloads['life:leaving_decided']>('life:leaving_decided',
@@ -91,6 +102,16 @@ function initGatherings(): void {
     onDeath(p.agentId, p.name, gameMinutesNow());
   }));
   simEvents.on('life:departed', guarded<{ agentId: number }>('life:departed', (p) => forgetInvitee(p.agentId)));
+  // Something to celebrate: a reason to stand a round tonight.
+  simEvents.on('agent:birthday', guarded<{ agentId: number }>('agent:birthday',
+    (p) => noteCelebrating(p.agentId, 'to celebrate a birthday', gameMinutesNow())));
+  simEvents.on('life:engaged', guarded<SimEventPayloads['life:engaged']>('life:engaged', (p) => {
+    const now = gameMinutesNow();
+    noteCelebrating(p.proposerId, 'to celebrate the engagement', now);
+    noteCelebrating(p.answererId, 'to celebrate the engagement', now);
+  }));
+  simEvents.on('civic:election', guarded<SimEventPayloads['civic:election']>('civic:election',
+    (p) => noteCelebrating(p.winnerId, 'to celebrate winning the election', gameMinutesNow())));
 }
 
 initGatherings();

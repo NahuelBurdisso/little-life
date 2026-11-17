@@ -6,6 +6,7 @@ import { getEffectivePersonality } from './states';
 import { adjustReputation } from './reputationEngine';
 import { payTavernRound } from './economyTransfers';
 import { simEvents } from './simEvents';
+import { maybeStandRound } from './gatherings/kinds/tavernRound';
 
 // ─── Tavern Engine ────────────────────────────────────────────────────────────
 // Tracks drink count per agent when at tavern. More drinks = more social,
@@ -33,6 +34,8 @@ export function tavernTick(nowMinutes: number): void {
   const allAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
   const allLocations = db.select().from(locations).all();
   const tavernIds = new Set(allLocations.filter(l => l.type === 'tavern').map(l => l.id));
+  /** Who is drinking at each tavern this pass: someone may stand them a round (below). */
+  const drinkersAt = new Map<number, number[]>();
 
   for (const agent of allAgents) {
     if (!agent.current_location || !tavernIds.has(agent.current_location)) {
@@ -53,6 +56,7 @@ export function tavernTick(nowMinutes: number): void {
 
     const action = agent.current_action?.type;
     if (action !== 'socializing' && action !== 'idle' && action !== 'talking') continue;
+    drinkersAt.set(agent.current_location, [...(drinkersAt.get(agent.current_location) ?? []), agent.id]);
 
     const personality = getEffectivePersonality(agent.id);
     if (!personality) continue;
@@ -159,6 +163,10 @@ export function tavernTick(nowMinutes: number): void {
       adjustReputation(agent.id, -2);
     }
   }
+
+  // A round for the house, now and then (lib/gatherings/kinds/tavernRound.ts): its
+  // own seeded dice and transaction, after the loop, so the draws above are untouched.
+  maybeStandRound(nowMinutes, drinkersAt);
 }
 
 /** Get current drink count for an agent. */

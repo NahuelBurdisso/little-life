@@ -71,3 +71,25 @@ export function shopliftFrom(thiefId: number, shopOwnerId: number | null, amount
   db.update(economy).set({ money: thief.money + taken }).where(eq(economy.id, thief.id)).run();
   return taken;
 }
+
+/**
+ * A resident's loss to the town (a fire's damage: the repairs are the town's
+ * builders' and the parish's, lib/gatherings/kinds/fire.ts): the money goes to the
+ * treasury, as a venue fee or an estate with no heir does, never out of the
+ * economy. Ledger row like a town fee. Never more than they have. Returns what was paid.
+ */
+export function payTreasury(fromId: number, amount: number, reason: string): number {
+  if (!(amount > 0)) return 0;
+  const from = db.select().from(economy).where(eq(economy.agent_id, fromId)).get();
+  const world = db.select().from(worldState).get();
+  if (!from || !world) return 0;
+  const paid = Math.round(Math.min(amount, Math.max(0, from.money)) * 100) / 100;
+  if (paid <= 0) return 0;
+  db.update(economy).set({ money: from.money - paid }).where(eq(economy.id, from.id)).run();
+  db.update(worldState).set({ tax_pool: world.tax_pool + paid }).where(eq(worldState.id, world.id)).run();
+  db.insert(economyTransactions).values({
+    from_agent: fromId, to_agent: null, amount: paid, reason, items_exchanged: null, location_id: null,
+    timestamp: Date.now(),
+  }).run();
+  return paid;
+}
