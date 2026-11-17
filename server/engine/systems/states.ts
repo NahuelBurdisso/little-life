@@ -523,6 +523,27 @@ export function contagionChancePerMinute(rules: LiveRules = getRules()): number 
 
 // ─── evaluateTriggers ─────────────────────────────────────────────────────────
 
+/**
+ * What every trigger reads: one agent's rows plus the tick's clock and world.
+ * `activeTypes` is shared, not copied: each trigger adds the state it grants,
+ * and the triggers after it must see that within the same tick.
+ */
+interface TriggerContext {
+  agent: AgentRow;
+  /** Non-null: evaluateTriggers returns before building the context without one. */
+  personality: PersonalityProfile;
+  agentNeeds: NeedsRow | undefined;
+  activeTypes: Set<string>;
+  nowMinutes: number;
+  weather: string;
+  season: string;
+  removedAgentIds: number[];
+  allAgents: AgentRow[];
+  /** Game minutes per tick, for windows over wall-clock-stamped tables. */
+  tickSpeed: number;
+  ctx: StatesTickContext;
+}
+
 function evaluateTriggers(
   agent: typeof agents.$inferSelect,
   agentNeeds: typeof needsTable.$inferSelect | undefined,
@@ -539,7 +560,35 @@ function evaluateTriggers(
   const personality = agent.personality as PersonalityProfile | null;
   if (!personality) return;
 
-  // ── Drunk ─────────────────────────────────────────────────────────────────
+  // Order matters: each trigger adds what it grants to `activeTypes`, and
+  // later ones read it (jealous needs this tick's infatuated; depressed reads
+  // heartbroken and stressed). The Math.random() sequence follows it too.
+  const t: TriggerContext = {
+    agent, personality, agentNeeds, activeTypes, nowMinutes, weather, season,
+    removedAgentIds, allAgents, tickSpeed, ctx,
+  };
+  triggerDrunk(t);
+  triggerSick(t);
+  triggerAlcoholic(t);
+  triggerInDebt(t);
+  triggerHeartbroken(t);
+  triggerAngry(t);
+  triggerStressed(t);
+  triggerEuphoric(t);
+  triggerGrieving(t);
+  triggerInfatuated(t);
+  triggerJealous(t);
+  triggerLonely(t);
+  triggerDepressed(t);
+  triggerConfident(t);
+}
+
+/**
+ * An impulsive agent at the tavern may start drinking; each spell is logged in
+ * `drunkHistory`, which the alcoholic trigger reads.
+ */
+function triggerDrunk(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, tickSpeed, ctx } = t;
   if (!activeTypes.has('drunk') && !activeTypes.has('hungover')) {
     if (agent.current_location != null && personality.impulsiveness > 40) {
       // impulsiveness / 10000 per GAME MINUTE at the tavern: a 70-impulsiveness
@@ -574,8 +623,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── Sick ──────────────────────────────────────────────────────────────────
+/**
+ * Falling ill on one's own (weather, season, exhaustion), outside the
+ * immunity window after the last recovery.
+ */
+function triggerSick(t: TriggerContext) {
+  const { agent, agentNeeds, activeTypes, nowMinutes, weather, season, tickSpeed } = t;
   if (!activeTypes.has('sick')) {
     // Check immunity cooldown — recently recovered agents can't get sick again immediately
     const lastRecovery = sickRecoveredAt.get(agent.id) ?? -9999;
@@ -607,8 +662,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── Alcoholic ────────────────────────────────────────────────────────────
+/**
+ * Three or more drunk spells in a week make an impulsive agent alcoholic;
+ * right after a recovery it is a per-minute relapse roll instead.
+ */
+function triggerAlcoholic(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, tickSpeed } = t;
   if (!activeTypes.has('alcoholic') && personality.impulsiveness > 50) {
     const history = drunkHistory.get(agent.id) ?? [];
     const recentWindow = nowMinutes - 10080; // 7 days
@@ -664,8 +725,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── In Debt ──────────────────────────────────────────────────────────────
+/**
+ * Three game days broke with no food puts the agent in debt; `brokeSince`
+ * tracks the run and resets once they have money again.
+ */
+function triggerInDebt(t: TriggerContext) {
+  const { agent, activeTypes, nowMinutes, ctx } = t;
   if (!activeTypes.has('in_debt')) {
     const eco = ctx.economyOf(agent.id);
     // `<= 0`, not `=== 0`: sale tax splits leave fractional balances and
@@ -700,8 +767,13 @@ function evaluateTriggers(
       brokeSince.delete(agent.id);
     }
   }
+}
 
-  // ── Heartbroken ───────────────────────────────────────────────────────────
+/**
+ * A sharp romance drop in the last game hour breaks the agent's heart.
+ */
+function triggerHeartbroken(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, tickSpeed } = t;
   if (!activeTypes.has('heartbroken')) {
     // Tables stamped with Date.now(), so the game-time window is converted to
     // wall clock at the current speed. A fixed ms window covered four times the
@@ -762,8 +834,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── Angry ─────────────────────────────────────────────────────────────────
+/**
+ * An aggressive agent who just came out of a bad conversation turns angry
+ * at the other participant.
+ */
+function triggerAngry(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, tickSpeed } = t;
   if (!activeTypes.has('angry') && personality.aggression > 40) {
     // Tables stamped with Date.now(), so the game-time window is converted to
     // wall clock at the current speed. A fixed ms window covered four times the
@@ -817,8 +895,14 @@ function evaluateTriggers(
       break;
     }
   }
+}
 
-  // ── Stressed ──────────────────────────────────────────────────────────────
+/**
+ * Three or more low needs make the agent stressed, with a two-hour
+ * hysteresis after the last time it lifted.
+ */
+function triggerStressed(t: TriggerContext) {
+  const { agent, agentNeeds, activeTypes, nowMinutes } = t;
   if (!activeTypes.has('stressed') && agentNeeds) {
     const needValues = [
       agentNeeds.hunger,
@@ -850,8 +934,13 @@ function evaluateTriggers(
       activeTypes.add('stressed');
     }
   }
+}
 
-  // ── Euphoric ──────────────────────────────────────────────────────────────
+/**
+ * High mood plus a very good recent conversation makes the agent euphoric.
+ */
+function triggerEuphoric(t: TriggerContext) {
+  const { agent, agentNeeds, activeTypes, nowMinutes, tickSpeed } = t;
   if (!activeTypes.has('euphoric') && agentNeeds && agentNeeds.mood > 70) {
     // Tables stamped with Date.now(), so the game-time window is converted to
     // wall clock at the current speed. A fixed ms window covered four times the
@@ -895,8 +984,13 @@ function evaluateTriggers(
       activeTypes.add('euphoric');
     }
   }
+}
 
-  // ── Grieving ──────────────────────────────────────────────────────────────
+/**
+ * Losing a close friend (friendship > 70) who left the town this tick.
+ */
+function triggerGrieving(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, removedAgentIds } = t;
   if (!activeTypes.has('grieving') && removedAgentIds.length > 0) {
     for (const removedId of removedAgentIds) {
       // Check if they had a close friendship
@@ -943,8 +1037,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── Infatuated ────────────────────────────────────────────────────────────
+/**
+ * A sensual agent with romance > 60 toward someone becomes infatuated, and
+ * the room learns of an affair when either of them is spoken for.
+ */
+function triggerInfatuated(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, allAgents } = t;
   if (!activeTypes.has('infatuated') && personality.sensuality > 40) {
     const rels = db
       .select(PAIR_ROMANCE)
@@ -1000,8 +1100,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── Jealous ──────────────────────────────────────────────────────────────
+/**
+ * An infatuated agent grows jealous of a rival with romance > 40 toward
+ * the same love interest.
+ */
+function triggerJealous(t: TriggerContext) {
+  const { agent, activeTypes, nowMinutes, ctx } = t;
   if (!activeTypes.has('jealous') && activeTypes.has('infatuated')) {
     const infatuatedState = ctx.states.find(agent.id, 'infatuated');
     if (infatuatedState?.target_agent_id) {
@@ -1037,8 +1143,14 @@ function evaluateTriggers(
       }
     }
   }
+}
 
-  // ── Lonely ────────────────────────────────────────────────────────────────
+/**
+ * Social under 20 for an hour with no good conversation in the window
+ * makes the agent lonely; `lowSocialSince` times the stretch.
+ */
+function triggerLonely(t: TriggerContext) {
+  const { agent, agentNeeds, activeTypes, nowMinutes, tickSpeed } = t;
   if (!activeTypes.has('lonely') && agentNeeds) {
     if (agentNeeds.social < 20) {
       if (!lowSocialSince.has(agent.id)) {
@@ -1094,8 +1206,14 @@ function evaluateTriggers(
       lowSocialSince.delete(agent.id); // social recovered, reset tracker
     }
   }
+}
 
-  // ── Depressed ─────────────────────────────────────────────────────────────
+/**
+ * Long loneliness, sustained low mood, or heartbreak on top of stress
+ * tips the agent into depression (neurotic agents sooner).
+ */
+function triggerDepressed(t: TriggerContext) {
+  const { agent, personality, agentNeeds, activeTypes, nowMinutes, tickSpeed, ctx } = t;
   if (!activeTypes.has('depressed')) {
     let shouldDepress = false;
     let depressSource = '';
@@ -1160,8 +1278,14 @@ function evaluateTriggers(
       activeTypes.add('depressed');
     }
   }
+}
 
-  // ── Confident ─────────────────────────────────────────────────────────────
+/**
+ * A vain agent with two good conversations in the last game day becomes
+ * confident.
+ */
+function triggerConfident(t: TriggerContext) {
+  const { agent, personality, activeTypes, nowMinutes, tickSpeed } = t;
   if (!activeTypes.has('confident') && personality.vanity > 40) {
     // Tables stamped with Date.now(), so the game-time window is converted to
     // wall clock at the current speed. A fixed ms window covered four times the
