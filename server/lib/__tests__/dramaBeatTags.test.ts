@@ -101,9 +101,9 @@ const EMIT_SITES: Array<[string, string, DramaBeat]> = [
   // Rows that used to log `drama` untagged: gossip read as ~90% of the beats because these were invisible.
   ['engine/systems/states.ts', 'was released from prison after', 'release'],
   ['engine/systems/states.ts', "publicly exposed their blackmailer's leverage", 'blackmail'],
-  ['engine/systems/states.ts', 'was caught stealing from ${loc.name}!', 'theft'],
-  ['engine/systems/states.ts', 'gambled at the tavern', 'drunk'],
-  ['engine/systems/states.ts', 'started spreading rumors about', 'gossip'],
+  ['engine/systems/states/effects.ts', 'was caught stealing from ${loc.name}!', 'theft'],
+  ['engine/systems/states/effects.ts', 'gambled at the tavern', 'drunk'],
+  ['engine/systems/states/effects.ts', 'started spreading rumors about', 'gossip'],
   ['lib/tavernEngine.ts', 'is getting tipsy at the tavern', 'drunk'],
   ['lib/tavernEngine.ts', 'is now drunk at the tavern!', 'drunk'],
   ['lib/tavernEngine.ts', 'outbursts[Math.floor(Math.random() * outbursts.length)]', 'outburst'],
