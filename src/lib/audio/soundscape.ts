@@ -341,6 +341,11 @@ const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
   tryst: null, caught: 'whisper', scandal: 'whisper',
   // Small everyday rows (a release, a tipsy night, a lonely week): the town's background, no cue.
   release: null, drunk: null, outburst: null, blackmail: null, lonely: null,
+  // Social calls (server/lib/socialCalls): a neighbour's visit is the town's quiet
+  // background too. They are the commonest new rows; a chime for each would nag.
+  sick_visit: null, vigil: null, condolence: null, congratulation: null, birthday_wish: null,
+  forgotten_birthday: null, welcome: null, consolation: null, plea_to_stay: null,
+  welcome_home: null, cold_shoulder: null, loan: null, loan_repaid: null, loan_unpaid: null,
 };
 
 /** Row types that carry their own cue regardless of `metadata.beat`. */

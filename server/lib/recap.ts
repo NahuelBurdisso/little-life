@@ -103,6 +103,10 @@ const BEAT_ICONS: Record<string, string> = {
   caught: '🤫', scandal: '🤫',
   // The small rows that used to go untagged (lib/tavernEngine.ts, lonelinessEngine.ts, states.ts).
   release: '🔓', drunk: '🍺', outburst: '❗', blackmail: '✉', lonely: '☁',
+  // Social calls (lib/socialCalls): someone going out of their way for someone.
+  sick_visit: '🍲', vigil: '🕯', condolence: '🕯', congratulation: '🎉', birthday_wish: '🎂',
+  forgotten_birthday: '☁', welcome: '🍞', consolation: '🫂', plea_to_stay: '🫂',
+  welcome_home: '🏠', cold_shoulder: '❄', loan: '💰', loan_repaid: '💰', loan_unpaid: '💸',
 };
 const CATEGORY_ICONS: Record<string, string> = {
   world_event: '~', aspiration: '★', goal: '▶', relationship: '♦', social: '💬', drama: '!',

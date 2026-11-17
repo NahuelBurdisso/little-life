@@ -26,4 +26,10 @@ export interface SimEventPayloads {
   'life:thinking_of_leaving': { agentId: number; reason: DepartureReason; reasons: DepartureReason[] };
   /** A resident who was thinking of leaving has decided to stay (lib/populationFlow.ts). */
   'life:decided_to_stay': { agentId: number };
+  /** A baby was born (lib/family.ts): the parents still in town. Friends come to congratulate (lib/socialCalls). */
+  'family:birth': { childId: number; childName: string; parentIds: number[] };
+  /** A proposal was accepted (lib/milestonesEngine.ts). The news is public at once. */
+  'life:engaged': { proposerId: number; answererId: number };
+  /** The election count (lib/townCalendar.ts): the winner and the candidates who lost. */
+  'civic:election': { winnerId: number; loserIds: number[] };
 }

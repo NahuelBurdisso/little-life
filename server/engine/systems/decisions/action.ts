@@ -193,6 +193,9 @@ export function startDecision(t: AgentTurn, decision: ScoredAction, dest: Decisi
       ? { _arrivalZone: matchedZoneId, _arrivalBuilding: matchedBuildingType }
       : {}),
     ...(seatedZone ? { pose: 'sitting' } : {}),
+    // The decision's own words for the player (a social call: "Sitting at
+    // Elena's bedside"), on the walk below and on the action at arrival.
+    ...(decision.description ? { description: decision.description } : {}),
     // A 'walking' decision can't be started in place (no destination: movement
     // skips it and decisions never re-assigns it); it becomes a short idle.
     _duration: baseAction.type === 'walking'
@@ -211,7 +214,11 @@ export function startDecision(t: AgentTurn, decision: ScoredAction, dest: Decisi
   if (needsToTravel) {
     db.update(agents)
       .set({
-        current_action: { type: 'walking', to: { x: destination!.x, y: destination!.y } },
+        current_action: {
+          type: 'walking',
+          to: { x: destination!.x, y: destination!.y },
+          ...((decision.walkDescription ?? decision.description) ? { description: decision.walkDescription ?? decision.description } : {}),
+        },
         current_destination: destination,
         action_started: nowMinutes,
         action_duration: null,

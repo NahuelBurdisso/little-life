@@ -97,6 +97,11 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   tavern_tipsy:    { category: 'social', base_importance: 0.3, retention: 'short', template: '{description}' },
   tavern_drunk:    { category: 'drama', base_importance: 0.5, retention: 'medium', template: '{description}' },
   hobby_levelup:   { category: 'social', base_importance: 0.4, retention: 'medium', template: '{agent} improved at {hobby} (level {level})' },
+  // Someone went out of their way for someone (lib/socialCalls): a sick visit, a
+  // vigil, a birthday wish, a loan. One row per call, tagged with the call's beat.
+  // `severity` lifts the row by 0.3 per unit: most visits go in at 0.5-0.65
+  // (Highlights without spamming), a vigil or an unpaid loan higher.
+  social_call:     { category: 'social', base_importance: 0.5, retention: 'medium', template: '{description}' },
 
   // ─── Life milestones (lib/milestonesEngine.ts) ──────────────────────────────
   // Their own types rather than `drama` rows: the client's story beats key on

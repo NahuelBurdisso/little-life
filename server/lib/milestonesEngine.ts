@@ -4,7 +4,7 @@ import {
   agents, conversationQueue, locations, needs, relationshipEvents, relationships, shared_knowledge, worldEvents,
 } from '../db/schema';
 import { CONFIG } from './constants';
-import { simEvents } from './simEvents';
+import { simEvents, type SimEventPayloads } from './simEvents';
 import { logActivity } from './activityLogger';
 import { createFact } from './gossip';
 import { getAgentStates } from './states';
@@ -723,6 +723,9 @@ function acceptProposal(rel: RelRow, proposer: number, answerer: number, now: nu
   });
   // Public news: sensitivity 1 spreads to whoever is nearby (gossipEngine).
   createFact('engagement', proposer, answerer, 1, [proposer, answerer], 'event');
+  // Friends come round to congratulate them (lib/socialCalls `congratulate`).
+  const engaged: SimEventPayloads['life:engaged'] = { proposerId: proposer, answererId: answerer };
+  simEvents.emit('life:engaged', engaged);
 
   remember(proposer, `I asked ${aName} to marry me, and they said yes! We're engaged.`, 0.9, 9, answerer);
   remember(answerer, `${pName} asked me to marry them, and I said yes. We're engaged!`, 0.9, 9, proposer);

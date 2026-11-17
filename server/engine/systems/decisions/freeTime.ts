@@ -24,7 +24,7 @@ import { getAgentIntimacy } from '../../../lib/intimacy/state';
 import { currentWorldSeed } from '../../../lib/intimacy/worldSeed';
 import { neglectedPartnerOf } from '../../../lib/intimacy/wandering';
 import type { AgentRow, NeedsRow, EconRow, LocationRow, RelRow, WorldRow, ScoredAction } from './types';
-import { nearestLocation, getRelationshipValues, addNoise, gatheringBonus, isEvening } from './helpers';
+import { nearestLocation, getRelationshipValues, addNoise, gatheringBonus, isEvening, meetingPlaceFor } from './helpers';
 import { PANTRY_TARGET, GROCERY_BASE_SCORE, nearestGrocer, HUNGRY_EAT_BONUS } from './meals';
 
 // --- Free Time Scoring ---
@@ -237,17 +237,6 @@ function intimacyPullFor(f: FreeTimeContext): IntimacyPull {
   const ownLonging = adultLayer ? (getAgentIntimacy(agent.id)?.longing ?? 0) : 0;
   const intimacySeed = neglectedBy != null ? currentWorldSeed() : 0;
   return { adultLayer, neglectedBy, ownLonging, intimacySeed };
-}
-
-/**
- * Where to go to spend time with `other`: their building, or — when they are
- * out in the street (`current_location` null) — the town square nearest them,
- * the fallback comfortVisitPhase uses. A null target sent the seeker
- * "socialising" wherever they stood. The movement layer can't follow a person,
- * only walk to a place. No dice: tests sequence this file's Math.random() draws.
- */
-function meetingPlaceFor(other: AgentRow, allLocations: LocationRow[]): number | undefined {
-  return other.current_location ?? nearestLocation(other.position, allLocations, 'town_square')?.id;
 }
 
 /** One socializing option per candidate, scored by `socialScoreFor`. */

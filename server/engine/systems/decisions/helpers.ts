@@ -29,6 +29,20 @@ export function nearestLocation(
   return best;
 }
 
+/**
+ * Where to go to spend time with `other`: their building, or — when they are
+ * out in the street (`current_location` null) — the town square nearest them,
+ * the fallback comfortVisitPhase uses. A null target sent the seeker
+ * "socialising" wherever they stood. The movement layer can't follow a person,
+ * only walk to a place. No dice: tests sequence freeTime.ts's Math.random() draws.
+ */
+export function meetingPlaceFor(
+  other: { current_location: number | null; position: { x: number; y: number } },
+  allLocations: LocationRow[],
+): number | undefined {
+  return other.current_location ?? nearestLocation(other.position, allLocations, 'town_square')?.id;
+}
+
 export function getRelationshipValues(
   rels: RelRow[],
   agentId: number,

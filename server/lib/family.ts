@@ -5,7 +5,7 @@ import {
   shared_knowledge, worldEvents,
 } from '../db/schema';
 import { CONFIG } from './constants';
-import { simEvents } from './simEvents';
+import { simEvents, type SimEventPayloads } from './simEvents';
 import { logActivity } from './activityLogger';
 import { addKnowers, createFact } from './gossip';
 import { getAgentStates, type StateType } from './states';
@@ -617,6 +617,10 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
   for (const id of friends) {
     remember(id, `${parents} had a baby ${kin}, ${name}. I must congratulate them.`, 0.6, 5, mother.id);
   }
+  // ...and some do go and do it (lib/socialCalls `congratulate`): the wish above
+  // used to be all there was.
+  const born: SimEventPayloads['family:birth'] = { childId: child.id, childName: name, parentIds: [...parentIds] };
+  simEvents.emit('family:birth', born);
 
   scheduleChristening(child.id, now + CHRISTENING_DELAY_MINUTES);
   return child;

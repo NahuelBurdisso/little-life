@@ -25,7 +25,11 @@ export type DramaBeat =
   | 'kiss' | 'kiss_rebuffed'                    // → kiss / heartbreak (lib/intimacy/kiss.ts)
   | 'tryst' | 'caught' | 'scandal'              // → romance / secret / secret (the adult layer, lib/intimacy/)
   | 'illness'                                   // an untreated illness turning for the worse (lib/sickness.ts); no canvas FX
-  | 'release' | 'drunk' | 'outburst' | 'blackmail' | 'lonely'; // small rows that were untagged; no canvas FX (see the table)
+  | 'release' | 'drunk' | 'outburst' | 'blackmail' | 'lonely' // small rows that were untagged; no canvas FX (see the table)
+  // Social calls (lib/socialCalls): someone went to see someone because of what happened to them.
+  | 'sick_visit' | 'vigil' | 'condolence' | 'congratulation' | 'birthday_wish' | 'forgotten_birthday'
+  | 'welcome' | 'consolation' | 'plea_to_stay' | 'welcome_home' | 'cold_shoulder'
+  | 'loan' | 'loan_repaid' | 'loan_unpaid';
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday' | 'kiss';
 
@@ -90,6 +94,23 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   outburst: null,
   blackmail: null,
   lonely: null,
+  // Social calls (lib/socialCalls, `social_call` rows): the walk over and the two
+  // of them together are the picture, so none plays an effect or a sound. Tagged
+  // so the story tally, the recap and the soak's per-kind table can read them.
+  sick_visit: null,
+  vigil: null,
+  condolence: null,
+  congratulation: null,
+  birthday_wish: null,
+  forgotten_birthday: null,
+  welcome: null,
+  consolation: null,
+  plea_to_stay: null,
+  welcome_home: null,
+  cold_shoulder: null,
+  loan: null,
+  loan_repaid: null,
+  loan_unpaid: null,
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

@@ -222,6 +222,77 @@ export function giveImpulsiveGift(params: {
   return amount;
 }
 
+// ─── Gifts a caller brings (lib/socialCalls) ─────────────────────────────────
+
+/** What a caller handed over: an item id, or an amount of money (0 when it was an item). */
+export interface CallGift {
+  item: string | null;
+  amount: number;
+}
+
+/** Food a visitor can carry to a sickbed or a house in mourning, best first. */
+const CALL_FOOD = ['food_prepared', 'bread', 'food_raw'];
+
+/**
+ * A considered gift brought on a social call: soup for the sick, bread for a
+ * newcomer, a small something for a birthday. Same wealth rules as a chat gift
+ * (a giver who isn't comfortable keeps their last few meals, a cash gift never
+ * goes under the money floor), the same ledger and the same `gift:given`, so
+ * jealousy and the favour ledger react to it like any other gift — but no feed
+ * row: the call writes the one line that tells the whole visit. Food is not
+ * held to the daily gift cooldown (it is a dish from the larder, not a
+ * present); money is. Null when the giver has nothing they can spare.
+ */
+export function giveCallGift(giverId: number, receiverId: number, opts: {
+  /** Only food (a visit to the sick or the bereaved). */
+  foodOnly?: boolean;
+  /** Fall back to a little money when there is no item to bring. */
+  allowMoney?: boolean;
+  /** Cap on a cash gift. Default 10. */
+  maxMoney?: number;
+  /** `gift:given` reason ('sick_visit', 'welcome'...). */
+  reason: string;
+}): CallGift | null {
+  if (giverId === receiverId) return null;
+  const giverEcon = db.select().from(economy).where(eq(economy.agent_id, giverId)).get();
+  const receiverEcon = db.select().from(economy).where(eq(economy.agent_id, receiverId)).get();
+  if (!giverEcon || !receiverEcon) return null;
+  const moneyTarget = worldMoneyTargetNow();
+  const tier = giftWealthTier(giverEcon.money, moneyTarget);
+  const nowMinute = gameMinutesNow();
+  const now = Date.now();
+
+  const item = opts.foodOnly
+    ? CALL_FOOD.find((id) => {
+      const have = getInventoryCount(giverEcon.inventory, id);
+      return have > 0 && (tier === 'comfortable' || have > GIFT_FOOD_RESERVE);
+    }) ?? null
+    : pickGiftItem(giverEcon.inventory, tier);
+
+  if (item) {
+    db.update(economy).set({ inventory: removeFromInventory(giverEcon.inventory, item, 1) }).where(eq(economy.id, giverEcon.id)).run();
+    db.update(economy).set({ inventory: addToInventory(receiverEcon.inventory, item, 1, now) }).where(eq(economy.id, receiverEcon.id)).run();
+    applyGiftRelationshipBoost(giverId, receiverId, ITEM_REGISTRY[item]?.basePrice ?? 5);
+    simEvents.emit('gift:given', { giverId, receiverId, item, reason: opts.reason });
+    return { item, amount: 0 };
+  }
+
+  if (!opts.allowMoney || tier !== 'comfortable') return null;
+  const lastAny = lastGiftMinute.get(giverId);
+  if (lastAny !== undefined && nowMinute - lastAny < GIFT_COOLDOWN_MINUTES) return null;
+  const amount = Math.floor(Math.min(opts.maxMoney ?? 10, giverEcon.money * 0.1, giverEcon.money - giftMoneyFloor(moneyTarget)));
+  if (amount < 3) return null;
+  db.update(economy).set({ money: giverEcon.money - amount }).where(eq(economy.id, giverEcon.id)).run();
+  db.update(economy).set({ money: receiverEcon.money + amount }).where(eq(economy.id, receiverEcon.id)).run();
+  db.insert(economyTransactions).values({
+    from_agent: giverId, to_agent: receiverId, amount, reason: 'gift', items_exchanged: null, location_id: null, timestamp: now,
+  }).run();
+  lastGiftMinute.set(giverId, nowMinute);
+  applyGiftRelationshipBoost(giverId, receiverId, amount);
+  simEvents.emit('gift:given', { giverId, receiverId, amount, reason: opts.reason });
+  return { item: null, amount };
+}
+
 // Items suitable for gifting, ordered by value. Ids must exist in ITEM_REGISTRY:
 // the list used to say food_cooked / ale / flowers, which nothing ever stocks
 // (real ids are food_prepared and drink), so only raw food and bread were ever

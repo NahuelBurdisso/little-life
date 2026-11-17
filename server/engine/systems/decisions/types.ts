@@ -25,6 +25,14 @@ export interface ScoredAction {
   targetAgentId?: number;
   topic?: string;
   source?: string;
+  /**
+   * What the player reads in the cast bar and the agent panel while this runs
+   * ("On the way to see Elena, who is ill"): carried on the action, which the
+   * client's describeAction prefers to anything it derives (src/lib/actionText.ts).
+   */
+  description?: string;
+  /** The same for the walk there, when it reads differently ("On the way to see Elena, who is ill"). */
+  walkDescription?: string;
 }
 
 export type GoalRow = typeof goals.$inferSelect;

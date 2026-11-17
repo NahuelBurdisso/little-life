@@ -18,6 +18,7 @@ import type { AgentRow, LocationRow, ScoredAction } from './types';
 import { nearestLocation, addNoise } from './helpers';
 import { withMeal, SUPPER_MIN_ENERGY } from './meals';
 import { checkEmergency } from './emergency';
+import { socialCallPhase, URGENT_SOCIAL_CALL_SCORE } from './socialCall';
 import { proposalSeekDecision, trystDecision, rendezvousSeekDecision } from './seek';
 import { isCommuteDue, checkSchedule } from './schedule';
 import { scoreFreeTimeActions } from './freeTime';
@@ -49,6 +50,17 @@ export function chooseDecision(t: AgentTurn, d: DecisionTickContext): ScoredActi
 
   if (!decision) {
     decision = comfortVisitPhase(agent, d);
+  }
+
+  // Phase 1a (calls): a promised social call (lib/socialCalls, score 6700, 6900
+  // urgent). Before the agent's own wedding in this order, so an ordinary call
+  // yields to it explicitly: nobody leaves their own ceremony to wish a friend
+  // happy birthday, but a spouse still goes to a deathbed.
+  if (!decision) {
+    const call = socialCallPhase(agent, d);
+    decision = call && call.score < URGENT_SOCIAL_CALL_SCORE && (ownWeddingPhase(agent, d) || ownChristeningPhase(agent, d))
+      ? null
+      : call;
   }
 
   if (!decision) {

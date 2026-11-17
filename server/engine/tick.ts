@@ -27,6 +27,8 @@ import { refreshAllReputations } from '../lib/reputationEngine';
 import { processAllMoodMomentum } from '../lib/moodMomentum';
 import { tavernTick } from '../lib/tavernEngine';
 import { lonelinessCheck } from '../lib/lonelinessEngine';
+// Also registers the social-call listeners (a side-effect module, like giftEngine).
+import { socialCallsHourly } from '../lib/socialCalls';
 import { dailyLifeHourly } from '../lib/dailyLife';
 import { smallMisdeedsHourly } from '../lib/smallMisdeeds';
 import { personalEventsHourly } from '../lib/personalEvents';
@@ -379,6 +381,10 @@ export async function gameTick(): Promise<void> {
     // A letter from home for someone the story passed by today (lib/personalEvents.ts).
     runGuarded('personalEvents', () => db.transaction(() => personalEventsHourly(newTime.hour, nowMinutes)));
     runGuarded('loneliness', () => lonelinessCheck(nowMinutes));
+    // Social calls (lib/socialCalls): missed calls, a birthday nobody marked,
+    // loans repaid or gone sour. One transaction: a repayment is two balances,
+    // a ledger row, a feed row and memories.
+    runGuarded('socialCalls', () => db.transaction(() => socialCallsHourly(nowMinutes)));
     // In a transaction like the phases around it: a confrontation writes a feed row,
     // a relationship event, reputation and goal progress, all or nothing.
     runGuarded('confrontation', () => db.transaction(() => confrontationCheck(nowMinutes)));

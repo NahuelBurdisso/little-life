@@ -79,6 +79,16 @@ function recordFavor(giverId: number, receiverId: number, magnitude: number): vo
   receiverBalance.received += magnitude;
 }
 
+/**
+ * A favour done without a gift: a visit to a sickbed, a night at a deathbed, a
+ * loan (lib/socialCalls). Gifts are recorded through `gift:given` above, so a
+ * visit that also brought food records both — the walk over was the favour.
+ */
+export function recordFavorGiven(giverId: number, receiverId: number, magnitude: number): void {
+  if (giverId === receiverId || magnitude <= 0) return;
+  recordFavor(giverId, receiverId, magnitude);
+}
+
 /** Get net favor balance: positive = they owe you, negative = you owe them */
 export function getNetFavorBalance(agentId: number, otherId: number): number {
   const balance = getBalance(agentId, otherId);

@@ -13,6 +13,8 @@ import { getAgentStates } from '../../../lib/states';
 import { getShareableFacts, getAgentName } from '../../../lib/gossip';
 import { getSharedHobbies } from '../../../lib/hobbyEngine';
 import { completeComfortVisit } from '../../../lib/lonelinessEngine';
+import { callOf, markSeated } from '../../../lib/socialCalls/engine';
+import { callTrigger } from '../../../lib/socialCalls/topics';
 import { newbornOf } from '../../../lib/familyState';
 import { congratsTopic } from '../../../ai/prompts';
 import { chooseTier, hasDramaticState } from '../../../lib/conversationTier';
@@ -63,8 +65,13 @@ export function queueSocialConversation(t: AgentTurn, decision: ScoredAction, d:
     });
     if (existingActive.length > 0) return; // Already talking
 
+    // A social call (lib/socialCalls) is the call the caller walked over for: a
+    // chat the pair happened to have an hour ago doesn't make the visit unneeded.
+    const call = decision.source === 'social_call' ? callOf(agentId) : null;
+    const isSocialCall = call != null && call.targetId === targetId;
+
     // Cooldown: skip if this pair talked recently (prevents pair domination)
-    if (pairOnCooldown(agentId, targetId)) return;
+    if (!isSocialCall && pairOnCooldown(agentId, targetId)) return;
 
     const rel = getRelationshipValues(
       allRelationships,
@@ -95,7 +102,8 @@ export function queueSocialConversation(t: AgentTurn, decision: ScoredAction, d:
     );
 
     // A comfort visit is the whole point of the walk over — chooseTier never
-    // lets it collapse into a one-line template exchange.
+    // lets it collapse into a one-line template exchange. A social call is the
+    // same promise kept, and gets the same floor.
     const isComfortVisit = decision.source === 'comfort_visit';
     const { tier, priority, maxWaitGameMin } = chooseTier({
       ...tierBudget,
@@ -111,7 +119,7 @@ export function queueSocialConversation(t: AgentTurn, decision: ScoredAction, d:
       hasGossip: agentPersonality
         ? getShareableFacts(agentId, targetId, agentPersonality).length > 0
         : false,
-      comfortVisit: isComfortVisit,
+      comfortVisit: isComfortVisit || isSocialCall,
       watched: isAnyWatched([agentId, targetId]),
       basePriority: Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0)),
     });
@@ -125,7 +133,7 @@ export function queueSocialConversation(t: AgentTurn, decision: ScoredAction, d:
         participants: [agentId, targetId],
         tier,
         priority,
-        trigger_reason: isComfortVisit ? 'comfort_visit' : 'needs_social',
+        trigger_reason: isSocialCall ? callTrigger(call.kind) : isComfortVisit ? 'comfort_visit' : 'needs_social',
         topic,
         queued_at: Date.now(),
         max_wait: queueMaxWait(maxWaitGameMin),
@@ -133,6 +141,10 @@ export function queueSocialConversation(t: AgentTurn, decision: ScoredAction, d:
       .returning()
       .get());
     if (isComfortVisit) completeComfortVisit(agentId);
+    // The call stays pending until its conversation ends (a dropped entry is
+    // simply tried again on the next walk over); seated, the cast bar says
+    // they are with them rather than on the way.
+    if (isSocialCall) markSeated(call.id, nowMinutes);
     if (isDate && shouldAnnounceDate(agentId, targetId, nowMinutes)) {
       logActivity({
         type: 'drama',

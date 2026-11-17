@@ -21,7 +21,11 @@ interface LogActivityParams {
    * description (see data/dramaBeats.ts). It lives in this JSON column rather than a new one,
    * so old databases need no ALTER and old rows simply lack it.
    */
-  metadata?: { chainId?: string; chainDepth?: number; ruleId?: string; beat?: DramaBeat; /** The shared_knowledge row a gossip beat retells (gazette.ts: old news). */ factId?: number } | null;
+  metadata?: {
+    chainId?: string; chainDepth?: number; ruleId?: string; beat?: DramaBeat;
+    /** The shared_knowledge row a gossip beat retells (gazette.ts: old news). */ factId?: number;
+    /** A `social_call` row's kind (lib/socialCalls): the soak counts calls per kind by it. */ callKind?: string;
+  } | null;
 }
 
 export function logActivity(params: LogActivityParams): void {

@@ -26,6 +26,7 @@ import './lib/playerOutcomes'; // Report what the player's nudges came to
 import './lib/milestonesEngine'; // Proposals, engagements and weddings of real couples
 import './lib/intimacy'; // Kisses, longing and the adult layer (opt-in)
 import './lib/family'; // Children of married couples: a parent's death or departure
+import './lib/socialCalls'; // Residents calling on someone because of what happened to them
 import { initBirthdays } from './lib/agingEngine';
 import { initPersonalityDrift } from './lib/personalityDrift';
 import { initFavorTracking } from './lib/favorEngine';

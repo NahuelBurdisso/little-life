@@ -40,7 +40,7 @@ import { WORLD_EVENTS } from '../data/worldEventCatalog';
 import { startWorldEvent } from '../engine/systems/events';
 import { emitter } from '../engine/emitter';
 import { logActivity } from './activityLogger';
-import { simEvents } from './simEvents';
+import { simEvents, type SimEventPayloads } from './simEvents';
 import { createFact } from './gossip';
 import { getHobbyLevel } from './hobbyEngine';
 import { adjustReputation, getReputation } from './reputationEngine';
@@ -535,6 +535,9 @@ function countVotes(civic: CivicState, now: number): void {
     const how = mine === winner.id ? 'I voted for them.' : mine != null ? `I voted for ${byId.get(mine)?.name ?? 'someone else'}.` : '';
     simEvents.emit('event:world', { agentId: a.id, name: 'Election result', description: `${headline} ${how}`.trim() });
   }
+  // Friends call on the winner, and on the ones who lost (lib/socialCalls).
+  const result: SimEventPayloads['civic:election'] = { winnerId: winner.id, loserIds: tally.ranking.slice(1).map((r) => r.id) };
+  simEvents.emit('civic:election', result);
   emitter.markDirty('agents.all');
 }
 

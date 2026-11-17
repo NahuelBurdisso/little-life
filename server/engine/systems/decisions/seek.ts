@@ -76,8 +76,11 @@ export function trystDecision(
   }
 }
 
-/** What `canSeekPartner` needs to know about one of the two (shared by the proposal and rendezvous walks). */
-function seekParty(a: AgentRow, hour: number, states: readonly string[]): SeekParty {
+/**
+ * What `canSeekPartner` needs to know about one of the two (shared by the
+ * proposal and rendezvous walks, and the social calls' guards, socialCall.ts).
+ */
+export function seekParty(a: AgentRow, hour: number, states: readonly string[]): SeekParty {
   const personality = getEffectivePersonality(a.id) ?? a.personality as PersonalityProfile | null;
   return {
     action: (a.current_action as { type?: string } | null)?.type ?? 'idle',

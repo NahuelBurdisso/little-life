@@ -760,6 +760,17 @@ export function notePlayerCare(agentIds: readonly number[]): void {
   }
 }
 
+/**
+ * A resident came on purpose to ask them to stay (lib/socialCalls `plead_to_stay`):
+ * that is being cared for, whatever the chat's tone came out as. The ordinary
+ * conversation check below usually catches it too (pleaders are friends), but a
+ * template chat with a gruff friend can land under both bars.
+ */
+export function noteCaredBy(agentId: number, carerId: number): void {
+  const t = state.thinking.get(agentId);
+  if (t && !t.caredBy) t.caredBy = firstName(nameOf(carerId));
+}
+
 interface ConversationEndedPayload {
   agentId: number;
   perpetratorId?: number | null;

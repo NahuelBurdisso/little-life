@@ -75,6 +75,15 @@ export function getTensionSnapshot(): TensionSnapshotEntry[] {
   }));
 }
 
+/**
+ * Someone came to console them (lib/socialCalls `console`): the same relief a
+ * warm conversation gives, once more on top of it — they came for this. A no-op
+ * before `initCascade`.
+ */
+export function relieveTension(agentId: number): void {
+  tensionTracker?.onPositiveConversation(agentId);
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function getCurrentTick(): number {
