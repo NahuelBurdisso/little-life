@@ -68,7 +68,7 @@ export function findNeedsInterrupt(
     const n = db.select().from(needs).where(eq(needs.agent_id, agentId)).get();
     if (!agent || !n) continue;
     const critical = n.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
-    // Same personality source as decisions.ts' checkSchedule.
+    // Same personality source as decisions/schedule.ts' checkSchedule.
     const personality = getEffectivePersonality(agentId) ?? (agent.personality as PersonalityProfile | null);
     const pastBedtime = agent.schedule
       ? isPastBedtime(agent.schedule, personality, world.time.hour, agent.workplace != null)
@@ -140,8 +140,6 @@ export function partnerDistressState(states: readonly string[]): string | null {
   return states.find((s) => DISTRESS_STATES.includes(s)) ?? (states.includes('sick') ? 'sick' : null);
 }
 
-/**
- * The two agents of a template conversation, or null when they can't have one:
 /**
  * The two agents of a template conversation, or null when they can't have one:
  * missing or deactivated (a dead agent's row stays, and used to still produce a

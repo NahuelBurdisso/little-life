@@ -201,8 +201,8 @@ export function registerStartOccupants(startOccupants: ReadonlyMap<number, numbe
 
 /**
  * Step 4: one needs row and one economy row per agent, in cast order. The
- * unseeded `Math.random()` draws stay in exactly this order (mood, stress, work
- * performance, daily expenses), each only when its fallback is reached.
+ * seeded draws stay in exactly this order (mood, stress, work performance,
+ * daily expenses), each only when its fallback is reached.
  */
 export function insertNeedsAndEconomy(ctx: SeedContext): void {
   const { config, scenario, agentMap, startMinute, genResult } = ctx;

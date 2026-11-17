@@ -210,7 +210,7 @@ export function affairDiscovery(ctx: CompletionContext): void {
 export function blackmailReport(ctx: CompletionContext): void {
   const { overallSentiment, participants } = ctx;
   // Blackmail report: if victim talks to constable with positive sentiment, share blackmail knowledge
-  if (overallSentiment > 0 && participants.length >= 2) {
+  if (overallSentiment > 0) {
     const speaker = participants[0];
     const speakerId = speaker.id;
     const otherParticipants = participants.slice(1);

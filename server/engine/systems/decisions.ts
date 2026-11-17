@@ -28,6 +28,12 @@ export { proposalSeekDecision, trystDecision, rendezvousSeekDecision } from './d
 export { sleepWindow, commuteLeadMinutes, isCommuteDue } from './decisions/schedule';
 export { zoneVerbOf, buildAction } from './decisions/action';
 
+/** Whether a conversation queue entry still includes this agent. */
+function isQueuedToTalk(agentId: number): boolean {
+  return db.select({ participants: conversationQueue.participants }).from(conversationQueue).all()
+    .some((q) => (q.participants as number[]).includes(agentId));
+}
+
 /**
  * CLOCK: GAME MINUTES. `agents.action_started` is stamped with
  * `gameMinutes(world.time)` and `action_duration` (ACTION_MIN_DURATIONS, jail
@@ -35,12 +41,6 @@ export { zoneVerbOf, buildAction } from './decisions/action';
  * of the subtraction, which is fine at tick_speed 1 but at 4x turned a 360-minute
  * night into 360 ticks = 24 game hours: the whole town slept round the clock.
  */
-/** Whether a conversation queue entry still includes this agent. */
-function isQueuedToTalk(agentId: number): boolean {
-  return db.select({ participants: conversationQueue.participants }).from(conversationQueue).all()
-    .some((q) => (q.participants as number[]).includes(agentId));
-}
-
 export function isActionComplete(agent: AgentRow, nowMinutes: number): boolean {
   if (agent.current_action == null) return true;
 

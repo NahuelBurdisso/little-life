@@ -51,7 +51,7 @@ const PERF_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_conversations_status_ended ON conversations (status, ended_at DESC)',
   'CREATE INDEX IF NOT EXISTS idx_shared_knowledge_type_active ON shared_knowledge (type, is_active)',
   // `relationship_events` only carries an index on `processed`, but it is also
-  // range-scanned on `timestamp` — by the heartbroken check in states.ts, once
+  // range-scanned on `timestamp` — by the heartbroken check in states/triggers.ts, once
   // per agent per tick, on a table that is only ever appended to. The window is
   // narrow (60 ticks), so the range index alone reduces a growing full scan to a
   // handful of rows; the autoplay collectors ride it too.

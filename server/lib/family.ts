@@ -604,7 +604,7 @@ function giveBirth(p: Pregnancy, byId: ReadonlyMap<number, AgentRow>, now: numbe
   remember(mother.id, `I gave birth to ${own} ${kin}, ${name}. I've never been so tired or so happy.${fear}`, fear ? 0.5 : 1, 10, fatherHere ? father!.id : undefined);
   if (fatherHere) remember(father!.id, `Our ${kin} ${name} was born today. I'm a father.`, 1, 10, mother.id);
 
-  // Friends hear the news and mean to congratulate (decisions.ts picks the
+  // Friends hear the news and mean to congratulate (decisions/social.ts picks the
   // topic when they next talk to a parent, familyState `newbornOf`).
   const friends = new Set<number>();
   for (const pid of parentIds) {

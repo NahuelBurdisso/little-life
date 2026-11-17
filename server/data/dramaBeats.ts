@@ -81,7 +81,7 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   // canvas picture or a sound: they never had one (their wording matched nothing in
   // beatDetect), and a tavern night or a lonely week should not start playing a puff.
   // release: a sentence served (states.ts); drunk: the tavern's excess, tipsy through gambling
-  // (tavernEngine, states.ts); outburst: a public flare-up, a drunken scene or a stab of jealousy;
+  // (tavernEngine, states/effects.ts); outburst: a public flare-up, a drunken scene or a stab of jealousy;
   // blackmail: leverage exposed or reported; lonely: withdrawal, and the neighbour who visits.
   // The patient walking to the clinic, or lying at home, is the picture.
   illness: null,

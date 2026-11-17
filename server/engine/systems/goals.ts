@@ -567,7 +567,7 @@ function initGoalProgressListeners(): void {
 /** Exported for tests: register the listeners without running a whole goals tick. */
 export const initGoalProgressListenersForTest = initGoalProgressListeners;
 
-/** The partner states conversations.ts reports as `partnerState`. */
+/** The partner states the conversation phase reports as `partnerState` (conversations/helpers.ts `partnerDistressState`). */
 // `sick` goes last: a kind word to someone ill is what a protect goal is waiting for.
 const DISTRESS = new Set(['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving', 'in_debt', 'sick']);
 

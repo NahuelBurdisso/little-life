@@ -222,7 +222,7 @@ function triggerInteractions(ctx: CompletionContext, totalRomanceDelta: number):
   const { overallSentiment, participantIds, participants } = ctx;
   // --- Conversation-triggered interactions ---
   // Very negative conversations can escalate to insults or confrontations
-  if (overallSentiment < -0.5 && participants.length >= 2) {
+  if (overallSentiment < -0.5) {
     const aggressorId = participantIds[0];
     const targetId = participantIds[1];
     const aggressorAgent = participants.find(p => p.id === aggressorId);
@@ -243,7 +243,7 @@ function triggerInteractions(ctx: CompletionContext, totalRomanceDelta: number):
   }
 
   // Flirtatious conversations can trigger romance interactions
-  if (overallSentiment > 0.3 && participants.length >= 2) {
+  if (overallSentiment > 0.3) {
     const p1 = participants[0];
     const p2 = participants[1];
     const p1Personality = p1.personality as PersonalityProfile | null;
@@ -258,7 +258,7 @@ function triggerInteractions(ctx: CompletionContext, totalRomanceDelta: number):
 function offerFinancialHelp(ctx: CompletionContext): void {
   const { overallSentiment, participants } = ctx;
   // --- Proactive Financial Help ---
-  if (overallSentiment > 0 && participants.length >= 2) {
+  if (overallSentiment > 0) {
     const speaker = participants[0];
     const otherParticipants = participants.slice(1);
     const speakerId = speaker.id;

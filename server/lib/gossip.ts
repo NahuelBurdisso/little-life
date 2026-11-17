@@ -602,7 +602,7 @@ export function getShareableFacts(
   // Relevance is resolved once per fact, before the sort. It was previously
   // computed inside the comparator, where the `getRelationshipFriendship` call
   // meant O(n log n) relationship SELECTs on a function called for every agent
-  // on every tick (the `hasGossip` check in decisions.ts) — and the comparator
+  // on every tick (the `hasGossip` check in decisions/social.ts) — and the comparator
   // re-derived the same answer for the same fact on every comparison it took part
   // in. Precomputing also makes the ordering a stable function of the data, which
   // a comparator doing I/O is not guaranteed to be.
@@ -634,13 +634,13 @@ export function getShareableFacts(
 
 // ─── Rumor backlash ───────────────────────────────────────────────────────────
 
-/** How long the subject stays angry at whoever told them: past the 480-minute grudge mark in states.ts. */
+/** How long the subject stays angry at whoever told them: past the 480-minute grudge mark in states/effects.ts. */
 const BACKLASH_ANGER_MINUTES = 600;
 
 /**
  * The subject of an unverified rumor just heard it — from `tellerId`. They get
  * angry at the teller (the messenger is who's in front of them), and the angry
- * state's own effect in states.ts turns that into a lasting `grudge` after 480
+ * state's own effect in states/effects.ts turns that into a lasting `grudge` after 480
  * game minutes, which in turn feeds confrontations (confrontationEngine). A
  * relationship event knocks trust and friendship now, so the sting shows before
  * the grudge does. Confirmed facts (a theft someone saw) don't do this: being

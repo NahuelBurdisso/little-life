@@ -99,7 +99,7 @@ export function checkSchedule(
       .get();
     // Only while someone alive can treat them: with the doctor and assistant
     // dead, the clinic is an empty room, and bed at home is where they get
-    // better (states.ts HOME_REST_RECOVERY).
+    // better (states/effects.ts HOME_REST_RECOVERY).
     if (sickState && sickState.severity > 0.4 && healerInTown()) {
       const clinic = nearestLocation(agent.position, allLocations, 'clinic');
       if (clinic) {

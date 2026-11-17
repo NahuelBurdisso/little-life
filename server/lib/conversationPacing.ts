@@ -193,7 +193,7 @@ export function isPastBedtime(
 /**
  * Why this participant has to leave the conversation now, if at all. Critical
  * energy first (they are about to collapse), then bedtime, then critical
- * hunger — the same needs `checkEmergency`/`checkSchedule` in decisions.ts act
+ * hunger — the same needs `checkEmergency`/`checkSchedule` in decisions/ act
  * on, which never got a say while the agent was `talking`.
  */
 export function needsWrapUpReason(

@@ -447,7 +447,7 @@ export function tick(
     let rDeltaBA = wasEstranged ? Math.min(0, rawRDeltaBA) : rawRDeltaBA;
 
     // The one guarantee for every romance source. Positive romance is queued by
-    // conversations, but also by seduction (states.ts), gifts, ripple rules,
+    // conversations, but also by seduction (states/effects.ts), gifts, ripple rules,
     // secret sharing, the town calendar and template beats, and most of those
     // know nothing about age or orientation. Rather than trust each writer,
     // this is where every queued delta finally lands: a POSITIVE romance delta

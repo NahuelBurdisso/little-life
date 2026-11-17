@@ -19,7 +19,7 @@ interface IPlanCache {
 }
 
 // ---------------------------------------------------------------------------
-// ScoredAction — must match decisions.ts interface
+// ScoredAction — must match decisions/types.ts interface
 // ---------------------------------------------------------------------------
 
 export interface ScoredAction {

@@ -204,8 +204,8 @@ export function statesTick() {
     }
   }
 
-  // ── Pass 2: Cascades (max depth 2) ────────────────────────────────────────
-  applyCascades(pendingCascades, nowMinutes, 0, 2, ctx);
+  // ── Pass 2: Cascades ──────────────────────────────────────────────────────
+  applyCascades(pendingCascades, nowMinutes, ctx);
 
   // ── Pass 3: Side effects ──────────────────────────────────────────────────
   for (const agent of allAgents) {
@@ -661,17 +661,16 @@ function collectExpiryCascades(
 
 // ─── applyCascades ────────────────────────────────────────────────────────────
 
+/**
+ * Insert the states that expiries queued in pass 1a (drunk -> hungover, drunk
+ * -> angry). One level only: it used to take a depth and recurse on a list of
+ * further cascades that nothing ever filled.
+ */
 function applyCascades(
   cascades: CascadeEntry[],
   nowMinutes: number,
-  depth: number,
-  maxDepth: number,
   ctx: StatesTickContext,
 ) {
-  if (depth >= maxDepth || cascades.length === 0) return;
-
-  const nextCascades: CascadeEntry[] = [];
-
   for (const cascade of cascades) {
     // Check if this state already exists for the agent
     if (ctx.states.find(cascade.agentId, cascade.stateType)) continue;
@@ -703,15 +702,5 @@ function applyCascades(
       });
       simEvents.emit('state:triggered', { agentId: cascade.agentId, state: cascade.stateType, cause: cascade.source });
     }
-
-    // Collect any expiry cascades from the newly inserted state (only for fixed-duration states)
-    // At depth 1 we don't generate further cascades — we only go 2 deep
-    if (depth + 1 < maxDepth) {
-      // hungover has no cascade-on-expiry, angry could cascade further but we stop here
-    }
-  }
-
-  if (nextCascades.length > 0) {
-    applyCascades(nextCascades, nowMinutes, depth + 1, maxDepth, ctx);
   }
 }

@@ -279,7 +279,7 @@ export function planRoute(
 // --- Arrival Handler ---
 
 function handleArrival(agent: AgentRow, world: WorldRow): void {
-  // A walk over to talk to someone (conversations.ts staging) replaces whatever
+  // A walk over to talk to someone (conversations/queue.ts staging) replaces whatever
   // walk the agent was on but leaves its `action_queue` alone. Popping that
   // queue here started the interrupted errand wherever the chat happened: a
   // baker caught on her way in worked a whole hour in the street — no bread,

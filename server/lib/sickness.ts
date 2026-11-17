@@ -11,7 +11,7 @@
  * while still untreated. The doctor dying, or sitting in jail, is what makes a fever
  * dangerous: the player can see it coming and can act.
  *
- * Pure: the callers (engine/systems/states.ts, lib/lifeEventsEngine.ts) own the DB.
+ * Pure: the callers (engine/systems/states/effects.ts, lib/lifeEventsEngine.ts) own the DB.
  * All rates are per GAME MINUTE; roll them through `chancePerTick`.
  */
 

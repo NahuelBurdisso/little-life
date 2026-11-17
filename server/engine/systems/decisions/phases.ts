@@ -407,7 +407,7 @@ export function eatBeforeBed(t: AgentTurn, decision: ScoredAction, nowMinutes: n
 export function validateAtTarget(agent: AgentRow, decision: ScoredAction, d: DecisionTickContext): ScoredAction {
   const { world, allLocations, nowMinutes } = d;
   // --- Validate action makes sense at target location ---
-  if (decision != null && decision.targetLocationId != null) {
+  if (decision.targetLocationId != null) {
     const targetLoc = allLocations.find((l) => l.id === decision!.targetLocationId);
     if (targetLoc) {
       // Can't work at a location that isn't your workplace

@@ -42,7 +42,7 @@ describe('classifyActivity — drama descriptions', () => {
     ['secret', 'Ana confessed a secret to Bo.', 'conversations confession'],
     ['romance', 'Ana and Bo have reconciled.', 'conversations reconciliation'],
     ['heartbreak', "Ana discovered Bo's affair and broke up!", 'conversations affair'],
-    // decisions.ts
+    // decisions/social.ts
     ['romance', 'Ana and Bo are on a date', 'decisions date'],
     ['arrest', 'Ana arrested Bo! Sentence: 8 hours.', 'decisions arrest'],
     // SnapResolver.ts

@@ -1,7 +1,7 @@
 import type { PersonalityProfile } from './personality';
 
 /**
- * The one definition of when an agent sleeps. decisions.ts (checkSchedule,
+ * The one definition of when an agent sleeps. decisions/schedule.ts and emergency.ts (checkSchedule,
  * sleep length, the social-crisis check) and conversationPacing.ts (a talk
  * ends at bedtime) both read it; they used to carry copies of the same block,
  * and when one copy learned to wake workers before their shift the other kept

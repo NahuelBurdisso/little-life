@@ -14,7 +14,7 @@ import {
  * What an agent is doing (`agents.current_action`) or will do next (`action_queue`).
  * Stored as JSON. `type` is always there ('idle', 'walking', 'working', 'talking'...);
  * `zoneActivity` names the hobby or zone verb of an idle/comfort action. The rest
- * depends on the type (decisions.ts `buildAction`, routers/nudge.ts) and is read where
+ * depends on the type (decisions/action.ts `buildAction`, routers/nudge.ts) and is read where
  * it is used, so it stays `unknown` here rather than pretending every action has it.
  */
 export interface AgentAction {

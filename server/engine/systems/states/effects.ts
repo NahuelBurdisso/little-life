@@ -604,11 +604,9 @@ function effectHungover(e: EffectContext, state: AgentStateRow) {
         .select()
         .from(relationships)
         .where(
-          or(
-            and(
-              eq(relationships.agent_a, Math.min(agent.id, otherId)),
-              eq(relationships.agent_b, Math.max(agent.id, otherId)),
-            ),
+          and(
+            eq(relationships.agent_a, Math.min(agent.id, otherId)),
+            eq(relationships.agent_b, Math.max(agent.id, otherId)),
           ),
         )
         .get();

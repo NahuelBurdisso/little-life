@@ -16,7 +16,7 @@ import { NOW, TIME, freshTown, insertLocation, insertResident } from '../../../l
  * doctor or medical assistant in the same room, and the sick walked to the
  * clinic to wait for one; with nobody left, the town's only hope was the
  * illness running out on its own. Now the sick rest at home and recover there
- * (states.ts HOME_REST_RECOVERY), and the vacancy pass looks for a new doctor.
+ * (states/effects.ts HOME_REST_RECOVERY), and the vacancy pass looks for a new doctor.
  */
 
 type WorldTime = typeof worldState.$inferSelect['time'];

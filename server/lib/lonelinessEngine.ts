@@ -7,7 +7,7 @@ import { getEffectivePersonality } from './states';
 // ─── Loneliness Engine ────────────────────────────────────────────────────────
 // Tracks chronic low social need. When social stays < 20 for extended periods,
 // the agent enters 'lonely' state. A warm friend may then schedule a comfort
-// visit: decisions.ts walks the visitor to the lonely agent and, once they are
+// visit: decisions/phases.ts walks the visitor to the lonely agent and, once they are
 // together, queues a conversation (see getComfortVisit).
 
 const lonelySince = new Map<number, number>(); // agentId → game minute when social first dropped below 20

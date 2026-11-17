@@ -35,13 +35,13 @@ import { emitter } from '../engine/emitter';
 /** Jobs that mean "no job": free to take one up. */
 export const JOBLESS = new Set(['unemployed', 'retired', '']);
 
-/** Jobs that treat the sick (engine/systems/states.ts). */
+/** Jobs that treat the sick (engine/systems/states/effects.ts). */
 export const HEALER_JOBS: readonly string[] = ['doctor', 'medical_assistant'];
 
 /**
  * Whether anyone alive in town can treat the sick. With nobody, the sick rest
- * at home instead of waiting at an empty clinic (decisions.ts), and recover
- * there slowly (states.ts `HOME_REST_RECOVERY`).
+ * at home instead of waiting at an empty clinic (engine/systems/decisions/schedule.ts), and recover
+ * there slowly (states/effects.ts `HOME_REST_RECOVERY`).
  */
 export function healerInTown(): boolean {
   return db.select({ id: agents.id }).from(agents)

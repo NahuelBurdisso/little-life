@@ -32,7 +32,7 @@
  *
  * Behaviour that depends on *which* event is active (storms send people
  * indoors, festivals pull them to the square, ...) is keyed on the event type
- * in systems/decisions.ts, not on effects.
+ * in systems/decisions/freeTime.ts, not on effects.
  */
 export const EVENT_EFFECT_KEYS = [
   'social_boost',

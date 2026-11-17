@@ -82,7 +82,7 @@ export function queuedTopic(entry: { topic: string | null; trigger_reason: strin
  */
 export const PATERNITY_TOPIC = "the baby's real father";
 
-/** Topic a friend brings to new parents (engine/systems/decisions.ts). */
+/** Topic a friend brings to new parents (engine/systems/decisions/social.ts). */
 export function congratsTopic(childName: string): string {
   return `congratulations on baby ${childName}`;
 }

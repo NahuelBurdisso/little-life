@@ -96,7 +96,7 @@ export const REFUSAL_RETRY_MINUTES = 2 * MINUTES_PER_DAY;
 /** How long the queued conversation may wait for a slot, in game minutes. */
 export const RENDEZVOUS_QUEUE_WAIT_MINUTES = 60;
 /**
- * Queue priority: the same protected level as a proposal (conversations.ts
+ * Queue priority: the same protected level as a proposal (conversations/helpers.ts
  * `isProtectedEntry`), so hunger does not walk one of them off between the
  * question and the answer and a slot-starved scheduler seats it before small talk.
  */
@@ -558,7 +558,7 @@ export type ArrangeResult =
  * make, put out now. The one who asks is `initiatorId` when the player chose, else
  * whoever aches more (`pickRendezvousInitiator`). It goes through the existing path
  * and nothing shortcuts it: a pending invitation (the asker walks over,
- * decisions.ts `RENDEZVOUS_SEEK_SCORE`) and, when the two are already together and
+ * decisions/seek.ts `RENDEZVOUS_SEEK_SCORE`) and, when the two are already together and
  * free, the `rendezvous` conversation queued right away (`RENDEZVOUS_TRIGGER`, so
  * its topic is not stripped). The other can still say no there, and a refusal costs
  * the asker exactly what it always does.

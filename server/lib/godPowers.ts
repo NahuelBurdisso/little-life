@@ -204,7 +204,7 @@ function wouldRepeat(p: PersonalityProfile | null): boolean {
 
 /**
  * A made-up story, told only to `seederId`. It goes through `createFact` like
- * the jealousy rumors in states.ts, with source `fabricated` so the existing
+ * the jealousy rumors in states/effects.ts, with source `fabricated` so the existing
  * "compare notes" discovery in `spreadGossip` can trace it back to the seeder
  * (known_by[0]) — planting a rumor in someone's mouth can cost *them*. It is
  * marked `reliability: 'unverified'` (the column existed, unused), which is what

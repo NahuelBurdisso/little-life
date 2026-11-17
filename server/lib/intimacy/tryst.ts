@@ -37,7 +37,7 @@ import { SNEAK_RANGE_PX, onlookersNear, someoneNear, withHiddenLoveBump } from '
 //        │  the other's, else a barn (any weather) or a grove (fair weather) after
 //        │  dark, else, late at night, a home where every other resident is asleep
 //        ▼
-//   both walk to the venue (decisions.ts, tier 6350: `trystStepFor` 'meet')
+//   both walk to the venue (decisions/seek.ts, tier 6350: `trystStepFor` 'meet')
 //        │  the pass sees them both there ─▶ beginTryst: both start
 //        │  `{ type: 'idle', zoneActivity: 'tryst', partnerId }` for 60-90 game min
 //        ▼

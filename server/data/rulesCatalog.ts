@@ -69,7 +69,7 @@ export const DEFAULT_LIVE_RULES: Readonly<LiveRules> = {
 
 /**
  * Multiplier on the per-minute chance of catching something from the
- * environment (states.ts). 'low' is the tuned base (~14% a day for a rested
+ * environment (states/triggers.ts). 'low' is the tuned base (~14% a day for a rested
  * agent in fair weather); 'high' is roughly one agent in two a day, which is
  * an epidemic town on purpose.
  */
@@ -77,7 +77,7 @@ export const SICKNESS_MULTIPLIER: Readonly<Record<SicknessLevel, number>> = {
   off: 0, low: 1, medium: 2, high: 3.5,
 };
 
-/** Multiplier on person-to-person spread: the states.ts roll and the `sick_contagion` ripple rule. */
+/** Multiplier on person-to-person spread: the states/effects.ts roll and the `sick_contagion` ripple rule. */
 export const CONTAGION_MULTIPLIER: Readonly<Record<SicknessLevel, number>> = {
   off: 0, low: 1, medium: 2, high: 3.5,
 };

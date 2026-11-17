@@ -74,7 +74,7 @@ export const PROPOSAL_PENDING_MINUTES = 42 * 60;
 /** How long the queued conversation may wait for a slot, in game minutes. */
 export const PROPOSAL_QUEUE_WAIT_MINUTES = 60;
 /**
- * Queue priority. At the protected level (conversations.ts `isProtectedEntry`)
+ * Queue priority. At the protected level (conversations/helpers.ts `isProtectedEntry`)
  * on purpose: hunger must not walk someone out between the question and the
  * answer, and a slot-starved scheduler should seat this before small talk.
  */
@@ -557,7 +557,7 @@ export function queueShotgunProposal(proposerId: number, partnerId: number): boo
 // one of its 10-minute passes, so a couple who keep different hours (one at the
 // forge all day, one at the bakery) could sit on a pending proposal until it
 // timed out and got re-decided a day later — a wedding that never came because
-// nobody walked across town. Now the proposer goes looking: decisions.ts turns
+// nobody walked across town. Now the proposer goes looking: decisions/phases.ts turns
 // `pendingProposalPartner` into a walk to the partner (same shape as a comfort
 // visit) whenever both are free to be found, and `queuePendingProposalNow`
 // seats the question the moment they meet instead of at the next pass.
@@ -639,7 +639,7 @@ interface ConversationEndedPayload {
   perpetratorId?: number | null;
   /** Both tiers carry it (a template chat is stored as a conversation row too); `template` tells them apart. */
   conversationId?: number;
-  /** Set by the template tier's emit (conversations.ts `processTimedOutEntry`). */
+  /** Set by the template tier's emit (conversations/template.ts `processTimedOutEntry`). */
   template?: boolean;
   summary?: string;
   turns?: number;

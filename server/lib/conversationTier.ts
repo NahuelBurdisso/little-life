@@ -201,7 +201,7 @@ export function underPressure(ctx: Pick<TierContext, 'backlog' | 'population' | 
 
 /**
  * A watched entry's priority: boosted, but kept below the protected band
- * (PLAYER_NUDGE_PRIORITY - 10 and up, conversations.ts `isProtectedEntry`) —
+ * (PLAYER_NUDGE_PRIORITY - 10 and up, conversations/helpers.ts `isProtectedEntry`) —
  * entering it would change how the scheduler treats the entry (needs can't cut
  * it, it waits out a busy partner), which is the player's privilege, not the
  * camera's.
