@@ -18,6 +18,7 @@ import { intimacyLinesFor } from './intimacyContext';
 import { isAdultContent } from '../lib/worldRules';
 import { isAdultAge } from '../lib/intimacy/eligibility';
 import { socialCallIntent } from '../lib/socialCalls/topics';
+import { gatheringIntent } from '../lib/gatherings/topics';
 import type { ConversationMessage } from '../db/schema';
 
 /**
@@ -414,6 +415,9 @@ export function topicIntent(topic: string, other: string): string {
   // A social call (lib/socialCalls): the caller came on purpose and says why.
   const call = socialCallIntent(topic, other);
   if (call) return call;
+  // A chat at a gathering (lib/gatherings): both are at the same occasion.
+  const gathering = gatheringIntent(topic, other);
+  if (gathering) return gathering;
   if (t.startsWith('checking on')) return `You want to see how ${other} is really doing — ask about the specific thing you know is going on with them, not a general "how are you".`;
   const intents: Record<string, string> = {
     'flirting': `You're drawn to ${other}. Flirt a little: tease, compliment something specific, or hint at how you feel.`,

@@ -32,4 +32,17 @@ export interface SimEventPayloads {
   'life:engaged': { proposerId: number; answererId: number };
   /** The election count (lib/townCalendar.ts): the winner and the candidates who lost. */
   'civic:election': { winnerId: number; loserIds: number[] };
+  /**
+   * A resident has made up their mind to leave town (lib/populationFlow.ts): they set off at
+   * `leaveAtMin` (game minutes). The town's chance to see them off (lib/gatherings send-off).
+   */
+  'life:leaving_decided': { agentId: number; leaveAtMin: number };
+  /**
+   * A world event has just started (engine/systems/events.ts `startWorldEvent`, the one entry
+   * point): lib/gatherings wraps the ones people gather for (a wedding, market day, a fire).
+   * `startedAtMin` is game minutes, `durationHours` game hours.
+   */
+  'world:event_started': {
+    eventId: number; type: string; triggeredBy: string; locationId: number | null; startedAtMin: number; durationHours: number; name: string;
+  };
 }

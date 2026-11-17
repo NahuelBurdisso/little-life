@@ -29,6 +29,7 @@ import { tavernTick } from '../lib/tavernEngine';
 import { lonelinessCheck } from '../lib/lonelinessEngine';
 // Also registers the social-call listeners (a side-effect module, like giftEngine).
 import { socialCallsHourly } from '../lib/socialCalls';
+import { gatheringsTick } from '../lib/gatherings';
 import { dailyLifeHourly } from '../lib/dailyLife';
 import { smallMisdeedsHourly } from '../lib/smallMisdeeds';
 import { personalEventsHourly } from '../lib/personalEvents';
@@ -371,6 +372,10 @@ export async function gameTick(): Promise<void> {
     // its contest, the election campaign and the count (lib/townCalendar.ts).
     // After career moves, so a vacancy filled this pass isn't swapped under the count.
     runGuarded('townCalendar', () => db.transaction(() => townCalendarTick(newTime, nowMinutes)));
+    // Gatherings (lib/gatherings): invitations for what is about to start, who is
+    // at each venue, the eulogy / toast / fire's outcome, and the summary at the end.
+    // After the calendar, so a market opened this pass is wrapped and opened at once.
+    runGuarded('gatherings', () => db.transaction(() => gatheringsTick(nowMinutes)));
   }
   // Loneliness and confrontation once per game hour.
   if (hourChanged(transitions)) {

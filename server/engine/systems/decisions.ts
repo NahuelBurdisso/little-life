@@ -19,6 +19,7 @@ import { resolveDestination, startDecision, logZoneActivity } from './decisions/
 import { executeCrime, constableArrests } from './decisions/crime';
 import { queueSocialConversation } from './decisions/social';
 import { queueLocationEncounters } from './decisions/encounters';
+import { queueGatheringEncounters } from './decisions/gathering';
 
 export { clearWorkSkipCounts, DATE_ANNOUNCE_REPEAT_MINUTES, shouldAnnounceDate, clearDateAnnouncements } from './decisions/state';
 export { gatheringBonus } from './decisions/helpers';
@@ -105,6 +106,9 @@ export function tick(world: WorldRow): void {
   }
 
   queueLocationEncounters(d);
+  // Chats at gatherings (lib/gatherings), after the chance meetings so a pair the
+  // tavern already queued is not queued twice; seeded dice, not Math.random.
+  queueGatheringEncounters(d);
   constableArrests(d);
 
   emitter.markDirty('agents.all');

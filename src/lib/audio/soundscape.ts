@@ -346,6 +346,9 @@ const BEAT_CUE: Readonly<Record<string, StoryCue | null>> = {
   sick_visit: null, vigil: null, condolence: null, congratulation: null, birthday_wish: null,
   forgotten_birthday: null, welcome: null, consolation: null, plea_to_stay: null,
   welcome_home: null, cold_shoulder: null, loan: null, loan_repaid: null, loan_unpaid: null,
+  // Gatherings (server/lib/gatherings): the summary of who came, written at the end.
+  // The wrapped event already rang its own cue (the knell, the fire alarm, the cheer).
+  funeral: null, wake: null, send_off: null, market_day: null, fire_saved: null, fire_lost: null, toast: null, round: null,
 };
 
 /** Row types that carry their own cue regardless of `metadata.beat`. */

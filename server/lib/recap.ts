@@ -107,6 +107,8 @@ const BEAT_ICONS: Record<string, string> = {
   sick_visit: '🍲', vigil: '🕯', condolence: '🕯', congratulation: '🎉', birthday_wish: '🎂',
   forgotten_birthday: '☁', welcome: '🍞', consolation: '🫂', plea_to_stay: '🫂',
   welcome_home: '🏠', cold_shoulder: '❄', loan: '💰', loan_repaid: '💰', loan_unpaid: '💸',
+  // Gatherings (lib/gatherings): the town doing something together.
+  funeral: '🕯', wake: '🍺', send_off: '👋', market_day: '🧺', fire_saved: '🔥', fire_lost: '🔥', toast: '🥂', round: '🍺',
 };
 const CATEGORY_ICONS: Record<string, string> = {
   world_event: '~', aspiration: '★', goal: '▶', relationship: '♦', social: '💬', drama: '!',

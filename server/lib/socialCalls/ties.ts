@@ -37,10 +37,15 @@ const UNAVAILABLE_STATES = new Set(['arrested', 'sick', 'depressed']);
 
 type AgentRow = typeof agents.$inferSelect;
 
-/** Every living resident but the target, with their ties to them. */
-export function gatherCandidates(targetId: number): CallerCandidate[] {
+/**
+ * Every living resident but the target, with their ties to them. The target is
+ * normally living too; a funeral (lib/gatherings) asks the ties of someone who
+ * has just died, so `opts.anyTarget` reads the target whether or not they are active.
+ */
+export function gatherCandidates(targetId: number, opts: { anyTarget?: boolean } = {}): CallerCandidate[] {
   const living = db.select().from(agents).where(eq(agents.is_active, true)).all();
-  const target = living.find((a) => a.id === targetId);
+  const target = living.find((a) => a.id === targetId)
+    ?? (opts.anyTarget ? db.select().from(agents).where(eq(agents.id, targetId)).get() : undefined);
   if (!target) return [];
   const rels = db.select().from(relationships)
     .where(or(eq(relationships.agent_a, targetId), eq(relationships.agent_b, targetId))).all();

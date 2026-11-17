@@ -29,7 +29,9 @@ export type DramaBeat =
   // Social calls (lib/socialCalls): someone went to see someone because of what happened to them.
   | 'sick_visit' | 'vigil' | 'condolence' | 'congratulation' | 'birthday_wish' | 'forgotten_birthday'
   | 'welcome' | 'consolation' | 'plea_to_stay' | 'welcome_home' | 'cold_shoulder'
-  | 'loan' | 'loan_repaid' | 'loan_unpaid';
+  | 'loan' | 'loan_repaid' | 'loan_unpaid'
+  // Gatherings (lib/gatherings): several residents in one place for a shared reason.
+  | 'funeral' | 'wake' | 'send_off' | 'market_day' | 'fire_saved' | 'fire_lost' | 'toast' | 'round';
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday' | 'kiss';
 
@@ -111,6 +113,18 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   loan: null,
   loan_repaid: null,
   loan_unpaid: null,
+  // Gatherings (lib/gatherings, `gathering` rows): the crowd at the venue and the
+  // event's own decor (a wreath, flames on a roof, bunting) are the picture, and the
+  // wrapped event already has its sound (the knell, the alarm). The row is the
+  // summary of who came, written when it is over: no effect would fit it.
+  funeral: null,
+  wake: null,
+  send_off: null,
+  market_day: null,
+  fire_saved: null,
+  fire_lost: null,
+  toast: null,
+  round: null,
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

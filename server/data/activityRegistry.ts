@@ -102,6 +102,11 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // `severity` lifts the row by 0.3 per unit: most visits go in at 0.5-0.65
   // (Highlights without spamming), a vigil or an unpaid loan higher.
   social_call:     { category: 'social', base_importance: 0.5, retention: 'medium', template: '{description}' },
+  // Several residents in one place for a shared reason (lib/gatherings): a funeral, a
+  // wake, a send-off, market day, a fire, a wedding's guests, a round at the tavern.
+  // ONE row per gathering, at its end, naming who came and who conspicuously did not.
+  // `severity` lifts it: funerals, wakes, send-offs and fires go in at 0.6 and up.
+  gathering:       { category: 'social', base_importance: 0.5, retention: 'long', template: '{description}' },
 
   // ─── Life milestones (lib/milestonesEngine.ts) ──────────────────────────────
   // Their own types rather than `drama` rows: the client's story beats key on

@@ -11,7 +11,6 @@ import { graveDeathChancePerMinute } from './sickness';
 import { db } from '../db';
 import { agents, economy, relationships, worldState, agentStates } from '../db/schema';
 import { logActivity } from './activityLogger';
-import { startWorldEvent } from '../engine/systems/events';
 import { eq, and, or } from 'drizzle-orm';
 import { createFact } from './gossip';
 import { simEvents } from './simEvents';
@@ -351,18 +350,6 @@ function estateLine(
   return `${deceased}'s estate${what ? ` — ${what} —` : ''} went to ${heirName}, ${who}.`;
 }
 
-function createFuneralEvent(ctx: DeathEffectContext): void {
-  // Catalog duration is in game hours; this used to insert `duration: 240`
-  // commented "4 hours", which the expiry math read as 240 hours.
-  startWorldEvent('funeral', {
-    triggeredBy: `death:${ctx.agentId}`,
-    name: `Funeral of ${ctx.agentName}`,
-    description: `The town gathers to mourn ${ctx.agentName}. ${ctx.causeDescription}.`,
-    enforceLimits: false,
-    announce: false, // the death itself is the feed entry; memorials are written separately
-  });
-}
-
 /** Statuses that make the deceased someone the survivor never got on with. */
 const HOSTILE_TIES = new Set(['rivals', 'enemies', 'estranged']);
 
@@ -450,7 +437,9 @@ const DEATH_EFFECTS: DeathEffect[] = [
   { name: 'create_death_fact', execute: createDeathFact },
   { name: 'trigger_grieving',  execute: triggerGrieving },
   { name: 'inheritance',       execute: processInheritance },
-  { name: 'funeral_event',     execute: createFuneralEvent },
+  // No funeral step: the funeral is a gathering (lib/gatherings, on `life:death`
+  // below), held the next day on the square with the mourners pulled in. It used
+  // to start here at once, with no place and nobody going.
   { name: 'memorial_memories', execute: createMemorialMemories },
   { name: 'activity_log',      execute: logDeath },
 ];

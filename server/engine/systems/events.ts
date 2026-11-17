@@ -6,7 +6,7 @@ import { gameMinutes, hourChanged } from '../../lib/gameClock';
 import { weightedRandom } from '../../lib/utils';
 import { emitter } from '../emitter';
 import { logActivity } from '../../lib/activityLogger';
-import { simEvents } from '../../lib/simEvents';
+import { simEvents, type SimEventPayloads } from '../../lib/simEvents';
 import { WORLD_EVENTS, EVENT_WEATHER, type WorldEventDef, type WorldEventType } from '../../data/worldEventCatalog';
 import { dramaMultiplier, getRules, type LiveRules } from '../../lib/worldRules';
 import { strangerLeaves } from '../../lib/strangerDeparture';
@@ -59,6 +59,18 @@ export interface StartWorldEventOptions {
  * their own copy of the definitions — and their own bugs (a 120-hour autoplay
  * "2 hour" event with no effects, a 240-hour funeral meant to last 4).
  */
+/**
+ * Where an event with no place of its own happens, by type: a fire has to burn
+ * SOME building (lib/gatherings registers the picker). Kept as a hook so this
+ * module doesn't import the systems that react to events.
+ */
+const venueResolvers = new Map<string, (startedAtMin: number) => number | null>();
+
+export function setEventVenueResolver(type: WorldEventType, fn: ((startedAtMin: number) => number | null) | null): void {
+  if (fn) venueResolvers.set(type, fn);
+  else venueResolvers.delete(type);
+}
+
 export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptions): StartWorldEventResult {
   const world = db.select().from(worldState).get();
   if (!world?.time) return { ok: false, reason: 'No world state' };
@@ -90,7 +102,7 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
     started_at: gameMinutes(world.time),
     duration: def.durationHours,
     effects: def.effects,
-    location_id: opts.locationId ?? null,
+    location_id: opts.locationId ?? venueResolvers.get(type)?.(gameMinutes(world.time)) ?? null,
     triggered_by: opts.triggeredBy,
     is_active: true,
   }).returning().get();
@@ -120,6 +132,14 @@ export function startWorldEvent(type: WorldEventType, opts: StartWorldEventOptio
       simEvents.emit('event:world', { agentId: agent.id, name, description });
     }
   }
+
+  // Listeners only schedule (they run inside the caller's transaction): the
+  // gatherings module wraps a wedding, market day or a fire in a gathering.
+  const started: SimEventPayloads['world:event_started'] = {
+    eventId: event.id, type, triggeredBy: opts.triggeredBy, locationId: event.location_id ?? null,
+    startedAtMin: event.started_at, durationHours: event.duration, name,
+  };
+  simEvents.emit('world:event_started', started);
 
   emitter.markDirty('world.state');
   return { ok: true, event };

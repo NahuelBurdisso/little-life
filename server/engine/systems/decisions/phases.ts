@@ -19,6 +19,7 @@ import { nearestLocation, addNoise } from './helpers';
 import { withMeal, SUPPER_MIN_ENERGY } from './meals';
 import { checkEmergency } from './emergency';
 import { socialCallPhase, URGENT_SOCIAL_CALL_SCORE } from './socialCall';
+import { gatheringPhase, hasMustGathering } from './gathering';
 import { proposalSeekDecision, trystDecision, rendezvousSeekDecision } from './seek';
 import { isCommuteDue, checkSchedule } from './schedule';
 import { scoreFreeTimeActions } from './freeTime';
@@ -58,7 +59,10 @@ export function chooseDecision(t: AgentTurn, d: DecisionTickContext): ScoredActi
   // happy birthday, but a spouse still goes to a deathbed.
   if (!decision) {
     const call = socialCallPhase(agent, d);
-    decision = call && call.score < URGENT_SOCIAL_CALL_SCORE && (ownWeddingPhase(agent, d) || ownChristeningPhase(agent, d))
+    // A `must` gathering (their husband's funeral, their own house on fire) is
+    // the same: a birthday wish can wait.
+    decision = call && call.score < URGENT_SOCIAL_CALL_SCORE
+      && (ownWeddingPhase(agent, d) || ownChristeningPhase(agent, d) || hasMustGathering(agent, d))
       ? null
       : call;
   }
@@ -69,6 +73,13 @@ export function chooseDecision(t: AgentTurn, d: DecisionTickContext): ScoredActi
 
   if (!decision) {
     decision = ownChristeningPhase(agent, d);
+  }
+
+  // Phase 1a'' (gatherings, lib/gatherings): a gathering that is the agent's own
+  // (score 6550: the widow at the funeral, the owner at the fire). Off a shift;
+  // out of bed only for a kind that wakes people. decisions/gathering.ts.
+  if (!decision) {
+    decision = gatheringPhase(agent, d, 'must');
   }
 
   if (!decision) {
@@ -90,13 +101,22 @@ export function chooseDecision(t: AgentTurn, d: DecisionTickContext): ScoredActi
   }
 
   if (!decision && !isCommuteDue(agent, allLocations, world.time.hour, world.time.minute)) {
-    decision = planPhase(t, d);
+    // A gathering of close ties (score 6100), or one they are already at, ahead
+    // of the day plan: a friend's funeral beats "browse the market". Never off a
+    // shift unless the kind says (a fire).
+    decision = gatheringPhase(agent, d, 'should') ?? planPhase(t, d);
   }
 
   // Phase 2: Schedule
   if (!decision) {
     const scheduled = checkSchedule(agent, world, allLocations, agentNeeds.hunger);
     decision = scheduled && withMeal(scheduled, mealPlan);
+  }
+
+  // Phase 2a (gatherings): anyone else's pull to a gathering, as a crowd pull
+  // (score 3850), rolled per tick with the gathering's own seeded dice.
+  if (!decision) {
+    decision = gatheringPhase(agent, d, 'may');
   }
 
   if (!decision && activeEventTypes.size > 0) {

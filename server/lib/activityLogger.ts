@@ -25,6 +25,7 @@ interface LogActivityParams {
     chainId?: string; chainDepth?: number; ruleId?: string; beat?: DramaBeat;
     /** The shared_knowledge row a gossip beat retells (gazette.ts: old news). */ factId?: number;
     /** A `social_call` row's kind (lib/socialCalls): the soak counts calls per kind by it. */ callKind?: string;
+    /** A `gathering` row's kind (lib/gatherings): the soak counts gatherings per kind by it. */ gatheringKind?: string;
   } | null;
 }
 

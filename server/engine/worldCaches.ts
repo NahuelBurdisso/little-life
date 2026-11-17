@@ -75,6 +75,7 @@ import { clearIntimacy, intimacySnapshotStore } from '../lib/intimacy/state';
 import { clearVacancies } from '../lib/vacancies';
 import { clearFamilyState, familySnapshotStore } from '../lib/familyState';
 import { clearSocialCallState, socialCallsSnapshotStore } from '../lib/socialCalls';
+import { clearGatheringState, gatheringsSnapshotStore } from '../lib/gatherings';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
 import type { SnapshotStore } from './snapshotCodec';
 
@@ -126,6 +127,7 @@ const PERSISTED_STORES: readonly SnapshotStore[] = [
   familySnapshotStore,
   intimacySnapshotStore,
   socialCallsSnapshotStore,
+  gatheringsSnapshotStore,
 ];
 
 /** Checkpoint every persisted store for the current world. Never throws. */
@@ -223,6 +225,8 @@ export function clearPerWorldCaches(): void {
   clearIntimacy();
   // Promised visits, who came and who didn't, lingering at a bedside (lib/socialCalls): agent ids and game minutes.
   clearSocialCallState();
+  // Funerals set for tomorrow, send-offs at dawn, who came to the last one, the rounds' cooldowns (lib/gatherings).
+  clearGatheringState();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();
