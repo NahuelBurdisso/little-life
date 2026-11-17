@@ -26,3 +26,11 @@ data/saves/
 # LLM traces (full prompts) and bench reports from scripts/llm-bench.ts.
 data/trace/
 data/bench/
+
+# Local settings: copy .env.example to .env and edit. Tracking .env invites a
+# secret (an API key for an OpenAI-compatible backend) into history one day.
+.env
+
+# The play copy (data/play/play.bat): its own world DB lives in a subfolder the
+# data/*.db patterns above do not reach.
+data/play/
