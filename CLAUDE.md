@@ -68,6 +68,8 @@ server/
   engine/systems/     11 phases in order: needs → states → economy → relationships →
                       conversations → goals → decisions → movement → events → gossip → cascade
                       (each sync phase in its own db.transaction; conversations is async)
+                      states/, decisions/, conversations/ hold each phase's steps; the
+                      same-named .ts is the orchestrator and re-exports the phase's API
   engine/emitter.ts   "channel dirty" pub/sub → client invalidates React Query caches
   lib/                *Engine.ts subsystems, cascade/ (Ripple/Tension/Snap), memory/,
                       goals/, planning/, perception/, worldgen/ (procedural town pipeline)

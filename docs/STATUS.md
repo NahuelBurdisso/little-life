@@ -2,10 +2,58 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors (now also over `scripts/`), `eslint` 0 errors
-(3 warnings, all `react-hooks/exhaustive-deps`; **0 explicit `any`**, and the rule is an error), vitest 348 files /
-4144 tests (Vitest 5, ~54 s). Branch `chore/hygiene-and-debt` off `master`
-(the only other branch; the September feature branches and all agent worktrees are merged and gone).
+**Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors (also over `scripts/`), `eslint` 0 errors
+(3 warnings, all `react-hooks/exhaustive-deps`; 0 explicit `any`, the rule is an error), vitest 352 files /
+4159 tests (Vitest 5, ~55 s), `npm run deadcode` 0/0. `master` holds the hygiene pass and the typing pass; branch
+`refactor/split-god-functions` (off `master`, 21 commits, not merged) holds the two sections below.
+
+## God-functions split (2026-11-17, branch `refactor/split-god-functions`)
+
+Behaviour-preserving extraction, one commit per function and one per file move, `npm run check` green before each.
+Each orchestrator now builds a context object and calls one small function per step, in the original order.
+
+| Was | Now | Steps live in |
+|---|---|---|
+| `states.ts` 2444 lines: `evaluateTriggers` 688, `processStateEffects` 923 | 717 lines: 38 and 47 | `engine/systems/states/` (`triggers.ts`, `effects.ts`, `context.ts`, `trackers.ts`) |
+| `decisions.ts` 2672: `tick` 1120, `scoreFreeTimeActions` 682 | 210: 12 and 70 | `engine/systems/decisions/` (14 modules; `phases.ts`, `freeTime.ts`, `action.ts`, `social.ts`, `crime.ts`...) |
+| `conversations.ts` 2011: `finishCompletedConversation` 731, `conversationsTick` 684 | 276: 32 and 16 | `engine/systems/conversations/` (`queue.ts`, `activeConversations.ts`, `completion.ts`, `darkDynamics.ts`, `facts.ts`...) |
+| `routers/setup.ts` 1422: `seedWorld` 739 | 659: ~45 | `routers/setup/` (`seedAgents.ts`, `seedRelationships.ts`, `seedKnowledge.ts`, `seedWorldState.ts`) |
+
+- The old files re-export what they exported; module-level trackers moved to `states/trackers.ts` and
+  `decisions/state.ts` as single instances. No submodule imports its parent.
+- Proof beyond the tests: sorted-line comparison of each file before and after its move (identical apart from
+  imports/exports); for `seedWorld`, a SHA-256 over every row of a seeded world with `Date.now` and `Math.random`
+  pinned, identical before and after for 4 seeds and casts of 13, 24 and 32.
+- One timing difference: `conversationsTick`'s promise resolves one microtask later (it awaits `runAsyncPass`); the
+  order of side effects is unchanged.
+- Still over 150 lines, not in scope: `replaceWorld` (280, `routers/setup.ts`), `processTimedOutEntry` (217,
+  `conversations/template.ts`), `fillLLMSlot` (124, mostly comments).
+
+## Bugs found while splitting, fixed (same branch, one commit and one test each)
+
+- `stressed` was the only state that did not emit `state:triggered` (so no cascade rule ever saw it).
+- A thief only remembered a theft they were caught at (`stealItem`).
+- `confident` shattering into `angry` wrote no feed row and no events.
+- Hangover regret counted sober talks during the hangover, and once per conversation instead of once per friend.
+- Pickpocketing wrote the thief's money from the tick-start snapshot, overwriting earlier changes that tick.
+- The reputation window (`recordReputation`) was a fixed 24 real minutes: one game day only at 1x.
+- Two biased `sort(() => Math.random() - 0.5)` shuffles are Fisher-Yates now (`lib/utils.ts` `shuffled`).
+- Seeding drew mood, stress, work_performance and daily_expenses from unseeded `Math.random()`; they come from
+  `forkRng(seed, 'needs')` now.
+- Dead code (the recursion in `applyCascades`, four always-true checks) and ~35 comments naming old paths.
+
+Open, found in the same work:
+- `startingNeeds()` (hunger, energy, social, comfort, fun at world start) is still unseeded: the same seed does not
+  yet give exactly the same residents (`routers/setup/seedAgents.ts`; it takes a `rand` argument already).
+- `hadRecentConflict` can differ between the two participants of one conversation: `recordParticipantOutcomes`
+  re-reads unprocessed relationship events per participant and listeners insert some in between (a refused
+  proposal, an election grudge). That is also why the repeated query was not hoisted.
+- `theftCount` on the `in_debt` state is written and never read.
+- The tavern owner goes briefly broke in the 10-day soak (seed `base1`, 4x, LLM off: "Marco Rivera is broke", day
+  3 on this branch, day 7 on `master`). Not from this branch. The soak before the fun rebalance had no anomaly, so
+  the likely cause is less tavern trade since work stopped draining fun; one seed, not confirmed.
+- Left as they are on purpose: an arrested resident in a town with no prison stands still for the sentence; plan
+  requests use the raw schedule hours and conversation topics the raw personality (scoring uses the effective ones).
 
 ## No explicit `any` (2026-11-17, same branch)
 
@@ -73,10 +121,7 @@ Tried and reverted:
 Still open from this pass:
 - **Gossip share** (164 of 227 drama rows in the base soak, LLM off). Presentation already treats retellings as
   texture (B1, gazette); lowering their importance changes Highlights and needs a look in the client first.
-- **God-functions**, unchanged: `states.ts` `processStateEffects` 923 lines / `evaluateTriggers` 688;
-  `decisions.ts` `tick` 1120 / `scoreFreeTimeActions` 682; `conversations.ts` `finishCompletedConversation` 731 /
-  `conversationsTick` 684; `routers/setup.ts` `seedWorld` 739. The files are big because these are; each needs its
-  own careful session, not a file shuffle. `App.tsx` still holds 22 `useState`.
+- (God-functions: split on `refactor/split-god-functions`, see the top.) `App.tsx` still holds 22 `useState`.
 - **No git remote**; `data/` holds ~650 MB of old backups and scratch DBs (left alone: the player's call).
 - **Real-LLM playtest** of family, calendar, overnight plans, the adult layer, and now grave illness and the fun
   rebalance: still the most informative next step.
