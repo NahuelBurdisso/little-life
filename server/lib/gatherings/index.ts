@@ -11,10 +11,12 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../../db';
 import { agents, locations, worldEvents } from '../../db/schema';
-import { simEvents } from '../simEvents';
+import { simEvents, type SimEventPayloads } from '../simEvents';
 import { gameMinutesNow } from '../worldClock';
 import { clearGatherings, forgetInvitee, gatheringsPass, registerGatheringKind } from './engine';
 import { FUNERAL, WAKE, onDeath } from './kinds/funeral';
+import { SEND_OFF, onLeavingDecided } from './kinds/sendOff';
+import { MARKET, onMarketStarted } from './kinds/market';
 import type { GatheringKind } from './types';
 
 export {
@@ -23,7 +25,7 @@ export {
 export type { Gathering, GatheringKind, GatheringRecord, InviteLevel, Attendance } from './types';
 
 /** The built-in kinds. Later passes register their own (`registerGatheringKind`). */
-export const GATHERING_KINDS: readonly GatheringKind[] = [FUNERAL, WAKE];
+export const GATHERING_KINDS: readonly GatheringKind[] = [FUNERAL, WAKE, SEND_OFF, MARKET];
 
 function registerBuiltInKinds(): void {
   for (const k of GATHERING_KINDS) registerGatheringKind(k);
@@ -76,6 +78,13 @@ function initGatherings(): void {
   if (initialized) return;
   initialized = true;
 
+  simEvents.on('world:event_started', guarded<SimEventPayloads['world:event_started']>('world:event_started', (p) => {
+    switch (p.type) {
+      case 'market_day': onMarketStarted(p.eventId, p.locationId, p.startedAtMin, p.durationHours); break;
+    }
+  }));
+  simEvents.on('life:leaving_decided', guarded<SimEventPayloads['life:leaving_decided']>('life:leaving_decided',
+    (p) => onLeavingDecided(p.agentId, p.leaveAtMin, gameMinutesNow())));
   // The dead are buried; the departed are struck from every list.
   simEvents.on('life:death', guarded<{ agentId: number; name: string }>('life:death', (p) => {
     forgetInvitee(p.agentId);

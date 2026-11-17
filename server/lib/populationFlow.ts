@@ -557,6 +557,9 @@ export function populationFlowDaily(time: ClockTime, nowMinutes: number): void {
     memoryService.record(t.agentId, 'reflection',
       "I've made up my mind: I'm leaving this town. Tomorrow morning I'll pack what I can carry and go.",
       { subtype: 'leaving_town' }, -0.5, 8);
+    // The hours before they set off are the town's chance to see them off (lib/gatherings).
+    const decided: SimEventPayloads['life:leaving_decided'] = { agentId: t.agentId, leaveAtMin: leaveAt };
+    simEvents.emit('life:leaving_decided', decided);
     changed = true;
   }
 
