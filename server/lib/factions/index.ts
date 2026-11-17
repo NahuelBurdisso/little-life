@@ -149,6 +149,7 @@ const TRIGGERS: Record<string, { kind: TriggerKind; text: string }> = {
   missed_funeral: { kind: 'slight', text: 'a funeral one of them stayed away from' },
   fire_absent: { kind: 'slight', text: 'a fire one of them never came to' },
   wedding_absent: { kind: 'slight', text: 'a wedding one of them stayed away from' },
+  christening_absent: { kind: 'slight', text: 'a christening one of them stayed away from' },
   ingratitude: { kind: 'slight', text: 'a kindness never returned' },
   election_grudge: { kind: 'slight', text: 'the election for mayor' },
 };
