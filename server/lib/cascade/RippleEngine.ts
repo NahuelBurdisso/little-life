@@ -6,7 +6,7 @@ import { simEvents } from '../simEvents';
 import { db } from '../../db';
 import { agents, agentStates, needs, economy, relationships, worldState, goals, locations } from '../../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
-import { createFact, getAgentName, jealousRumorContext, type FactContext } from '../gossip';
+import { createFact, getAgentName, jealousRumorContext, learnExistingFact, type FactContext } from '../gossip';
 import { describeWitnessedAct, type WitnessAmplifier } from './WitnessAmplifier';
 import type { TensionTracker } from './TensionTracker';
 import { logActivity } from '../activityLogger';
@@ -855,7 +855,7 @@ export class RippleEngine {
       const subjectId = metadata.perpetratorId;
       if (subjectId != null && subjectId !== agentId) {
         const otherId = metadata.victimId != null && metadata.victimId !== subjectId ? metadata.victimId : null;
-        createFact(
+        const created = createFact(
           fx.createFact,
           subjectId,
           otherId,
@@ -863,6 +863,11 @@ export class RippleEngine {
           [agentId, subjectId, ...(otherId != null ? [otherId] : [])],
           `cascade:${rule.id}`,
         );
+        // The event's own code usually wrote this fact first (crime.ts: the
+        // caught theft, the arrest), so createFact saw a duplicate and returned
+        // null — and the witness the rule was for never learned anything. They
+        // join the existing fact instead.
+        if (created == null) learnExistingFact(fx.createFact, subjectId, otherId, agentId);
       }
     } else if (fx.createFact) {
       const targetId = metadata.perpetratorId ?? metadata.victimId ?? null;

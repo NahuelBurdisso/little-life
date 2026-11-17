@@ -430,6 +430,24 @@ export function createFact(
   return Number(result.lastInsertRowid);
 }
 
+/**
+ * `agentId` learns the active fact(s) of this type about `subjectId` (and
+ * `targetId`, when given) that already exist — what a witness report does when
+ * createFact turns its fact away as a duplicate of the one the event itself
+ * wrote. Matches createFact's own duplicate test (a null target matches any).
+ */
+export function learnExistingFact(type: string, subjectId: number, targetId: number | null, agentId: number): void {
+  const rows = db.select({ id: shared_knowledge.id }).from(shared_knowledge)
+    .where(and(
+      eq(shared_knowledge.type, type),
+      eq(shared_knowledge.subject_id, subjectId),
+      eq(shared_knowledge.is_active, true),
+      ...(targetId != null ? [eq(shared_knowledge.target_id, targetId)] : []),
+    ))
+    .all();
+  for (const row of rows) addKnowers(row.id, [agentId]);
+}
+
 /** Adds `ids` to a fact's `known_by`, once each. A missing row is ignored. */
 export function addKnowers(factId: number, ids: number[]): void {
   const f = db.select({ known_by: shared_knowledge.known_by }).from(shared_knowledge).where(eq(shared_knowledge.id, factId)).get();

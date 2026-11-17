@@ -139,7 +139,12 @@ export function constableArrests(d: DecisionTickContext): void {
       // 8h base, +2h per negative fact past the arrest threshold, capped at 2 days.
       const sentence = Math.min(2880, 480 + (negFacts - arrestThreshold) * 120);
 
-      arrest(agent, other, prison, sentence, record, nowMinutes);
+      // Everyone in the room when the constable takes them, read before the
+      // teleport moves the prisoner (rows are this tick's snapshot).
+      const onlookers = activeAgents
+        .filter((a) => a.current_location === other.current_location && a.id !== agent.id && a.id !== other.id)
+        .map((a) => a.id);
+      arrest(agent, other, prison, sentence, record, nowMinutes, onlookers);
 
       break; // One arrest per tick
     }
@@ -158,7 +163,12 @@ function arrest(
   sentence: number,
   record: KnowledgeRow[],
   nowMinutes: number,
+  /** Who saw it happen: they know of the arrest from the start. */
+  onlookers: number[],
 ): void {
+  // Where it happened, before the teleport below moves them to the prison.
+  const sceneId = other.current_location;
+
   // Arrest: teleport criminal to prison, then hold them for the sentence.
   // The `arrested` state is what actually confines them — the guard at the
   // top of the decision loop keeps re-idling them until it expires.
@@ -216,9 +226,18 @@ function arrest(
   // arrest once it ends (and the cooldown runs from then).
   markFactsPaid(record.map(f => f.id), nowMinutes + sentence);
 
-  // Create arrest gossip fact
-  createFact('arrest', other.id, agent.id, 2, [agent.id, other.id], 'witnessed', { detail: `arrested by ${agent.name}` });
-  simEvents.emit('crime:arrested', { agentId: other.id, constableName: agent.name });
+  // Create arrest gossip fact. The onlookers know it too: it happened in front
+  // of them, and the witness rule below only ever picks one of them.
+  createFact('arrest', other.id, agent.id, 2, [agent.id, other.id, ...onlookers], 'witnessed', { detail: `arrested by ${agent.name}` });
+  // The cast and the scene: the arrested resident is the perpetrator, the
+  // constable the other party (so arrest_gossip's fact names them, and they are
+  // never picked as their own witness), and `locationId` is where it happened.
+  // Without it RippleEngine fell back to the prisoner's current place — the
+  // prison they had just been teleported to — and looked for witnesses there.
+  simEvents.emit('crime:arrested', {
+    agentId: other.id, perpetratorId: other.id, victimId: agent.id,
+    locationId: sceneId, constableName: agent.name,
+  });
 
   // Arrest memories
   simEvents.emit('interaction:completed', {
