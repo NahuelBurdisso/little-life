@@ -1,6 +1,6 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { db } from '../db';
-import { agents, economy, locations, relationships, shared_knowledge, worldState } from '../db/schema';
+import { agents, economy, locations, needs, relationships, shared_knowledge, worldState } from '../db/schema';
 import { generateWorld } from '../lib/worldgen';
 import { stopTickLoopAndWait } from '../engine/tick';
 import { eq } from 'drizzle-orm';
@@ -161,6 +161,45 @@ describe('initialize DB determinism', () => {
 
     const ws = db.select({ setup_config: worldState.setup_config }).from(worldState).get();
     expect((ws?.setup_config as SavedConfig | null)?.worldgen.seed).toBe(seed);
+  });
+
+  /**
+   * The mood, stress, work performance and daily expenses `initialize` seeds,
+   * in insert order. Captured at the insert, not read back: `initialize`
+   * restarts the tick loop, and its first tick rebuilds mood and stress
+   * before a test could read them.
+   */
+  async function seededDraws(seed: string) {
+    const { setupRouter } = await import('../routers/setup');
+    const drawn: Array<Record<string, unknown>> = [];
+    const realInsert = db.insert.bind(db);
+    const spy = vi.spyOn(db, 'insert').mockImplementation(((table: Parameters<typeof db.insert>[0]) => {
+      const builder = realInsert(table);
+      if (table !== needs && table !== economy) return builder;
+      const realValues = builder.values.bind(builder);
+      builder.values = ((row: Record<string, unknown>) => {
+        const { mood, stress, work_performance, daily_expenses } = row;
+        drawn.push(table === needs ? { mood, stress } : { work_performance, daily_expenses });
+        return realValues(row as never);
+      }) as typeof builder.values;
+      return builder;
+    }) as typeof db.insert);
+    try {
+      await setupRouter.createCaller({}).initialize(makeSetupConfig(seed));
+    } finally {
+      spy.mockRestore();
+    }
+    return drawn;
+  }
+
+  it('same seed → same starting mood, stress, performance and expenses; another seed → others', async () => {
+    const first = await seededDraws('needs-seed-a');
+    const again = await seededDraws('needs-seed-a');
+    const other = await seededDraws('needs-seed-b');
+
+    expect(first).toHaveLength(MINIMAL_AGENTS.length * 2);
+    expect(again).toEqual(first);
+    expect(other).not.toEqual(first);
   });
 });
 

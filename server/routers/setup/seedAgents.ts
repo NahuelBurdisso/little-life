@@ -10,6 +10,7 @@ import { ambitionText } from '../../data/ambitions';
 import { CONFIG } from '../../lib/constants';
 import { HOOK_VALUES } from '../../lib/dramaHooks';
 import { startingMoodModifiers, startingNeeds } from '../../lib/startingNeeds';
+import { forkRng } from '../../lib/worldgen/rng';
 import type { SeedContext } from './seedContext';
 
 // ─── Helper: job-based starting money ────────────────────────────────────────
@@ -204,7 +205,13 @@ export function registerStartOccupants(startOccupants: ReadonlyMap<number, numbe
  * performance, daily expenses), each only when its fallback is reached.
  */
 export function insertNeedsAndEconomy(ctx: SeedContext): void {
-  const { config, scenario, agentMap, startMinute } = ctx;
+  const { config, scenario, agentMap, startMinute, genResult } = ctx;
+  // Seeded from the world seed like the rest of the world: these were plain
+  // Math.random(), so the same seed gave the same town with different moods,
+  // stress, work performance and daily expenses. One stream for the whole
+  // step, drawn in the order the Math.random() calls were (a draw happens
+  // only when the scenario gives no value).
+  const rng = forkRng(genResult.seed, 'needs');
 
   // 4. Insert needs + economy for each agent
   // The crime slider decides inequality: it flattens everyone toward 60-80 at
@@ -226,8 +233,8 @@ export function insertNeedsAndEconomy(ctx: SeedContext): void {
       ...startingNeeds(),
       // The hooks' lonely and bored residents (lib/dramaHooks.ts).
       ...scenario?.hooks.needs[agentIdx],
-      mood: scenarioMood?.mood ?? 55 + Math.floor(Math.random() * 25),
-      stress: scenarioMood?.stress ?? 10 + Math.floor(Math.random() * 20),
+      mood: scenarioMood?.mood ?? 55 + Math.floor(rng.next() * 25),
+      stress: scenarioMood?.stress ?? 10 + Math.floor(rng.next() * 20),
       decay_rates: { ...CONFIG.NEEDS.DEFAULT_DECAY_RATES },
       thresholds: { ...CONFIG.NEEDS.THRESHOLDS },
       // The seeded `mood` above only lasts until the needs phase rebuilds it on
@@ -241,12 +248,12 @@ export function insertNeedsAndEconomy(ctx: SeedContext): void {
       job: agentCfg.job,
       job_title: agentCfg.jobTitle,
       salary: agentCfg.salary,
-      work_performance: 70 + Math.floor(Math.random() * 20),
+      work_performance: 70 + Math.floor(rng.next() * 20),
       money: startingMoneyFor(agentIdx),
       daily_expenses:
         CONFIG.ECONOMY.DAILY_EXPENSES.min +
         Math.floor(
-          Math.random() *
+          rng.next() *
             (CONFIG.ECONOMY.DAILY_EXPENSES.max - CONFIG.ECONOMY.DAILY_EXPENSES.min)
         ),
       inventory: getJobStartingInventory(agentCfg.job),
