@@ -89,6 +89,27 @@ export function recordFavorGiven(giverId: number, receiverId: number, magnitude:
   recordFavor(giverId, receiverId, magnitude);
 }
 
+/**
+ * How many favours `debtorId` owes `creditorId`: what they received from them
+ * minus what they gave back (never below 0). Read-only — `getBalance` creates
+ * an empty entry for every pair it is asked about, and the caller picker asks
+ * about every resident for every call, which would bloat the checkpoint with
+ * zeroes. The social calls read this to bring back the people who owe a visit
+ * (socialCalls/pickCallers.ts) and to notice ingratitude (socialCalls/reciprocity.ts).
+ */
+export function favorsOwed(debtorId: number, creditorId: number): number {
+  const b = favorLedger.get(debtorId)?.get(creditorId);
+  return b ? Math.max(0, b.received - b.given) : 0;
+}
+
+/**
+ * Both directions of a pair's ledger, for the pair dossier: what `a` owes `b`
+ * and what `b` owes `a` (each ≥ 0, read-only).
+ */
+export function favorStanding(a: number, b: number): { aOwesB: number; bOwesA: number } {
+  return { aOwesB: favorsOwed(a, b), bOwesA: favorsOwed(b, a) };
+}
+
 /** Get net favor balance: positive = they owe you, negative = you owe them */
 export function getNetFavorBalance(agentId: number, otherId: number): number {
   const balance = getBalance(agentId, otherId);

@@ -33,6 +33,7 @@ import { getEffectivePersonality } from '../../states';
 import type { PersonalityProfile } from '../../personality';
 import { gatherCandidates } from '../../socialCalls/ties';
 import { feel, mood, remember } from '../../socialCalls/effects';
+import { noteOrdeal } from '../../socialCalls/reciprocity';
 import { invite, scheduleGathering } from '../engine';
 import {
   DAY, HOUR, endWrappedEvent, excused, gatheringFeed, isActive, nameList, rngFor, statesOf,
@@ -272,14 +273,17 @@ export function onFireStarted(eventId: number, locationId: number | null, starte
   if (locationId == null) return;
   const loc = db.select({ type: locations.type }).from(locations).where(eq(locations.id, locationId)).get();
   if (!loc || !BURNABLE.has(loc.type)) return;
+  const owners = ownersOf(locationId);
   scheduleGathering({
     kind: 'fire',
     venueLocationId: locationId,
     startMin: startedAtMin,
     endMin: startedAtMin + Math.min(durationHours * HOUR, 2 * HOUR),
-    hostIds: ownersOf(locationId),
+    hostIds: owners,
     eventId,
   });
+  // A fire is an ordeal: whoever owed the owner a kindness and never came is noticed.
+  for (const o of owners) noteOrdeal(o, 'fire', startedAtMin);
 }
 
 /** A fire has to burn some building: the venue resolver startWorldEvent asks for a fire with no place. */

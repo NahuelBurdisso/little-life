@@ -8,6 +8,8 @@
  * gains the lender loses. The loan is a row in `loans` — a debt has to outlive
  * a restart and travel with a save.
  *
+ * Who lends: a warm friend, or one who owes the borrower a kindness (reciprocity).
+ *
  * Then it plays out on its own (the hourly sweep, `loansHourly`):
  *   - the borrower back on their feet (cash above the money target plus what
  *     they owe) pays it back: a transfer, a memory each, a warmer friendship and
@@ -27,6 +29,8 @@ import { learnFact } from '../gossip';
 import { callRecordsFor } from './engine';
 import { favour, feed, feel, firstOf, mood, nameOf, remember, whereIs } from './effects';
 import { produceCalls } from './produce';
+import { RETURN_MIN } from './pickCallers';
+import { favorsOwed } from '../favorEngine';
 import { CALL_TOPIC } from './topics';
 import type { SocialCall, SocialCallKind } from './types';
 
@@ -114,7 +118,10 @@ export function onHardTimes(agentId: number, nowMin: number): void {
     kind: 'lend_money', targetId: agentId, nowMin,
     spec: { ties: ['family', 'best_friend', 'friend'], max: 1, eagerness: 0.9 },
     stagger: { first: 2 * HOUR, spacing: 0, jitter: 4 * HOUR },
-    filter: (c) => c.warmth >= LOANS.LENDER_MIN_WARMTH && c.money >= target * LOANS.LENDER_RICH_SHARE && loanAmount(c.money, target) > 0,
+    // A cold purse still opens for someone it owes: whoever helped the lender
+    // before is lent to even by a lender not warm enough to offer a stranger.
+    filter: (c) => (c.warmth >= LOANS.LENDER_MIN_WARMTH || (c.owes ?? 0) >= RETURN_MIN)
+      && c.money >= target * LOANS.LENDER_RICH_SHARE && loanAmount(c.money, target) > 0,
   });
 }
 
@@ -138,6 +145,10 @@ export function loansHourly(nowMin: number): void {
       const paid = payResident(loan.borrower_id, loan.lender_id, loan.amount, 'loan_repayment');
       if (paid < loan.amount) continue;
       db.update(loans).set({ status: 'repaid', settled_at_min: nowMin }).where(eq(loans.id, loan.id)).run();
+      // Paying it back settles the debt of gratitude the loan left (the lender's
+      // favour of 2, lend_money's consequence) — only what is owed: a borrower who
+      // had helped the lender first doesn't put the lender in their debt by repaying.
+      favour(loan.borrower_id, loan.lender_id, Math.min(2, favorsOwed(loan.borrower_id, loan.lender_id)));
       const late = loan.status === 'overdue';
       feel(loan.borrower_id, loan.lender_id, 'loan_repaid', `${borrower} paid back ${lender}'s loan`, {
         fromCaller: { friendship: 2 }, fromTarget: { friendship: late ? 2 : 3, trust: late ? 4 : 6 }, sentiment: 0.5,

@@ -10,7 +10,7 @@
 import { makeRng, stringToSeed } from '../worldgen/rng';
 import { currentWorldSeed } from '../intimacy/worldSeed';
 import { callsMadeTo, pendingCallsFor, scheduleCall, socialCallKind } from './engine';
-import { pickCallers, staggerOffsets, type CallerCandidate, type PickSpec } from './pickCallers';
+import { RETURN_MIN, pickCallers, staggerOffsets, type CallerCandidate, type PickSpec } from './pickCallers';
 import { gatherCandidates } from './ties';
 import type { CallPayload, SocialCall } from './types';
 
@@ -59,12 +59,16 @@ export function produceCalls(req: ProduceRequest): SocialCall[] {
   const chosen = pickCallers(cands, { ...req.spec, max: Math.min(req.spec.max, room) }, rng);
   const offsets = staggerOffsets(chosen.length, req.stagger.first, req.stagger.spacing, req.stagger.jitter, rng);
   const out: SocialCall[] = [];
+  const owesOf = new Map(cands.map((c) => [c.id, c.owes ?? 0]));
   chosen.forEach((callerId, i) => {
     const notBeforeMin = req.nowMin + offsets[i];
+    // A caller who owes the target a kindness is returning it: the visit's
+    // consequence and feed row say so (effects.ts `feed`, kinds.ts `warmVisit`).
+    const returning = (owesOf.get(callerId) ?? 0) >= RETURN_MIN;
     const call = scheduleCall({
       kind: req.kind, callerId, targetId: req.targetId, nowMin: req.nowMin, notBeforeMin,
       ...(req.expiresAtMin != null ? { expiresAtMin: Math.max(req.expiresAtMin, notBeforeMin + 60) } : {}),
-      payload: req.payload,
+      payload: returning ? { ...(req.payload ?? {}), returning: true } : req.payload,
     });
     if (call) out.push(call);
   });

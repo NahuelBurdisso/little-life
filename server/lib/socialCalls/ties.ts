@@ -17,6 +17,7 @@ import { db } from '../../db';
 import { agents, children, economy, locations, relationships } from '../../db/schema';
 import { getAgentStates, getEffectivePersonality } from '../states';
 import { cliqueIdOf } from '../cliques';
+import { favorsOwed } from '../favorEngine';
 import { ENGAGED_TAG, MARRIED_TAG } from '../marriage';
 import type { PersonalityProfile } from '../personality';
 import { callOf } from './engine';
@@ -87,6 +88,7 @@ export function gatherCandidates(targetId: number, opts: { anyTarget?: boolean }
       curiosity: p?.curiosity ?? 50,
       money: money.get(a.id) ?? 0,
       age: a.age,
+      owes: favorsOwed(a.id, targetId),
     };
   });
 }

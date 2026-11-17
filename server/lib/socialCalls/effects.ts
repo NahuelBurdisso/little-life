@@ -86,13 +86,19 @@ export function giftClause(gift: CallGift | null): string {
  * by 0.3 per unit (see data/activityRegistry.ts).
  */
 export function feed(call: SocialCall, beat: DramaBeat, description: string, severity: number, location?: number | null): void {
+  // A caller who owed the target a kindness came to return it (produce.ts sets
+  // `returning`): the row says so, since that was part of why they came. Only on
+  // a visit that came off — the cool rows are written at 0.1 and below.
+  const text = call.payload.returning === true && severity > 0.1
+    ? `${description.replace(/[.!]$/, '')} — returning an old kindness.`
+    : description;
   logActivity({
     type: 'social_call',
     initiator: call.callerId,
     target: call.targetId,
     ...(location != null ? { location } : {}),
     severity,
-    templateData: { description },
+    templateData: { description: text },
     metadata: { beat, callKind: call.kind },
   });
 }

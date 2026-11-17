@@ -20,12 +20,14 @@ import {
 import { clearProducerState, defaultJudge, producers, registerBuiltInKinds } from './kinds';
 import { loansHourly, onHardTimes } from './loans';
 import { callKindOfTrigger } from './topics';
+import { clearReciprocity, noteOrdeal, reciprocityHourly } from './reciprocity';
 
 export {
   scheduleCall, pendingCallsFor, callsMadeTo, callOf, registerSocialCallKind, socialCallsSnapshotStore,
 } from './engine';
 export { SOCIAL_CALL_KINDS } from './kinds';
 export type { SocialCall, SocialCallKind, CallRecord, VisitResult } from './types';
+export { noteOrdeal, reciprocityTally } from './reciprocity';
 
 registerBuiltInKinds();
 
@@ -33,6 +35,7 @@ registerBuiltInKinds();
 export function clearSocialCallState(): void {
   clearSocialCalls();
   clearProducerState();
+  clearReciprocity();
 }
 
 interface EndedPayload {
@@ -78,6 +81,7 @@ export function socialCallsHourly(nowMin: number): void {
   }
   runDueWatches(nowMin);
   loansHourly(nowMin);
+  reciprocityHourly(nowMin);
 }
 
 // ─── Wiring ──────────────────────────────────────────────────────────────────
@@ -104,12 +108,20 @@ function initSocialCalls(): void {
   simEvents.on('state:triggered', guarded<{ agentId: number; state: string; cause?: string }>('state:triggered', (p) => {
     const now = gameMinutesNow();
     switch (p.state) {
-      case 'sick': producers.onSick(p.agentId, now); break;
+      case 'sick':
+        if (producers.onSick(p.agentId, now)) noteOrdeal(p.agentId, 'sick', now);
+        break;
       case 'heartbroken': producers.onHeartbroken(p.agentId, now); break;
-      case 'in_debt': onHardTimes(p.agentId, now); break;
+      case 'in_debt':
+        onHardTimes(p.agentId, now);
+        noteOrdeal(p.agentId, 'in_debt', now);
+        break;
       case 'grieving':
         // Only a death's mourners (lifeEventsEngine.ts): "mourning <name>".
-        if (typeof p.cause === 'string' && p.cause.startsWith('mourning ')) producers.onMourning(p.agentId, p.cause.slice('mourning '.length), now);
+        if (typeof p.cause === 'string' && p.cause.startsWith('mourning ')) {
+          producers.onMourning(p.agentId, p.cause.slice('mourning '.length), now);
+          noteOrdeal(p.agentId, 'grieving', now);
+        }
         break;
     }
   }));

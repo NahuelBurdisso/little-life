@@ -13,6 +13,8 @@
  *     that asymmetry is the point. Who came and who didn't must be legible.
  *     Loyalty adds to it for the closest ties (a dutiful husband comes even if
  *     he is not a warm man);
+ *   - a debt of gratitude (favours received from the target and not returned)
+ *     raises that weight a little: kindness comes back;
  *   - candidates are taken closest first, each with a roll at that weight,
  *     until the kind's maximum: one rng draw per candidate considered.
  */
@@ -62,6 +64,28 @@ export interface CallerCandidate {
   /** Their money, for the kinds that need a full purse (a loan). */
   money: number;
   age: number;
+  /**
+   * Favours the candidate owes the target (favorEngine `favorsOwed`): visits,
+   * gifts, loans and rounds received and not yet returned. Optional so the
+   * fixtures written before reciprocity need no change (missing = 0).
+   */
+  owes?: number;
+}
+
+/**
+ * Owing the target this many favours makes the debt part of why someone comes
+ * ("she sat with me when I was ill"): the call carries `payload.returning`, the
+ * feed and the target's memory say so.
+ */
+export const RETURN_MIN = 2;
+
+/**
+ * 1 or more: a debt of gratitude makes someone readier to come, by 10% per
+ * favour owed up to +40%. Below RETURN_MIN it is not a debt anyone feels.
+ */
+export function gratitude(owes: number | undefined): number {
+  const o = owes ?? 0;
+  return o >= RETURN_MIN ? 1 + Math.min(0.4, o * 0.1) : 1;
 }
 
 export interface PickSpec {
@@ -105,7 +129,10 @@ export function pickCallers(cands: readonly CallerCandidate[], spec: PickSpec, r
     .filter((c) => !c.hostile && !c.unavailable && !c.busy && c.age >= minAge && !spec.exclude?.has(c.id))
     .map((c) => ({ c, tie: closestTie(c, spec.ties) }))
     .filter((x) => x.tie > 0)
-    .map((x) => ({ id: x.c.id, score: x.tie * willingness(x.c, spec.extraTrait), friendship: x.c.friendship }))
+    // Owing the target a kindness or two brings someone readier (reciprocity):
+    // one more factor on the same score, so no extra draw and the order of the
+    // draws only changes when someone actually owes.
+    .map((x) => ({ id: x.c.id, score: x.tie * willingness(x.c, spec.extraTrait) * gratitude(x.c.owes), friendship: x.c.friendship }))
     // Closest first; equal ties go to the fonder one, then the lower id (stable for the tests).
     .sort((a, b) => b.score - a.score || b.friendship - a.friendship || a.id - b.id);
 

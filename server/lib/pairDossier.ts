@@ -29,6 +29,7 @@ import {
 import { applyDiminishing } from '../engine/systems/relationships';
 import { pickConversationGist } from './memory/conversationGist';
 import { detectStoryArcs, type ArcBeat, type ArcKind } from './chronicle';
+import { favorStanding } from './favorEngine';
 import { gameMinutes } from './gameClock';
 import { isPivotalEvent } from './storyBeats';
 import { CONFIG } from './constants';
@@ -69,6 +70,12 @@ export interface DossierRelationship {
   aToB: Feeling;
   /** How B feels about A. */
   bToA: Feeling;
+  /**
+   * Favours each owes the other (lib/favorEngine.ts `favorStanding`): visits,
+   * gifts, loans, rounds received and not yet returned. In memory only, so a
+   * fixture without it is fine (missing = nothing owed).
+   */
+  favours?: { aOwesB: number; bOwesA: number };
 }
 
 export interface DossierEvent {
@@ -415,6 +422,7 @@ export function getPairDossier(aId: number, bId: number, nowMs: number = Date.no
         interactionCount: relRow.interaction_count,
         aToB: feelingOf(relRow, aId),
         bToA: feelingOf(relRow, bId),
+        favours: favorStanding(aId, bId),
       }
     : null;
 

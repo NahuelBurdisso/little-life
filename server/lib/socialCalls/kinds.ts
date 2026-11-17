@@ -32,6 +32,7 @@ import type { TieKind } from './pickCallers';
 import { CALL_TOPIC } from './topics';
 import type { CallWatch, SocialCall, SocialCallKind, VisitResult } from './types';
 import { LEND_MONEY_KIND } from './loans';
+import { noteFavourReturned } from './reciprocity';
 
 const HOUR = 60;
 const DAY = 24 * HOUR;
@@ -95,6 +96,12 @@ function warmVisit(call: SocialCall, r: VisitResult, o: { moodValue: number; moo
     sentiment: 0.6,
   });
   favour(call.callerId, call.targetId, o.favour);
+  // Kindness coming back: the target remembers who came to them because they
+  // once went to the caller (the favour just recorded pays part of that debt).
+  if (call.payload.returning === true) {
+    noteFavourReturned();
+    remember(call.targetId, `${firstOf(call.callerId)} came to me the way I once went to them. Kindness comes back.`, 0.5, 5, call.callerId);
+  }
 }
 
 // ─── sick_visit ──────────────────────────────────────────────────────────────
@@ -130,11 +137,12 @@ const SICK_VISIT: SocialCallKind = {
   },
 };
 
-function onSick(agentId: number, nowMin: number): void {
+/** Returns whether it was a real illness (the reciprocity ordeal waits for one too). */
+function onSick(agentId: number, nowMin: number): boolean {
   const sick = db.select().from(agentStates)
     .where(and(eq(agentStates.agent_id, agentId), eq(agentStates.type, 'sick'))).orderBy(desc(agentStates.id)).get();
   // Not every sniffle: a fever bad enough to keep someone in bed.
-  if (!sick || sick.severity < 0.4) return;
+  if (!sick || sick.severity < 0.4) return false;
   produceCalls({
     kind: 'sick_visit', targetId: agentId, nowMin,
     // Not the household: they are already at the bedside.
@@ -142,6 +150,7 @@ function onSick(agentId: number, nowMin: number): void {
     stagger: { first: 30, spacing: 4 * HOUR, jitter: 2 * HOUR },
     targetCooldownMin: 3 * DAY,
   });
+  return true;
 }
 
 function housematesOf(agentId: number): Set<number> {

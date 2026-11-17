@@ -709,6 +709,15 @@ export function PairDossier({ pair, watched, onToggleWatch, onClose, onFocusAgen
                       {rel.interactionCount} interaction{rel.interactionCount === 1 ? "" : "s"} · familiarity {Math.round(rel.familiarity)}
                       {rel.tags.length > 0 && <> · {rel.tags.join(", ")}</>}
                     </p>
+                    {/* Kindness owed either way (server/lib/favorEngine.ts): what reciprocity reads. */}
+                    {rel.favours && (rel.favours.aOwesB >= 1 || rel.favours.bOwesA >= 1) && (
+                      <p className="text-[11px] text-ui-dim mt-1">
+                        🤝 {[
+                          rel.favours.aOwesB >= 1 ? `${first} owes ${second} ${rel.favours.aOwesB} kindness${rel.favours.aOwesB === 1 ? "" : "es"}` : "",
+                          rel.favours.bOwesA >= 1 ? `${second} owes ${first} ${rel.favours.bOwesA} kindness${rel.favours.bOwesA === 1 ? "" : "es"}` : "",
+                        ].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
                     {/* Children they share (server/lib/family.ts). */}
                     {dossier.children.length > 0 && (
                       <p className="text-[11px] text-ui-dim mt-1">
