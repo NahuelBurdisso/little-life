@@ -5,10 +5,10 @@ Living document. Every session reads it first and updates it last (see `CLAUDE.m
 **Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors (also over `scripts/`), `eslint` 0 errors
 (3 warnings, all `react-hooks/exhaustive-deps`; 0 explicit `any`, the rule is an error), vitest 352 files /
 4159 tests (Vitest 5, ~55 s), `npm run deadcode` 0/0. `master` holds the hygiene pass, the typing pass and the
-god-functions split. Branch `feat/living-town` (off `master`, 28 commits + this note, not merged): `npm run check`
+god-functions split and the living-town pass (`feat/living-town`, fast-forwarded the same day): `npm run check`
 green at 375 files / 4312 tests, `npm run deadcode` 0/0.
 
-## Living town (2026-11-17, branch `feat/living-town`)
+## Living town (2026-11-17, merged to `master`)
 
 Why: an audit of the event bus found that what happens to a resident almost never reached anyone else (most events
 had no listener beyond a memory for the person themselves; reactions needed people to already share a room). Four
