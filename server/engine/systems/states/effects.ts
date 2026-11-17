@@ -574,8 +574,12 @@ function effectHungover(e: EffectContext, state: AgentStateRow) {
 
   // Find memories created while agent was drunk (around when this state started).
   // Memories are tick-stamped and the state is not, so carry the 300-minute
-  // lookback over to ticks at the current speed.
-  const lookbackTicks = (nowMinutes - state.started_at + 300) / (tickSpeed > 0 ? tickSpeed : 1);
+  // lookback over to ticks at the current speed. The window ends when the
+  // hangover started: it used to run up to now, so sober talks during the
+  // hangover were regretted as drunken ones.
+  const ticksPerMinute = 1 / (tickSpeed > 0 ? tickSpeed : 1);
+  const lookbackTicks = (nowMinutes - state.started_at + 300) * ticksPerMinute;
+  const sinceHangoverTicks = (nowMinutes - state.started_at) * ticksPerMinute;
   const recentConvoMemories = db
     .select()
     .from(memories)
@@ -584,13 +588,18 @@ function effectHungover(e: EffectContext, state: AgentStateRow) {
         eq(memories.agent_id, agent.id),
         eq(memories.type, 'conversation'),
         gt(memories.created_at, currentTick - lookbackTicks),
+        lt(memories.created_at, currentTick - sinceHangoverTicks),
       ),
     )
     .all();
 
+  // One regret per friend per hangover: each conversation memory used to add
+  // its own, so three chats with the same friend were three regrets and -15.
+  const regretted = new Set<number>();
   for (const mem of recentConvoMemories) {
     const relatedAgents = ((mem.metadata as Record<string, unknown>)?.related_agents as number[] | undefined) ?? [];
     for (const otherId of relatedAgents) {
+      if (regretted.has(otherId)) continue;
       const rel = db
         .select()
         .from(relationships)
@@ -614,6 +623,7 @@ function effectHungover(e: EffectContext, state: AgentStateRow) {
             .where(eq(agents.id, otherId))
             .get()?.name ?? 'them';
 
+        regretted.add(otherId);
         const regretContent = `I feel terrible about what I said to ${otherName} while drunk.`;
         const regretResult = db.insert(memories)
           .values({

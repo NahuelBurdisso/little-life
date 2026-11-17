@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { db } from '../../../db';
-import { activityLog, agents, agentStates, conversations, economy, locations, needs } from '../../../db/schema';
+import {
+  activityLog, agents, agentStates, conversations, economy, locations, memories, needs, relationships,
+} from '../../../db/schema';
 import { simEvents } from '../../../lib/simEvents';
+import { taskRunner } from '../../../ai/taskRunner';
 import { createStatesTickContext } from '../states/context';
 import { evaluateTriggers } from '../states/triggers';
 import { processStateEffects } from '../states/effects';
-import { NOW, PERSONALITY, freshTown, insertResident } from '../../../lib/__tests__/populationFixtures';
+import { NOW, PERSONALITY, freshTown, insertResident, relate } from '../../../lib/__tests__/populationFixtures';
 
 /**
  * Small fixes in the states phase's trigger and effect handlers (states/triggers.ts,
@@ -112,5 +115,77 @@ describe('effectConfident', () => {
     expect(feed).toEqual(expect.arrayContaining([['state_lost', 'confident'], ['state_gained', 'angry']]));
     expect(eventsNamed('state:cleared')).toEqual([{ agentId: vain, state: 'confident' }]);
     expect(eventsNamed('state:triggered')).toEqual([{ agentId: vain, state: 'angry', cause: 'cascade:confident_vanity' }]);
+  });
+});
+
+describe('effectHungover', () => {
+  const TICK = 10_000;
+  /** Hangover began 100 game minutes ago; at 1x that is 100 ticks. */
+  const HANGOVER_STARTED = NOW - 100;
+
+  let drinker: number;
+
+  beforeEach(() => {
+    vi.spyOn(taskRunner, 'generateEmbedding').mockImplementation(() => {});
+    drinker = insertResident('Hungover Hal', homes[0], {});
+    db.insert(agentStates).values({
+      agent_id: drinker, type: 'hungover', severity: 0.5, started_at: HANGOVER_STARTED, duration: 300,
+      source: 'cascade:drunk', metadata: null,
+    }).run();
+  });
+
+  function friend(name: string): number {
+    const id = insertResident(name, homes[1], {});
+    relate(drinker, id, { friendship_ab: 60, friendship_ba: 60 });
+    return id;
+  }
+
+  function talkedWith(otherId: number, createdAt: number) {
+    db.insert(memories).values({
+      agent_id: drinker, type: 'conversation', description: 'we talked', importance: 3,
+      created_at: createdAt, last_accessed: createdAt, metadata: { related_agents: [otherId] },
+    }).run();
+  }
+
+  function runEffects(others: number[]) {
+    const all = [drinker, ...others].map(agentRow);
+    processStateEffects(agentRow(drinker), statesOf(drinker), all, NOW, TICK, 1, createStatesTickContext());
+  }
+
+  const regrets = () => db.select().from(memories)
+    .where(and(eq(memories.agent_id, drinker), eq(memories.type, 'emotional'))).all();
+  const friendshipTowards = (otherId: number) => {
+    const rel = db.select().from(relationships).where(or(
+      and(eq(relationships.agent_a, drinker), eq(relationships.agent_b, otherId)),
+      and(eq(relationships.agent_a, otherId), eq(relationships.agent_b, drinker)),
+    )).get()!;
+    return rel.agent_a === drinker ? rel.friendship_ab : rel.friendship_ba;
+  };
+
+  it('regrets only what was said before the hangover started, not sober talks since', () => {
+    const drinkingBuddy = friend('Drinking Dan');
+    const soberChat = friend('Sober Sam');
+    talkedWith(drinkingBuddy, TICK - 150); // while drunk
+    talkedWith(soberChat, TICK - 50); // during the hangover
+
+    runEffects([drinkingBuddy, soberChat]);
+
+    expect(regrets().map((m) => m.description)).toEqual([
+      'I feel terrible about what I said to Drinking Dan while drunk.',
+    ]);
+    expect(friendshipTowards(drinkingBuddy)).toBe(55);
+    expect(friendshipTowards(soberChat)).toBe(60);
+  });
+
+  it('regrets each friend once per hangover, however many talks there were', () => {
+    const buddy = friend('Drinking Dan');
+    talkedWith(buddy, TICK - 150);
+    talkedWith(buddy, TICK - 160);
+    talkedWith(buddy, TICK - 170);
+
+    runEffects([buddy]);
+
+    expect(regrets()).toHaveLength(1);
+    expect(friendshipTowards(buddy)).toBe(55);
   });
 });
