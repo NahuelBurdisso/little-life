@@ -4,8 +4,68 @@ Living document. Every session reads it first and updates it last (see `CLAUDE.m
 
 **Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors (also over `scripts/`), `eslint` 0 errors
 (3 warnings, all `react-hooks/exhaustive-deps`; 0 explicit `any`, the rule is an error), vitest 352 files /
-4159 tests (Vitest 5, ~55 s), `npm run deadcode` 0/0. `master` holds the hygiene pass and the typing pass; branch
-`refactor/split-god-functions` (off `master`, 21 commits, not merged) holds the two sections below.
+4159 tests (Vitest 5, ~55 s), `npm run deadcode` 0/0. `master` holds the hygiene pass, the typing pass and the
+god-functions split. Branch `feat/living-town` (off `master`, 28 commits + this note, not merged): `npm run check`
+green at 375 files / 4312 tests, `npm run deadcode` 0/0.
+
+## Living town (2026-11-17, branch `feat/living-town`)
+
+Why: an audit of the event bus found that what happens to a resident almost never reached anyone else (most events
+had no listener beyond a memory for the person themselves; reactions needed people to already share a room). Four
+steps, each implemented by a separate agent, `npm run check` re-run after each.
+
+1. **Dead wiring fixed** (10 commits): tavern `drunk`, chronic `lonely` and gift jealousy now emit `state:triggered`;
+   grief events only for real mourners, everyone else a tie-aware death memory (`deathMemoryFor`); arrest witnesses
+   resolved at the scene, and witness-report ripple rules teach an existing fact (`gossip.ts learnExistingFact` —
+   `createFact` returns null on a duplicate and used to teach nobody); a served sentence is a `released` fact;
+   theft/scam events carry their cast; long-lonely residents get their comfort visit; socialising with someone
+   outdoors heads for the nearest square (`meetingPlaceFor`); `constable_sees_criminal` gated to the constable. New
+   events, typed in `SimEventPayloads` (`simEvents.ts`): `crime:released`, `health:grave` (+ `metadata.grave`),
+   `life:thinking_of_leaving`, `life:decided_to_stay`; later steps added `family:birth`, `life:engaged`,
+   `civic:election`, `world:event_started`, `life:leaving_decided`.
+2. **Social calls** (`server/lib/socialCalls/`, phase `decisions/socialCall.ts`, score 6700 / 6900 urgent): a
+   resident walks to another because of what happened to them. Data-driven `SOCIAL_CALL_KINDS`
+   (`registerSocialCallKind`, `produceCalls`, `callsMadeTo`, `callRecordsFor`): `sick_visit`, `vigil` (urgent, on
+   `health:grave`), `condolence`, `congratulate` (birth, engagement, election, a goal of priority >= 0.75),
+   `birthday_wish` (+ the forgotten birthday), `welcome`, `console`, `plead_to_stay`, `meet_at_gate` (welcome or
+   reproach), `lend_money` (real transfer, `loans` table, migration 0001; repaid when solvent, sours into a `debt`
+   fact after 14 days), `mediate` (step 4). Pending calls are in memory, checkpointed in `sim_snapshots`. Chats are
+   `social_call:<kind>` with their own template scripts (`data/socialCallScripts.ts`) and LLM intent; feed type
+   `social_call`.
+3. **Gatherings** (`server/lib/gatherings/`, phase `decisions/gathering.ts`: must 6550 / should 6100 / may 3850):
+   funeral next day on the square with a eulogy, absentees remembered, then a wake at the tavern; send-off for a
+   leaver; market day people actually go to (haggles, lunch-hour visits); fire brigade (`fire_outbreak` now has a
+   building; outcome scales with helpers; wakes sleepers); wedding/christening guests who matter + toast; a round
+   at the tavern. Chats stay 2-person (`gathering:<kind>` encounters). Feed type `gathering`.
+4. **Factions, reciprocity, dialogue** (`server/lib/factions/`, `socialCalls/reciprocity.ts`, `lib/partnerView.ts`):
+   after a fight, a discovered affair, an unpaid loan or repeated slights (missed funeral/fire/wedding/christening,
+   ingratitude) close ties take a side over 4-64 h, stay out, are torn, or mediate; enough people per side makes a
+   **town feud** read by Brewing, a chronicle `feud` arc, the gazette, free-time scoring and the election; caps: -12
+   friendship per pair from side-taking, max(2, pop/6) feuds, fades after 6 quiet days, half thaws on reconciliation.
+   The favour ledger now decides who comes (`gratitude()`), "returning an old kindness", and ingratitude. The
+   conversation prompt gets one or two `[You can see]` / `[You know]` lines about the other person, gated by what
+   the speaker can know.
+
+Soak, LLM off, 4x (runs are not deterministic: read ranges). Seed `living1`, 12 days, 13 residents, before -> after:
+distinct beat types 12 -> 19-25, "no new beat for 3 days" warning 1 -> 0, friends 8% -> 5-9%, mood 72-80 -> 67-78,
+money ratio 1.23-1.31 unchanged, tick p50/p95 23/53 -> 22/43 ms, work 6.7-7.6 h/day; 10-16 calls, 2 feuds, one
+funeral + wake (7 came) in one of the runs. Seed `living2`, 20 days, 24 residents: 30 beat types, 45 calls, 5
+feuds (11 sides taken, 14 neutral, 3 torn, 2 mediations tried), 3 weddings (avg 21 guests), tick 41/77 ms. The soak
+prints calls per kind, gatherings with attendance, and feuds/reciprocity.
+
+Open:
+- **Never seen in a soak, integration tests only:** fire brigade, send-off, christening guests, a town feud, a
+  successful mediation, ingratitude, `condolence`, `plead_to_stay`, `meet_at_gate`, `lend_money`.
+- **Not seen live.** `little-life-verify` ran 6 game hours at 4x (LLM offline, an evening and night): boots, no
+  client or server errors, but no call or gathering fell in that window. Nothing here has run with the real LLM:
+  look first at the partner-view lines in dialogue, mediation chats, how often side-taking rows appear, whether the
+  gazette keeps a feud's cause private, and people leaving work at noon for the market or a sick visit.
+- ~26-30% of sick visits still lapse (caller's shift vs the patient's bedtime); the round's freeloader line says
+  "theirs" for everyone; `drunk_fight` still cannot fire for a tavern drunk (the event has no perpetrator/victim);
+  gathering chats add LLM load at a busy wedding (6-8% per game minute, `chooseTier` downgrades under pressure).
+- Five commits of step 4 (`6522985`..`15c7dcc`) were split by hunk and may not compile one by one; the branch tip does.
+- Shop solvency is not from this pass (traced: wholesale restocking, the assistant's wage, upkeep, clinic fees).
+- Two `--keep` soak DBs are left in `%TEMP%` (`little-life-soak-*.db`).
 
 ## God-functions split (2026-11-17, branch `refactor/split-god-functions`)
 
