@@ -464,6 +464,9 @@ function triggerStressed(t: TriggerContext) {
         initiator: agent.id,
         templateData: { agent: agent.name, state: 'stressed' },
       });
+      // Every other trigger announces its state; this one only logged it, so
+      // the `state:triggered` listeners never heard that anyone got stressed.
+      simEvents.emit('state:triggered', { agentId: agent.id, state: 'stressed', cause: 'needs:multiple_low' });
       activeTypes.add('stressed');
     }
   }
