@@ -8,7 +8,7 @@ import { cliqueSocialModifier } from '../../../lib/cliques';
 import { eq, and } from 'drizzle-orm';
 import { CONFIG } from '../../../lib/constants';
 import { gameMinutes } from '../../../lib/gameClock';
-import { distance } from '../../../lib/utils';
+import { distance, shuffled } from '../../../lib/utils';
 import { PersonalityProfile, loyaltyBonus, sensualityBonus, curiosityNoveltyBonus } from '../../../lib/personality';
 import { getEffectivePersonality, getAgentStates } from '../../../lib/states';
 import { getNegativeFactCount } from '../../../lib/gossip';
@@ -219,7 +219,8 @@ function socialCandidatesFor(f: FreeTimeContext): AgentRow[] {
     const strangers = otherAgents.filter(
       (a) => a.id !== agent.id && a.is_active && !socialCandidates.includes(a),
     );
-    const sample = strangers.sort(() => Math.random() - 0.5).slice(0, 3);
+    // Uniform: `sort(() => Math.random() - 0.5)` made some strangers likelier than others.
+    const sample = shuffled(strangers).slice(0, 3);
     socialCandidates.push(...sample);
   }
   return socialCandidates;

@@ -10,6 +10,7 @@ import { getAgentStates } from '../../../lib/states';
 import { chooseTier, hasDramaticState } from '../../../lib/conversationTier';
 import { isAnyWatched } from '../../../lib/spotlight';
 import { queueMaxWait } from '../../../lib/conversationPacing';
+import { shuffled } from '../../../lib/utils';
 import { getRelationshipValues } from './helpers';
 import type { DecisionTickContext } from './context';
 
@@ -46,9 +47,9 @@ export function queueLocationEncounters(d: DecisionTickContext): void {
     // 15% per GAME MINUTE per social location: rolled once per tick it left the
     // tavern a quarter as chatty at 4x (chancePerTick compounds it over the tick).
     if (Math.random() > chancePerTick(0.15, world.tick_speed)) continue;
-    const shuffled = group.sort(() => Math.random() - 0.5);
-    const a = shuffled[0];
-    const b = shuffled[1];
+    // A uniform pick: `group.sort(() => Math.random() - 0.5)` favoured some
+    // pairs over others. Nothing after this reads `group`, so the copy is safe.
+    const [a, b] = shuffled(group);
 
     // Check if this pair already has a queued or active conversation (from cached data)
     const existingQueue2 = allQueuedConvos.filter(q => {

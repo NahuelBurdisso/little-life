@@ -14,6 +14,22 @@ export function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
+/**
+ * A uniform random permutation of `items` (Fisher-Yates), as a new array.
+ * `arr.sort(() => Math.random() - 0.5)` is neither: the comparator is
+ * inconsistent, so some orders come up far more often than others, and it
+ * reorders the caller's array. `rand` is injectable for seeded callers;
+ * the world generator's RNG has its own `shuffle` (worldgen/rng.ts).
+ */
+export function shuffled<T>(items: readonly T[], rand: () => number = Math.random): T[] {
+  const copy = items.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
 export function distance(
   a: { x: number; y: number },
   b: { x: number; y: number },
