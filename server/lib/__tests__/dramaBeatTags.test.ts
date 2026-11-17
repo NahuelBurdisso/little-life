@@ -113,7 +113,7 @@ const EMIT_SITES: Array<[string, string, DramaBeat]> = [
   ['lib/lonelinessEngine.ts', 'has become lonely and withdrawn', 'lonely'],
   ['lib/lonelinessEngine.ts', 'seems lonely and decided to visit', 'lonely'],
   ['lib/giftEngine.ts', 'and feels jealous', 'outburst'],
-  ['engine/systems/conversations.ts', 'reported blackmail to the constable', 'blackmail'],
+  ['engine/systems/conversations/darkDynamics.ts', 'reported blackmail to the constable', 'blackmail'],
   ['lib/gossip.ts', 'and is furious.', 'outburst'],
 ];
 
