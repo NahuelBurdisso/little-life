@@ -1007,11 +1007,90 @@ async function processCompletedConversation(
   }
 }
 
+/**
+ * What the sections of a finished LLM conversation read, computed once by
+ * `loadCompletion` so each section gets the same values the single long
+ * function used to share as locals. `conversation` is the row Step A handed
+ * over; `fresh` is the row re-read at completion time, whose transcript is final.
+ */
+interface CompletionContext {
+  conversation: ConversationRow;
+  fresh: ConversationRow;
+  world: WorldRow;
+  messages: ConversationMessage[];
+  /** WALL-CLOCK ms, stamped on this completion's events and `ended_at`. */
+  now: number;
+  /** Step A's verdict that the clock cut this conversation short. */
+  cutShort: boolean;
+  isFallback: ReturnType<typeof fallbackDetector>;
+  overallSentiment: number;
+  participantIds: number[];
+  participants: AgentRow[];
+  time: {
+    day: number;
+    hour: number;
+    minute: number;
+    totalTicks: number;
+  };
+}
+
+/** Relationship deltas summed over every pair, for the quality evaluation. */
+interface RelationshipDeltaTotals {
+  friendship: number;
+  romance: number;
+  trust: number;
+}
+
+/**
+ * Runs every post-conversation effect of a finished LLM conversation, in a fixed
+ * order: listeners of the `conversation:ended` emit and the later sections read
+ * what the earlier ones wrote. Nothing here is awaited — the whole completion
+ * runs synchronously once called — so no tick can interleave with it.
+ */
 async function finishCompletedConversation(
   conversation: ConversationRow,
   world: WorldRow,
   truncated: boolean,
 ): Promise<void> {
+  const ctx = loadCompletion(conversation, world, truncated);
+  if (!ctx) return;
+
+  recordSpokenTopics(ctx);
+  const totals = createRelationshipEvents(ctx);
+  triggerInteractions(ctx, totals.romance);
+  offerFinancialHelp(ctx);
+
+  // --- Fact Creation ---
+  recordDrunkIncident(ctx);
+  recordSecretTold(ctx);
+  recordReputation(ctx);
+
+  recordParticipantOutcomes(ctx);
+  spreadConversationGossip(ctx);
+
+  // --- Dark Social Dynamics: Post-Conversation Effects ---
+  beggingOutcome(ctx);
+  confessionOutcome(ctx);
+  reconciliationOutcome(ctx);
+  alcoholismRecovery(ctx);
+  affairDiscovery(ctx);
+  blackmailReport(ctx);
+
+  const evaluation = evaluateConversationQuality(ctx, totals);
+  closeFinishedConversation(ctx, evaluation);
+}
+
+/**
+ * The shared facts of a completion, or null when there is nothing to complete:
+ * already ended elsewhere, nothing said, or fewer than two participants left.
+ * Each of those exits does its own cleanup here, exactly as the early returns
+ * of the old single function did, so null means "stop, it's handled".
+ */
+function loadCompletion(
+  conversation: ConversationRow,
+  world: WorldRow,
+  truncated: boolean,
+): CompletionContext | null {
   // Evict first, so every exit path below is covered. This is the terminal step
   // for the conversation — no further turns will be generated for it — and it
   // was the only completion path that never dropped its cached identities, so
@@ -1026,7 +1105,7 @@ async function finishCompletedConversation(
     // player nudge). The scheduler entry is already gone, so nothing else will ever
     // rescue these agents — release them here or they stay `talking` forever.
     if (releaseTalkingParticipants(conversation)) emitter.markDirty('agents.all');
-    return;
+    return null;
   }
 
   const messages = fresh.messages as ConversationMessage[];
@@ -1051,7 +1130,7 @@ async function finishCompletedConversation(
       .where(eq(conversations.id, fresh.id))
       .run();
     if (releaseTalkingParticipants(fresh)) emitter.markDirty('agents.all');
-    return;
+    return null;
   }
 
   // Calculate overall sentiment: average of all message sentiments
@@ -1083,9 +1162,25 @@ async function finishCompletedConversation(
       .where(eq(conversations.id, conversation.id))
       .run();
     if (releaseTalkingParticipants(fresh)) emitter.markDirty('agents.all');
-    return;
+    return null;
   }
 
+  const time = world.time as {
+    day: number;
+    hour: number;
+    minute: number;
+    totalTicks: number;
+  };
+
+  return {
+    conversation, fresh, world, messages, now, cutShort, isFallback,
+    overallSentiment, participantIds, participants, time,
+  };
+}
+
+/** Remember what each side said, so their next conversations today steer off it. */
+function recordSpokenTopics(ctx: CompletionContext): void {
+  const { fresh, world, messages, isFallback, participantIds, participants } = ctx;
   // What each side said, so their next conversations today can be steered
   // off it (lib/topicMemory.ts: perception penalty + prompt hint). LLM
   // conversations only — template lines are canned and repeat by design.
@@ -1097,7 +1192,15 @@ async function finishCompletedConversation(
     messages: messages.map((m) => ({ speakerId: m.speakerId, text: m.text, fallback: isFallback(m) })),
     gameMinute: gameMinutes(world.time),
   });
+}
 
+/**
+ * One relationship event per pair, with the deltas the impact engine derives
+ * from the conversation. Returns the deltas summed over every pair: the flirt
+ * trigger and the quality evaluation read them.
+ */
+function createRelationshipEvents(ctx: CompletionContext): RelationshipDeltaTotals {
+  const { fresh, world, messages, now, overallSentiment, participants } = ctx;
   // Accumulate relationship deltas across all pairs for quality evaluation
   let totalFriendshipDelta = 0;
   let totalRomanceDelta = 0;
@@ -1202,6 +1305,15 @@ async function finishCompletedConversation(
     }
   }
 
+  return { friendship: totalFriendshipDelta, romance: totalRomanceDelta, trust: totalTrustDelta };
+}
+
+/**
+ * A very negative conversation can tip into an insult or a fight, a warm one
+ * into a flirt. `totalRomanceDelta` is the summed romance delta of every pair.
+ */
+function triggerInteractions(ctx: CompletionContext, totalRomanceDelta: number): void {
+  const { overallSentiment, participantIds, participants } = ctx;
   // --- Conversation-triggered interactions ---
   // Very negative conversations can escalate to insults or confrontations
   if (overallSentiment < -0.5 && participants.length >= 2) {
@@ -1234,7 +1346,11 @@ async function finishCompletedConversation(
       emitFlirtBeat(p1, p2);
     }
   }
+}
 
+/** A warm, well-off close friend slips a little money to one who is nearly broke. */
+function offerFinancialHelp(ctx: CompletionContext): void {
+  const { overallSentiment, participants } = ctx;
   // --- Proactive Financial Help ---
   if (overallSentiment > 0 && participants.length >= 2) {
     const speaker = participants[0];
@@ -1275,9 +1391,11 @@ async function finishCompletedConversation(
       }
     }
   }
+}
 
-  // --- Fact Creation ---
-
+/** Fact: a drunk participant in a negative conversation made a scene. */
+function recordDrunkIncident(ctx: CompletionContext): void {
+  const { overallSentiment, participantIds } = ctx;
   // Drunk incident: drunk participant in a negative conversation
   for (const participantId of participantIds) {
     const states = getAgentStates(participantId);
@@ -1288,7 +1406,11 @@ async function finishCompletedConversation(
       }
     }
   }
+}
 
+/** Fact: a heartbroken or lonely participant confided something to a close friend. */
+function recordSecretTold(ctx: CompletionContext): void {
+  const { messages, isFallback, participantIds, participants } = ctx;
   // Secret told: heartbroken/lonely participant confides to a close friend
   for (const participantId of participantIds) {
     const states = getAgentStates(participantId);
@@ -1325,7 +1447,11 @@ async function finishCompletedConversation(
       }
     }
   }
+}
 
+/** Fact: someone keeps ending up in negative conversations, and the town notices. */
+function recordReputation(ctx: CompletionContext): void {
+  const { overallSentiment, participantIds } = ctx;
   // Reputation: negative conversation + agent has 3+ recent negative conversations
   if (overallSentiment < -0.2) {
     // Filter in SQL: this used to load every ended conversation ever, messages
@@ -1346,14 +1472,14 @@ async function finishCompletedConversation(
       }
     }
   }
+}
 
-  const time = world.time as {
-    day: number;
-    hour: number;
-    minute: number;
-    totalTicks: number;
-  };
-
+/**
+ * Per participant: the `conversation:ended` emit (memory, goals, cascades listen
+ * synchronously) and then the social, fun and mood effects on their needs.
+ */
+function recordParticipantOutcomes(ctx: CompletionContext): void {
+  const { fresh, messages, cutShort, overallSentiment, participants, time } = ctx;
   // For each participant: create memory, queue embedding, update needs
   for (const participant of participants) {
     const otherParticipants = participants.filter(
@@ -1450,7 +1576,11 @@ async function finishCompletedConversation(
         .run();
     }
   }
+}
 
+/** Pass on what each speaker knows about anyone they mentioned themselves. */
+function spreadConversationGossip(ctx: CompletionContext): void {
+  const { messages, participantIds } = ctx;
   // Spread gossip: for each participant, share known shared_knowledge if the subject
   // was mentioned. Only the speaker's OWN lines count — matching against the whole
   // transcript leaked a secret whenever the *listener* happened to say the subject's name.
@@ -1465,9 +1595,14 @@ async function finishCompletedConversation(
     if (spokenTexts.length === 0) continue;
     spreadGossip(pid, otherId, spokenTexts, sharable);
   }
+}
 
-  // --- Dark Social Dynamics: Post-Conversation Effects ---
-
+/**
+ * An agent in debt asked a friend for help: a warm friend gives money, a cold
+ * one refuses, and three refusals unlock desperation.
+ */
+function beggingOutcome(ctx: CompletionContext): void {
+  const { now, overallSentiment, participantIds, participants } = ctx;
   // Begging outcome: in_debt agent asking friends for help
   for (const pid of participantIds) {
     const pidStates = getAgentStates(pid);
@@ -1523,7 +1658,11 @@ async function finishCompletedConversation(
       }
     }
   }
+}
 
+/** An honest agent carrying hidden sins confesses one to a friend they trust. */
+function confessionOutcome(ctx: CompletionContext): void {
+  const { participantIds, participants } = ctx;
   // Confession outcome: honest agent with hidden sins confides in trusted friend
   for (const pid of participantIds) {
     const pidAgent = participants.find(p => p.id === pid);
@@ -1552,7 +1691,11 @@ async function finishCompletedConversation(
     if (!pidAgent || !listener) continue;
     performConfession(pidAgent, listener, hiddenSin);
   }
+}
 
+/** A loyal agent holding a grudge forgives someone who has since cleaned up. */
+function reconciliationOutcome(ctx: CompletionContext): void {
+  const { overallSentiment, participantIds, participants } = ctx;
   // Reconciliation outcome: loyal agent forgives transgressor who has cleaned up
   if (overallSentiment > 0.2) {
     for (const pid of participantIds) {
@@ -1583,7 +1726,11 @@ async function finishCompletedConversation(
       if (forgiver && forgiven) performReconciliation(rel, forgiver, forgiven);
     }
   }
+}
 
+/** A sober alcoholic's warm chat with a good friend starts their recovery. */
+function alcoholismRecovery(ctx: CompletionContext): void {
+  const { overallSentiment, participantIds, participants } = ctx;
   // Alcoholism recovery: positive convo with warm friend while sober
   for (const pid of participantIds) {
     const pidStates = getAgentStates(pid);
@@ -1614,7 +1761,11 @@ async function finishCompletedConversation(
       db.update(agentStates).set({ metadata: meta }).where(eq(agentStates.id, alcState.id)).run();
     }
   }
+}
 
+/** Each participant may react to what they now know of their partner's affair. */
+function affairDiscovery(ctx: CompletionContext): void {
+  const { participantIds, participants, time } = ctx;
   // Affair discovery: partner learns about affair through gossip
   for (const pid of participantIds) {
     const otherId = participantIds.find(p => p !== pid);
@@ -1623,7 +1774,11 @@ async function finishCompletedConversation(
     const partner = participants.find(p => p.id === otherId);
     if (discoverer && partner) reactToPartnerAffair(discoverer, partner, gameMinutes(time));
   }
+}
 
+/** A blackmail victim who has a good talk with the constable tells them about it. */
+function blackmailReport(ctx: CompletionContext): void {
+  const { overallSentiment, participants } = ctx;
   // Blackmail report: if victim talks to constable with positive sentiment, share blackmail knowledge
   if (overallSentiment > 0 && participants.length >= 2) {
     const speaker = participants[0];
@@ -1662,21 +1817,38 @@ async function finishCompletedConversation(
       }
     }
   }
+}
 
+/** Score the conversation; the score is stored on the row when it is closed. */
+function evaluateConversationQuality(
+  ctx: CompletionContext,
+  totals: RelationshipDeltaTotals,
+): ReturnType<typeof evaluateConversation> {
+  const { fresh, messages, cutShort, isFallback } = ctx;
   // --- Conversation Quality Evaluation ---
-  const evaluation = evaluateConversation({
+  return evaluateConversation({
     messages: messages.map(m => ({ text: m.text || '', sentiment: m.sentiment || 0, fallback: isFallback(m) })),
     injectedMemories: [], // Memories are in the LLM prompt, not stored on conversation record; evaluator redistributes this weight
     topic: (fresh.topic as string) || null,
     maxTurns: fresh.max_turns || 6,
     relationshipDeltas: {
-      friendship: totalFriendshipDelta,
-      romance: totalRomanceDelta,
-      trust: totalTrustDelta,
+      friendship: totals.friendship,
+      romance: totals.romance,
+      trust: totals.trust,
     },
     truncated: cutShort,
   });
+}
 
+/**
+ * The last writes of a completion: the row ends with its sentiment and score,
+ * the participants go back to idle, and the feed gets its "finished talking" line.
+ */
+function closeFinishedConversation(
+  ctx: CompletionContext,
+  evaluation: ReturnType<typeof evaluateConversation>,
+): void {
+  const { fresh, now, overallSentiment, participantIds, participants } = ctx;
   // Mark conversation as ended
   db.update(conversations)
     .set({
