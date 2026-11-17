@@ -20,6 +20,7 @@ export const CALL_TOPIC = {
   condolence: 'condolences for a loss',
   congratulate_engagement: 'congratulations on the engagement',
   congratulate_election: 'congratulations on becoming mayor',
+  congratulate_goal: 'congratulations on a hard-won success',
   birthday_wish: 'birthday wishes',
   welcome: 'a welcome to town',
   console_election: 'consolation after losing the election',
@@ -71,6 +72,8 @@ export function socialCallIntent(topic: string, other: string): string | null {
       return `${other} has just become engaged. You came to congratulate them warmly and ask about the wedding.`;
     case CALL_TOPIC.congratulate_election:
       return `${other} has just been elected mayor. You came to congratulate them, and maybe to say what you hope they'll do.`;
+    case CALL_TOPIC.congratulate_goal:
+      return `${other} has just achieved something they worked hard for. You came to congratulate them and hear how they did it.`;
     case CALL_TOPIC.birthday_wish:
       return `It is ${other}'s birthday today. You came to wish them a happy birthday.`;
     case CALL_TOPIC.welcome:

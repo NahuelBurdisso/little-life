@@ -77,6 +77,19 @@ describe('socialCallPhase: walking over to keep a promised call', () => {
     expect(socialCallPhase(agentRow(caller), ctx(MIDDAY))).toMatchObject({ score: URGENT_SOCIAL_CALL_SCORE, targetAgentId: target });
   });
 
+  it("a sick visit fits into the caller's lunch hour; a birthday wish waits for the evening", () => {
+    const LUNCH = { ...EVENING, hour: 12 };
+    const noon = gameMinutes(LUNCH);
+    db.update(agents).set({ workplace: town.bakery }).where(eq(agents.id, caller)).run();
+    db.insert(agentStates).values({ agent_id: target, type: 'sick', severity: 0.6, started_at: 0, duration: 99999, source: 'test', metadata: null }).run();
+    scheduleCall({ kind: 'sick_visit', callerId: caller, targetId: target, nowMin: noon - 10, notBeforeMin: noon - 5 });
+    expect(socialCallPhase(agentRow(caller), ctx(LUNCH))).toMatchObject({ score: SOCIAL_CALL_SCORE, targetAgentId: target });
+    expect(socialCallPhase(agentRow(caller), ctx({ ...LUNCH, hour: 14 }))).toBeNull();
+    clearSocialCallState();
+    scheduleCall({ kind: 'birthday_wish', callerId: caller, targetId: target, nowMin: noon - 10, notBeforeMin: noon - 5 });
+    expect(socialCallPhase(agentRow(caller), ctx(LUNCH))).toBeNull();
+  });
+
   it('drops the call when the target has died, and records a missed one past its window', () => {
     promise();
     db.update(agents).set({ current_action: { type: 'dead' } }).where(eq(agents.id, target)).run();

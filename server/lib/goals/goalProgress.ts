@@ -158,7 +158,7 @@ function addMoodModifier(agentId: number, value: number, source: string, minutes
  * rules, favors, reputation, drift all listen), logs the feed row and lifts the owner's mood.
  * A goal that is no longer active is left alone, so a race between two writers completes once.
  */
-export function completeGoal(goal: Pick<GoalRow, 'id' | 'agent_id' | 'type' | 'target_id' | 'description'>, nowMinutes = gameMinutesNow(), progress?: number): boolean {
+export function completeGoal(goal: Pick<GoalRow, 'id' | 'agent_id' | 'type' | 'target_id' | 'description'> & { priority?: number }, nowMinutes = gameMinutesNow(), progress?: number): boolean {
   const res = db.update(goals)
     .set({ status: 'completed', completed_at: nowMinutes, ...(progress != null ? { progress } : {}) })
     .where(and(eq(goals.id, goal.id), eq(goals.status, 'active')))
@@ -173,6 +173,8 @@ export function completeGoal(goal: Pick<GoalRow, 'id' | 'agent_id' | 'type' | 't
     description,
     // Same cast as goals.ts `goalEventCast`: the target is the other party.
     ...(goal.target_id != null ? { victimId: goal.target_id } : {}),
+    // How much it mattered to them (0..1): friends come to congratulate a big one (lib/socialCalls).
+    ...(goal.priority != null ? { priority: goal.priority } : {}),
   });
   logActivity({
     type: 'goal_completed',

@@ -132,6 +132,8 @@ function initSocialCalls(): void {
   simEvents.on('family:birth', guarded<SimEventPayloads['family:birth']>('family:birth', (p) => producers.onBirth(p.parentIds, p.childName, gameMinutesNow())));
   simEvents.on('life:engaged', guarded<SimEventPayloads['life:engaged']>('life:engaged', (p) => producers.onEngaged(p.proposerId, p.answererId, gameMinutesNow())));
   simEvents.on('civic:election', guarded<SimEventPayloads['civic:election']>('civic:election', (p) => producers.onElection(p.winnerId, p.loserIds, gameMinutesNow())));
+  simEvents.on('goal:completed', guarded<{ agentId: number; goalType: string; priority?: number }>('goal:completed',
+    (p) => producers.onGoalCompleted(p.agentId, p.goalType, p.priority, gameMinutesNow())));
   simEvents.on('life:job_changed', guarded<{ agentId: number; from: string; to: string; reason: string }>('life:job_changed',
     (p) => producers.onJobChanged(p.agentId, p.from, p.to, p.reason, gameMinutesNow())));
   simEvents.on('life:thinking_of_leaving', guarded<SimEventPayloads['life:thinking_of_leaving']>('life:thinking_of_leaving',

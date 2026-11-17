@@ -283,6 +283,41 @@ export const SOCIAL_CALL_SCRIPTS: TopicScript[] = [
     ],
   },
 
+  // ===== congratulations: a goal that mattered, come true =====
+  {
+    id: 'call_congrats_goal',
+    trigger: callTrigger('congratulate'),
+    cooldownHours: ONCE,
+    when: intentIs(CALL_TOPIC.congratulate_goal),
+    weight: heavy,
+    topic: () => CALL_TOPIC.congratulate_goal,
+    anchors: () => ['congratulations', 'work', 'done'],
+    openers: [
+      {
+        kind: 'tell', text: "Congratulations, {you}! I heard you've done it at last.", s: 0.5,
+        replies: [
+          { text: 'Thank you. It took some doing, but it is done.', s: 0.4, stance: 'agree' },
+          { text: "Thank you. I hardly believe it's done.", s: 0.3, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'ask', text: 'All that work, {you}, and you did it. How does it feel?', s: 0.4,
+        replies: [
+          { text: 'Like the work was worth it.', s: 0.4, stance: 'agree' },
+          { text: "Strange. Now it's done I don't know what to do with myself.", s: 0.2, stance: 'neutral' },
+        ],
+      },
+    ],
+    follow: [
+      { text: 'You worked hard for it. Everyone could see.', s: 0.4 },
+      { text: 'Well done. Nobody deserved it more.', s: 0.4 },
+    ],
+    close: [
+      { text: 'Congratulations again, {you}. Well done.', s: 0.4, when: byOpener },
+      { text: 'Thank you for the congratulations, {you}.', s: 0.3, when: byListener },
+    ],
+  },
+
   // ===== a birthday =====
   {
     id: 'call_birthday',

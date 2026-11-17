@@ -195,6 +195,21 @@ describe('social calls: each kind end to end', () => {
       visit(call);
       expect((rowsWithBeat('congratulation')[0].template_data as { description: string }).description).toMatch(/little Ada/);
     });
+
+    it('a goal that mattered brings friends round; a small one or a revenge does not', () => {
+      const doer = insertResident('Rosa Vidal', town.homes[0]);
+      const friend = insertResident('Ana Gil', town.homes[1]);
+      setEffectivePersonality(friend, WARM);
+      relate(doer, friend, { friendship_ab: 70, friendship_ba: 70 });
+      producers.onGoalCompleted(doer, 'custom', 0.4, NOW);
+      producers.onGoalCompleted(doer, 'revenge', 0.95, NOW);
+      expect(callOf(friend)).toBeNull();
+      producers.onGoalCompleted(doer, 'custom', 0.9, NOW);
+      const call = callOf(friend)!;
+      expect(call.payload.occasion).toBe('goal');
+      visit(call);
+      expect((rowsWithBeat('congratulation')[0].template_data as { description: string }).description).toMatch(/on a hard-won success/);
+    });
   });
 
   describe('birthday_wish', () => {

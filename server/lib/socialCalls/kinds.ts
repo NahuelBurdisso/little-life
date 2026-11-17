@@ -298,12 +298,14 @@ const CONGRATULATE: SocialCallKind = {
   pairCooldownMin: 5 * DAY,
   windowMin: 36 * HOUR,
   topic: (c) => c.payload.occasion === 'birth' ? congratsTopic(String(c.payload.childName ?? 'the baby'))
-    : c.payload.occasion === 'election' ? CALL_TOPIC.congratulate_election : CALL_TOPIC.congratulate_engagement,
+    : c.payload.occasion === 'election' ? CALL_TOPIC.congratulate_election
+      : c.payload.occasion === 'goal' ? CALL_TOPIC.congratulate_goal : CALL_TOPIC.congratulate_engagement,
   label: (_c, n) => ({ walking: `On the way to congratulate ${n}`, there: `Congratulating ${n}` }),
   consequence(call, r) {
     const caller = nameOf(call.callerId), target = nameOf(call.targetId);
     const on = call.payload.occasion === 'birth' ? `the birth of little ${String(call.payload.childName ?? 'one')}`
-      : call.payload.occasion === 'election' ? 'becoming mayor' : 'the engagement';
+      : call.payload.occasion === 'election' ? 'becoming mayor'
+        : call.payload.occasion === 'goal' ? 'a hard-won success' : 'the engagement';
     if (!r.good) {
       feed(call, 'congratulation', `${caller} came to congratulate ${target} on ${on}, and was received coolly.`, 0.1, whereIs(call.callerId));
       return;
@@ -336,6 +338,11 @@ function congratulate(targetIds: number[], occasion: string, nowMin: number, ext
     left -= calls.length;
   }
 }
+
+/** A goal at or above this priority is a big one: friends come to congratulate. */
+export const BIG_GOAL_PRIORITY = 0.75;
+/** Goals nobody comes round to celebrate (or that have their own call). */
+const UNCONGRATULATED_GOALS: ReadonlySet<string> = new Set(['revenge', 'undermine', 'steal_from', 'seduce', 'investigate', 'campaign']);
 
 // ─── birthday_wish ───────────────────────────────────────────────────────────
 
@@ -572,6 +579,15 @@ export const producers = {
   onMourning,
   onBirth: (parentIds: number[], childName: string, nowMin: number) => congratulate(parentIds, 'birth', nowMin, { childName }),
   onEngaged: (a: number, b: number, nowMin: number) => congratulate([a, b], 'engagement', nowMin),
+  /**
+   * A goal that mattered to them (`priority`, 0..1, from the goal reviewer and the
+   * ambition behind it) came true: friends come round. Only the big ones, and never
+   * the dark ones — nobody congratulates a revenge, and the election has its own call.
+   */
+  onGoalCompleted: (agentId: number, goalType: string, priority: number | undefined, nowMin: number) => {
+    if ((priority ?? 0) < BIG_GOAL_PRIORITY || UNCONGRATULATED_GOALS.has(goalType)) return;
+    congratulate([agentId], 'goal', nowMin, {}, 2);
+  },
   onElection: (winnerId: number, loserIds: number[], nowMin: number) => {
     congratulate([winnerId], 'election', nowMin, {}, 2);
     for (const id of loserIds) consoleFor(id, 'election', nowMin);

@@ -21,6 +21,9 @@ import type { DecisionTickContext } from './context';
 export const SOCIAL_CALL_SCORE = 6700;
 export const URGENT_SOCIAL_CALL_SCORE = 6900;
 
+/** A sick visit fits into the lunch hour: this many game minutes either side of `schedule.lunchTime`. */
+export const LUNCH_VISIT_SLACK_MIN = 30;
+
 /** In no state to go: they would only carry the illness in, or can't leave. */
 const CALLER_NOT_NOW = new Set(['sick', 'depressed', 'arrested']);
 
@@ -89,7 +92,14 @@ export function socialCallPhase(agent: AgentRow, d: DecisionTickContext): Scored
     // The target's shift only counts while they are at work: a fevered baker in
     // bed at home during her hours is exactly who gets visited (the first soak
     // had most sick visits wait out the patient's shift and expire).
-    if (me.onShift || them.action === 'working') return null;
+    // A sick visit may also be made in the caller's lunch hour: a working caller
+    // and a patient who sleeps early share only a few evening hours, and ~30% of
+    // the step-2/3 soaks' sick visits lapsed in between. Only that kind: a
+    // birthday or a welcome can wait for the evening; a sickbed is the errand
+    // people did slip out for at noon.
+    const lunchBreak = me.onShift && call.kind === 'sick_visit'
+      && Math.abs(world.time.hour * 60 + world.time.minute - agent.schedule.lunchTime * 60) <= LUNCH_VISIT_SLACK_MIN;
+    if ((me.onShift && !lunchBreak) || them.action === 'working') return null;
     if (them.onShift && target.current_location != null && target.current_location === target.workplace) return null;
   }
 
