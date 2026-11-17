@@ -1514,7 +1514,7 @@ function applyCascades(
     // Check if this state already exists for the agent
     if (ctx.states.find(cascade.agentId, cascade.stateType)) continue;
 
-    let severity = cascade.severity ?? 0.5;
+    const severity = cascade.severity ?? 0.5;
     // Shared with the ripple engine's cascade states (lib/stateDurations.ts):
     // hungover 3-6 h, angry 3-12 h, sick 6-18 h, depressed open-ended.
     const duration = rollStateDuration(cascade.stateType) ?? 240;

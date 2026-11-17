@@ -118,7 +118,7 @@ export async function callOllamaChat(
     answeredEmpty = error instanceof LLMEmptyReplyError;
     if (error.name === "AbortError") {
       if (cancelled()) throw new LLMAbortedError();
-      throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`);
+      throw new Error(`LLM request timed out after ${CONFIG.AI.TIMEOUT_MS}ms`, { cause: error });
     }
     throw error;
   } finally {

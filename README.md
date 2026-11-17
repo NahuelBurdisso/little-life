@@ -117,7 +117,8 @@ movement and events keep going. `npm run soak` runs the whole sim this way, head
 ## Developer notes
 
 ```bash
-npm run check          # tsc --noEmit + vitest run: the gate before and after every change
+npm run check          # tsc --noEmit + eslint + vitest run: the gate before and after every change
+npm run lint           # eslint, warnings included
 npm test               # vitest only (server logic and pure client modules)
 npm run typecheck
 npm run build          # tsc + vite build

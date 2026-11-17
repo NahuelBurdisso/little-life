@@ -14,7 +14,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 1. Read [`docs/STATUS.md`](docs/STATUS.md) — current state, open bugs, what's next.
 2. `git status --short | wc -l` — this repo has a history of large uncommitted piles.
    If the tree is dirty with work you didn't do, ask before building on top of it.
-3. `npm run check` (typecheck + tests, ~1 min). Must be green before and after your change.
+3. `npm run check` (typecheck + lint + tests, ~1.5 min). Must be green before and after your change.
 
 ## End of every session
 
@@ -37,7 +37,8 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 
 ```bash
 npm run dev          # server (tsx watch, :3001) + vite (:5173)
-npm run check        # tsc --noEmit + vitest run (~1 min)  ← gate for every change
+npm run check        # tsc --noEmit + eslint (errors only) + vitest run (~1.5 min)  ← gate for every change
+npm run lint         # eslint with warnings (the `any` backlog, hook deps)
 npm test             # vitest only
 npm run deadcode     # orphan files + exports nothing uses (confirm with grep before deleting)
 npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
