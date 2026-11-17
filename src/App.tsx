@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react";
 import { trpc } from "./lib/trpc";
 import { isWorldReplaced } from "./lib/worldIdentity";
-import { SetupWizard } from "./components/setup/SetupWizard";
 import { TopBar } from "./components/ui/TopBar";
 import { ActivityFeed } from "./components/ui/ActivityFeed";
 import { AgentPanel } from "./components/ui/AgentPanel";
@@ -23,10 +22,6 @@ import { TownStats } from "./components/ui/TownStats";
 import { useGazette } from "./hooks/useGazette";
 import { NewAgentDialog } from "./components/ui/NewAgentDialog";
 import { LocationPanel } from "./components/ui/LocationPanel";
-import { RelationshipGraph } from "./components/ui/RelationshipGraph";
-import { PairDossier } from "./components/ui/PairDossier";
-import { RomanceLedger } from "./components/ui/RomanceLedger";
-import { Journal } from "./components/ui/Journal";
 import { journalUnread, type JournalTab } from "./lib/journal";
 import { useWorldState } from "./hooks/useWorldState";
 import { gameMinutes } from "../server/lib/gameClock";
@@ -43,10 +38,8 @@ import { HealthBanner } from "./components/ui/HealthBanner";
 import { Toasts } from "./components/ui/Toasts";
 import { LoadingScreen } from "./components/ui/LoadingScreen";
 import { FloatingToolbar } from "./components/ui/FloatingToolbar";
-import { AutoplayPanel } from "./components/ui/AutoplayPanel";
 import { MeetTheTown } from "./components/ui/MeetTheTown";
 import { CoachMarks } from "./components/ui/CoachMarks";
-import { HelpOverlay } from "./components/ui/HelpOverlay";
 import { useFirstRunGuide } from "./hooks/useFirstRunGuide";
 import { worldSeedKey } from "./lib/firstRun";
 import { useToolbarCollapsed } from "./hooks/useToolbarCollapsed";
@@ -58,6 +51,18 @@ import { RecapCard } from "./components/ui/RecapCard";
 import { recapAutoDismissMs, recapVisible } from "./lib/recapDisplay";
 import { conversationOf, thoughtOf } from "./lib/thoughtLine";
 import { portraitMood } from "./components/ui/portraitMood";
+
+// Code-split: the wizard is only seen on a new world and the big modals only when
+// opened, yet together they were a large share of the first bundle (the graph and
+// the dossier alone are ~1500 lines). They stay mounted exactly as before, so the
+// hooks inside them behave the same; only the download moves off the first paint.
+const SetupWizard = lazy(() => import("./components/setup/SetupWizard").then((m) => ({ default: m.SetupWizard })));
+const RelationshipGraph = lazy(() => import("./components/ui/RelationshipGraph").then((m) => ({ default: m.RelationshipGraph })));
+const PairDossier = lazy(() => import("./components/ui/PairDossier").then((m) => ({ default: m.PairDossier })));
+const RomanceLedger = lazy(() => import("./components/ui/RomanceLedger").then((m) => ({ default: m.RomanceLedger })));
+const Journal = lazy(() => import("./components/ui/Journal").then((m) => ({ default: m.Journal })));
+const AutoplayPanel = lazy(() => import("./components/ui/AutoplayPanel").then((m) => ({ default: m.AutoplayPanel })));
+const HelpOverlay = lazy(() => import("./components/ui/HelpOverlay").then((m) => ({ default: m.HelpOverlay })));
 
 export default function App() {
   const { world, events, isLoading: worldLoading } = useWorldState();
@@ -442,10 +447,14 @@ export default function App() {
 
   // Show setup wizard if simulation hasn't started
   if (isNewSimulation && !setupComplete) {
-    return <SetupWizard onStart={() => {
-      utils.invalidate(); // refetch all queries after seed
-      setSetupComplete(true);
-    }} />;
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <SetupWizard onStart={() => {
+          utils.invalidate(); // refetch all queries after seed
+          setSetupComplete(true);
+        }} />
+      </Suspense>
+    );
   }
 
   if (worldLoading || !world) {
@@ -623,6 +632,8 @@ export default function App() {
         onClose={() => setShowNewAgent(false)}
         onCreated={(id) => focusAgent(String(id))}
       />
+      {/* One boundary for every lazy modal: nothing shows while a chunk is on its way. */}
+      <Suspense fallback={null}>
       <RelationshipGraph
         isOpen={showRelGraph}
         onClose={() => setShowRelGraph(false)}
@@ -681,6 +692,7 @@ export default function App() {
       />
       <CoachMarks isOpen={guide.coachOpen} onClose={guide.closeCoach} />
       <HelpOverlay isOpen={guide.helpOpen} onClose={guide.closeHelp} onMeetTheTown={guide.openTour} />
+      </Suspense>
 
       {/* Attribution */}
       <div className="fixed bottom-1 left-1 z-10 text-[8px] text-ui-muted opacity-40 pointer-events-none">
