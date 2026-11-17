@@ -1741,7 +1741,79 @@ export function buildAction(decision: ScoredAction, shoppingList: string[] = [])
 
 // --- Main Tick ---
 
+type GoalRow = typeof goals.$inferSelect;
+type QueueRow = typeof conversationQueue.$inferSelect;
+type ConversationRow = typeof conversations.$inferSelect;
+type KnowledgeRow = typeof shared_knowledge.$inferSelect;
+type WorldEventRow = typeof worldEvents.$inferSelect;
+
+/**
+ * Everything the decision pass loads once per tick (`loadDecisionContext`).
+ * One instance is handed to every agent's turn and to the passes after the
+ * loop, so what a step changes the later ones see: `allQueuedConvos` is
+ * pushed to as conversations are queued, which is how a pair queued by one
+ * agent is not queued again by the other, nor by the location encounters.
+ */
+interface DecisionTickContext {
+  world: WorldRow;
+  activeAgents: AgentRow[];
+  allLocations: LocationRow[];
+  allRelationships: RelRow[];
+  needsMap: Map<number, NeedsRow>;
+  econMap: Map<number, EconRow>;
+  goalsMap: Map<number, GoalRow[]>;
+  allQueuedConvos: QueueRow[];
+  allActiveConvos: ConversationRow[];
+  pairOnCooldown: (a: number, b: number) => boolean;
+  tierBudget: { backlog: number; population: number; latencyMs: number | null };
+  allActiveKnowledge: KnowledgeRow[];
+  negativeFactCounts: Map<number, number>;
+  activeWorldEvents: WorldEventRow[];
+  activeEventTypes: Set<string>;
+  campaigners: Set<number>;
+  currentWeather: string;
+  nowMinutes: number;
+}
+
+/** One agent's own reads for their turn, worked out once it gets past the jail and the plan request. */
+interface AgentTurn {
+  agent: AgentRow;
+  agentNeeds: NeedsRow;
+  agentEcon: EconRow | null;
+  critical: number;
+  mealPlan: (requested: number | undefined) => MealPlan | null;
+}
+
+/** Where a decision sends the agent (`resolveDestination`): the door, the spot inside, and the zone it matched. */
+interface DecisionDestination {
+  destination: { x: number; y: number; locationId?: number } | null;
+  zoneTarget: { x: number; y: number } | null;
+  matchedZoneId: string | undefined;
+  matchedBuildingType: string | undefined;
+  seatedZone: boolean;
+}
+
+/**
+ * The decision phase: every active agent whose action is done picks the next
+ * one, then co-located agents may strike up a chat and a constable may make an
+ * arrest. Runs inside the phase's transaction, so the order of the steps (and
+ * of their DB writes and `Math.random()` draws) is part of the behaviour.
+ */
 export function tick(world: WorldRow): void {
+  const d = loadDecisionContext(world);
+
+  for (const agent of d.activeAgents) {
+    decideForAgent(agent, d);
+  }
+
+  queueLocationEncounters(d);
+  constableArrests(d);
+
+  emitter.markDirty('agents.all');
+}
+
+/** Load once what every agent's turn reads (see `DecisionTickContext`). */
+function loadDecisionContext(world: WorldRow): DecisionTickContext {
   const activeAgents = db
     .select()
     .from(agents)
@@ -1838,817 +1910,1032 @@ export function tick(world: WorldRow): void {
   // Action and agent-state stamps are game minutes (see isActionComplete).
   const nowMinutes = gameMinutes(world.time);
 
-  for (const agent of activeAgents) {
-    // Skip agents whose current action is still in progress
-    if (!isActionComplete(agent, nowMinutes)) continue;
+  return {
+    world, activeAgents, allLocations, allRelationships, needsMap, econMap, goalsMap,
+    allQueuedConvos, allActiveConvos, pairOnCooldown, tierBudget, allActiveKnowledge, negativeFactCounts,
+    activeWorldEvents, activeEventTypes, campaigners, currentWeather, nowMinutes,
+  };
+}
 
-    // Jailed agents serve the sentence. This sits above every scoring tier on
-    // purpose — the emergency override scores 9999 and would otherwise send a
-    // starving prisoner walking out of the cell to find food.
-    if (getAgentStates(agent.id).includes('arrested')) {
-      const prisonLoc = allLocations.find(l => l.type === 'prison');
-      if (prisonLoc) {
-        // The jail feeds its prisoners (economy.ts serveMeal: 'ration'); a
-        // sentence runs up to 48 game hours of the 72-hour starvation clock.
-        const prisonerHunger = needsMap.get(agent.id)?.hunger ?? 100;
-        const mealtime = prisonerHunger < CONFIG.NEEDS.THRESHOLDS.low;
-        db.update(agents).set({
-          current_action: mealtime ? { type: 'eating', locationId: prisonLoc.id } : { type: 'idle' },
-          position: { x: prisonLoc.entry_point.x, y: prisonLoc.entry_point.y },
-          current_destination: null,
-          current_location: prisonLoc.id,
-          action_started: nowMinutes,
-          action_duration: 60,
-          action_queue: [],
-          current_path: null,
-        }).where(eq(agents.id, agent.id)).run();
-      }
-      continue;
+/**
+ * One agent's turn of the decision pass. Every early `return` here is a
+ * `continue` of the per-agent loop this used to be the body of: the steps
+ * after it are skipped for this agent only.
+ */
+function decideForAgent(agent: AgentRow, d: DecisionTickContext): void {
+  const { world, allLocations, needsMap, econMap, nowMinutes } = d;
+  // Skip agents whose current action is still in progress
+  if (!isActionComplete(agent, nowMinutes)) return;
+
+  if (holdJailed(agent, d)) return;
+
+  requestPlanIfDue(agent, world);
+
+  // Fetch per-agent data from pre-loaded Maps
+  const agentNeeds = needsMap.get(agent.id);
+  if (!agentNeeds) return;
+
+  const agentEcon = econMap.get(agent.id) ?? null;
+  const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
+  const mealPlan = (requested: number | undefined) => chooseMealTarget(
+    agent, agentEcon, requested, allLocations, econMap, world.time, agentNeeds.hunger, critical,
+  );
+  const t: AgentTurn = { agent, agentNeeds, agentEcon, critical, mealPlan };
+
+  let decision = chooseDecision(t, d);
+  decision = eatBeforeBed(t, decision, nowMinutes);
+  decision = validateAtTarget(agent, decision, d);
+
+  const destination = resolveDestination(agent, decision, allLocations);
+  startDecision(t, decision, destination, d);
+  logZoneActivity(agent, decision);
+  executeCrime(t, decision, d);
+  queueSocialConversation(t, decision, d);
+}
+
+/**
+ * Hold a jailed agent in the prison for this turn. True when the agent is
+ * under arrest, and their turn ends there (with or without a prison to hold
+ * them in).
+ */
+function holdJailed(agent: AgentRow, d: DecisionTickContext): boolean {
+  const { allLocations, needsMap, nowMinutes } = d;
+  // Jailed agents serve the sentence. This sits above every scoring tier on
+  // purpose — the emergency override scores 9999 and would otherwise send a
+  // starving prisoner walking out of the cell to find food.
+  if (getAgentStates(agent.id).includes('arrested')) {
+    const prisonLoc = allLocations.find(l => l.type === 'prison');
+    if (prisonLoc) {
+      // The jail feeds its prisoners (economy.ts serveMeal: 'ration'); a
+      // sentence runs up to 48 game hours of the 72-hour starvation clock.
+      const prisonerHunger = needsMap.get(agent.id)?.hunger ?? 100;
+      const mealtime = prisonerHunger < CONFIG.NEEDS.THRESHOLDS.low;
+      db.update(agents).set({
+        current_action: mealtime ? { type: 'eating', locationId: prisonLoc.id } : { type: 'idle' },
+        position: { x: prisonLoc.entry_point.x, y: prisonLoc.entry_point.y },
+        current_destination: null,
+        current_location: prisonLoc.id,
+        action_started: nowMinutes,
+        action_duration: 60,
+        action_queue: [],
+        current_path: null,
+      }).where(eq(agents.id, agent.id)).run();
     }
+    return true;
+  }
+  return false;
+}
 
-    // Plan generation: trigger when waking up OR when plan is stale during daytime.
-    // The wake-up path catches the normal case; the stale-plan path catches agents
-    // who missed a sleep→wake cycle (e.g., sick, depressed, or stuck agents).
-    const completedActionType = agent.current_action?.type;
-    const sched = agent.schedule as { wakeTime?: number; sleepTime?: number } | null;
-    const wakeTime = sched?.wakeTime ?? 7;
-    const sleepTime = sched?.sleepTime ?? 22;
-    const effSleepTime = sleepTime === 0 ? 24 : sleepTime;
-    const isDaytime = effSleepTime > wakeTime
-      ? (world.time.hour >= wakeTime && world.time.hour < effSleepTime)
-      : !(world.time.hour >= effSleepTime && world.time.hour < wakeTime);
-    const currentPlan = agent.daily_plan;
-    const planIsStale = !currentPlan || currentPlan.day < (world.time.day ?? 1);
-    // A fallback plan (the LLM failed) is re-requested like a missing one so it
-    // gets upgraded once the LLM recovers. That makes this call fire on most
-    // passes for such agents, which is fine: queueGeneration is a no-op while a
-    // request is in flight or the agent's retry backoff is running.
-    const planIsFallback = currentPlan?.source === 'fallback';
-    const planClock = { day: world.time.day ?? 1, hour: world.time.hour, minute: world.time.minute };
+/** Ask for a day plan on waking, or when the plan is missing, stale or a fallback in the daytime. */
+function requestPlanIfDue(agent: AgentRow, world: WorldRow): void {
+  // Plan generation: trigger when waking up OR when plan is stale during daytime.
+  // The wake-up path catches the normal case; the stale-plan path catches agents
+  // who missed a sleep→wake cycle (e.g., sick, depressed, or stuck agents).
+  const completedActionType = agent.current_action?.type;
+  const sched = agent.schedule as { wakeTime?: number; sleepTime?: number } | null;
+  const wakeTime = sched?.wakeTime ?? 7;
+  const sleepTime = sched?.sleepTime ?? 22;
+  const effSleepTime = sleepTime === 0 ? 24 : sleepTime;
+  const isDaytime = effSleepTime > wakeTime
+    ? (world.time.hour >= wakeTime && world.time.hour < effSleepTime)
+    : !(world.time.hour >= effSleepTime && world.time.hour < wakeTime);
+  const currentPlan = agent.daily_plan;
+  const planIsStale = !currentPlan || currentPlan.day < (world.time.day ?? 1);
+  // A fallback plan (the LLM failed) is re-requested like a missing one so it
+  // gets upgraded once the LLM recovers. That makes this call fire on most
+  // passes for such agents, which is fine: queueGeneration is a no-op while a
+  // request is in flight or the agent's retry backoff is running.
+  const planIsFallback = currentPlan?.source === 'fallback';
+  const planClock = { day: world.time.day ?? 1, hour: world.time.hour, minute: world.time.minute };
 
-    if (completedActionType === 'sleeping' && world.time.hour >= wakeTime) {
-      planGenerator.queueGeneration(agent.id, planClock);
-    } else if (isDaytime && (planIsStale || planIsFallback) && completedActionType !== 'dead') {
-      // Catch-all: agent has no plan for today but it's daytime — generate one now
-      planGenerator.queueGeneration(agent.id, planClock);
-    }
+  if (completedActionType === 'sleeping' && world.time.hour >= wakeTime) {
+    planGenerator.queueGeneration(agent.id, planClock);
+  } else if (isDaytime && (planIsStale || planIsFallback) && completedActionType !== 'dead') {
+    // Catch-all: agent has no plan for today but it's daytime — generate one now
+    planGenerator.queueGeneration(agent.id, planClock);
+  }
+}
 
-    // Fetch per-agent data from pre-loaded Maps
-    const agentNeeds = needsMap.get(agent.id);
-    if (!agentNeeds) continue;
+/**
+ * The agent's next action: the first phase that has an answer wins, in
+ * priority order (each phase only runs while no earlier one decided), and an
+ * idle at home when none does.
+ */
+function chooseDecision(t: AgentTurn, d: DecisionTickContext): ScoredAction {
+  const { agent, agentNeeds, mealPlan } = t;
+  const { world, activeAgents, allLocations, allRelationships, activeEventTypes, nowMinutes } = d;
+  let decision: ScoredAction | null = null;
 
-    const agentEcon = econMap.get(agent.id) ?? null;
-    const critical = agentNeeds.thresholds?.critical ?? CONFIG.NEEDS.THRESHOLDS.critical;
-    const mealPlan = (requested: number | undefined) => chooseMealTarget(
-      agent, agentEcon, requested, allLocations, econMap, world.time, agentNeeds.hunger, critical,
+  // Phase 1: Emergency
+  if (CONFIG.DECISIONS.EMERGENCY_OVERRIDE) {
+    decision = checkEmergency(
+      agent,
+      agentNeeds,
+      allLocations,
+      allRelationships,
+      activeAgents,
+      activeEventTypes,
+      () => mealPlan(agent.home ?? undefined),
+      world.time.hour,
     );
+  }
 
-    let decision: ScoredAction | null = null;
+  if (!decision) {
+    decision = comfortVisitPhase(agent, d);
+  }
 
-    // Phase 1: Emergency
-    if (CONFIG.DECISIONS.EMERGENCY_OVERRIDE) {
-      decision = checkEmergency(
-        agent,
-        agentNeeds,
-        allLocations,
-        allRelationships,
-        activeAgents,
-        activeEventTypes,
-        () => mealPlan(agent.home ?? undefined),
-        world.time.hour,
-      );
+  if (!decision) {
+    decision = ownWeddingPhase(agent, d);
+  }
+
+  if (!decision) {
+    decision = ownChristeningPhase(agent, d);
+  }
+
+  if (!decision) {
+    decision = pendingProposalPhase(agent, d);
+  }
+
+  // Phase 1a'''-: an agreed tryst, and the night and dawn after it (adult layer,
+  // score 6350: above the rendezvous seek below, since an evening already agreed
+  // outranks asking for one; below the proposal above). Walks to the venue, holds a
+  // guest at the house through the evening, sends them to bed there, and at dawn
+  // home again, quietly. Once both are at the venue the periodic pass starts the
+  // evening itself (lib/intimacy/tryst.ts).
+  if (!decision) {
+    decision = trystDecision(agent, world.time.hour, nowMinutes, getAgentStates(agent.id));
+  }
+
+  if (!decision && isAdultContent()) {
+    decision = rendezvousPhase(agent, d);
+  }
+
+  if (!decision && !isCommuteDue(agent, allLocations, world.time.hour, world.time.minute)) {
+    decision = planPhase(t, d);
+  }
+
+  // Phase 2: Schedule
+  if (!decision) {
+    const scheduled = checkSchedule(agent, world, allLocations, agentNeeds.hunger);
+    decision = scheduled && withMeal(scheduled, mealPlan);
+  }
+
+  if (!decision && activeEventTypes.size > 0) {
+    decision = eventCrowdPhase(agent, d);
+  }
+
+  if (!decision) {
+    decision = freeTimePhase(t, d);
+  }
+
+  // Fallback
+  if (!decision) {
+    decision = { action: 'idle', score: 0, targetLocationId: agent.home };
+  }
+  return decision;
+}
+
+/** Phase 1a: a promised comfort visit to a lonely friend. */
+function comfortVisitPhase(agent: AgentRow, d: DecisionTickContext): ScoredAction | null {
+  const { activeAgents, allLocations, nowMinutes } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 1a: Comfort visit (score 7000 — above the day plan, below emergency).
+  // A warm friend promised to look in on a lonely neighbour (lonelinessEngine).
+  // Walk to wherever they are; the social-queue block below opens the
+  // conversation once the two are together.
+  const visit = getComfortVisit(agent.id, nowMinutes);
+  if (visit) {
+    const lonely = activeAgents.find((a) => a.id === visit.lonelyAgentId);
+    const lonelyAction = (lonely?.current_action as { type?: string } | null)?.type;
+    if (!lonely || lonelyAction === 'dead') {
+      completeComfortVisit(agent.id);
+    } else if (lonelyAction !== 'sleeping') {
+      // Asleep: leave the visit pending; it keeps until its window closes.
+      decision = {
+        action: 'socializing',
+        score: 7000,
+        targetLocationId:
+          lonely.current_location ?? nearestLocation(lonely.position, allLocations, 'town_square')?.id,
+        targetAgentId: lonely.id,
+        topic: 'checking in on how they have been doing lately',
+        source: 'comfort_visit',
+      };
     }
+  }
+  return decision;
+}
 
-    // Phase 1a: Comfort visit (score 7000 — above the day plan, below emergency).
-    // A warm friend promised to look in on a lonely neighbour (lonelinessEngine).
-    // Walk to wherever they are; the social-queue block below opens the
-    // conversation once the two are together.
-    if (!decision) {
-      const visit = getComfortVisit(agent.id, nowMinutes);
-      if (visit) {
-        const lonely = activeAgents.find((a) => a.id === visit.lonelyAgentId);
-        const lonelyAction = (lonely?.current_action as { type?: string } | null)?.type;
-        if (!lonely || lonelyAction === 'dead') {
-          completeComfortVisit(agent.id);
-        } else if (lonelyAction !== 'sleeping') {
-          // Asleep: leave the visit pending; it keeps until its window closes.
-          decision = {
-            action: 'socializing',
-            score: 7000,
-            targetLocationId:
-              lonely.current_location ?? nearestLocation(lonely.position, allLocations, 'town_square')?.id,
-            targetAgentId: lonely.id,
-            topic: 'checking in on how they have been doing lately',
-            source: 'comfort_visit',
-          };
+/** Phase 1a': the agent's own wedding. */
+function ownWeddingPhase(agent: AgentRow, d: DecisionTickContext): ScoredAction | null {
+  const { activeWorldEvents, allLocations } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 1a': their own wedding (score 6500 — above the day plan, below a
+  // comfort visit's promise and emergencies). The ceremony is on the square
+  // (lib/milestonesEngine.ts) and runs for the event's six hours; a bride
+  // who stays at the counter because her plan said "work" left the town
+  // celebrating two empty chairs. Guests are pulled in by Phase 2b below.
+  const ownWedding = activeWorldEvents.find((e) => {
+    if (e.type !== 'wedding') return false;
+    const couple = parseWeddingTrigger(e.triggered_by);
+    return couple !== null && couple.includes(agent.id);
+  });
+  const venue = ownWedding
+    ? (ownWedding.location_id ?? nearestLocation(agent.position, allLocations, 'town_square')?.id)
+    : undefined;
+  if (venue != null) {
+    decision = { action: 'socializing', score: 6500, targetLocationId: venue };
+  }
+  return decision;
+}
+
+/** Phase 1a' (family): the christening of the agent's own child. */
+function ownChristeningPhase(agent: AgentRow, d: DecisionTickContext): ScoredAction | null {
+  const { activeWorldEvents, allLocations } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 1a' (family): their own child's christening, same score and for the
+  // same reason as their wedding — the town gathering to welcome a baby whose
+  // parents stayed at work would be welcoming nobody (lib/family.ts).
+  const ownChristening = activeWorldEvents.find((e) => {
+    if (e.type !== 'christening') return false;
+    const childId = parseChristeningTrigger(e.triggered_by);
+    return childId !== null && parentsOfChild(childId).includes(agent.id);
+  });
+  const venue = ownChristening
+    ? (ownChristening.location_id ?? nearestLocation(agent.position, allLocations, 'town_square')?.id)
+    : undefined;
+  if (venue != null) {
+    decision = { action: 'socializing', score: 6500, targetLocationId: venue };
+  }
+  return decision;
+}
+
+/** Phase 1a'': going to find the partner a pending proposal is for. */
+function pendingProposalPhase(agent: AgentRow, d: DecisionTickContext): ScoredAction | null {
+  const { world, activeAgents, allLocations } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 1a'': a pending proposal (score 6400 — above the day plan, below their
+  // own wedding). The proposer used to wait for the partner to wander into range;
+  // now they go and find them when both are free to be found (proposalSeekDecision
+  // holds the sleep/shift rules). Once together the question is seated on the
+  // spot, and the social-queue block below leaves this decision alone so an
+  // ordinary chat doesn't take the place of the proposal.
+  const partnerId = pendingProposalPartner(agent.id);
+  const partner = partnerId != null ? activeAgents.find((a) => a.id === partnerId) : undefined;
+  if (partner) {
+    decision = proposalSeekDecision(agent, partner, allLocations, world.time.hour, getAgentStates(agent.id), getAgentStates(partner.id));
+    if (decision && queuePendingProposalNow(agent.id)) {
+      // Together already: stay put with them while the conversation starts.
+      decision = { ...decision, targetLocationId: agent.current_location ?? decision.targetLocationId };
+    }
+  }
+  return decision;
+}
+
+/** Phase 1a''': going to find the lover a pending rendezvous invitation is for (adult layer). */
+function rendezvousPhase(agent: AgentRow, d: DecisionTickContext): ScoredAction | null {
+  const { world, activeAgents, allLocations } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 1a''': a pending rendezvous invitation (adult layer, score 6300, right
+  // below the proposal block above, same guards). The asker goes to find the one
+  // they want to ask, and the invitation is seated the moment they are together.
+  // The social-queue block below leaves this decision alone (source 'rendezvous_seek').
+  const askedId = pendingRendezvousPartner(agent.id);
+  const asked = askedId != null ? activeAgents.find((a) => a.id === askedId) : undefined;
+  if (asked) {
+    decision = rendezvousSeekDecision(agent, asked, allLocations, world.time.hour, getAgentStates(agent.id), getAgentStates(asked.id));
+    if (decision && queuePendingRendezvousNow(agent.id)) {
+      // Together already: stay put with them while the conversation starts.
+      decision = { ...decision, targetLocationId: agent.current_location ?? decision.targetLocationId };
+    }
+  }
+  return decision;
+}
+
+/** Phase 1b: the step of the day plan for this hour (the caller skips it while the commute is due). */
+function planPhase(t: AgentTurn, d: DecisionTickContext): ScoredAction | null {
+  const { agent, mealPlan } = t;
+  const { world } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 1b: Plan layer (score 6000 — above free-time, below emergency).
+  // Not while the commute is due: plan blocks are whole hours and an LLM plan
+  // (like the fallback one) puts "work" at `workStart`, so the block before it
+  // would hold the agent at home and the commute would come out of the shift
+  // again. The schedule sends them off (checkSchedule, isCommuteDue).
+  const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day, world.time.minute);
+  // A planned meal with no meal to be had falls through to the schedule.
+  if (planned) {
+    decision = withMeal(planned, mealPlan);
+  }
+  return decision;
+}
+
+/**
+ * Phase 2b: the pull of active world events on an otherwise undecided agent.
+ * Later rules override earlier ones, as they always have (a storm sends home
+ * someone a festival had just sent to the square).
+ */
+function eventCrowdPhase(agent: AgentRow, d: DecisionTickContext): ScoredAction | null {
+  const { world, allLocations, activeWorldEvents, activeEventTypes } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 2b: Event crowd behavior — idle agents gravitate toward active events.
+  // The pull chances below are authored per GAME MINUTE and rolled through
+  // chancePerTick, so a festival fills the square in the same game time at 4x
+  // (per tick, an idle agent set off after 1/4 of the game minutes) as at 1x.
+  // Festival/wedding/competition: head to town square to join the fun.
+  // A couple's wedding names its venue; go there rather than to whichever
+  // square is nearest (a town can have more than one open area).
+  // A christening (lib/family.ts) gathers the town the same way, and the
+  // calendar's festivals name their venue too (Midsummer is in the park).
+  if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')
+    || activeEventTypes.has('christening')) {
+    const namedVenue = activeWorldEvents.find((e) =>
+      e.location_id != null
+      && (e.type === 'wedding' || e.type === 'christening' || withFamilies([e.type]).has('festival')))?.location_id;
+    const venue = namedVenue != null
+      ? allLocations.find((l) => l.id === namedVenue)
+      : nearestLocation(agent.position, allLocations, 'town_square');
+    if (venue && agent.current_location !== venue.id && Math.random() < chancePerTick(0.4, world.tick_speed)) {
+      decision = { action: 'socializing', score: 3800, targetLocationId: venue.id };
+    }
+  }
+  // Storm: rush home if outdoors
+  if (activeEventTypes.has('storm') && agent.current_location === null) {
+    decision = { action: 'idle', score: 3800, targetLocationId: agent.home };
+  }
+  // Town meeting: head to town square
+  if (activeEventTypes.has('town_meeting')) {
+    const square = nearestLocation(agent.position, allLocations, 'town_square');
+    if (square && agent.current_location !== square.id && Math.random() < chancePerTick(0.6, world.tick_speed)) {
+      decision = { action: 'socializing', score: 3900, targetLocationId: square.id };
+    }
+  }
+  // Traveling merchant: browse the market
+  if (activeEventTypes.has('traveling_merchant') && Math.random() < chancePerTick(0.25, world.tick_speed)) {
+    const square = nearestLocation(agent.position, allLocations, 'town_square');
+    if (square) {
+      decision = { action: 'idle', score: 3500, targetLocationId: square.id, source: 'browse' };
+    }
+  }
+  return decision;
+}
+
+/**
+ * Phase 3: the best-scored free-time option (scoreFreeTimeActions), after
+ * goals and a campaign have weighed in and eating options have been sent to
+ * where a meal is. Null when nothing is left to choose from.
+ */
+function freeTimePhase(t: AgentTurn, d: DecisionTickContext): ScoredAction | null {
+  const { agent, agentNeeds, agentEcon, mealPlan } = t;
+  const {
+    world, activeAgents, allLocations, allRelationships, econMap, activeEventTypes, currentWeather, negativeFactCounts,
+  } = d;
+  let decision: ScoredAction | null = null;
+  // Phase 3: Free time scoring
+  const scored = scoreFreeTimeActions(
+    agent,
+    agentNeeds,
+    agentEcon,
+    allLocations,
+    allRelationships,
+    activeAgents,
+    world,
+    econMap,
+    activeEventTypes,
+    currentWeather,
+    negativeFactCounts,
+  );
+  if (scored.length > 0) {
+    applyGoalAlignment(agent, scored, d);
+    applyCampaigning(agent, scored, d);
+    addSafetyNetWalk(scored, allLocations);
+
+    // Eating options go where the meal is; with none to be had they are
+    // dropped and the next-best action wins (it used to be a 10-minute
+    // idle at home, re-decided into the same empty table).
+    const viable = scored
+      .map((s) => withMeal(s, mealPlan))
+      .filter((s): s is ScoredAction => s != null);
+    viable.sort((a, b) => b.score - a.score);
+    decision = viable[0] ?? null;
+  }
+  return decision;
+}
+
+/** Goals with a target pull the agent toward that person: a boost if together, a seek option if not. */
+function applyGoalAlignment(agent: AgentRow, scored: ScoredAction[], d: DecisionTickContext): void {
+  const { activeAgents, goalsMap } = d;
+  // Goal alignment bonus — boost social actions toward goal targets
+  const agentGoals = goalsMap.get(agent.id) ?? [];
+  for (const goal of agentGoals) {
+    if (!goal.target_id) continue;
+    const target = activeAgents.find(a => a.id === goal.target_id);
+    if (!target || !target.is_active) continue;
+
+    // Co-located: massive score boost for socializing with target
+    if (agent.current_location === target.current_location) {
+      for (const s of scored) {
+        if (s.action === 'socializing' && s.targetAgentId === goal.target_id) {
+          s.score += Math.round(2500 * goal.priority);
         }
       }
-    }
-
-    // Phase 1a': their own wedding (score 6500 — above the day plan, below a
-    // comfort visit's promise and emergencies). The ceremony is on the square
-    // (lib/milestonesEngine.ts) and runs for the event's six hours; a bride
-    // who stays at the counter because her plan said "work" left the town
-    // celebrating two empty chairs. Guests are pulled in by Phase 2b below.
-    if (!decision) {
-      const ownWedding = activeWorldEvents.find((e) => {
-        if (e.type !== 'wedding') return false;
-        const couple = parseWeddingTrigger(e.triggered_by);
-        return couple !== null && couple.includes(agent.id);
+    } else {
+      // NOT co-located: add a "go find target" socializing option
+      // Goal-driven agents seek out their targets
+      const seekScore = Math.round(800 * goal.priority);
+      scored.push({
+        action: 'socializing',
+        score: addNoise(seekScore),
+        targetAgentId: target.id,
+        targetLocationId: target.current_location ?? undefined,
+        source: `goal:seek_target`,
       });
-      const venue = ownWedding
-        ? (ownWedding.location_id ?? nearestLocation(agent.position, allLocations, 'town_square')?.id)
-        : undefined;
-      if (venue != null) {
-        decision = { action: 'socializing', score: 6500, targetLocationId: venue };
-      }
     }
+  }
+}
 
-    // Phase 1a' (family): their own child's christening, same score and for the
-    // same reason as their wedding — the town gathering to welcome a baby whose
-    // parents stayed at work would be welcoming nobody (lib/family.ts).
-    if (!decision) {
-      const ownChristening = activeWorldEvents.find((e) => {
-        if (e.type !== 'christening') return false;
-        const childId = parseChristeningTrigger(e.triggered_by);
-        return childId !== null && parentsOfChild(childId).includes(agent.id);
-      });
-      const venue = ownChristening
-        ? (ownChristening.location_id ?? nearestLocation(agent.position, allLocations, 'town_square')?.id)
-        : undefined;
-      if (venue != null) {
-        decision = { action: 'socializing', score: 6500, targetLocationId: venue };
-      }
+/** A candidate in the mayoral campaign spends free time canvassing. */
+function applyCampaigning(agent: AgentRow, scored: ScoredAction[], d: DecisionTickContext): void {
+  const { campaigners } = d;
+  // Campaigning: a candidate's free time goes to meeting people. Every
+  // socializing option is worth more, and one to a voter they haven't
+  // yet canvassed more still — the support score counts heads.
+  if (campaigners.has(agent.id)) {
+    for (const s of scored) {
+      if (s.action !== 'socializing') continue;
+      s.score *= s.targetAgentId != null && !campaigners.has(s.targetAgentId) ? 1.8 : 1.4;
     }
+  }
+}
 
-    // Phase 1a'': a pending proposal (score 6400 — above the day plan, below their
-    // own wedding). The proposer used to wait for the partner to wander into range;
-    // now they go and find them when both are free to be found (proposalSeekDecision
-    // holds the sleep/shift rules). Once together the question is seated on the
-    // spot, and the social-queue block below leaves this decision alone so an
-    // ordinary chat doesn't take the place of the proposal.
-    if (!decision) {
-      const partnerId = pendingProposalPartner(agent.id);
-      const partner = partnerId != null ? activeAgents.find((a) => a.id === partnerId) : undefined;
-      if (partner) {
-        decision = proposalSeekDecision(agent, partner, allLocations, world.time.hour, getAgentStates(agent.id), getAgentStates(partner.id));
-        if (decision && queuePendingProposalNow(agent.id)) {
-          // Together already: stay put with them while the conversation starts.
-          decision = { ...decision, targetLocationId: agent.current_location ?? decision.targetLocationId };
+/** With every option suppressed to almost nothing, a walk to the square. */
+function addSafetyNetWalk(scored: ScoredAction[], allLocations: LocationRow[]): void {
+  // Safety net: if all scores suppressed to near-zero, add a minimum walk
+  if (scored.every(s => s.score < 5)) {
+    const square = allLocations.find(l => l.type === 'town_square');
+    if (square) {
+      scored.push({ action: 'socializing', score: 10, targetLocationId: square.id });
+    }
+  }
+}
+
+/** A hungry agent about to go to bed eats first, if there is a meal to be had. */
+function eatBeforeBed(t: AgentTurn, decision: ScoredAction, nowMinutes: number): ScoredAction {
+  const { agent, agentNeeds, mealPlan } = t;
+  // Don't go to bed hungry. Sleep is 6 game hours (and an energy emergency
+  // outranks a hunger one whenever energy is lower), so a hungry agent who
+  // went to bed woke up under the critical line: in the soaks most of the
+  // town's time below hunger 35 was spent asleep. An hour's meal first, if
+  // there is one to be had; bed on the next pass.
+  if (decision.action === 'sleeping') {
+    const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
+    const supper = agentNeeds.hunger < low && agentNeeds.energy >= SUPPER_MIN_ENERGY
+      ? mealPlan(sleepTargetFor(agent, nowMinutes))
+      : null;
+    if (supper) decision = { action: 'eating', score: decision.score, targetLocationId: supper.locationId };
+  }
+  return decision;
+}
+
+/** Correct a decision the target location cannot host: not their workplace, not their bed, closed. */
+function validateAtTarget(agent: AgentRow, decision: ScoredAction, d: DecisionTickContext): ScoredAction {
+  const { world, allLocations, nowMinutes } = d;
+  // --- Validate action makes sense at target location ---
+  if (decision != null && decision.targetLocationId != null) {
+    const targetLoc = allLocations.find((l) => l.id === decision!.targetLocationId);
+    if (targetLoc) {
+      // Can't work at a location that isn't your workplace
+      if (decision.action === 'working' && decision.targetLocationId !== agent.workplace) {
+        decision = { action: 'idle', score: 0, targetLocationId: agent.home };
+      }
+      // Can't sleep anywhere except in tonight's bed: home, or a lover's house for a guest
+      // whose night there is on (sleepTargetFor, lib/intimacy/tryst.ts).
+      if (decision!.action === 'sleeping') {
+        const bed = sleepTargetFor(agent, nowMinutes);
+        if (decision!.targetLocationId !== bed) {
+          decision = { action: 'sleeping', score: decision!.score, targetLocationId: bed };
         }
       }
-    }
-
-    // Phase 1a'''-: an agreed tryst, and the night and dawn after it (adult layer,
-    // score 6350: above the rendezvous seek below, since an evening already agreed
-    // outranks asking for one; below the proposal above). Walks to the venue, holds a
-    // guest at the house through the evening, sends them to bed there, and at dawn
-    // home again, quietly. Once both are at the venue the periodic pass starts the
-    // evening itself (lib/intimacy/tryst.ts).
-    if (!decision) {
-      decision = trystDecision(agent, world.time.hour, nowMinutes, getAgentStates(agent.id));
-    }
-
-    // Phase 1a''': a pending rendezvous invitation (adult layer, score 6300, right
-    // below the proposal block above, same guards). The asker goes to find the one
-    // they want to ask, and the invitation is seated the moment they are together.
-    // The social-queue block below leaves this decision alone (source 'rendezvous_seek').
-    if (!decision && isAdultContent()) {
-      const askedId = pendingRendezvousPartner(agent.id);
-      const asked = askedId != null ? activeAgents.find((a) => a.id === askedId) : undefined;
-      if (asked) {
-        decision = rendezvousSeekDecision(agent, asked, allLocations, world.time.hour, getAgentStates(agent.id), getAgentStates(asked.id));
-        if (decision && queuePendingRendezvousNow(agent.id)) {
-          // Together already: stay put with them while the conversation starts.
-          decision = { ...decision, targetLocationId: agent.current_location ?? decision.targetLocationId };
-        }
-      }
-    }
-
-    // Phase 1b: Plan layer (score 6000 — above free-time, below emergency).
-    // Not while the commute is due: plan blocks are whole hours and an LLM plan
-    // (like the fallback one) puts "work" at `workStart`, so the block before it
-    // would hold the agent at home and the commute would come out of the shift
-    // again. The schedule sends them off (checkSchedule, isCommuteDue).
-    if (!decision && !isCommuteDue(agent, allLocations, world.time.hour, world.time.minute)) {
-      const planned = planExecutor.getPlannedAction(agent.id, world.time.hour, world.time.totalTicks, world.time.day, world.time.minute);
-      // A planned meal with no meal to be had falls through to the schedule.
-      if (planned) {
-        decision = withMeal(planned, mealPlan);
-      }
-    }
-
-    // Phase 2: Schedule
-    if (!decision) {
-      const scheduled = checkSchedule(agent, world, allLocations, agentNeeds.hunger);
-      decision = scheduled && withMeal(scheduled, mealPlan);
-    }
-
-    // Phase 2b: Event crowd behavior — idle agents gravitate toward active events.
-    // The pull chances below are authored per GAME MINUTE and rolled through
-    // chancePerTick, so a festival fills the square in the same game time at 4x
-    // (per tick, an idle agent set off after 1/4 of the game minutes) as at 1x.
-    if (!decision && activeEventTypes.size > 0) {
-      // Festival/wedding/competition: head to town square to join the fun.
-      // A couple's wedding names its venue; go there rather than to whichever
-      // square is nearest (a town can have more than one open area).
-      // A christening (lib/family.ts) gathers the town the same way, and the
-      // calendar's festivals name their venue too (Midsummer is in the park).
-      if (activeEventTypes.has('festival') || activeEventTypes.has('wedding') || activeEventTypes.has('competition')
-        || activeEventTypes.has('christening')) {
-        const namedVenue = activeWorldEvents.find((e) =>
-          e.location_id != null
-          && (e.type === 'wedding' || e.type === 'christening' || withFamilies([e.type]).has('festival')))?.location_id;
-        const venue = namedVenue != null
-          ? allLocations.find((l) => l.id === namedVenue)
-          : nearestLocation(agent.position, allLocations, 'town_square');
-        if (venue && agent.current_location !== venue.id && Math.random() < chancePerTick(0.4, world.tick_speed)) {
-          decision = { action: 'socializing', score: 3800, targetLocationId: venue.id };
-        }
-      }
-      // Storm: rush home if outdoors
-      if (activeEventTypes.has('storm') && agent.current_location === null) {
-        decision = { action: 'idle', score: 3800, targetLocationId: agent.home };
-      }
-      // Town meeting: head to town square
-      if (activeEventTypes.has('town_meeting')) {
-        const square = nearestLocation(agent.position, allLocations, 'town_square');
-        if (square && agent.current_location !== square.id && Math.random() < chancePerTick(0.6, world.tick_speed)) {
-          decision = { action: 'socializing', score: 3900, targetLocationId: square.id };
-        }
-      }
-      // Traveling merchant: browse the market
-      if (activeEventTypes.has('traveling_merchant') && Math.random() < chancePerTick(0.25, world.tick_speed)) {
-        const square = nearestLocation(agent.position, allLocations, 'town_square');
-        if (square) {
-          decision = { action: 'idle', score: 3500, targetLocationId: square.id, source: 'browse' };
-        }
-      }
-    }
-
-    // Phase 3: Free time scoring
-    if (!decision) {
-      const scored = scoreFreeTimeActions(
-        agent,
-        agentNeeds,
-        agentEcon,
-        allLocations,
-        allRelationships,
-        activeAgents,
-        world,
-        econMap,
-        activeEventTypes,
-        currentWeather,
-        negativeFactCounts,
-      );
-      if (scored.length > 0) {
-        // Goal alignment bonus — boost social actions toward goal targets
-        const agentGoals = goalsMap.get(agent.id) ?? [];
-        for (const goal of agentGoals) {
-          if (!goal.target_id) continue;
-          const target = activeAgents.find(a => a.id === goal.target_id);
-          if (!target || !target.is_active) continue;
-
-          // Co-located: massive score boost for socializing with target
-          if (agent.current_location === target.current_location) {
-            for (const s of scored) {
-              if (s.action === 'socializing' && s.targetAgentId === goal.target_id) {
-                s.score += Math.round(2500 * goal.priority);
-              }
-            }
-          } else {
-            // NOT co-located: add a "go find target" socializing option
-            // Goal-driven agents seek out their targets
-            const seekScore = Math.round(800 * goal.priority);
-            scored.push({
-              action: 'socializing',
-              score: addNoise(seekScore),
-              targetAgentId: target.id,
-              targetLocationId: target.current_location ?? undefined,
-              source: `goal:seek_target`,
-            });
-          }
-        }
-
-        // Campaigning: a candidate's free time goes to meeting people. Every
-        // socializing option is worth more, and one to a voter they haven't
-        // yet canvassed more still — the support score counts heads.
-        if (campaigners.has(agent.id)) {
-          for (const s of scored) {
-            if (s.action !== 'socializing') continue;
-            s.score *= s.targetAgentId != null && !campaigners.has(s.targetAgentId) ? 1.8 : 1.4;
-          }
-        }
-
-        // Safety net: if all scores suppressed to near-zero, add a minimum walk
-        if (scored.every(s => s.score < 5)) {
-          const square = allLocations.find(l => l.type === 'town_square');
-          if (square) {
-            scored.push({ action: 'socializing', score: 10, targetLocationId: square.id });
-          }
-        }
-
-        // Eating options go where the meal is; with none to be had they are
-        // dropped and the next-best action wins (it used to be a 10-minute
-        // idle at home, re-decided into the same empty table).
-        const viable = scored
-          .map((s) => withMeal(s, mealPlan))
-          .filter((s): s is ScoredAction => s != null);
-        viable.sort((a, b) => b.score - a.score);
-        decision = viable[0] ?? null;
-      }
-    }
-
-    // Fallback
-    if (!decision) {
-      decision = { action: 'idle', score: 0, targetLocationId: agent.home };
-    }
-
-    // Don't go to bed hungry. Sleep is 6 game hours (and an energy emergency
-    // outranks a hunger one whenever energy is lower), so a hungry agent who
-    // went to bed woke up under the critical line: in the soaks most of the
-    // town's time below hunger 35 was spent asleep. An hour's meal first, if
-    // there is one to be had; bed on the next pass.
-    if (decision.action === 'sleeping') {
-      const low = agentNeeds.thresholds?.low ?? CONFIG.NEEDS.THRESHOLDS.low;
-      const supper = agentNeeds.hunger < low && agentNeeds.energy >= SUPPER_MIN_ENERGY
-        ? mealPlan(sleepTargetFor(agent, nowMinutes))
-        : null;
-      if (supper) decision = { action: 'eating', score: decision.score, targetLocationId: supper.locationId };
-    }
-
-    // --- Validate action makes sense at target location ---
-    if (decision != null && decision.targetLocationId != null) {
-      const targetLoc = allLocations.find((l) => l.id === decision!.targetLocationId);
-      if (targetLoc) {
-        // Can't work at a location that isn't your workplace
-        if (decision.action === 'working' && decision.targetLocationId !== agent.workplace) {
+      // Check operating hours for commercial locations
+      if (['eating', 'shopping'].includes(decision!.action)) {
+        if (!isOpenAt(targetLoc.operating_hours, world.time.hour)) {
           decision = { action: 'idle', score: 0, targetLocationId: agent.home };
         }
-        // Can't sleep anywhere except in tonight's bed: home, or a lover's house for a guest
-        // whose night there is on (sleepTargetFor, lib/intimacy/tryst.ts).
-        if (decision!.action === 'sleeping') {
-          const bed = sleepTargetFor(agent, nowMinutes);
-          if (decision!.targetLocationId !== bed) {
-            decision = { action: 'sleeping', score: decision!.score, targetLocationId: bed };
-          }
-        }
-        // Check operating hours for commercial locations
-        if (['eating', 'shopping'].includes(decision!.action)) {
-          if (!isOpenAt(targetLoc.operating_hours, world.time.hour)) {
-            decision = { action: 'idle', score: 0, targetLocationId: agent.home };
-          }
-        }
-      }
-    }
-
-    // Build destination from the target location
-    let destination: { x: number; y: number; locationId?: number } | null = null;
-    let zoneTarget: { x: number; y: number } | null = null;
-    let matchedZoneId: string | undefined;
-    let matchedBuildingType: string | undefined;
-    let seatedZone = false;
-    if (decision.targetLocationId) {
-      const loc = allLocations.find((l) => l.id === decision!.targetLocationId);
-      if (loc) {
-        // Always pathfind to the entry point — this is guaranteed to be a walkable tile.
-        // If the action targets an interior zone, store the zone center separately and
-        // teleport the agent there on arrival (two-phase interior movement).
-        const destX = loc.entry_point.x;
-        const destY = loc.entry_point.y;
-
-        const locType = loc.type as string;
-        // Zone activities ride on `action: 'idle'` with the real intent in `source`
-        // ('fish', 'garden', 'perform', ...). Passing the action alone sent every
-        // activity to whichever zone happened to allow 'idle'.
-        // `agent.id` is passed so the agent is not counted against the capacity of
-        // the zone it is already standing in — otherwise a single-occupant zone
-        // (home:bed) blocks its own occupant on every re-decision.
-        const zone = findAvailableZone(locType, zoneVerbOf(decision!) ?? decision!.source ?? decision!.action, loc.id, agent.id);
-        if (zone) {
-          const locPos = loc.position as { x: number; y: number; width: number; height: number };
-          const slot = zoneSlotOffset(agent.id);
-          zoneTarget = {
-            x: locPos.x + zone.center[0] * 32 + 16 + slot.dx,
-            y: locPos.y + zone.center[1] * 32 + 16 + slot.dy,
-          };
-          matchedZoneId = zone.id;
-          matchedBuildingType = locType;
-          seatedZone = isSeatedZone(locType, zone.id);
-        } else {
-          // No zone matched (plenty of action/building pairs have no mapping —
-          // 'idle' in a shop, 'resting' anywhere). Standing them on a floor tile
-          // keeps them inside; the alternative is the entry_point, which is a
-          // tile outside the south wall, so they'd loiter on the doorstep.
-          const tile = fallbackInteriorTile(locType, agent.id);
-          if (tile) {
-            const locPos = loc.position as { x: number; y: number; width: number; height: number };
-            const slot = zoneSlotOffset(agent.id);
-            zoneTarget = {
-              x: locPos.x + tile[0] * 32 + 16 + slot.dx,
-              y: locPos.y + tile[1] * 32 + 16 + slot.dy,
-            };
-            matchedBuildingType = locType;
-          }
-        }
-
-        // Every zone is genuinely full and the agent is already inside: keep them
-        // where they stand. Re-routing to the entry_point would park them in the
-        // doorway for the whole action.
-        const alreadyHere = agent.current_location === loc.id;
-        if (!zone && alreadyHere) {
-          destination = null;
-        } else {
-          destination = {
-            x: destX,
-            y: destY,
-            locationId: loc.id,
-          };
-        }
-      }
-    }
-
-    // Determine action duration
-    const durationKey = decision.action;
-    const minDuration =
-      CONFIG.DECISIONS.ACTION_MIN_DURATIONS[durationKey] ??
-      CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'];
-
-    const actionDuration =
-      decision.action === 'idle' &&
-      agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD
-        ? 120
-        : decision.action === 'sleeping'
-          ? sleepDurationMinutes(
-              world.time.hour, world.time.minute,
-              sleepWindow(agent, getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null).wake,
-              minDuration,
-              agentNeeds.energy < critical,
-            )
-          : minDuration;
-
-    const baseAction = buildAction(
-      decision,
-      decision.action === 'shopping'
-        ? groceryList(agentEcon, allLocations.find((l) => l.id === decision!.targetLocationId))
-        : [],
-    );
-
-    // Walk straight to the spot. The destination above is the entry_point, and
-    // the spot used to be reached in a second walk started on arrival
-    // (handleArrival in movement.ts: an interior hop inside buildings, a 5-tick
-    // lerp in open areas). Two costs came with it:
-    //  - a place the agent was already in was left and re-entered: a farmer
-    //    re-deciding `working` every hour (the action is 60 minutes) walked
-    //    from the crops out to the farm gate and back, a clerk from the counter
-    //    out onto the doorstep and back — ~5 such walks per agent a day in the
-    //    soaks, and at 4x each leg costs a whole 4-minute tick to arrive;
-    //  - every trip was two walks, so paid that arrival tick twice, and the open
-    //    area lerp padded the action by 5 ticks (20 game minutes at 4x).
-    // planRoute (movement.ts) routes into a building through its door on the
-    // building's own grid, so one walk covers door and spot.
-    //
-    // The queued action carries what starting it needs (startQueuedAction):
-    //  - `_arrivalZone`/`_arrivalBuilding` for any matched zone, indoor or open
-    //    area: the zone's effects (fish → food, garden, jog...) run on arrival,
-    //    and indoor zones register occupancy;
-    //  - `_duration`: the length decided here. Arrival used to reset it to the
-    //    action type's minimum, so a sleep shortened to end at the wake time
-    //    (or a 120-minute mope) was six hours / ten minutes again once walked to.
-    // `pose` is a cosmetic hint for the renderer and rides on the action itself.
-    const queuedAction: AgentAction = {
-      ...(baseAction.type === 'walking' ? { type: 'idle' } : baseAction),
-      ...(matchedZoneId && matchedBuildingType
-        ? { _arrivalZone: matchedZoneId, _arrivalBuilding: matchedBuildingType }
-        : {}),
-      ...(seatedZone ? { pose: 'sitting' } : {}),
-      // A 'walking' decision can't be started in place (no destination: movement
-      // skips it and decisions never re-assigns it); it becomes a short idle.
-      _duration: baseAction.type === 'walking'
-        ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
-        : actionDuration,
-    };
-    if (destination && zoneTarget) {
-      destination = { x: zoneTarget.x, y: zoneTarget.y, locationId: destination.locationId };
-    }
-
-    const needsToTravel =
-      destination &&
-      (Math.abs(agent.position.x - destination.x) > 4 ||
-        Math.abs(agent.position.y - destination.y) > 4);
-
-    if (needsToTravel) {
-      db.update(agents)
-        .set({
-          current_action: { type: 'walking', to: { x: destination!.x, y: destination!.y } },
-          current_destination: destination,
-          action_started: nowMinutes,
-          action_duration: null,
-          action_queue: [queuedAction],
-          current_path: null,
-        })
-        .where(eq(agents.id, agent.id))
-        .run();
-    } else {
-      // Already on the spot (or staying where they stand): start it here, the
-      // same way an arrival would — so an angler who re-decides `fish` on the
-      // riverbank still lands a fish.
-      if (destination) {
-        db.update(agents).set({ position: { x: destination.x, y: destination.y } }).where(eq(agents.id, agent.id)).run();
-      }
-      startQueuedAction(agent.id, agent.current_location, queuedAction, [], world.time);
-    }
-
-    // Log zone-driven activities to activity feed
-    if (decision.source && ['contemplate', 'fish', 'garden', 'forage', 'perform', 'jog', 'browse', 'rest', 'shoplifting', 'pickpocket'].includes(decision.source)) {
-      const activityNames: Record<string, string> = {
-        contemplate: 'is contemplating by the riverside',
-        fish: 'is fishing at the river',
-        garden: 'is tending the garden',
-        forage: 'is foraging in the grove',
-        perform: 'is performing in the town square',
-        jog: 'is jogging around town',
-        browse: 'is browsing the market stalls',
-        rest: 'is resting at home',
-        shoplifting: 'is eyeing goods at the shop suspiciously',
-        pickpocket: 'is lurking near someone with money',
-      };
-      logActivity({
-        type: decision.source as string,
-        initiator: agent.id,
-        templateData: { agent: agent.name, description: `${agent.name} ${activityNames[decision.source] ?? decision.source}` },
-      });
-    }
-
-    // Crime execution — resolve theft when agent starts the action
-    if (decision.source === 'shoplifting' || decision.source === 'pickpocket') {
-      const thief = agent;
-      const thiefEcon = agentEcon;
-      if (thiefEcon) {
-        const stolenAmount = Math.floor(5 + Math.random() * 10); // $5-15
-        const caught = Math.random() < 0.35; // 35% chance caught
-
-        if (decision.source === 'pickpocket' && decision.targetAgentId) {
-          const victimEcon = db.select().from(economy).where(eq(economy.agent_id, decision.targetAgentId)).get();
-          const victimAgent = activeAgents.find(a => a.id === decision.targetAgentId);
-          if (victimEcon && victimAgent && victimEcon.money >= stolenAmount) {
-            db.update(economy).set({ money: victimEcon.money - stolenAmount }).where(eq(economy.id, victimEcon.id)).run();
-            db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
-            if (caught) {
-              createFact('theft', thief.id, decision.targetAgentId, 2, [thief.id, decision.targetAgentId], 'witnessed');
-              // `item`/`locationName` are what the thief's memory says
-              // (MemoryObserver); without them it read "I got caught stealing
-              // undefined from undefined".
-              simEvents.emit('economy:theft_caught', {
-                agentId: thief.id, perpetratorId: thief.id, victimId: decision.targetAgentId,
-                locationId: thief.current_location,
-                item: `$${stolenAmount}`, locationName: victimAgent.name,
-              });
-              logActivity({ type: 'drama', initiator: thief.id, target: decision.targetAgentId,
-                templateData: { description: `${thief.name} was caught pickpocketing $${stolenAmount} from ${victimAgent.name}!` }, metadata: { beat: 'theft' } });
-            } else {
-              logActivity({ type: 'drama', initiator: thief.id,
-                templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` }, metadata: { beat: 'theft' } });
-              simEvents.emit('economy:theft_success', {
-                agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount,
-                item: `$${stolenAmount}`, locationName: victimAgent.name,
-              });
-            }
-          }
-        } else if (decision.source === 'shoplifting') {
-          // Steal from the shop: the take comes out of the owner's till, capped
-          // at what it holds. It used to be minted — money from outside the
-          // treasury loop (economy.ts, townTreasury.ts). An empty till, or a
-          // shop without an owner, has nothing to lose.
-          const shop = allLocations.find((l) => l.id === decision.targetLocationId);
-          const shopOwner = shop?.owner ?? null;
-          const taken = shopliftFrom(thief.id, shopOwner, stolenAmount);
-          if (taken <= 0) {
-            // nothing taken, nothing to report
-          } else if (caught) {
-            createFact('theft', thief.id, null, 2, [thief.id], 'witnessed');
-            simEvents.emit('economy:theft_caught', {
-              agentId: thief.id, perpetratorId: thief.id,
-              locationId: thief.current_location,
-              item: `$${taken} worth of goods`, locationName: shop?.name ?? 'the shop',
-            });
-            logActivity({ type: 'drama', initiator: thief.id,
-              templateData: { description: `${thief.name} was caught shoplifting $${taken} worth of goods!` }, metadata: { beat: 'theft' } });
-          } else {
-            logActivity({ type: 'drama', initiator: thief.id,
-              templateData: { description: `${thief.name} shoplifted $${taken} worth of goods` }, metadata: { beat: 'theft' } });
-          }
-        }
-      }
-    }
-
-    // Social decisions -> conversation queue (only if agents are at same location)
-    // Skip if queue is already full
-    if (decision.action === 'socializing' && decision.targetAgentId && decision.source !== 'proposal_seek' && decision.source !== 'rendezvous_seek'
-      && allQueuedConvos.length < CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE * 3) {
-      const agentId = agent.id;
-      const targetId = decision.targetAgentId;
-
-      // Both agents must be at the same location to start a conversation
-      const targetAgent = activeAgents.find(a => a.id === targetId);
-      if (!targetAgent) continue;
-      const sameLocation = agent.current_location != null &&
-        agent.current_location === targetAgent.current_location;
-      const closeEnough = !sameLocation && targetAgent.position &&
-        distance(agent.position, targetAgent.position) < 64; // within 2 tiles
-      if (!sameLocation && !closeEnough) continue;
-
-      // Check if this pair already has a queued conversation (from cached data)
-      const existingQueue = allQueuedConvos.filter(q => {
-        const p = q.participants as number[];
-        return p.includes(agentId) && p.includes(targetId);
-      });
-      if (existingQueue.length > 0) continue; // Already queued
-
-      // Check if this pair already has an active conversation (from cached data)
-      const existingActive = allActiveConvos.filter(c => {
-        const p = c.participants as number[];
-        return p.includes(agentId) && p.includes(targetId);
-      });
-      if (existingActive.length > 0) continue; // Already talking
-
-      // Cooldown: skip if this pair talked recently (prevents pair domination)
-      if (pairOnCooldown(agentId, targetId)) continue;
-
-      const rel = getRelationshipValues(
-        allRelationships,
-        agentId,
-        targetId,
-      );
-      const friendship = rel?.friendship ?? 0;
-      const romance = rel?.romance ?? 0;
-
-      // Date detection: romantic socializing in evening = date. Announced
-      // below, once the chat is actually queued.
-      const isDate = romance > 30 && isEvening(world.time.hour);
-
-      // Topic selection: use plan-provided topic if available, else personality-driven
-      const agentPersonality = agent.personality as PersonalityProfile | null;
-      let topic: string | null = decision.topic ?? null;
-      // A friend meeting new parents congratulates them (lib/family.ts): the
-      // baby is the news for a couple of days. Half the time, so the friends
-      // still have other things to say to each other in that window.
-      if (!topic && friendship > 20 && Math.random() < 0.5) {
-        const baby = newbornOf(targetId, gameMinutes(world.time));
-        if (baby) topic = congratsTopic(baby.name);
-      }
-      if (!topic && agentPersonality) {
-        // Generate drama topic from current states
-        const agentStatesForTopic = getAgentStates(agentId);
-        let recentDrama: string | null = null;
-        if (agentStatesForTopic.includes('heartbroken')) recentDrama = 'heartbreak';
-        else if (agentStatesForTopic.includes('jealous')) recentDrama = 'jealousy and suspicion';
-        else if (agentStatesForTopic.includes('in_debt')) recentDrama = 'money troubles';
-        else if (agentStatesForTopic.includes('angry')) recentDrama = 'something that made you angry';
-        else if (agentStatesForTopic.includes('infatuated')) recentDrama = 'someone special';
-
-        const otherActiveAgents = activeAgents.filter(a => a.id !== agent.id && a.id !== targetId);
-        topic = selectPersonalityTopic(
-          agentPersonality,
-          agentNeeds.mood,
-          friendship,
-          romance,
-          otherActiveAgents.map(a => ({ name: a.name })),
-          recentDrama,
-        );
-      }
-
-      // Gossip override: dishonest + curious agents prefer to share real facts
-      if (!topic && agentPersonality && agentPersonality.honesty < 40 && agentPersonality.curiosity > 60) {
-        const gossipFacts = getShareableFacts(agentId, targetId, agentPersonality);
-        if (gossipFacts.length > 0) {
-          const subjectName = getAgentName(gossipFacts[0].subject_id);
-          topic = `gossip about ${subjectName}`;
-        }
-      }
-
-      // Economic topic override
-      if (!topic && agentEcon) {
-        if (agentEcon.money < 15 && Math.random() < 0.3) {
-          topic = 'financial struggles';
-        } else if (agentEcon.money > 80 && friendship > 40 && Math.random() < 0.15) {
-          topic = 'the town economy';
-        }
-      }
-
-      // The campaign: a candidate asks for votes, and the town talks about
-      // little else in the last days (lib/townCalendar.ts reads the topic to
-      // weigh the chat's support).
-      if (!topic && campaigners.size > 0) {
-        const candidateTalking = campaigners.has(agentId) || campaigners.has(targetId);
-        if (candidateTalking && Math.random() < 0.6) topic = 'the upcoming election for mayor';
-        else if (!candidateTalking && Math.random() < 0.15) topic = 'who to vote for in the election';
-      }
-
-      // Date topic override: romantic conversations
-      if (!topic && isDate) {
-        const dateTopics = [
-          'flirting and getting to know each other better',
-          'dreams and hopes for the future',
-          'favorite memories together',
-          'what they find attractive about each other',
-          'planning something fun to do together',
-        ];
-        topic = dateTopics[Math.floor(Math.random() * dateTopics.length)];
-      }
-
-      // Context-driven topic overrides: weather, events, hobbies
-      if (!topic && Math.random() < 0.35) {
-        const contextTopics: string[] = [];
-
-        // Weather commentary
-        if (world.time.season === 'winter' && Math.random() < 0.4) contextTopics.push('the cold weather');
-        if (world.time.season === 'spring' && Math.random() < 0.3) contextTopics.push('the beautiful spring weather');
-
-        // Active world events
-        if (activeEventTypes.has('festival')) contextTopics.push('the town festival');
-        if (activeEventTypes.has('storm')) contextTopics.push('the terrible storm');
-        if (activeEventTypes.has('wedding')) contextTopics.push('the wedding celebration');
-        if (activeEventTypes.has('sickness')) contextTopics.push('the flu going around');
-        if (activeEventTypes.has('full_moon')) contextTopics.push('the beautiful full moon');
-        if (activeEventTypes.has('competition')) contextTopics.push('the town competition');
-        if (activeEventTypes.has('mysterious_stranger')) contextTopics.push('the mysterious stranger in town');
-        if (activeEventTypes.has('traveling_merchant')) contextTopics.push('the traveling merchant and their wares');
-
-        // Shared hobbies
-        const sharedHobbies = getSharedHobbies(agentId, targetId);
-        if (sharedHobbies.length > 0) {
-          contextTopics.push(`their shared love of ${sharedHobbies[0]}`);
-        }
-
-        if (contextTopics.length > 0) {
-          topic = contextTopics[Math.floor(Math.random() * contextTopics.length)];
-        }
-      }
-
-      // --- Determine conversation tier: LLM only for meaningful interactions ---
-      const agentStatesArr = getAgentStates(agentId);
-      // Depressed agents skip conversations entirely — don't queue them
-      if ((agentStatesArr as string[]).includes('depressed')) continue;
-      const targetStatesArr = getAgentStates(targetId);
-
-      // Check familiarity for first meetings
-      const relRow = allRelationships.find(
-        r => (r.agent_a === agentId && r.agent_b === targetId) ||
-             (r.agent_b === agentId && r.agent_a === targetId),
-      );
-
-      // A comfort visit is the whole point of the walk over — chooseTier never
-      // lets it collapse into a one-line template exchange.
-      const isComfortVisit = decision.source === 'comfort_visit';
-      const { tier, priority, maxWaitGameMin } = chooseTier({
-        ...tierBudget,
-        source: 'social',
-        friendship,
-        romance,
-        mood: agentNeeds.mood,
-        social: agentNeeds.social,
-        dramaticState: hasDramaticState(agentStatesArr, targetStatesArr),
-        topic,
-        firstMeeting: !relRow || relRow.familiarity < 5,
-        // Check for gossip to share
-        hasGossip: agentPersonality
-          ? getShareableFacts(agentId, targetId, agentPersonality).length > 0
-          : false,
-        comfortVisit: isComfortVisit,
-        watched: isAnyWatched([agentId, targetId]),
-        basePriority: Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0)),
-      });
-
-      // Recorded in the per-tick snapshot too: it was read once at the top of the
-      // pass, so when A and B each decided to socialize with the other in the
-      // same tick, both saw an empty queue and [A,B] and [B,A] were both queued.
-      // The location-encounter pass below reads the same snapshot.
-      allQueuedConvos.push(db.insert(conversationQueue)
-        .values({
-          participants: [agentId, targetId],
-          tier,
-          priority,
-          trigger_reason: isComfortVisit ? 'comfort_visit' : 'needs_social',
-          topic,
-          queued_at: Date.now(),
-          max_wait: queueMaxWait(maxWaitGameMin),
-        })
-        .returning()
-        .get());
-      if (isComfortVisit) completeComfortVisit(agentId);
-      if (isDate && shouldAnnounceDate(agentId, targetId, nowMinutes)) {
-        logActivity({
-          type: 'drama',
-          initiator: agentId,
-          target: targetId,
-          templateData: { description: `${agent.name} and ${targetAgent.name} are on a date` },
-          metadata: { beat: 'date' },
-        });
       }
     }
   }
+  return decision;
+}
 
+/** Where the decision sends the agent: the target's door, the zone (or floor tile) inside, or nowhere. */
+function resolveDestination(agent: AgentRow, decision: ScoredAction, allLocations: LocationRow[]): DecisionDestination {
+  // Build destination from the target location
+  let destination: { x: number; y: number; locationId?: number } | null = null;
+  let zoneTarget: { x: number; y: number } | null = null;
+  let matchedZoneId: string | undefined;
+  let matchedBuildingType: string | undefined;
+  let seatedZone = false;
+  if (decision.targetLocationId) {
+    const loc = allLocations.find((l) => l.id === decision!.targetLocationId);
+    if (loc) {
+      // Always pathfind to the entry point — this is guaranteed to be a walkable tile.
+      // If the action targets an interior zone, store the zone center separately and
+      // teleport the agent there on arrival (two-phase interior movement).
+      const destX = loc.entry_point.x;
+      const destY = loc.entry_point.y;
+
+      const locType = loc.type as string;
+      // Zone activities ride on `action: 'idle'` with the real intent in `source`
+      // ('fish', 'garden', 'perform', ...). Passing the action alone sent every
+      // activity to whichever zone happened to allow 'idle'.
+      // `agent.id` is passed so the agent is not counted against the capacity of
+      // the zone it is already standing in — otherwise a single-occupant zone
+      // (home:bed) blocks its own occupant on every re-decision.
+      const zone = findAvailableZone(locType, zoneVerbOf(decision!) ?? decision!.source ?? decision!.action, loc.id, agent.id);
+      if (zone) {
+        const locPos = loc.position as { x: number; y: number; width: number; height: number };
+        const slot = zoneSlotOffset(agent.id);
+        zoneTarget = {
+          x: locPos.x + zone.center[0] * 32 + 16 + slot.dx,
+          y: locPos.y + zone.center[1] * 32 + 16 + slot.dy,
+        };
+        matchedZoneId = zone.id;
+        matchedBuildingType = locType;
+        seatedZone = isSeatedZone(locType, zone.id);
+      } else {
+        // No zone matched (plenty of action/building pairs have no mapping —
+        // 'idle' in a shop, 'resting' anywhere). Standing them on a floor tile
+        // keeps them inside; the alternative is the entry_point, which is a
+        // tile outside the south wall, so they'd loiter on the doorstep.
+        const tile = fallbackInteriorTile(locType, agent.id);
+        if (tile) {
+          const locPos = loc.position as { x: number; y: number; width: number; height: number };
+          const slot = zoneSlotOffset(agent.id);
+          zoneTarget = {
+            x: locPos.x + tile[0] * 32 + 16 + slot.dx,
+            y: locPos.y + tile[1] * 32 + 16 + slot.dy,
+          };
+          matchedBuildingType = locType;
+        }
+      }
+
+      // Every zone is genuinely full and the agent is already inside: keep them
+      // where they stand. Re-routing to the entry_point would park them in the
+      // doorway for the whole action.
+      const alreadyHere = agent.current_location === loc.id;
+      if (!zone && alreadyHere) {
+        destination = null;
+      } else {
+        destination = {
+          x: destX,
+          y: destY,
+          locationId: loc.id,
+        };
+      }
+    }
+  }
+  return { destination, zoneTarget, matchedZoneId, matchedBuildingType, seatedZone };
+}
+
+/**
+ * Start the decision: work out its duration and action, then either set the
+ * agent walking with the action queued for arrival or start it where they stand.
+ */
+function startDecision(t: AgentTurn, decision: ScoredAction, dest: DecisionDestination, d: DecisionTickContext): void {
+  const { agent, agentNeeds, agentEcon, critical } = t;
+  const { world, allLocations, nowMinutes } = d;
+  const { zoneTarget, matchedZoneId, matchedBuildingType, seatedZone } = dest;
+  let { destination } = dest;
+  // Determine action duration
+  const durationKey = decision.action;
+  const minDuration =
+    CONFIG.DECISIONS.ACTION_MIN_DURATIONS[durationKey] ??
+    CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'];
+
+  const actionDuration =
+    decision.action === 'idle' &&
+    agentNeeds.mood < CONFIG.NEEDS.MOOD_CRITICAL_THRESHOLD
+      ? 120
+      : decision.action === 'sleeping'
+        ? sleepDurationMinutes(
+            world.time.hour, world.time.minute,
+            sleepWindow(agent, getEffectivePersonality(agent.id) ?? agent.personality as PersonalityProfile | null).wake,
+            minDuration,
+            agentNeeds.energy < critical,
+          )
+        : minDuration;
+
+  const baseAction = buildAction(
+    decision,
+    decision.action === 'shopping'
+      ? groceryList(agentEcon, allLocations.find((l) => l.id === decision!.targetLocationId))
+      : [],
+  );
+
+  // Walk straight to the spot. The destination above is the entry_point, and
+  // the spot used to be reached in a second walk started on arrival
+  // (handleArrival in movement.ts: an interior hop inside buildings, a 5-tick
+  // lerp in open areas). Two costs came with it:
+  //  - a place the agent was already in was left and re-entered: a farmer
+  //    re-deciding `working` every hour (the action is 60 minutes) walked
+  //    from the crops out to the farm gate and back, a clerk from the counter
+  //    out onto the doorstep and back — ~5 such walks per agent a day in the
+  //    soaks, and at 4x each leg costs a whole 4-minute tick to arrive;
+  //  - every trip was two walks, so paid that arrival tick twice, and the open
+  //    area lerp padded the action by 5 ticks (20 game minutes at 4x).
+  // planRoute (movement.ts) routes into a building through its door on the
+  // building's own grid, so one walk covers door and spot.
+  //
+  // The queued action carries what starting it needs (startQueuedAction):
+  //  - `_arrivalZone`/`_arrivalBuilding` for any matched zone, indoor or open
+  //    area: the zone's effects (fish → food, garden, jog...) run on arrival,
+  //    and indoor zones register occupancy;
+  //  - `_duration`: the length decided here. Arrival used to reset it to the
+  //    action type's minimum, so a sleep shortened to end at the wake time
+  //    (or a 120-minute mope) was six hours / ten minutes again once walked to.
+  // `pose` is a cosmetic hint for the renderer and rides on the action itself.
+  const queuedAction: AgentAction = {
+    ...(baseAction.type === 'walking' ? { type: 'idle' } : baseAction),
+    ...(matchedZoneId && matchedBuildingType
+      ? { _arrivalZone: matchedZoneId, _arrivalBuilding: matchedBuildingType }
+      : {}),
+    ...(seatedZone ? { pose: 'sitting' } : {}),
+    // A 'walking' decision can't be started in place (no destination: movement
+    // skips it and decisions never re-assigns it); it becomes a short idle.
+    _duration: baseAction.type === 'walking'
+      ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
+      : actionDuration,
+  };
+  if (destination && zoneTarget) {
+    destination = { x: zoneTarget.x, y: zoneTarget.y, locationId: destination.locationId };
+  }
+
+  const needsToTravel =
+    destination &&
+    (Math.abs(agent.position.x - destination.x) > 4 ||
+      Math.abs(agent.position.y - destination.y) > 4);
+
+  if (needsToTravel) {
+    db.update(agents)
+      .set({
+        current_action: { type: 'walking', to: { x: destination!.x, y: destination!.y } },
+        current_destination: destination,
+        action_started: nowMinutes,
+        action_duration: null,
+        action_queue: [queuedAction],
+        current_path: null,
+      })
+      .where(eq(agents.id, agent.id))
+      .run();
+  } else {
+    // Already on the spot (or staying where they stand): start it here, the
+    // same way an arrival would — so an angler who re-decides `fish` on the
+    // riverbank still lands a fish.
+    if (destination) {
+      db.update(agents).set({ position: { x: destination.x, y: destination.y } }).where(eq(agents.id, agent.id)).run();
+    }
+    startQueuedAction(agent.id, agent.current_location, queuedAction, [], world.time);
+  }
+}
+
+/** Write a feed row for a zone-driven activity (fishing, performing, lurking...). */
+function logZoneActivity(agent: AgentRow, decision: ScoredAction): void {
+  // Log zone-driven activities to activity feed
+  if (decision.source && ['contemplate', 'fish', 'garden', 'forage', 'perform', 'jog', 'browse', 'rest', 'shoplifting', 'pickpocket'].includes(decision.source)) {
+    const activityNames: Record<string, string> = {
+      contemplate: 'is contemplating by the riverside',
+      fish: 'is fishing at the river',
+      garden: 'is tending the garden',
+      forage: 'is foraging in the grove',
+      perform: 'is performing in the town square',
+      jog: 'is jogging around town',
+      browse: 'is browsing the market stalls',
+      rest: 'is resting at home',
+      shoplifting: 'is eyeing goods at the shop suspiciously',
+      pickpocket: 'is lurking near someone with money',
+    };
+    logActivity({
+      type: decision.source as string,
+      initiator: agent.id,
+      templateData: { agent: agent.name, description: `${agent.name} ${activityNames[decision.source] ?? decision.source}` },
+    });
+  }
+}
+
+/** Resolve a shoplifting or pickpocketing decision as the action starts: the take, and whether they were caught. */
+function executeCrime(t: AgentTurn, decision: ScoredAction, d: DecisionTickContext): void {
+  const { agent, agentEcon } = t;
+  const { activeAgents, allLocations } = d;
+  // Crime execution — resolve theft when agent starts the action
+  if (decision.source === 'shoplifting' || decision.source === 'pickpocket') {
+    const thief = agent;
+    const thiefEcon = agentEcon;
+    if (thiefEcon) {
+      const stolenAmount = Math.floor(5 + Math.random() * 10); // $5-15
+      const caught = Math.random() < 0.35; // 35% chance caught
+
+      if (decision.source === 'pickpocket' && decision.targetAgentId) {
+        const victimEcon = db.select().from(economy).where(eq(economy.agent_id, decision.targetAgentId)).get();
+        const victimAgent = activeAgents.find(a => a.id === decision.targetAgentId);
+        if (victimEcon && victimAgent && victimEcon.money >= stolenAmount) {
+          db.update(economy).set({ money: victimEcon.money - stolenAmount }).where(eq(economy.id, victimEcon.id)).run();
+          db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
+          if (caught) {
+            createFact('theft', thief.id, decision.targetAgentId, 2, [thief.id, decision.targetAgentId], 'witnessed');
+            // `item`/`locationName` are what the thief's memory says
+            // (MemoryObserver); without them it read "I got caught stealing
+            // undefined from undefined".
+            simEvents.emit('economy:theft_caught', {
+              agentId: thief.id, perpetratorId: thief.id, victimId: decision.targetAgentId,
+              locationId: thief.current_location,
+              item: `$${stolenAmount}`, locationName: victimAgent.name,
+            });
+            logActivity({ type: 'drama', initiator: thief.id, target: decision.targetAgentId,
+              templateData: { description: `${thief.name} was caught pickpocketing $${stolenAmount} from ${victimAgent.name}!` }, metadata: { beat: 'theft' } });
+          } else {
+            logActivity({ type: 'drama', initiator: thief.id,
+              templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` }, metadata: { beat: 'theft' } });
+            simEvents.emit('economy:theft_success', {
+              agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount,
+              item: `$${stolenAmount}`, locationName: victimAgent.name,
+            });
+          }
+        }
+      } else if (decision.source === 'shoplifting') {
+        // Steal from the shop: the take comes out of the owner's till, capped
+        // at what it holds. It used to be minted — money from outside the
+        // treasury loop (economy.ts, townTreasury.ts). An empty till, or a
+        // shop without an owner, has nothing to lose.
+        const shop = allLocations.find((l) => l.id === decision.targetLocationId);
+        const shopOwner = shop?.owner ?? null;
+        const taken = shopliftFrom(thief.id, shopOwner, stolenAmount);
+        if (taken <= 0) {
+          // nothing taken, nothing to report
+        } else if (caught) {
+          createFact('theft', thief.id, null, 2, [thief.id], 'witnessed');
+          simEvents.emit('economy:theft_caught', {
+            agentId: thief.id, perpetratorId: thief.id,
+            locationId: thief.current_location,
+            item: `$${taken} worth of goods`, locationName: shop?.name ?? 'the shop',
+          });
+          logActivity({ type: 'drama', initiator: thief.id,
+            templateData: { description: `${thief.name} was caught shoplifting $${taken} worth of goods!` }, metadata: { beat: 'theft' } });
+        } else {
+          logActivity({ type: 'drama', initiator: thief.id,
+            templateData: { description: `${thief.name} shoplifted $${taken} worth of goods` }, metadata: { beat: 'theft' } });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Queue the conversation a socializing decision asks for, when the two are
+ * together and free to talk. The last step of the agent's turn: each early
+ * `return` was a `continue` of the per-agent loop, with nothing after it.
+ */
+function queueSocialConversation(t: AgentTurn, decision: ScoredAction, d: DecisionTickContext): void {
+  const { agent, agentNeeds } = t;
+  const {
+    world, activeAgents, allRelationships, allQueuedConvos, allActiveConvos, pairOnCooldown, tierBudget, nowMinutes,
+  } = d;
+  // Social decisions -> conversation queue (only if agents are at same location)
+  // Skip if queue is already full
+  if (decision.action === 'socializing' && decision.targetAgentId && decision.source !== 'proposal_seek' && decision.source !== 'rendezvous_seek'
+    && allQueuedConvos.length < CONFIG.CONVERSATIONS.MAX_QUEUE_SIZE * 3) {
+    const agentId = agent.id;
+    const targetId = decision.targetAgentId;
+
+    // Both agents must be at the same location to start a conversation
+    const targetAgent = activeAgents.find(a => a.id === targetId);
+    if (!targetAgent) return;
+    const sameLocation = agent.current_location != null &&
+      agent.current_location === targetAgent.current_location;
+    const closeEnough = !sameLocation && targetAgent.position &&
+      distance(agent.position, targetAgent.position) < 64; // within 2 tiles
+    if (!sameLocation && !closeEnough) return;
+
+    // Check if this pair already has a queued conversation (from cached data)
+    const existingQueue = allQueuedConvos.filter(q => {
+      const p = q.participants as number[];
+      return p.includes(agentId) && p.includes(targetId);
+    });
+    if (existingQueue.length > 0) return; // Already queued
+
+    // Check if this pair already has an active conversation (from cached data)
+    const existingActive = allActiveConvos.filter(c => {
+      const p = c.participants as number[];
+      return p.includes(agentId) && p.includes(targetId);
+    });
+    if (existingActive.length > 0) return; // Already talking
+
+    // Cooldown: skip if this pair talked recently (prevents pair domination)
+    if (pairOnCooldown(agentId, targetId)) return;
+
+    const rel = getRelationshipValues(
+      allRelationships,
+      agentId,
+      targetId,
+    );
+    const friendship = rel?.friendship ?? 0;
+    const romance = rel?.romance ?? 0;
+
+    // Date detection: romantic socializing in evening = date. Announced
+    // below, once the chat is actually queued.
+    const isDate = romance > 30 && isEvening(world.time.hour);
+
+    // Topic selection: use plan-provided topic if available, else personality-driven
+    const agentPersonality = agent.personality as PersonalityProfile | null;
+    const topic = chooseConversationTopic(t, decision, { targetId, agentPersonality, friendship, romance, isDate }, d);
+
+    // --- Determine conversation tier: LLM only for meaningful interactions ---
+    const agentStatesArr = getAgentStates(agentId);
+    // Depressed agents skip conversations entirely — don't queue them
+    if ((agentStatesArr as string[]).includes('depressed')) return;
+    const targetStatesArr = getAgentStates(targetId);
+
+    // Check familiarity for first meetings
+    const relRow = allRelationships.find(
+      r => (r.agent_a === agentId && r.agent_b === targetId) ||
+           (r.agent_b === agentId && r.agent_a === targetId),
+    );
+
+    // A comfort visit is the whole point of the walk over — chooseTier never
+    // lets it collapse into a one-line template exchange.
+    const isComfortVisit = decision.source === 'comfort_visit';
+    const { tier, priority, maxWaitGameMin } = chooseTier({
+      ...tierBudget,
+      source: 'social',
+      friendship,
+      romance,
+      mood: agentNeeds.mood,
+      social: agentNeeds.social,
+      dramaticState: hasDramaticState(agentStatesArr, targetStatesArr),
+      topic,
+      firstMeeting: !relRow || relRow.familiarity < 5,
+      // Check for gossip to share
+      hasGossip: agentPersonality
+        ? getShareableFacts(agentId, targetId, agentPersonality).length > 0
+        : false,
+      comfortVisit: isComfortVisit,
+      watched: isAnyWatched([agentId, targetId]),
+      basePriority: Math.round(100 - agentNeeds.social + (friendship > 50 ? 20 : 0)),
+    });
+
+    // Recorded in the per-tick snapshot too: it was read once at the top of the
+    // pass, so when A and B each decided to socialize with the other in the
+    // same tick, both saw an empty queue and [A,B] and [B,A] were both queued.
+    // The location-encounter pass below reads the same snapshot.
+    allQueuedConvos.push(db.insert(conversationQueue)
+      .values({
+        participants: [agentId, targetId],
+        tier,
+        priority,
+        trigger_reason: isComfortVisit ? 'comfort_visit' : 'needs_social',
+        topic,
+        queued_at: Date.now(),
+        max_wait: queueMaxWait(maxWaitGameMin),
+      })
+      .returning()
+      .get());
+    if (isComfortVisit) completeComfortVisit(agentId);
+    if (isDate && shouldAnnounceDate(agentId, targetId, nowMinutes)) {
+      logActivity({
+        type: 'drama',
+        initiator: agentId,
+        target: targetId,
+        templateData: { description: `${agent.name} and ${targetAgent.name} are on a date` },
+        metadata: { beat: 'date' },
+      });
+    }
+  }
+}
+
+/** What `chooseConversationTopic` needs to know about the pair. */
+interface TopicPair {
+  targetId: number;
+  agentPersonality: PersonalityProfile | null;
+  friendship: number;
+  romance: number;
+  isDate: boolean;
+}
+
+/**
+ * The topic of a socializing chat: the decision's own, else the first of the
+ * overrides below that applies. Each override draws `Math.random()` only when
+ * the ones before it left the topic empty, which is the order the tests sequence.
+ */
+function chooseConversationTopic(t: AgentTurn, decision: ScoredAction, pair: TopicPair, d: DecisionTickContext): string | null {
+  const { agent, agentNeeds, agentEcon } = t;
+  const { world, activeAgents, activeEventTypes, campaigners } = d;
+  const { targetId, agentPersonality, friendship, romance, isDate } = pair;
+  const agentId = agent.id;
+  let topic: string | null = decision.topic ?? null;
+  // A friend meeting new parents congratulates them (lib/family.ts): the
+  // baby is the news for a couple of days. Half the time, so the friends
+  // still have other things to say to each other in that window.
+  if (!topic && friendship > 20 && Math.random() < 0.5) {
+    const baby = newbornOf(targetId, gameMinutes(world.time));
+    if (baby) topic = congratsTopic(baby.name);
+  }
+  if (!topic && agentPersonality) {
+    // Generate drama topic from current states
+    const agentStatesForTopic = getAgentStates(agentId);
+    let recentDrama: string | null = null;
+    if (agentStatesForTopic.includes('heartbroken')) recentDrama = 'heartbreak';
+    else if (agentStatesForTopic.includes('jealous')) recentDrama = 'jealousy and suspicion';
+    else if (agentStatesForTopic.includes('in_debt')) recentDrama = 'money troubles';
+    else if (agentStatesForTopic.includes('angry')) recentDrama = 'something that made you angry';
+    else if (agentStatesForTopic.includes('infatuated')) recentDrama = 'someone special';
+
+    const otherActiveAgents = activeAgents.filter(a => a.id !== agent.id && a.id !== targetId);
+    topic = selectPersonalityTopic(
+      agentPersonality,
+      agentNeeds.mood,
+      friendship,
+      romance,
+      otherActiveAgents.map(a => ({ name: a.name })),
+      recentDrama,
+    );
+  }
+
+  // Gossip override: dishonest + curious agents prefer to share real facts
+  if (!topic && agentPersonality && agentPersonality.honesty < 40 && agentPersonality.curiosity > 60) {
+    const gossipFacts = getShareableFacts(agentId, targetId, agentPersonality);
+    if (gossipFacts.length > 0) {
+      const subjectName = getAgentName(gossipFacts[0].subject_id);
+      topic = `gossip about ${subjectName}`;
+    }
+  }
+
+  // Economic topic override
+  if (!topic && agentEcon) {
+    if (agentEcon.money < 15 && Math.random() < 0.3) {
+      topic = 'financial struggles';
+    } else if (agentEcon.money > 80 && friendship > 40 && Math.random() < 0.15) {
+      topic = 'the town economy';
+    }
+  }
+
+  // The campaign: a candidate asks for votes, and the town talks about
+  // little else in the last days (lib/townCalendar.ts reads the topic to
+  // weigh the chat's support).
+  if (!topic && campaigners.size > 0) {
+    const candidateTalking = campaigners.has(agentId) || campaigners.has(targetId);
+    if (candidateTalking && Math.random() < 0.6) topic = 'the upcoming election for mayor';
+    else if (!candidateTalking && Math.random() < 0.15) topic = 'who to vote for in the election';
+  }
+
+  // Date topic override: romantic conversations
+  if (!topic && isDate) {
+    const dateTopics = [
+      'flirting and getting to know each other better',
+      'dreams and hopes for the future',
+      'favorite memories together',
+      'what they find attractive about each other',
+      'planning something fun to do together',
+    ];
+    topic = dateTopics[Math.floor(Math.random() * dateTopics.length)];
+  }
+
+  // Context-driven topic overrides: weather, events, hobbies
+  if (!topic && Math.random() < 0.35) {
+    const contextTopics: string[] = [];
+
+    // Weather commentary
+    if (world.time.season === 'winter' && Math.random() < 0.4) contextTopics.push('the cold weather');
+    if (world.time.season === 'spring' && Math.random() < 0.3) contextTopics.push('the beautiful spring weather');
+
+    // Active world events
+    if (activeEventTypes.has('festival')) contextTopics.push('the town festival');
+    if (activeEventTypes.has('storm')) contextTopics.push('the terrible storm');
+    if (activeEventTypes.has('wedding')) contextTopics.push('the wedding celebration');
+    if (activeEventTypes.has('sickness')) contextTopics.push('the flu going around');
+    if (activeEventTypes.has('full_moon')) contextTopics.push('the beautiful full moon');
+    if (activeEventTypes.has('competition')) contextTopics.push('the town competition');
+    if (activeEventTypes.has('mysterious_stranger')) contextTopics.push('the mysterious stranger in town');
+    if (activeEventTypes.has('traveling_merchant')) contextTopics.push('the traveling merchant and their wares');
+
+    // Shared hobbies
+    const sharedHobbies = getSharedHobbies(agentId, targetId);
+    if (sharedHobbies.length > 0) {
+      contextTopics.push(`their shared love of ${sharedHobbies[0]}`);
+    }
+
+    if (contextTopics.length > 0) {
+      topic = contextTopics[Math.floor(Math.random() * contextTopics.length)];
+    }
+  }
+  return topic;
+}
+
+/**
+ * Chance meetings: at most one new chat per social location per tick, between
+ * two random people there who are free and not already talking or queued.
+ */
+function queueLocationEncounters(d: DecisionTickContext): void {
+  const {
+    world, activeAgents, allLocations, allRelationships, needsMap, allQueuedConvos, allActiveConvos, pairOnCooldown, tierBudget,
+  } = d;
   // --- Tavern/Location Encounter: queue conversations between co-located agents ---
   // Groups agents by location, then queues conversations for pairs that aren't already talking
   const locationGroups = new Map<number, typeof activeAgents>();
@@ -2736,7 +3023,11 @@ export function tick(world: WorldRow): void {
       max_wait: queueMaxWait(encounterWait),
     }).run();
   }
+}
 
+/** A constable on duty arrests at most one co-located agent per tick whose record has grown long enough. */
+function constableArrests(d: DecisionTickContext): void {
+  const { world, activeAgents, allLocations, econMap, allActiveKnowledge, nowMinutes } = d;
   // --- Constable Arrest Mechanic ---
   // If the constable is at the same location as an agent with 8+ arrestable facts (4+ when
   // they know of a theft or blackmail first-hand), arrest them. What counts is lib/arrests.ts:
@@ -2785,80 +3076,94 @@ export function tick(world: WorldRow): void {
       // 8h base, +2h per negative fact past the arrest threshold, capped at 2 days.
       const sentence = Math.min(2880, 480 + (negFacts - arrestThreshold) * 120);
 
-      // Arrest: teleport criminal to prison, then hold them for the sentence.
-      // The `arrested` state is what actually confines them — the guard at the
-      // top of the decision loop keeps re-idling them until it expires.
-      db.update(agents).set({
-        current_action: { type: 'idle' },
-        position: { x: prison.entry_point.x, y: prison.entry_point.y },
-        current_destination: null,
-        current_location: prison.id,
-        action_started: nowMinutes,
-        action_duration: sentence,
-        action_queue: [],
-        current_path: null,
-      }).where(eq(agents.id, other.id)).run();
-
-      db.insert(agentStates).values({
-        agent_id: other.id,
-        type: 'arrested',
-        severity: Math.min(1, sentence / 2880),
-        started_at: nowMinutes,
-        duration: sentence,
-        target_agent_id: agent.id,
-        source: 'arrest',
-        metadata: { prison_id: prison.id, sentence },
-      }).run();
-
-      // Log the arrest
-      const [ordA, ordB] = [Math.min(agent.id, other.id), Math.max(agent.id, other.id)];
-      db.insert(relationshipEvents).values({
-        agent_a: ordA,
-        agent_b: ordB,
-        event_type: 'arrested',
-        description: `${agent.name} arrested ${other.name}`,
-        friendship_delta_ab: agent.id === ordA ? -10 : 0,
-        friendship_delta_ba: agent.id === ordA ? 0 : -10,
-        romance_delta_ab: 0, romance_delta_ba: 0,
-        trust_delta_ab: agent.id === ordA ? -20 : 0,
-        trust_delta_ba: agent.id === ordA ? 0 : -20,
-        sentiment: -0.8,
-        processed: false,
-        timestamp: Date.now(),
-      }).run();
-
-      logActivity({
-        type: 'drama',
-        initiator: agent.id,
-        target: other.id,
-        severity: Math.min(1, sentence / 2880),
-        templateData: {
-          description: `${agent.name} arrested ${other.name}! Sentence: ${Math.round(sentence / 60)} hours.`,
-        },
-        metadata: { beat: 'arrest' },
-      });
-
-      // The sentence pays for the record it was for: those facts stop counting toward an
-      // arrest once it ends (and the cooldown runs from then).
-      markFactsPaid(record.map(f => f.id), nowMinutes + sentence);
-
-      // Create arrest gossip fact
-      createFact('arrest', other.id, agent.id, 2, [agent.id, other.id], 'witnessed', { detail: `arrested by ${agent.name}` });
-      simEvents.emit('crime:arrested', { agentId: other.id, constableName: agent.name });
-
-      // Arrest memories
-      simEvents.emit('interaction:completed', {
-        agentId: agent.id, otherName: other.name,
-        action: `arrested ${other.name}`,
-      });
-      simEvents.emit('interaction:completed', {
-        agentId: other.id, otherName: agent.name,
-        action: `was arrested by ${agent.name}`,
-      });
+      arrest(agent, other, prison, sentence, record, nowMinutes);
 
       break; // One arrest per tick
     }
   }
+}
 
-  emitter.markDirty('agents.all');
+/**
+ * The constable `agent` arrests `other`: to the prison for `sentence` game
+ * minutes, with the relationship hit, the feed row, the paid-for record, the
+ * gossip and both memories.
+ */
+function arrest(
+  agent: AgentRow,
+  other: AgentRow,
+  prison: LocationRow,
+  sentence: number,
+  record: KnowledgeRow[],
+  nowMinutes: number,
+): void {
+  // Arrest: teleport criminal to prison, then hold them for the sentence.
+  // The `arrested` state is what actually confines them — the guard at the
+  // top of the decision loop keeps re-idling them until it expires.
+  db.update(agents).set({
+    current_action: { type: 'idle' },
+    position: { x: prison.entry_point.x, y: prison.entry_point.y },
+    current_destination: null,
+    current_location: prison.id,
+    action_started: nowMinutes,
+    action_duration: sentence,
+    action_queue: [],
+    current_path: null,
+  }).where(eq(agents.id, other.id)).run();
+
+  db.insert(agentStates).values({
+    agent_id: other.id,
+    type: 'arrested',
+    severity: Math.min(1, sentence / 2880),
+    started_at: nowMinutes,
+    duration: sentence,
+    target_agent_id: agent.id,
+    source: 'arrest',
+    metadata: { prison_id: prison.id, sentence },
+  }).run();
+
+  // Log the arrest
+  const [ordA, ordB] = [Math.min(agent.id, other.id), Math.max(agent.id, other.id)];
+  db.insert(relationshipEvents).values({
+    agent_a: ordA,
+    agent_b: ordB,
+    event_type: 'arrested',
+    description: `${agent.name} arrested ${other.name}`,
+    friendship_delta_ab: agent.id === ordA ? -10 : 0,
+    friendship_delta_ba: agent.id === ordA ? 0 : -10,
+    romance_delta_ab: 0, romance_delta_ba: 0,
+    trust_delta_ab: agent.id === ordA ? -20 : 0,
+    trust_delta_ba: agent.id === ordA ? 0 : -20,
+    sentiment: -0.8,
+    processed: false,
+    timestamp: Date.now(),
+  }).run();
+
+  logActivity({
+    type: 'drama',
+    initiator: agent.id,
+    target: other.id,
+    severity: Math.min(1, sentence / 2880),
+    templateData: {
+      description: `${agent.name} arrested ${other.name}! Sentence: ${Math.round(sentence / 60)} hours.`,
+    },
+    metadata: { beat: 'arrest' },
+  });
+
+  // The sentence pays for the record it was for: those facts stop counting toward an
+  // arrest once it ends (and the cooldown runs from then).
+  markFactsPaid(record.map(f => f.id), nowMinutes + sentence);
+
+  // Create arrest gossip fact
+  createFact('arrest', other.id, agent.id, 2, [agent.id, other.id], 'witnessed', { detail: `arrested by ${agent.name}` });
+  simEvents.emit('crime:arrested', { agentId: other.id, constableName: agent.name });
+
+  // Arrest memories
+  simEvents.emit('interaction:completed', {
+    agentId: agent.id, otherName: other.name,
+    action: `arrested ${other.name}`,
+  });
+  simEvents.emit('interaction:completed', {
+    agentId: other.id, otherName: agent.name,
+    action: `was arrested by ${agent.name}`,
+  });
 }
