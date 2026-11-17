@@ -183,7 +183,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
     );
   }
 
-  const { agent, needs, economy, reputation, hobbies } = data as any;
+  const { agent, needs, economy, reputation, hobbies } = data;
 
   // Deceased agent view
   if (!agent.is_active) {
@@ -194,8 +194,8 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
   const isPaused = world?.is_paused ?? false;
   const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
 
-  const agentNameMap = new Map(allAgents.map((a: any) => [String(a.id), a.name]));
-  const activeConvo = activeConversations.find((c: any) =>
+  const agentNameMap = new Map(allAgents.map((a) => [String(a.id), a.name]));
+  const activeConvo = activeConversations.find((c) =>
     c.participants?.includes(Number(agentId))
   );
   const recentConvos = (conversationHistory ?? []).slice(0, 3);
@@ -265,7 +265,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
             )}
 
             {/* Family (server/lib/family.ts via agents.getAgentSummary) */}
-            <FamilyLine family={(data as any).family} onSelectAgent={onSelectAgent} />
+            <FamilyLine family={data.family} onSelectAgent={onSelectAgent} />
 
             {/* Traits */}
             {agent.traits && agent.traits.length > 0 && (
@@ -305,7 +305,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
               <div className="px-3 py-2 border-b border-ui-line">
                 <div className="text-xs text-ui-dim font-medium mb-1.5">Hobbies</div>
                 <div className="flex flex-wrap gap-1">
-                  {hobbies.map((h: any) => (
+                  {hobbies.map((h) => (
                     <span
                       key={h.hobby}
                       className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300"
@@ -358,7 +358,7 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
                   Recent Conversations ({recentConvos.length})
                 </div>
                 <div className="space-y-2">
-                  {recentConvos.map((convo: any) => (
+                  {recentConvos.map((convo) => (
                     <ConversationViewer
                       key={convo.id}
                       conversation={convo}
@@ -384,10 +384,10 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
         {activeTab === "mind" && (
           <div>
             {/* Self-Concept (evolving, generated from memories) */}
-            {(agent as any).self_description && (
+            {agent.self_description && (
               <div className="px-3 py-2 border-b border-ui-line">
                 <div className="text-xs text-ui-dim font-medium mb-1">Self-Concept</div>
-                <p className="text-[11px] text-ui-blue leading-relaxed italic">{(agent as any).self_description}</p>
+                <p className="text-[11px] text-ui-blue leading-relaxed italic">{agent.self_description}</p>
               </div>
             )}
 
@@ -405,21 +405,21 @@ export function AgentPanel({ agentId, onClose, onSelectAgent, onViewPair }: Agen
                 <div className="text-xs text-ui-dim font-medium mb-1.5">Daily Schedule</div>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
                   <span className="text-ui-dim">Wake</span>
-                  <span className="text-ui-text">{(agent.schedule as any).wakeTime}:00</span>
+                  <span className="text-ui-text">{agent.schedule.wakeTime}:00</span>
                   <span className="text-ui-dim">Work</span>
                   <span className="text-ui-text">
-                    {agent.workplace ? `${(agent.schedule as any).workStart}:00 - ${(agent.schedule as any).workEnd}:00` : 'No job'}
+                    {agent.workplace ? `${agent.schedule.workStart}:00 - ${agent.schedule.workEnd}:00` : 'No job'}
                   </span>
                   <span className="text-ui-dim">Lunch</span>
-                  <span className="text-ui-text">{(agent.schedule as any).lunchTime}:00</span>
+                  <span className="text-ui-text">{agent.schedule.lunchTime}:00</span>
                   <span className="text-ui-dim">Sleep</span>
-                  <span className="text-ui-text">{(agent.schedule as any).sleepTime}:00</span>
+                  <span className="text-ui-text">{agent.schedule.sleepTime}:00</span>
                 </div>
               </div>
             )}
 
             {/* Daily plan */}
-            <PlanTimeline dailyPlan={(agent as any).daily_plan} />
+            <PlanTimeline dailyPlan={agent.daily_plan} />
 
           </div>
         )}

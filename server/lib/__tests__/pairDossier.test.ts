@@ -20,6 +20,7 @@ import {
   reconstructSeries,
   undoDelta,
 } from '../pairDossier';
+import type { ConversationMessage } from '../../db/schema';
 
 /**
  * Against the test DB for the queries (orientation, json_each membership,
@@ -136,7 +137,7 @@ function insertConversation(participants: number[], o: {
   endedAt: number;
   status?: string;
   topic?: string;
-  messages?: Array<Record<string, unknown>>;
+  messages?: ConversationMessage[];
 }): number {
   return db.insert(conversations).values({
     participants,

@@ -148,11 +148,12 @@ class PlaceLifeSystem implements CanvasSystem {
   /** Roads, trees, rocks, water and building footprints: where a laundry line must not stand. */
   private rebuildWorld(data: DataContext): void {
     const world = data.world;
-    const roads: any[] = world.road_tiles ?? [];
-    const terrain: any[] = world.terrain_tiles ?? [];
+    if (!world) return;
+    const roads = world.road_tiles ?? [];
+    const terrain = world.terrain_tiles ?? [];
     const locs = data.locations;
     const sig = [world.map_width, roads.length, terrain.length, locs.length].join('|')
-      + locs.map((l: any) => l.id + ',' + l.position?.x + ',' + l.position?.y).join(';');
+      + locs.map((l) => l.id + ',' + l.position?.x + ',' + l.position?.y).join(';');
     if (sig === this.worldSig) return;
     this.worldSig = sig;
     this.mapW = world.map_width ?? 0;

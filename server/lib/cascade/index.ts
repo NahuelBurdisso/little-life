@@ -1,4 +1,5 @@
 // server/lib/cascade/index.ts
+import type { RipplePayload } from './cascadeTypes';
 import { RippleEngine, otherPartyName } from './RippleEngine';
 import { WitnessAmplifier } from './WitnessAmplifier';
 import { TensionTracker } from './TensionTracker';
@@ -78,7 +79,7 @@ export function getTensionSnapshot(): TensionSnapshotEntry[] {
 
 function getCurrentTick(): number {
   const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  return (world?.time as any)?.totalTicks ?? 0;
+  return world?.time.totalTicks ?? 0;
 }
 
 // ─── initCascade ────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ export function initCascade(): void {
   // ─── Direct tension listeners ──────────────────────────────────────────────
 
   // Stressed while already stressed → +5 tension
-  simEvents.on('state:triggered', (payload: any) => {
+  simEvents.on('state:triggered', (payload: RipplePayload) => {
     if (!tensionTracker) return;
     if (payload?.state !== 'stressed') return;
 
@@ -131,7 +132,7 @@ export function initCascade(): void {
   });
 
   // Need critical → +8 tension
-  simEvents.on('need:critical', (payload: any) => {
+  simEvents.on('need:critical', (payload: RipplePayload) => {
     if (!tensionTracker) return;
     const agentId = payload?.agentId;
     if (agentId == null) return;
@@ -144,7 +145,7 @@ export function initCascade(): void {
   });
 
   // Positive conversation → tension relief
-  simEvents.on('conversation:ended', (payload: any) => {
+  simEvents.on('conversation:ended', (payload: RipplePayload) => {
     if (!tensionTracker) return;
     const agentId = payload?.agentId;
     if (agentId == null) return;

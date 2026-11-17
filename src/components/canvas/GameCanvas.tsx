@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Container, Graphics } from "pixi.js";
+import { Container, Graphics, type Ticker } from "pixi.js";
 import { useGameCanvas } from "../../hooks/useGameCanvas";
 import { TilemapRenderer } from "./TilemapRenderer";
 import { BuildingRenderer } from "./BuildingRenderer";
@@ -26,6 +26,7 @@ import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { ParticleContext } from "./particles/types";
 import { idString, pairKey } from "./idString";
 import { registerCameraView } from "../../lib/cameraView";
+import type { AgentView, ConversationView, LocationView, RelationshipView, WorldEventView, WorldView } from '../../lib/apiTypes';
 
 // Held-pose emotes: action type -> looping emote key. Emotes only live ~1.5s,
 // so a pose that lasts minutes has to re-puff to stay legible.
@@ -43,7 +44,7 @@ const POSE_PUFF_INTERVAL_MS = 7000;
  * left stale zones, roads and door paths on screen.
  */
 function hashStaticLayers(
-  locations: any[],
+  locations: LocationView[],
   roads: Array<{ x: number; y: number }>,
   terrain: Array<{ x: number; y: number; kind?: string }>,
 ): number {
@@ -67,13 +68,13 @@ function hashStaticLayers(
 }
 
 interface GameCanvasProps {
-  agents: any[];
-  world: any;
+  agents: AgentView[];
+  world: WorldView | null | undefined;
   /** Rows from `world.getActiveEvents` — a separate query, not a column on `world`. */
-  events?: any[];
-  conversations: any[];
-  locations?: any[];
-  relationships?: any[];
+  events?: WorldEventView[];
+  conversations: ConversationView[];
+  locations?: LocationView[];
+  relationships?: RelationshipView[];
   onAgentSelect: (agentId: string) => void;
   onAgentContextMenu: (agentId: string, pos: { x: number; y: number }) => void;
   onAgentHover: (agentId: string | null, pos?: { x: number; y: number }) => void;
@@ -201,7 +202,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   // conversions were ~24k short-lived strings a second. `relationships` is
   // re-parsed from JSON each poll, so this rebuilds about once a second.
   const normalizedRelationships = useMemo(
-    () => (relationships ?? []).map((rel: any) => ({
+    () => (relationships ?? []).map((rel) => ({
       a: String(rel.agent_a),
       b: String(rel.agent_b),
       rel,
@@ -278,7 +279,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     // (The line between talkers, its tone and the message dot are the Talk canvas system's.)
     const convos = conversationsRef.current ?? [];
     if (spritePoolRef.current && convos.length > 0) {
-      for (const convo of convos as any[]) {
+      for (const convo of convos) {
         if (convo.status !== 'active') continue;
         const ids = (convo.participants ?? []) as (number | string)[];
         if (ids.length < 2) continue;
@@ -387,7 +388,7 @@ export const GameCanvas = React.memo(function GameCanvas({
 
     // Particle engine — data-driven visual effects below speech bubbles
     const particleEngine = new ParticleEngine(worldContainer, 1000);
-    particleEngine.initTextures(app.renderer as any).catch(err =>
+    particleEngine.initTextures(app.renderer).catch(err =>
       console.warn('[ParticleEngine] Texture init failed:', err)
     );
     particleEngineRef.current = particleEngine;
@@ -445,7 +446,7 @@ export const GameCanvas = React.memo(function GameCanvas({
 
     // Animation loop — store ref for cleanup
     let lastLabelScale = 0;
-    const cameraTickFn = (ticker: any) => {
+    const cameraTickFn = (ticker: Ticker) => {
       // Read the ref rather than the captured instance: the cleanup below nulls
       // it, and a frame that lands after teardown must not touch a destroyed
       // camera (StrictMode double-invoke, or any remount).
@@ -512,8 +513,8 @@ export const GameCanvas = React.memo(function GameCanvas({
   }, [app, stableOnSelect, stableOnHover, stableOnContext, stableLocationAt, stableOnLocation]);
 
   // Drive tilemap + camera dimensions from world state
-  const mapW = (world as any)?.map_width ?? 0;
-  const mapH = (world as any)?.map_height ?? 0;
+  const mapW = world?.map_width ?? 0;
+  const mapH = world?.map_height ?? 0;
   useEffect(() => {
     if (!tilemapRef.current || !cameraRef.current) return;
     if (mapW === 0 || mapH === 0) return;
@@ -537,7 +538,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   // Outline the location whose panel is open.
   useEffect(() => {
     const loc = selectedLocationId != null
-      ? (locations ?? []).find((l: any) => l.id === selectedLocationId)
+      ? (locations ?? []).find((l) => l.id === selectedLocationId)
       : null;
     buildingRendererRef.current?.setSelectedRect(loc?.position ?? null);
   }, [selectedLocationId, locations, app]);
@@ -554,7 +555,8 @@ export const GameCanvas = React.memo(function GameCanvas({
     for (const agent of agents) {
       const agentId = String(agent.id);
       // The server writes "daily work" for every shift; say what this workplace does instead.
-      const actionDesc = taskThought((agent.current_action as any)?.taskDescription, agent, locations);
+      const task = agent.current_action?.taskDescription;
+      const actionDesc = taskThought(typeof task === 'string' ? task : undefined, agent, locations);
       const prevAction = prevActionsRef.current.get(agentId);
 
       if (actionDesc && actionDesc !== prevAction && bubbleSystemRef.current) {
@@ -615,9 +617,9 @@ export const GameCanvas = React.memo(function GameCanvas({
       // Active events come from their own query and are row objects, not a
       // `world.activeEvents` column — that read was always undefined, so the
       // festival glow had never rendered.
-      const activeEvents = (events ?? []).map((e: any) => e.type);
+      const activeEvents = (events ?? []).map((e) => e.type);
       lightingRef.current.update(
-        agents.map((a: any) => ({
+        agents.map((a) => ({
           id: a.id,
           position: a.position ?? { x: 0, y: 0 },
           current_location: a.current_location ?? null,
@@ -667,7 +669,7 @@ export const GameCanvas = React.memo(function GameCanvas({
   useEffect(() => {
     if (!app) return;
 
-    const tickFn = (ticker: any) => {
+    const tickFn = (ticker: Ticker) => {
       const delta = ticker.deltaTime;
       // Lerp all sprites toward their targets each frame
       spritePoolRef.current?.lerpAll(delta);
@@ -718,7 +720,7 @@ export const GameCanvas = React.memo(function GameCanvas({
         const agentData = agentDataRef.current;
         agentData.length = sourceAgents.length;
         for (let i = 0; i < sourceAgents.length; i++) {
-          const a: any = sourceAgents[i];
+          const a = sourceAgents[i];
           const id = idString(a.id);
           const sprite = spritePool.getSprite(id);
           let entry = agentData[i];
@@ -735,11 +737,11 @@ export const GameCanvas = React.memo(function GameCanvas({
           entry.action = (typeof a.current_action === 'string' ? a.current_action : a.current_action?.type) ?? 'idle';
         }
 
-        const dayPhase = (worldRef.current as any)?.day_phase ?? 'morning';
+        const dayPhase = worldRef.current?.day_phase ?? 'morning';
 
         // The farm's crop rows follow the season and how far into it the town is; a
         // no-op unless the growth stage changed.
-        const clock = (worldRef.current as any)?.time;
+        const clock = worldRef.current?.time;
         tilemapRef.current?.setCropSeason(clock?.season, seasonDayOf(clock));
 
         // Synthetic 'chimney' locations — smoke emitters at chimney caps. Which
@@ -765,9 +767,9 @@ export const GameCanvas = React.memo(function GameCanvas({
 
         const ctx = particleCtxRef.current;
         ctx.agents = agentData;
-        ctx.weather = (worldRef.current as any)?.weather ?? 'sunny';
+        ctx.weather = worldRef.current?.weather ?? 'sunny';
         ctx.dayPhase = dayPhase;
-        ctx.season = (worldRef.current as any)?.time?.season ?? 'spring';
+        ctx.season = worldRef.current?.time?.season ?? 'spring';
         ctx.locations = chimneyLocs;
 
         // Camera center for world-space emitters
@@ -836,7 +838,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     const weatherSystem = weatherRef.current;
     // Read the size per-frame: the canvas resizes whenever the agent panel or a
     // resize handle moves, and stale bounds mis-place spawns and the cull test.
-    const weatherTick = (ticker: any) => {
+    const weatherTick = (ticker: Ticker) => {
       weatherSystem.update(weather, app.renderer.width, app.renderer.height, ticker.deltaTime);
     };
     app.ticker.add(weatherTick);
@@ -882,7 +884,7 @@ export const GameCanvas = React.memo(function GameCanvas({
       setFollow(false);
       cam.focusOn(e.x, e.y);
     } else if (e.type === 'focusLocation') {
-      const loc = (locationsRef.current ?? []).find((l: any) => l.id === e.locationId) as any;
+      const loc = (locationsRef.current ?? []).find((l) => l.id === e.locationId);
       if (!loc?.position) return;
       setFollow(false);
       cam.focusOn(loc.position.x + loc.position.width / 2, loc.position.y + loc.position.height / 2);
@@ -910,7 +912,7 @@ export const GameCanvas = React.memo(function GameCanvas({
     pg.clear();
     if (!selectedAgentId || !agents) return;
 
-    const agent = agents.find((a: any) => String(a.id) === selectedAgentId);
+    const agent = agents.find((a) => String(a.id) === selectedAgentId);
     if (!agent?.current_path || (agent.current_path as number[][]).length === 0) return;
     const path = agent.current_path as number[][];
     // Draw dashed path

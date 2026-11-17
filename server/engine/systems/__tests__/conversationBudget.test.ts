@@ -167,8 +167,8 @@ function taggedConversations() {
   return db.select().from(conversations).where(like(conversations.trigger_reason, `${TAG}%`)).all();
 }
 
-function schedulerEntry(conversationId: number): Record<string, unknown> | undefined {
-  return (db.select().from(conversationSchedulerState).get()!.active_llm_conversations as Array<Record<string, unknown>>)
+function schedulerEntry(conversationId: number) {
+  return db.select().from(conversationSchedulerState).get()!.active_llm_conversations
     .find((e) => e.conversationId === conversationId);
 }
 

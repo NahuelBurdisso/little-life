@@ -6,7 +6,7 @@ import { simEvents } from './simEvents';
 import { getEffectivePersonality } from './states';
 import { gameMinutes } from './gameClock';
 import { gameMinutesNow } from './worldClock';
-import { addToInventory, removeFromInventory, getInventoryCount } from './economyEngine';
+import { addToInventory, removeFromInventory, getInventoryCount, type InventoryItem } from './economyEngine';
 import { ITEM_REGISTRY, itemPhrase } from '../data/economyData';
 import { CONFIG } from './constants';
 
@@ -70,9 +70,9 @@ export function giftMoneyFloor(moneyTarget: number): number {
  * won't give away food down to their last few units: it is their next meal,
  * and the pantry runs are already the poorest agents' weak spot.
  */
-export function pickGiftItem(inventory: unknown[], tier: GiftWealthTier): string | null {
+export function pickGiftItem(inventory: InventoryItem[], tier: GiftWealthTier): string | null {
   for (const item of GIFT_ITEMS) {
-    const have = getInventoryCount(inventory as any[], item);
+    const have = getInventoryCount(inventory, item);
     if (have <= 0) continue;
     const isFoodItem = ITEM_REGISTRY[item]?.category === 'food';
     if (isFoodItem && tier !== 'comfortable' && have <= GIFT_FOOD_RESERVE) continue;
@@ -292,7 +292,7 @@ function initGiftSystem(): void {
     if (Math.random() > giftChance * GIFT_CHANCE_FACTOR[tier]) return;
 
     // Find best gift item the agent can spare
-    const giftItem = pickGiftItem(econ.inventory as any[], tier);
+    const giftItem = pickGiftItem(econ.inventory, tier);
 
     // If no items in inventory, buy one (spontaneous purchase for gifting)
     if (!giftItem) {
@@ -350,8 +350,8 @@ function initGiftSystem(): void {
     const recipientEcon = db.select().from(economy).where(eq(economy.agent_id, otherId)).get();
     if (!recipientEcon) return;
 
-    const newGiverInv = removeFromInventory(econ.inventory as any[], giftItem, 1);
-    const newReceiverInv = addToInventory(recipientEcon.inventory as any[], giftItem, 1, now);
+    const newGiverInv = removeFromInventory(econ.inventory, giftItem, 1);
+    const newReceiverInv = addToInventory(recipientEcon.inventory, giftItem, 1, now);
 
     db.update(economy).set({ inventory: newGiverInv }).where(eq(economy.id, econ.id)).run();
     db.update(economy).set({ inventory: newReceiverInv }).where(eq(economy.id, recipientEcon.id)).run();

@@ -139,16 +139,16 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent, onViewPair }
     const R = 200;
 
     const existingIds = new Set(nodesRef.current.map((n) => n.id));
-    const agentIds = new Set(agents.map((a: any) => String(a.id)));
+    const agentIds = new Set(agents.map((a) => String(a.id)));
 
     if (!initializedRef.current || existingIds.size !== agentIds.size) {
-      nodesRef.current = agents.map((a: any, i: number) => {
+      nodesRef.current = agents.map((a, i) => {
         const angle = (2 * Math.PI * i) / agents.length;
-        const states = (a.activeStates ?? []).map((s: any) => s.type);
+        const states = (a.activeStates ?? []).map((s) => s.type);
         return {
           id: String(a.id),
           label: a.name,
-          job: a.schedule?.job ?? '',
+          job: a.job_title ?? '',
           mood: a.needs?.mood ?? 50,
           states,
           color: agentColorHex(a.name),
@@ -164,15 +164,15 @@ export function RelationshipGraph({ isOpen, onClose, onSelectAgent, onViewPair }
     } else {
       // Update dynamic data without resetting positions
       for (const node of nodesRef.current) {
-        const agent = agents.find((a: any) => String(a.id) === node.id) as any;
+        const agent = agents.find((a) => String(a.id) === node.id);
         if (agent) {
           node.mood = agent.needs?.mood ?? 50;
-          node.states = (agent.activeStates ?? []).map((s: any) => s.type);
+          node.states = (agent.activeStates ?? []).map((s) => s.type);
         }
       }
     }
 
-    edgesRef.current = (relationships ?? []).map((r: any) => ({
+    edgesRef.current = (relationships ?? []).map((r) => ({
       source: String(r.agent_a),
       target: String(r.agent_b),
       friendshipAB: r.friendship_ab ?? 0,

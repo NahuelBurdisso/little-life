@@ -26,7 +26,7 @@ export class EngagementCollector {
 
     const actionDist: Record<string, number> = {};
     for (const a of agentRows) {
-      const action = (a.current_action as any)?.type || 'idle';
+      const action = a.current_action?.type || 'idle';
       actionDist[action] = (actionDist[action] || 0) + 1;
     }
 
@@ -181,7 +181,7 @@ export class EngagementCollector {
       }
     }
 
-    const moving = agentRows.filter(a => (a.current_action as any)?.type === 'walking').length;
+    const moving = agentRows.filter(a => a.current_action?.type === 'walking').length;
 
     // ── Goals ─────────────────────────────────────────────────────────────
     let goalsCreated = 0;

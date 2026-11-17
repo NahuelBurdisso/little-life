@@ -701,8 +701,8 @@ export class BuildingRenderer {
 
     // ── 9. Furniture labels + sprites ──────────────────────────────────────────
     for (const zone of zones) {
-      if ((zone as any).furniture) {
-        const furn = (zone as any).furniture as { label: string; tile: [number, number] };
+      const furn = (zone as { furniture?: { label: string; tile: [number, number] } }).furniture;
+      if (furn) {
 
         // `[-1,-1]` is the "no furniture cell in this interior grid" sentinel
         // (homes are all-walkable). Rendering it literally placed the sprite and

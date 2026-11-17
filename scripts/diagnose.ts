@@ -1,5 +1,5 @@
 import { db } from '../server/db/index';
-import { worldState, agents, needs, conversations, conversationQueue, conversationSchedulerState, agentStates, memories, relationships, relationshipEvents, facts, economyTransactions, activityLog, economy, templateUsage, worldEvents, locations } from '../server/db/schema';
+import { worldState, agents, needs, conversations, conversationQueue, conversationSchedulerState, agentStates, memories, relationships, relationshipEvents, shared_knowledge, economyTransactions, activityLog, economy, templateUsage, worldEvents, locations } from '../server/db/schema';
 import { eq } from 'drizzle-orm';
 import fs from 'fs';
 import { gameMinutes } from '../server/lib/gameClock';
@@ -22,7 +22,7 @@ tableSizes["agentStates"] = db.select().from(agentStates).all().length;
 tableSizes["memories"] = db.select().from(memories).all().length;
 tableSizes["relationships"] = db.select().from(relationships).all().length;
 tableSizes["relationshipEvents"] = db.select().from(relationshipEvents).all().length;
-tableSizes["facts"] = db.select().from(facts).all().length;
+tableSizes["facts"] = db.select().from(shared_knowledge).all().length;
 tableSizes["economyTransactions"] = db.select().from(economyTransactions).all().length;
 tableSizes["activityLog"] = db.select().from(activityLog).all().length;
 tableSizes["templateUsage"] = db.select().from(templateUsage).all().length;
@@ -39,7 +39,7 @@ console.log("  ended convos:", endedConvos.length);
 const unprocessedRE = db.select().from(relationshipEvents).where(eq(relationshipEvents.processed, false)).all().length;
 console.log("  unprocessed rel events:", unprocessedRE);
 
-const activeFacts = db.select().from(facts).where(eq(facts.is_active, true)).all().length;
+const activeFacts = db.select().from(shared_knowledge).where(eq(shared_knowledge.is_active, true)).all().length;
 console.log("  active facts:", activeFacts);
 
 const scheduler = db.select().from(conversationSchedulerState).all()[0];
@@ -49,17 +49,17 @@ console.log("Stats:", JSON.stringify(scheduler?.stats));
 
 console.log("\n=== AGENT STATUS ===");
 const allAgents = db.select().from(agents).where(eq(agents.is_active, true)).all();
-const totalTicks = (world?.time as any)?.totalTicks ?? 0;
+const totalTicks = world?.time.totalTicks ?? 0;
 // `action_started` is a game-minute stamp (see isActionComplete in decisions.ts).
-const nowMinutes = world?.time ? gameMinutes(world.time as any) : 0;
+const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
 
 for (const a of allAgents) {
   const n = db.select().from(needs).where(eq(needs.agent_id, a.id)).all()[0];
   const states = db.select().from(agentStates).where(eq(agentStates.agent_id, a.id)).all();
   const e = db.select().from(economy).where(eq(economy.agent_id, a.id)).all()[0];
-  const action = a.current_action as any;
+  const action = a.current_action;
   const actionAge = nowMinutes - (a.action_started ?? 0);
-  const pos = a.position as any;
+  const pos = a.position;
   console.log(a.name,
     "| action:", JSON.stringify(action),
     "| age:", actionAge, "game min",
@@ -72,8 +72,8 @@ for (const a of allAgents) {
     "| social:", n?.social?.toFixed(1),
     "| money:", e?.money?.toFixed(0),
     "| states:", states.map(s => s.type).join(",") || "none",
-    "| queueLen:", (a.action_queue as any[])?.length ?? 0,
-    "| moodMods:", (n?.mood_modifiers as any[])?.length ?? 0
+    "| queueLen:", a.action_queue?.length ?? 0,
+    "| moodMods:", n?.mood_modifiers?.length ?? 0
   );
 }
 
@@ -82,7 +82,7 @@ console.log("\n=== POTENTIAL ISSUES ===");
 // Stuck agents
 for (const a of allAgents) {
   const actionAge = nowMinutes - (a.action_started ?? 0);
-  const actionType = (a.current_action as any)?.type;
+  const actionType = a.current_action?.type;
   if (actionAge > 500 && actionType !== "sleeping") {
     console.log("STUCK?", a.name, "action:", JSON.stringify(a.current_action), "for", actionAge, "game min");
   }
@@ -93,7 +93,7 @@ for (const c of activeConvos) {
   const parts = c.participants as number[];
   const talking = parts.filter(pid => {
     const agent = allAgents.find(a => a.id === pid);
-    return (agent?.current_action as any)?.type === "talking";
+    return agent?.current_action?.type === "talking";
   });
   if (talking.length === 0) {
     console.log("ORPHAN CONVO:", c.id, "participants:", parts, "none talking, age:", totalTicks - (c.started_at ?? 0), "ticks");
@@ -133,7 +133,7 @@ for (const e of allEcon) {
 // Mood modifier accumulation
 for (const a of allAgents) {
   const n = db.select().from(needs).where(eq(needs.agent_id, a.id)).all()[0];
-  const mods = n?.mood_modifiers as any[];
+  const mods = n?.mood_modifiers;
   if (mods && mods.length > 10) {
     console.log("MOOD MOD PILE-UP:", a.name, mods.length, "modifiers");
     const expired = mods.filter(m => m.expiresAt < totalTicks);
@@ -196,12 +196,12 @@ const staleByTicks = activeConvos.filter(c => totalTicks - c.started_at > 200);
 if (staleByTicks.length > 0) {
   console.log("\nSTALE ACTIVE CONVOS (>200 ticks old):", staleByTicks.length);
   for (const c of staleByTicks) {
-    console.log("  id:", c.id, "age:", totalTicks - c.started_at, "ticks, participants:", c.participants, "msgs:", (c.messages as any[]).length);
+    console.log("  id:", c.id, "age:", totalTicks - c.started_at, "ticks, participants:", c.participants, "msgs:", c.messages.length);
   }
 }
 
 // Pending transitions
-const pending = world?.pending_transitions as any[];
+const pending = world?.pending_transitions;
 if (pending && pending.length > 0) console.log("PENDING TRANSITIONS:", pending.length, JSON.stringify(pending));
 
 // Collision grid size
@@ -218,7 +218,7 @@ console.log("Avg embedding size:", (avgEmbSize / 1024).toFixed(1), "KB");
 console.log("Total embedding storage:", ((avgEmbSize * withEmb) / 1024 / 1024).toFixed(2), "MB");
 
 // Check for conversation message bloat
-const convoMsgCounts = db.select().from(conversations).all().map(c => (c.messages as any[]).length);
+const convoMsgCounts = db.select().from(conversations).all().map(c => c.messages.length);
 if (convoMsgCounts.length > 0) {
   const maxMsgs = Math.max(...convoMsgCounts);
   const avgMsgs = convoMsgCounts.reduce((s, n) => s + n, 0) / convoMsgCounts.length;

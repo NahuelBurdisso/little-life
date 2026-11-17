@@ -712,7 +712,7 @@ export class AgentSprite {
   }
 
   /** Update state ring color based on active states. */
-  updateStates(activeStates: Array<{ type: string; metadata?: any }>) {
+  updateStates(activeStates: Array<{ type: string; metadata?: Record<string, unknown> | null }>) {
     const top = topState(activeStates.map(s => s.type));
 
     if (top) {

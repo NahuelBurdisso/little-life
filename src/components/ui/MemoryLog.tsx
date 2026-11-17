@@ -35,6 +35,12 @@ const TYPE_COLORS: Record<string, string> = {
   secret: "bg-red-900/50 text-red-300",
 };
 
+/** How many memories a reflection cites (`metadata.citation_ids`), 0 when it names none. */
+function citationCount(metadata: Record<string, unknown> | null | undefined): number {
+  const ids = metadata?.citation_ids;
+  return Array.isArray(ids) ? ids.length : 0;
+}
+
 function importanceDots(importance: number): React.ReactElement {
   // importance 0-10 mapped to 1-5 dots
   const count = Math.max(1, Math.min(5, Math.ceil(importance / 2)));
@@ -128,9 +134,9 @@ export function MemoryLog({ memories, worldTick, tickSpeed, isPaused }: MemoryLo
               {memory.description}
             </div>
             {memory.type === 'reflection' &&
-              (memory.metadata as any)?.citation_ids?.length > 0 && (
+              citationCount(memory.metadata) > 0 && (
                 <div className="text-[10px] text-ui-muted mt-0.5">
-                  ── based on {(memory.metadata as any).citation_ids.length} memories
+                  ── based on {citationCount(memory.metadata)} memories
                 </div>
               )}
           </div>

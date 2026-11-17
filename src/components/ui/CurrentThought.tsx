@@ -1,12 +1,13 @@
 import { describeAction } from "../../lib/actionText";
 import { styleOf, stateLabel } from "../../lib/stateStyle";
 import { thoughtOf, toneClass, type ThoughtContext } from "../../lib/thoughtLine";
+import type { AgentAction } from '../../../server/db/schema';
 
 interface CurrentThoughtProps {
   agent: {
     id?: number | string;
     name: string;
-    current_action: Record<string, any>;
+    current_action: AgentAction;
     traits: string[];
   };
   needs: {
@@ -25,7 +26,7 @@ interface CurrentThoughtProps {
     source: string;
     /** Whom the feeling is about, so the line can name them (`thoughtOf`). */
     target_agent_id?: number | null;
-    metadata: Record<string, any> | null;
+    metadata: Record<string, unknown> | null;
   }[];
   /** Who is who, and the talk this resident is in: what `thoughtOf` needs to name names. */
   thoughtContext: ThoughtContext;

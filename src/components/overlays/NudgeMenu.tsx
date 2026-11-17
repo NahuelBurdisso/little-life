@@ -4,13 +4,14 @@ import { trpc } from "../../lib/trpc";
 import { displayPlaceName, locationIcon } from "../../lib/locationInfo";
 import { MiniPortrait } from "../ui/MiniPortrait";
 import { W } from "../ui/warmClasses";
+import type { AgentView, LocationView } from '../../lib/apiTypes';
 
 interface NudgeMenuProps {
   agentId: string;
   selectedAgentId: string | null;
   position: { x: number; y: number };
-  agents: any[];
-  locations: any[];
+  agents: AgentView[];
+  locations: LocationView[];
   onClose: () => void;
   onSelectAgent: (id: string) => void;
   /** Opens the pair dossier for the two residents. Without it "View relationship" just selects. */
@@ -83,7 +84,7 @@ function TextPrompt({
 }
 
 /** The sim refuses talk/go-to nudges for sleepers (server/routers/nudge.ts), so grey them out up front. */
-function isAsleep(agent: any): boolean {
+function isAsleep(agent: AgentView | null | undefined): boolean {
   const a = agent?.current_action;
   const type = typeof a === "string" ? a : a?.type;
   return type === "sleeping";
@@ -162,11 +163,11 @@ export function NudgeMenu({
   // to double-submit is two events landing before React unmounts it (Enter + click).
   const firedRef = useRef(false);
 
-  const currentAgent = agents.find((a: any) => String(a.id) === agentId);
-  const otherAgents = agents.filter((a: any) => String(a.id) !== agentId);
+  const currentAgent = agents.find((a) => String(a.id) === agentId);
+  const otherAgents = agents.filter((a) => String(a.id) !== agentId);
   const partnerId =
     pairWith ?? (selectedAgentId !== null && selectedAgentId !== agentId ? selectedAgentId : null);
-  const partner = partnerId ? agents.find((a: any) => String(a.id) === partnerId) : null;
+  const partner = partnerId ? agents.find((a) => String(a.id) === partnerId) : null;
   const isPairMode = partnerId !== null;
   const eitherAsleep = isAsleep(currentAgent) || isAsleep(partner);
 
@@ -279,9 +280,9 @@ export function NudgeMenu({
   // A secret the listener already knows is not a reveal, so drop those.
   const tellableSecrets = (knownFacts ?? [])
     .filter(
-      (f: any) => f.sensitivity >= 2 && !(f.known_by as number[]).includes(Number(partnerId)),
+      (f) => f.sensitivity >= 2 && !(f.known_by as number[]).includes(Number(partnerId)),
     )
-    .sort((a: any, b: any) => b.sensitivity - a.sensitivity)
+    .sort((a, b) => b.sensitivity - a.sensitivity)
     .slice(0, 8);
 
   // Clamp position to viewport
@@ -309,8 +310,8 @@ export function NudgeMenu({
     </div>
   );
 
-  const firstOf = (a: any) => (a?.name ? String(a.name).split(" ")[0] : "them");
-  const rumorAbout = rumorSubject ? agents.find((a: any) => String(a.id) === rumorSubject) : null;
+  const firstOf = (a: { name?: string } | null | undefined) => (a?.name ? String(a.name).split(" ")[0] : "them");
+  const rumorAbout = rumorSubject ? agents.find((a) => String(a.id) === rumorSubject) : null;
 
   /** Detail box for a rumor about `rumorSubject`, heard first by the right-clicked agent. */
   const rumorTextMenu = (onBack: () => void) => (
@@ -340,8 +341,8 @@ export function NudgeMenu({
         >
           <option value="">nobody else</option>
           {agents
-            .filter((a: any) => String(a.id) !== rumorSubject && String(a.id) !== agentId)
-            .map((a: any) => (
+            .filter((a) => String(a.id) !== rumorSubject && String(a.id) !== agentId)
+            .map((a) => (
               <option key={String(a.id)} value={String(a.id)}>
                 {a.name}
               </option>
@@ -397,7 +398,7 @@ export function NudgeMenu({
                 {currentAgent?.name ?? "They"} knows no secrets the other doesn't.
               </p>
             ) : (
-              tellableSecrets.map((f: any) => (
+              tellableSecrets.map((f) => (
                 <Item
                   key={f.id}
                   icon="🤫"
@@ -496,7 +497,7 @@ export function NudgeMenu({
       {subMenu === "talk" && (
         <div className="max-h-56 overflow-y-auto">
           {back(() => setSubMenu(null))}
-          {otherAgents.map((a: any) => {
+          {otherAgents.map((a) => {
             const blocked = asleep || isAsleep(a);
             return (
               <Item
@@ -520,7 +521,7 @@ export function NudgeMenu({
           <p className="px-3 pb-1 text-[10px] text-[var(--ui-text-secondary)]">
             Secrets, confrontations, chats between two people.
           </p>
-          {otherAgents.map((a: any) => (
+          {otherAgents.map((a) => (
             <Item
               key={String(a.id)}
               icon={<MiniPortrait agent={a} size={16} dim={isAsleep(a)} />}
@@ -539,7 +540,7 @@ export function NudgeMenu({
       {subMenu === "goto" && (
         <div className="max-h-56 overflow-y-auto">
           {back(() => setSubMenu(null))}
-          {locations.map((loc: any) => (
+          {locations.map((loc) => (
             <Item
               key={String(loc.id)}
               icon={locationIcon(loc.type)}
@@ -572,7 +573,7 @@ export function NudgeMenu({
           <p className="px-3 pb-1 text-[10px] text-[var(--ui-text-secondary)]">
             {firstOf(currentAgent)} hears a rumor about...
           </p>
-          {otherAgents.map((a: any) => (
+          {otherAgents.map((a) => (
             <Item
               key={String(a.id)}
               icon={<MiniPortrait agent={a} size={16} />}
@@ -647,7 +648,7 @@ export function NudgeMenu({
               ? `Who does ${firstOf(currentAgent)} fall for?`
               : `Who is ${firstOf(currentAgent)} jealous of?`}
           </p>
-          {otherAgents.map((a: any) => (
+          {otherAgents.map((a) => (
             <Item
               key={String(a.id)}
               icon={<MiniPortrait agent={a} size={16} />}

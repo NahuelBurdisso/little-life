@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
+import type { ConversationMessage } from '../../../server/db/schema';
 
 interface ConversationViewerProps {
   conversation: {
     id: number;
     participants: number[];
-    messages: Record<string, any>[];
+    messages: ConversationMessage[];
     topic: string | null;
     status: string;
     sentiment: number;
@@ -68,7 +69,7 @@ export function ConversationViewer({
         ref={scrollRef}
         className="space-y-1.5 max-h-40 overflow-y-auto pr-1"
       >
-        {conversation.messages.map((msg: any, i: number) => {
+        {conversation.messages.map((msg, i) => {
           const isLeft = msg.speakerId === leftSpeaker;
           const speakerKey = String(msg.speakerId);
           const name =

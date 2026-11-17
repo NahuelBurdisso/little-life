@@ -4,12 +4,13 @@ import type { ThoughtContext } from "../../lib/thoughtLine";
 import { GoalsView } from "./GoalsView";
 import { SecretsOpinions } from "./SecretsOpinions";
 import { MemoryLog } from "./MemoryLog";
+import type { AgentAction } from '../../../server/db/schema';
 
 interface ThoughtsTabProps {
   agent: {
     id: number | string;
     name: string;
-    current_action: Record<string, any>;
+    current_action: AgentAction;
     traits: string[];
   };
   needs: {
@@ -27,7 +28,7 @@ interface ThoughtsTabProps {
     severity: number;
     source: string;
     target_agent_id?: number | null;
-    metadata: Record<string, any> | null;
+    metadata: Record<string, unknown> | null;
   }[];
   /** Names and the current conversation, for the inner-monologue line. */
   thoughtContext: ThoughtContext;

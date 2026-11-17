@@ -38,18 +38,10 @@ import { isAdultAge, isAdultsOnlyFact } from '../lib/intimacy/eligibility';
 
 const VALID_SPEEDS = [0, 0.5, 1, 2, 4];
 
-function getActionType(currentAction: Record<string, any> | null): string | null {
-  if (!currentAction) return null;
-  if (typeof currentAction === 'object' && 'type' in currentAction) {
-    return currentAction.type as string;
-  }
-  return typeof currentAction === 'string' ? currentAction : null;
-}
-
 type AgentRow = typeof agents.$inferSelect;
 
 function isTalking(agent: AgentRow): boolean {
-  return getActionType(agent.current_action as Record<string, any> | null) === 'talking';
+  return agent.current_action?.type === 'talking';
 }
 
 /**
@@ -156,10 +148,10 @@ export const nudgeRouter = router({
             return { success: false, reason: 'Agent B not found or inactive' };
           }
 
-          if (getActionType(agentA.current_action) === 'sleeping') {
+          if (agentA.current_action?.type === 'sleeping') {
             return { success: false, reason: `${agentA.name} is sleeping` };
           }
-          if (getActionType(agentB.current_action) === 'sleeping') {
+          if (agentB.current_action?.type === 'sleeping') {
             return { success: false, reason: `${agentB.name} is sleeping` };
           }
 
@@ -203,7 +195,7 @@ export const nudgeRouter = router({
             .run();
 
           // Set both agents walking toward midpoint
-          const existingQueueA = (agentA.action_queue as Record<string, any>[]) ?? [];
+          const existingQueueA = agentA.action_queue ?? [];
           db.update(agents)
             .set({
               ...walkOrder(agentA, { x: midX, y: midY }, nowGameMinutes),
@@ -215,7 +207,7 @@ export const nudgeRouter = router({
             .where(eq(agents.id, agentAId))
             .run();
 
-          const existingQueueB = (agentB.action_queue as Record<string, any>[]) ?? [];
+          const existingQueueB = agentB.action_queue ?? [];
           db.update(agents)
             .set({
               ...walkOrder(agentB, { x: midX, y: midY }, nowGameMinutes),
@@ -252,7 +244,7 @@ export const nudgeRouter = router({
           if (!agent || !agent.is_active) {
             return { success: false, reason: 'Agent not found or inactive' };
           }
-          if (getActionType(agent.current_action) === 'sleeping') {
+          if (agent.current_action?.type === 'sleeping') {
             return { success: false, reason: `${agent.name} is sleeping` };
           }
 
@@ -580,8 +572,8 @@ export const nudgeRouter = router({
           // replacing it, matching `suggest_talk`. Overwriting threw away the rest of
           // the agent's planned day, so a single nudge left both of them with nothing
           // to do once the argument ended.
-          const queueA = (agentA.action_queue as Record<string, any>[]) ?? [];
-          const queueB = (agentB.action_queue as Record<string, any>[]) ?? [];
+          const queueA = agentA.action_queue ?? [];
+          const queueB = agentB.action_queue ?? [];
 
           db.update(agents).set({
             ...walkOrder(agentA, { x: midX, y: midY }, nowGameMinutes),
@@ -654,7 +646,7 @@ export const nudgeRouter = router({
 
         // ─── Unknown ───────────────────────────────────────────────────────
         default:
-          return { success: false, reason: `Unknown action type: ${(action as any).type}` };
+          return { success: false, reason: `Unknown action type: ${(action as { type: string }).type}` };
       }
     }),
 });

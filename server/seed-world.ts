@@ -37,7 +37,7 @@ async function main() {
 
   const wsClient = createWSClient({
     url: process.env.VITE_WS_URL ?? 'ws://localhost:3001',
-    WebSocket: WebSocket as any,
+    WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
   });
 
   const client = createTRPCClient<AppRouter>({
@@ -48,8 +48,8 @@ async function main() {
     const result = await client.setup.initialize.mutate(setupConfig);
     console.log('Result:', result);
     console.log('\nAgents:', agents.map(a => `${a.name} (${a.jobTitle})`).join(', '));
-  } catch (err: any) {
-    console.error('Failed:', err.message || err);
+  } catch (err) {
+    console.error('Failed:', err instanceof Error ? err.message : err);
     wsClient.close();
     process.exit(1);
   }

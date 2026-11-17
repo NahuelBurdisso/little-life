@@ -799,7 +799,7 @@ export const rippleRules: RippleRule[] = [
     sourceFilter: (payload) =>
       typeof payload?.sentiment === 'number' &&
       payload.sentiment > 0.2 &&
-      payload?.partnerState &&
+      typeof payload.partnerState === 'string' &&
       ['lonely', 'heartbroken', 'depressed', 'stressed', 'grieving'].includes(payload.partnerState),
     target: 'self',
     probability: 0.6,

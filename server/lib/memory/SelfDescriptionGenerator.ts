@@ -32,7 +32,7 @@ export class SelfDescriptionGenerator {
     const worldEpoch = currentWorldEpoch();
     const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
     if (!agent) return;
-    if ((agent.current_action as any)?.type === 'dead') return;
+    if (agent.current_action?.type === 'dead') return;
 
     const personality = agent.personality as PersonalityProfile | null;
     if (!personality) return;

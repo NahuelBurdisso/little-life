@@ -25,6 +25,7 @@ import {
   completeGoal, describeGoal, recordGoalOutcome, HOSTILE_CHAT, WARM_CHAT, type GoalOutcome,
 } from '../../lib/goals/goalProgress';
 import { firstName as givenName } from '../../ai/names';
+import type { PersonalityProfile } from '../../lib/personality';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ const MINUTES_PER_DAY = 1440;
 const RECREATE_COOLDOWN_MINUTES = 720;
 
 type GoalRow = typeof goals.$inferSelect;
+type AgentRow = typeof agents.$inferSelect;
 
 /**
  * Roll an abandonment rule's `chance`, which the registry authors as a
@@ -64,12 +66,12 @@ function rollDailyChance(chance: number, tickSpeed: number): boolean {
   return Math.random() < dailyChancePerTick(chance, tickSpeed);
 }
 
-function checkPersonalityGate(personality: any, gate: Record<string, string>): boolean {
+function checkPersonalityGate(personality: PersonalityProfile | null, gate: Record<string, string>): boolean {
   for (const [trait, condition] of Object.entries(gate)) {
     const parts = condition.split(' ');
     const op = parts[0];
     const value = parseFloat(parts[1]);
-    const actual = personality?.[trait] ?? 50;
+    const actual = personality?.[trait as keyof PersonalityProfile] ?? 50;
     if (!compareOp(actual, op, value)) return false;
   }
   return true;
@@ -81,7 +83,7 @@ function checkPersonalityGate(personality: any, gate: Record<string, string>): b
 
 function checkTriggerCondition(
   trigger: GoalTriggerDef,
-  agent: any,
+  agent: AgentRow,
   _currentTick: number,
   cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
   cachedRelationships: (typeof relationships.$inferSelect)[],
@@ -253,7 +255,7 @@ function pickObservedSufferer(
 // ─── evaluateTriggers ─────────────────────────────────────────────────────────
 
 function evaluateTriggers(
-  agent: any,
+  agent: AgentRow,
   nowMinutes: number,
   cachedKnowledge: (typeof shared_knowledge.$inferSelect)[],
   cachedRelationships: (typeof relationships.$inferSelect)[],
@@ -312,7 +314,7 @@ function evaluateTriggers(
     if (duplicate) continue;
 
     const condState = trigger.condition.state ?? trigger.condition.fact_type ?? trigger.condition.aspiration ?? '';
-    db.insert(goals).values({
+    const created = db.insert(goals).values({
       agent_id: agent.id,
       type: trigger.generates,
       target_id: targetId ?? undefined,
@@ -321,9 +323,9 @@ function evaluateTriggers(
       progress: 0,
       status: 'active',
       created_at: nowMinutes,
-    }).run();
+    }).returning().get();
 
-    activeGoals.push({ type: trigger.generates, target_id: targetId } as any);
+    activeGoals.push(created);
     if (targetId != null) {
       const key = crowdKey(trigger.generates, targetId);
       observers.crowd.set(key, (observers.crowd.get(key) ?? 0) + 1);
@@ -345,8 +347,8 @@ function evaluateTriggers(
 // ─── evaluateAbandonment ──────────────────────────────────────────────────────
 
 function evaluateAbandonment(
-  agent: any,
-  goal: any,
+  agent: AgentRow,
+  goal: GoalRow,
   nowMinutes: number,
   allAgentStates: readonly AgentStateRow[],
   tickSpeed: number,
@@ -396,7 +398,8 @@ function evaluateAbandonment(
         const field = parts[0].split('.')[1];
         const op = parts[1];
         const value = parseFloat(parts[2]);
-        if (compareOp((econ as any)[field], op, value)) {
+        const actual = (econ as Record<string, unknown>)[field];
+        if (typeof actual === 'number' && compareOp(actual, op, value)) {
           shouldAbandon = true;
         }
       }
@@ -480,7 +483,7 @@ export function goalEventCast(goal: { target_id: number | null }): { victimId?: 
 
 // ─── evaluatePassiveProgress ──────────────────────────────────────────────────
 
-function evaluatePassiveProgress(agent: any, goal: any, nowMinutes: number, stateRows: AgentStateRowsSnapshot): void {
+function evaluatePassiveProgress(agent: AgentRow, goal: GoalRow, nowMinutes: number, stateRows: AgentStateRowsSnapshot): void {
   const def = GOAL_REGISTRY[goal.type];
   if (!def || def.valid_interactions.length > 0) return; // only passive goals
 
@@ -584,7 +587,7 @@ export function goalsTick(): void {
   const nowMinutes = world?.time ? gameMinutes(world.time) : 0;
   const tickSpeed = world?.tick_speed ?? 1;
   const isDayChange = world?.pending_transitions?.some(
-    (t: any) => t.type === 'day_changed'
+    (t) => t.type === 'day_changed'
   ) ?? false;
 
   // Pre-load shared tables once per tick to avoid per-agent/per-trigger queries

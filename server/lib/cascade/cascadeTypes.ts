@@ -10,10 +10,39 @@ export interface CascadeMetadata {
   victimId?: number;
 }
 
+/**
+ * A simEvents payload as the cascade reads it. One shape for every source event: each
+ * event carries a few of these fields and a rule's `sourceFilter` checks the ones it
+ * needs, so they are all optional. `_cascade` (the chain an engine-emitted event belongs
+ * to) and `_resolvedAgentId` are the engine's own marks. Anything else an event carries is `unknown` here.
+ */
+export interface RipplePayload {
+  agentId?: number;
+  targetId?: number;
+  perpetratorId?: number;
+  victimId?: number;
+  locationId?: number | null;
+  action?: string;
+  state?: string;
+  sentiment?: number;
+  goalType?: string;
+  content?: string;
+  topics?: string[];
+  partnerState?: string;
+  won?: boolean;
+  romanceLevel?: number;
+  hadRecentConflict?: boolean;
+  factType?: string;
+  templateKey?: string;
+  _cascade?: CascadeMetadata;
+  _resolvedAgentId?: number;
+  [key: string]: unknown;
+}
+
 export interface RippleRule {
   id: string;
   source: string;
-  sourceFilter?: (payload: any, ctx: RippleContext) => boolean;
+  sourceFilter?: (payload: RipplePayload, ctx: RippleContext) => boolean;
   target: 'self' | 'perpetrator' | 'victim' | 'witness' | 'random_present';
   probability: number;
   personalityGates?: Array<{
@@ -40,7 +69,7 @@ export interface RippleEffects {
   clearState?: string;
   createFact?: string;
   emitEvent?: string;
-  emitPayload?: Record<string, any>;
+  emitPayload?: Record<string, unknown>;
   moodDelta?: number;
   stressDelta?: number;
   relationshipDelta?: {

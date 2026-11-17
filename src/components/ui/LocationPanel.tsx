@@ -5,12 +5,13 @@ import { displayPlaceName, hoursSummary, locationIcon, prettyLocationType, type 
 import { eventMinutesLeft } from "../../../server/lib/gameClock";
 import { MiniPortrait } from "./MiniPortrait";
 import { W } from "./warmClasses";
+import type { AgentView, WorldEventView } from '../../lib/apiTypes';
 
 interface LocationPanelProps {
   location: LocationLike & { description?: string; capacity?: number };
-  agents: any[];
+  agents: AgentView[];
   /** Active world events (`world.getActiveEvents` rows). */
-  events: any[];
+  events: WorldEventView[];
   /** World clock hour (0-23) for the open/closed badge; null before the world loads. */
   hour: number | null;
   nowMinutes: number | null;
@@ -30,7 +31,7 @@ interface LocationPanelProps {
  */
 const START_FOLDED_BELOW = 1200;
 
-function actionType(agent: any): string {
+function actionType(agent: AgentView): string {
   const a = agent?.current_action;
   return (typeof a === "string" ? a : a?.type) ?? "idle";
 }

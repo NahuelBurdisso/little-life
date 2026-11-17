@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { db } from '../../../db';
-import { agents, agentStates, economy, economyTransactions, locations, needs, worldState } from '../../../db/schema';
+import { agents, agentStates, economy, economyTransactions, locations, needs, worldState, type AgentAction } from '../../../db/schema';
 import { and, eq, like } from 'drizzle-orm';
 import { needsTick, serviceApplies } from '../needs';
 import { clearPurchaseTracking, economyTick, PANTRY_MOOD_PENALTY } from '../economy';
@@ -87,7 +87,7 @@ const count = (id: number, item: string) => (econOf(id).inventory as Inv).find((
 const purchasesBy = (id: number) => db.select().from(economyTransactions)
   .where(and(eq(economyTransactions.from_agent, id), like(economyTransactions.reason, 'purchase:%'))).all();
 
-function act(id: number, action: Record<string, unknown>, at: number | null, startedAt = 500): void {
+function act(id: number, action: AgentAction, at: number | null, startedAt = 500): void {
   db.update(agents).set({ current_action: action, action_started: startedAt, action_duration: 60, current_location: at })
     .where(eq(agents.id, id)).run();
 }

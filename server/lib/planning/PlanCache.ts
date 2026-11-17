@@ -31,7 +31,7 @@ class PlanCache {
     this.plans.set(agentId, plan);
     this.loaded.add(agentId);
     db.update(agents)
-      .set({ daily_plan: plan as any })
+      .set({ daily_plan: plan })
       .where(eq(agents.id, agentId))
       .run();
   }

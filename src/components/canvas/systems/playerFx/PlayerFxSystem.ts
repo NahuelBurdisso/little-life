@@ -108,7 +108,7 @@ class PlayerFxSystem implements CanvasSystem {
       case "suggest_go_to": {
         const loc = e.locationId != null ? this.location(e.locationId) : null;
         const dest = loc ? doorOf(loc) : null;
-        if (a != null && dest) return this.add(fxKey.pin(a), () => new PinFx(env, a, loc.id, dest.x, dest.y));
+        if (a != null && loc && dest) return this.add(fxKey.pin(a), () => new PinFx(env, a, loc.id, dest.x, dest.y));
         break;
       }
       case "give_money":
@@ -130,7 +130,7 @@ class PlayerFxSystem implements CanvasSystem {
         const x = sp ? sp.x : e.x;
         const y = sp ? sp.y : e.y;
         if (x == null || y == null) return;
-        const dir = sp && (sp as any).facingDir === -1 ? -1 : 1;
+        const dir = sp && sp.facingDir === -1 ? -1 : 1;
         return this.add(fxKey.farewell(a), () => new FarewellFx(env, a, x, y, dir));
       }
       case "event": {
@@ -184,7 +184,7 @@ class PlayerFxSystem implements CanvasSystem {
     }
   }
 
-  private location(id: number): any | null {
+  private location(id: number): LocationLite | null {
     const list = this.data?.locations;
     if (!list) return null;
     for (const l of list) if (l?.id === id) return l;
@@ -239,7 +239,7 @@ class PlayerFxSystem implements CanvasSystem {
 }
 
 /** Where an agent walking to a location ends up: its entry point, else the middle of its south wall. */
-function doorOf(loc: any): { x: number; y: number } | null {
+function doorOf(loc: LocationLite | null | undefined): { x: number; y: number } | null {
   const e = loc?.entry_point;
   if (e && Number.isFinite(e.x) && Number.isFinite(e.y)) return { x: e.x, y: e.y };
   const p = loc?.position;
@@ -250,3 +250,5 @@ function doorOf(loc: any): { x: number; y: number } | null {
 export function createPlayerFxSystem(layers: CanvasLayers, services: CanvasServices): CanvasSystem {
   return new PlayerFxSystem(layers, services);
 }
+
+import type { LocationLite } from '../../../../lib/apiTypes';

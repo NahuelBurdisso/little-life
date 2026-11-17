@@ -3,6 +3,7 @@ import { WINDOW_GLASS, southWindowXs } from "../../BuildingRenderer";
 import { inView } from "../view";
 import type { CanvasLayers, CanvasServices, CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
 import { panelPx, stepCurtain } from "./curtainMath";
+import type { LocationLite } from '../../../../lib/apiTypes';
 
 /** Warm cloth, and the darker fold at each panel's inner edge that makes it read as a curtain. */
 const FABRIC = 0xb0525e;
@@ -51,7 +52,7 @@ class CurtainSystem implements CanvasSystem {
   private list: Curtain[] = [];
   private readonly pool: PIXI.Sprite[] = [];
   private generation = 0;
-  private readonly homes = new Map<number, any>();
+  private readonly homes = new Map<number, LocationLite>();
 
   constructor(private readonly layers: CanvasLayers, _services: CanvasServices) {}
 
@@ -151,7 +152,7 @@ class CurtainSystem implements CanvasSystem {
     }
   }
 
-  private acquire(loc: any, gen: number): Curtain {
+  private acquire(loc: LocationLite, gen: number): Curtain {
     const xs = southWindowXs(loc);
     const sprites: PIXI.Sprite[] = [];
     for (let i = 0; i < xs.length; i++) {
@@ -195,7 +196,7 @@ class CurtainSystem implements CanvasSystem {
 }
 
 /** Whether a curtain was laid out for this very house (same footprint), not another that reused its id. */
-function sameHome(c: Curtain, loc: any): boolean {
+function sameHome(c: Curtain, loc: LocationLite): boolean {
   const { x, y, width, height } = loc.position ?? {};
   return c.southY === y + height && c.cx === x + width / 2 && c.halfW === width / 2;
 }

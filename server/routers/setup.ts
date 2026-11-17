@@ -1073,7 +1073,7 @@ function seedWorld(
     collision_grid: dynamicCollisionGrid,
     road_tiles: genResult.roads,
     terrain_tiles: genResult.terrainTiles,
-    setup_config: config as any,
+    setup_config: config,
     // A new town, even from the same seed: its saves rotate on their own.
     world_id: randomUUID(),
   }).run();

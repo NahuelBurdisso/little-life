@@ -193,7 +193,7 @@ export function summarizePhases(perTick: Record<string, readonly number[]>, tota
 
 /** Just the slice of better-sqlite3 the tracker uses, so tests can hand it a real in-memory database. */
 export interface SqliteLike {
-  prepare(sql: string): { all(...params: unknown[]): any[]; get(...params: unknown[]): any };
+  prepare(sql: string): { all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown };
 }
 
 export interface TrackerDeps {
@@ -210,14 +210,17 @@ const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
 
 export function createHealthTracker(deps: TrackerDeps) {
   const { sqlite } = deps;
-  const all = (sql: string, ...p: unknown[]) => sqlite.prepare(sql).all(...p);
-  const maxId = (table: string): number => Number(sqlite.prepare(`SELECT COALESCE(MAX(id), 0) AS m FROM ${table}`).get()?.m ?? 0);
+  // Raw SQL on purpose (the tracker also runs on a bare in-memory database in its tests),
+  // so each call names the columns it selected: `all<{ id: number }>(...)`.
+  const all = <Row>(sql: string, ...p: unknown[]) => sqlite.prepare(sql).all(...p) as Row[];
+  const maxId = (table: string): number =>
+    Number((sqlite.prepare(`SELECT COALESCE(MAX(id), 0) AS m FROM ${table}`).get() as { m: number } | undefined)?.m ?? 0);
 
-  const activeIds = () => new Set<number>(all('SELECT id FROM agents WHERE is_active = 1').map((r) => r.id));
-  const statuses = () => new Map<string, string>(all('SELECT agent_a, agent_b, status FROM relationships')
+  const activeIds = () => new Set<number>(all<{ id: number }>('SELECT id FROM agents WHERE is_active = 1').map((r) => r.id));
+  const statuses = () => new Map<string, string>(all<{ agent_a: number; agent_b: number; status: string }>('SELECT agent_a, agent_b, status FROM relationships')
     .map((r) => [pairKey(r.agent_a, r.agent_b), String(r.status)]));
-  const publicFacts = () => new Set<number>(all('SELECT id FROM shared_knowledge WHERE is_public = 1').map((r) => r.id));
-  const goalStates = () => new Map<number, string>(all('SELECT id, status FROM goals').map((r) => [r.id, String(r.status)]));
+  const publicFacts = () => new Set<number>(all<{ id: number }>('SELECT id FROM shared_knowledge WHERE is_public = 1').map((r) => r.id));
+  const goalStates = () => new Map<number, string>(all<{ id: number; status: string }>('SELECT id, status FROM goals').map((r) => [r.id, String(r.status)]));
 
   const seenBeats = new Set<string>();
   let activeBefore = activeIds();
@@ -263,10 +266,13 @@ export function createHealthTracker(deps: TrackerDeps) {
     /** Close the day: diff every snapshot against the previous one and roll them forward. */
     endDay(day: number): DayHealth {
       const activeNow = activeIds();
-      const nameOf = new Map<number, string>(all('SELECT id, name FROM agents').map((r) => [r.id, String(r.name)]));
+      const nameOf = new Map<number, string>(all<{ id: number; name: string }>('SELECT id, name FROM agents').map((r) => [r.id, String(r.name)]));
 
       // ── The day's activity rows ──
-      const rows = all('SELECT type, importance, initiator_id, target_id, agent_ids, metadata FROM activity_log WHERE id > ?', logMark);
+      const rows = all<{
+        type: string; importance: number; initiator_id: number | null; target_id: number | null;
+        agent_ids: string | null; metadata: string | null;
+      }>('SELECT type, importance, initiator_id, target_id, agent_ids, metadata FROM activity_log WHERE id > ?', logMark);
       logMark = maxId('activity_log');
       const beats: Record<string, number> = {};
       const storyTypes = new Set<string>();
@@ -308,7 +314,9 @@ export function createHealthTracker(deps: TrackerDeps) {
       }
       statusBefore = statusNow;
       const statusMix: Record<string, number> = {};
-      const friendRows = all('SELECT agent_a, agent_b, friendship_ab, friendship_ba, status FROM relationships')
+      const friendRows = all<{ agent_a: number; agent_b: number; friendship_ab: number; friendship_ba: number; status: string }>(
+        'SELECT agent_a, agent_b, friendship_ab, friendship_ba, status FROM relationships',
+      )
         .filter((r) => activeNow.has(r.agent_a) && activeNow.has(r.agent_b));
       let mutualFriends = 0;
       let friendSum = 0;
@@ -321,7 +329,7 @@ export function createHealthTracker(deps: TrackerDeps) {
       const pairs = (activeNow.size * (activeNow.size - 1)) / 2;
 
       // ── Knowledge ──
-      const newFacts = all('SELECT sensitivity FROM shared_knowledge WHERE id > ?', factMark);
+      const newFacts = all<{ sensitivity: number }>('SELECT sensitivity FROM shared_knowledge WHERE id > ?', factMark);
       factMark = maxId('shared_knowledge');
       const publicNow = publicFacts();
       const madePublic = [...publicNow].filter((id) => !publicBefore.has(id)).length;

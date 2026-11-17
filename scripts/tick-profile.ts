@@ -158,14 +158,14 @@ async function main(): Promise<void> {
     const { getDefaultAgents, getDefaultRelationships } = await import('../src/components/setup/defaults');
     const { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } = await import('../src/components/setup/types');
     const { setupRouter } = await import('../server/routers/setup');
-    await setupRouter.createCaller({} as any).initialize({
+    await setupRouter.createCaller({}).initialize({
       agents: getDefaultAgents(),
       relationships: getDefaultRelationships(),
       world: DEFAULT_WORLD,
       rules: DEFAULT_RULES,
       scenario: { ...DEFAULT_PRESET.values, seed: SEED },
       worldgen: { ...DEFAULT_WORLDGEN, seed: SEED },
-    } as any);
+    });
     await stopTickLoopAndWait();
   } else {
     // A save carries positions but the zone occupancy singleton is in-memory

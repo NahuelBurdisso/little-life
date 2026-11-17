@@ -15,6 +15,7 @@ import {
   type Shot,
 } from '../lib/director';
 import { buildCaption, type Caption } from '../lib/directorCaption';
+import type { AgentView, ConversationView, LocationView, WorldEventView } from '../lib/apiTypes';
 
 const CAPTIONS_KEY = 'little-life:director-captions';
 
@@ -41,10 +42,10 @@ const REMEMBER_MS = 60_000;
 interface UseDirectorArgs {
   /** The toolbar's Director switch. */
   enabled: boolean;
-  agents: ReadonlyArray<any>;
-  conversations: ReadonlyArray<any>;
-  locations: ReadonlyArray<any>;
-  events: ReadonlyArray<any>;
+  agents: ReadonlyArray<AgentView>;
+  conversations: ReadonlyArray<ConversationView>;
+  locations: ReadonlyArray<LocationView>;
+  events: ReadonlyArray<WorldEventView>;
   alerts: readonly DramaAlert[];
   favorites: ReadonlySet<string>;
   /**
@@ -221,7 +222,7 @@ export function useDirector({ enabled, agents, conversations, locations, events,
   const lingering = useRef<{ since: number; caption: Caption } | null>(null);
   let caption: Caption | null = null;
   if (enabled && captionsOn && shot) {
-    const built = buildCaption(shot, conversations as any[], nameOf);
+    const built = buildCaption(shot, conversations, nameOf);
     const talking = built != null && built.conversationId != null;
     const lingerHere = lingering.current?.since === shot.since ? lingering.current.caption : null;
     if (built && talking) lingering.current = { since: shot.since, caption: built };

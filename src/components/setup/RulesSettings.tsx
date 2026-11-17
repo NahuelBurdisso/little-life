@@ -1,9 +1,12 @@
 import { getCategories, getParamsByCategory, getCategoryLabel } from './configRegistry';
 import type { ConfigParam } from './configRegistry';
+import type { RulesConfig } from './types';
+
+type ConfigValue = RulesConfig[string];
 
 interface Props {
-  config: Record<string, any>;
-  onChange: (config: Record<string, any>) => void;
+  config: RulesConfig;
+  onChange: (config: RulesConfig) => void;
 }
 
 function ToggleControl({ param, value, onChange }: { param: ConfigParam; value: boolean; onChange: (v: boolean) => void }) {
@@ -74,7 +77,7 @@ function TextControl({ param, value, onChange }: { param: ConfigParam; value: st
   );
 }
 
-function ConfigControl({ param, value, onChange }: { param: ConfigParam; value: any; onChange: (v: any) => void }) {
+function ConfigControl({ param, value, onChange }: { param: ConfigParam; value: ConfigValue; onChange: (v: ConfigValue) => void }) {
   switch (param.type) {
     case 'toggle': return <ToggleControl param={param} value={value as boolean} onChange={onChange} />;
     case 'slider': return <SliderControl param={param} value={value as number} onChange={onChange} />;
@@ -84,7 +87,7 @@ function ConfigControl({ param, value, onChange }: { param: ConfigParam; value: 
 }
 
 export function RulesSettings({ config, onChange }: Props) {
-  const update = (key: string, value: any) => onChange({ ...config, [key]: value });
+  const update = (key: string, value: ConfigValue) => onChange({ ...config, [key]: value });
 
   const categories = getCategories();
 

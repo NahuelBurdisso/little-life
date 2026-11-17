@@ -262,10 +262,10 @@ export function statesTick() {
   // were ticks, so at 4x every state lasted four times its game-time length
   // (a 2-4 h drunk spell ran 8-16 game hours, three broke days took twelve).
   // `currentTick` is kept only for the memory stream, which is tick-stamped.
-  const currentTick = (world.time as any).totalTicks as number;
+  const currentTick = world.time.totalTicks as number;
   const nowMinutes = gameMinutes(world.time);
   const weather = world.weather as string;
-  const season = (world.time as any).season as string;
+  const season = world.time.season as string;
 
   clearEffectivePersonalities();
 
@@ -406,7 +406,7 @@ function exposeBlackmailOnDayChange() {
     if (!victimId) continue;
     const victim = db.select({ personality: agents.personality, name: agents.name }).from(agents).where(eq(agents.id, victimId)).get();
     if (!victim?.personality) continue;
-    const honesty = (victim.personality as any).honesty ?? 50;
+    const honesty = victim.personality.honesty ?? 50;
     if (honesty > 60 && Math.random() < 0.05) {
       // Self-expose: make the secret public, deactivate blackmail
       db.update(shared_knowledge).set({ is_active: false }).where(eq(shared_knowledge.id, fact.id)).run();
@@ -435,12 +435,12 @@ function runDeathChecks(
     if (!agentNeeds) continue;
 
     const states = ctx.states.forAgent(agent.id);
-    const action = (agent.current_action as any)?.type ?? 'idle';
+    const action = agent.current_action?.type ?? 'idle';
     const isOutdoors = agent.current_location == null;
 
     const deathCause = checkDeathTriggers(
       { id: agent.id, name: agent.name, age: agent.age },
-      nowMinutes, states as any, agentNeeds, ctx.jobOf(agent.id) ?? '', action, isOutdoors, season, tickSpeed,
+      nowMinutes, states, agentNeeds, ctx.jobOf(agent.id) ?? '', action, isOutdoors, season, tickSpeed,
     );
 
     if (deathCause && !diedThisTick.has(agent.id)) {
@@ -1340,7 +1340,7 @@ function checkConditionalExits(
 
       case 'alcoholic': {
         // Recovery path 1: metadata flag set by conversations system
-        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const meta = state.metadata ?? {};
         if (meta.recoveryTriggered) {
           shouldExit = true;
           break;
@@ -1357,7 +1357,7 @@ function checkConditionalExits(
       }
 
       case 'jealous': {
-        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const meta = state.metadata ?? {};
         const loveInterestId = meta.loveInterestId as number | undefined;
         const rivalId = meta.rivalId as number | undefined;
         if (!loveInterestId || !rivalId) {
@@ -1603,7 +1603,7 @@ function processStateEffects(
         );
 
         // Read meta once, accumulate all updates, then write once
-        let meta = { ...((state.metadata as Record<string, any> | null) ?? {}) };
+        let meta = { ...(state.metadata ?? {}) };
 
         for (const other of nearbyAgents) {
           // Skip agents with immunity (recently recovered)
@@ -1645,8 +1645,8 @@ function processStateEffects(
           // Being seen to: stops the illness worsening and lifts the death hazard (lib/sickness.ts).
           meta.treatedAt = nowMinutes;
           const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, healerNearby.id)).get();
-          const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
-            (i: any) => i.itemId === 'medicine' && i.quantity > 0
+          const hasMedicine = healerEcon && healerEcon.inventory.some(
+            (i) => i.itemId === 'medicine' && i.quantity > 0
           );
 
           if (hasMedicine) {
@@ -1663,9 +1663,9 @@ function processStateEffects(
             // Consume 1 medicine every 120 game minutes
             const lastMedUsed = (meta.lastMedicineUsed as number | undefined) ?? 0;
             if (nowMinutes - lastMedUsed > 120) {
-              const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
+              const newInv = healerEcon!.inventory.map((i) =>
                 i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
-              ).filter((i: any) => i.quantity > 0);
+              ).filter((i) => i.quantity > 0);
               db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, healerNearby.id)).run();
               meta.lastMedicineUsed = nowMinutes;
 
@@ -2017,7 +2017,7 @@ function processStateEffects(
 
         // Mark regret as processed so it only runs once per hangover
         db.update(agentStates)
-          .set({ metadata: { ...(state.metadata as Record<string, any> | null ?? {}), regretProcessed: true } })
+          .set({ metadata: { ...(state.metadata ?? {}), regretProcessed: true } })
           .where(eq(agentStates.id, state.id))
           .run();
         break;
@@ -2043,7 +2043,7 @@ function processStateEffects(
         if (agent.current_location == null) break;
         if (!personality) break;
 
-        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const meta = state.metadata ?? {};
         const desperationUnlocked = meta.desperationUnlocked as boolean ?? false;
         const moralityThreshold = desperationUnlocked ? 50 : 40;
 
@@ -2054,7 +2054,7 @@ function processStateEffects(
         if (!loc?.owner || loc.owner === agent.id) break;
 
         const ownerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, loc.owner)).get();
-        if (!ownerEcon || (ownerEcon.inventory as any[]).length === 0) break;
+        if (!ownerEcon || ownerEcon.inventory.length === 0) break;
 
         const items = ownerEcon.inventory as Array<{ itemId: string; quantity: number; acquiredAt: number }>;
         const targetItem = items.find((i) => i.quantity > 0);
@@ -2081,14 +2081,14 @@ function processStateEffects(
 
         const thiefEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, agent.id)).get();
         if (thiefEcon) {
-          const existing = (thiefEcon.inventory as any[]).find((i: any) => i.itemId === targetItem.itemId);
+          const existing = thiefEcon.inventory.find((i) => i.itemId === targetItem.itemId);
           let newThiefInv;
           if (existing) {
-            newThiefInv = (thiefEcon.inventory as any[]).map((i: any) =>
+            newThiefInv = thiefEcon.inventory.map((i) =>
               i.itemId === targetItem.itemId ? { ...i, quantity: i.quantity + 1 } : i
             );
           } else {
-            newThiefInv = [...(thiefEcon.inventory as any[]), { itemId: targetItem.itemId, quantity: 1, acquiredAt: Date.now() }];
+            newThiefInv = [...thiefEcon.inventory, { itemId: targetItem.itemId, quantity: 1, acquiredAt: Date.now() }];
           }
           db.update(economyTable).set({ inventory: newThiefInv }).where(eq(economyTable.agent_id, agent.id)).run();
         }
@@ -2172,7 +2172,7 @@ function processStateEffects(
         // Mood penalty: STATE_MOOD's jealous entry (lib/stateMood.ts), applied
         // by the needs phase, which rebuilt away the -0.2 once written here.
 
-        const meta = (state.metadata as Record<string, any> | null) ?? {};
+        const meta = state.metadata ?? {};
         const rivalId = meta.rivalId as number | undefined;
 
         if (rivalId && personality && personality.aggression > 60) {
@@ -2223,8 +2223,8 @@ function processStateEffects(
       const healerZone = zoneOccupancy.findAgentZone(agent.id);
       const inClinicExamRoom = healerZone?.building === 'clinic' && healerZone.zone === 'exam_room';
       const healerEcon = ctx.economyOf(agent.id);
-      const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
-        (i: any) => i.itemId === 'medicine' && i.quantity > 0
+      const hasMedicine = healerEcon && healerEcon.inventory.some(
+        (i) => i.itemId === 'medicine' && i.quantity > 0
       );
 
       if (inClinicExamRoom && hasMedicine) {
@@ -2238,13 +2238,13 @@ function processStateEffects(
           // Treat alcoholism: consume medicine, trigger recovery
           const alcoholicState = patientStates.find(s => s.type === 'alcoholic');
           if (alcoholicState && Math.random() < chancePerTick(0.02, tickSpeed)) { // 2% per game minute
-            const alcMeta = { ...((alcoholicState.metadata as any) ?? {}), recoveryTriggered: true };
+            const alcMeta = { ...(alcoholicState.metadata ?? {}), recoveryTriggered: true };
             db.update(agentStates).set({ metadata: alcMeta }).where(eq(agentStates.id, alcoholicState.id)).run();
 
             // Consume medicine
-            const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
+            const newInv = healerEcon!.inventory.map((i) =>
               i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
-            ).filter((i: any) => i.quantity > 0);
+            ).filter((i) => i.quantity > 0);
             db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, agent.id)).run();
 
             logActivity({
@@ -2272,9 +2272,9 @@ function processStateEffects(
             db.delete(agentStates).where(eq(agentStates.id, depressedState.id)).run();
 
             // Consume medicine
-            const newInv = (healerEcon!.inventory as any[]).map((i: any) =>
+            const newInv = healerEcon!.inventory.map((i) =>
               i.itemId === 'medicine' ? { ...i, quantity: i.quantity - 1 } : i
-            ).filter((i: any) => i.quantity > 0);
+            ).filter((i) => i.quantity > 0);
             db.update(economyTable).set({ inventory: newInv }).where(eq(economyTable.agent_id, agent.id)).run();
 
             // Mood boost

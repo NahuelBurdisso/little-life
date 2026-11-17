@@ -1,6 +1,6 @@
 import * as PIXI from "pixi.js";
 import { bubbleDurationMs, bubbleOffsetX, bubbleText, speakerSentiment } from '../../lib/bubbleText';
-import type { SpritePool } from "./SpritePool";
+import type { AgentData, SpritePool } from "./SpritePool";
 import { loadStrip } from "./stripAtlas";
 import { idString } from "./idString";
 import { styleOf } from "../../lib/stateStyle";
@@ -41,7 +41,7 @@ const ACTIVITY_EMOTES: Record<string, string> = {
 };
 
 /** Shared read-only stand-in for a missing `activeStates`, so the per-frame loop never allocates one. */
-const EMPTY_STATES: readonly any[] = [];
+const EMPTY_STATES: NonNullable<AgentData['activeStates']> = [];
 const EMPTY_IDS: readonly number[] = [];
 
 /** First conversation listing `agentId` as a participant — a plain loop, `update` runs per frame. */
@@ -402,7 +402,7 @@ export class BubbleSystem {
    */
   update(
     conversations: Array<{ participants?: number[]; sentiment?: number | null; messages?: Array<{ speakerId?: number; text?: string; fallback?: boolean; sentiment?: number | null }> }>,
-    agents: Array<{ id: number; position: { x: number; y: number } }>,
+    agents: AgentData[],
     deltaTime: number,
     spritePool?: SpritePool,
   ) {
@@ -540,7 +540,7 @@ export class BubbleSystem {
       const aid = idString(a.id);
       const pos = posMap.get(aid);
       if (!pos) continue;
-      const curMood = (a as any).needs?.mood ?? 50;
+      const curMood = a.needs?.mood ?? 50;
       const prevMood = this.prevMoodMap.get(aid) ?? 50;
 
       if (curMood > 80 && prevMood <= 80) this.showEmote(aid, "heart", pos);
@@ -550,7 +550,7 @@ export class BubbleSystem {
       // State-triggered emotes — show when a new state appears
       // Compared against last frame's list, then that list is overwritten in place — building a
       // fresh `.map` array per agent per frame was pure garbage on a list that almost never changes.
-      const curStates: any[] = (a as any).activeStates ?? EMPTY_STATES;
+      const curStates = a.activeStates ?? EMPTY_STATES;
       let prevStates = this.prevStatesMap.get(aid);
       if (!prevStates) {
         prevStates = [];
@@ -568,7 +568,8 @@ export class BubbleSystem {
       for (let s = 0; s < curStates.length; s++) prevStates[s] = curStates[s].type;
 
       // Zone activity emotes
-      const curAction = (a as any).current_action?.zoneActivity ?? '';
+      const action = typeof a.current_action === 'object' ? a.current_action : undefined;
+      const curAction = action?.zoneActivity ?? '';
       const prevAct = this.prevActionMap.get(aid) ?? '';
       if (curAction && curAction !== prevAct) {
         if (ACTIVITY_EMOTES[curAction]) {
@@ -579,8 +580,8 @@ export class BubbleSystem {
 
       // Server-stamped one-shot emote (perception greetings). `emote_at` is the
       // edge, not `emote` — two greetings in a row carry the same emoji.
-      const stampedAt = (a as any).current_action?.emote_at ?? 0;
-      const stampedEmote = (a as any).current_action?.emote;
+      const stampedAt = action?.emote_at ?? 0;
+      const stampedEmote = action?.emote;
       if (stampedAt && stampedEmote && stampedAt !== this.prevEmoteStampMap.get(aid)) {
         this.showEmote(aid, stampedEmote, pos);
       }

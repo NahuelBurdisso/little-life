@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from 'react';
 import { trpc } from '../../lib/trpc';
 import { WorldPreview } from './WorldPreview';
+import type { inferRouterOutputs } from '@trpc/server';
+import type { AppRouter } from '../../../server/router';
+
+type PreviewResult = inferRouterOutputs<AppRouter>['setup']['previewWorld'];
 import {
   type WorldGenConfig,
   type AgentConfig,
@@ -48,7 +52,7 @@ export function WorldLayout({
   config, onChange, agents, relationships, scenario, onErrorChange,
 }: WorldLayoutProps) {
   const previewMutation = trpc.setup.previewWorld.useMutation();
-  const [previewResult, setPreviewResult] = useState<any>(null);
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const [seedDraft, setSeedDraft] = useState<string>(config.seed ?? '');
   // Local rather than `previewMutation.error`, which is shared hook state: a
   // superseded request that rejects after the newest one resolved painted a red
@@ -342,9 +346,9 @@ export function WorldLayout({
               the gap as a 2px dashed outline at 40% alpha, which nobody could
               see. Measured over 480 worlds at 13/20/30 agents: 12.9% ship
               missing at least one plot. */}
-          {previewResult?.warnings?.length > 0 && (
+          {previewResult != null && (previewResult.warnings?.length ?? 0) > 0 && (
             <div className="text-xs text-amber-400 space-y-0.5">
-              {previewResult.warnings.map((w: string) => (
+              {(previewResult.warnings ?? []).map((w: string) => (
                 <div key={w}>{w} Regenerate for a different town.</div>
               ))}
             </div>

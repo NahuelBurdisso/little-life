@@ -1,4 +1,5 @@
 import { trpc } from '../lib/trpc';
+import type { ActivityView } from '../lib/apiTypes';
 
 /**
  * The newest activity rows (newest first), for canvas systems that turn log entries
@@ -6,7 +7,7 @@ import { trpc } from '../lib/trpc';
  * panel is mounted both share one cache entry; the subscription here keeps it fresh
  * when the panel isn't.
  */
-export function useCanvasActivity(): any[] {
+export function useCanvasActivity(): ActivityView[] {
   const utils = trpc.useUtils();
   const { data } = trpc.activity.getRecent.useQuery({ limit: 50 });
   trpc.activity.onUpdate.useSubscription(undefined, {

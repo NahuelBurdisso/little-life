@@ -30,7 +30,7 @@ export function getRelationship(agentA: number, agentB: number) {
 }
 
 /** A relationship value from the point of view of the agent (`isA` = they are agent_a). */
-export function getRelField(rel: any, field: string, isA: boolean): number {
+export function getRelField(rel: typeof relationships.$inferSelect, field: string, isA: boolean): number {
   switch (field) {
     case 'friendship': return isA ? rel.friendship_ab : rel.friendship_ba;
     case 'romance':    return isA ? rel.romance_ab    : rel.romance_ba;

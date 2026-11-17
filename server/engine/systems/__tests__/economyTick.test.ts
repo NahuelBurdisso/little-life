@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { db } from '../../../db';
-import { activityLog, agents, economy, economyTransactions, locations, worldState } from '../../../db/schema';
+import { activityLog, agents, economy, economyTransactions, locations, worldState, type AgentAction } from '../../../db/schema';
 import { and, eq, inArray, like } from 'drizzle-orm';
 import { CONFIG } from '../../../lib/constants';
 import {
@@ -133,7 +133,7 @@ const feedPurchasesBy = (agentId: number) =>
     eq(activityLog.initiator_id, agentId),
   )).all();
 
-function setAction(agentId: number, action: Record<string, unknown>, startedAt: number, at: number): void {
+function setAction(agentId: number, action: AgentAction, startedAt: number, at: number): void {
   db.update(agents)
     .set({ current_action: action, action_started: startedAt, action_duration: 20, current_location: at })
     .where(eq(agents.id, agentId))

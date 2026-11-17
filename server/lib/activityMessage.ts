@@ -41,7 +41,7 @@ function humanize(token: unknown): string {
 }
 
 /** `goal_description` is the raw GOAL_REGISTRY key; `goal` may be LLM prose. */
-function goalPhrase(d: Record<string, any>): string {
+function goalPhrase(d: Record<string, string | number>): string {
   const raw = d.goal_description ?? d.goal;
   if (raw == null) return 'a goal';
   return goalClause(raw);

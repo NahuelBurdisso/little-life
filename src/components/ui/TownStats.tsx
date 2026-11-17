@@ -69,7 +69,7 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
   if (!isOpen) return null;
 
   // --- Compute stats ---
-  const agentData = agents.map((a: any) => ({
+  const agentData = agents.map((a) => ({
     id: a.id,
     name: a.name,
     mood: a.needs?.mood ?? 50,
@@ -77,11 +77,11 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
     energy: a.needs?.energy ?? 50,
     social: a.needs?.social ?? 50,
     stress: a.needs?.stress ?? 0,
-    states: (a.activeStates ?? []).map((s: any) => s.type as string),
-    action: (a.current_action as any)?.type ?? 'idle',
+    states: (a.activeStates ?? []).map((s) => s.type as string),
+    action: a.current_action?.type ?? 'idle',
     // `plan:decomposed` / `goal:...` are decision sources, not activities (see lib/actionText.ts).
     zone: (() => {
-      const z = (a.current_action as any)?.zoneActivity as string | undefined;
+      const z = a.current_action?.zoneActivity as string | undefined;
       return z && !z.includes(':') ? z : null;
     })(),
   }));
@@ -115,10 +115,10 @@ export function TownStats({ isOpen, onClose }: TownStatsProps) {
 
   // Relationship stats
   const rels = relationships ?? [];
-  const partners = rels.filter((r: any) => r.status === 'partners').length;
-  const bestFriends = rels.filter((r: any) => r.status === 'best_friends').length;
-  const rivals = rels.filter((r: any) => r.status === 'rivals' || r.status === 'enemies').length;
-  const grudges = rels.filter((r: any) => (r.tags as string[])?.includes('grudge')).length;
+  const partners = rels.filter((r) => r.status === 'partners').length;
+  const bestFriends = rels.filter((r) => r.status === 'best_friends').length;
+  const rivals = rels.filter((r) => r.status === 'rivals' || r.status === 'enemies').length;
+  const grudges = rels.filter((r) => (r.tags as string[])?.includes('grudge')).length;
 
   // Agents in trouble
   const sickCount = agentData.filter(a => a.states.includes('sick')).length;

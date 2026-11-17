@@ -25,6 +25,7 @@ import {
   shared_knowledge,
   locations,
 } from '../../db/schema';
+import type { ActiveLLMEntry, ConversationMessage } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { eq, and, desc, gt, lt, sql } from 'drizzle-orm';
 import { CONFIG } from '../../lib/constants';
@@ -75,48 +76,9 @@ import { evaluateConversation } from '../../lib/conversationEvaluator';
 // Types
 // ---------------------------------------------------------------------------
 
-interface ConversationMessage {
-  speakerId: number;
-  text: string;
-  sentiment: number;
-  topics: string[];
-  timestamp: number;
-  fallback?: boolean;
-}
 
 type WrapUpReason = 'budget' | NeedsWrapUpReason;
 
-/**
- * A live LLM conversation as the scheduler tracks it (persisted as JSON in
- * `conversation_scheduler_state.active_llm_conversations`, so new fields are
- * optional: entries written before them are stamped on first sight).
- */
-interface ActiveLLMEntry {
-  conversationId: number;
-  /** WALL-CLOCK ms at dispatch. Only the orphan sweep and wait estimates use it. */
-  startedAt: number;
-  /** GAME MINUTES at dispatch — what the budget is measured from. */
-  startedGameMin?: number;
-  /** GAME MINUTES this conversation may run (tier max turns × allowance). */
-  budgetGameMin?: number;
-  /** Turns it was dispatched with, before any wrap-up lowered `max_turns`. */
-  plannedTurns?: number;
-  /** GAME MINUTES an in-flight turn may still land after a wrap-up begins. */
-  graceGameMin?: number;
-  /**
-   * Player-requested or comfort visit (see isProtectedEntry): needs don't cut
-   * in before the first exchange has landed.
-   */
-  protected?: boolean;
-  /**
-   * Set once the conversation has to end early. `max_turns` is lowered so the
-   * task runner stops after the in-flight turn; it is closed with a farewell
-   * when that turn lands or `sinceGameMin` + grace passes. `leaverId` is the
-   * participant whose needs called time; a budget wrap-up has none — whoever's
-   * turn it is when it closes says goodbye.
-   */
-  wrapUp?: { reason: WrapUpReason; sinceGameMin: number; leaverId?: number };
-}
 
 type AgentRow = typeof agents.$inferSelect;
 type ConversationRow = typeof conversations.$inferSelect;
@@ -181,7 +143,7 @@ function releaseTalkingParticipants(conversation: ConversationRow): boolean {
   for (const participantId of participantIds) {
     const agent = db.select().from(agents).where(eq(agents.id, participantId)).get();
     if (!agent) continue;
-    const action = agent.current_action as any;
+    const action = agent.current_action;
     if (action?.type === 'talking' && String(action?.conversationId) === String(conversation.id)) {
       db.update(agents)
         .set({ current_action: { type: 'idle' }, action_duration: null })
@@ -1098,7 +1060,7 @@ async function finishCompletedConversation(
   const isFallback = fallbackDetector(fresh.participants as number[]);
   const spoken = messages.filter((m) => !isFallback(m));
   if (spoken.length > 0) {
-    const sentimentSum = spoken.reduce((sum, m) => sum + m.sentiment, 0);
+    const sentimentSum = spoken.reduce((sum, m) => sum + (m.sentiment ?? 0), 0);
     overallSentiment = sentimentSum / spoken.length;
   }
 
@@ -1300,7 +1262,7 @@ async function finishCompletedConversation(
 
         if (giverId && receiverId) {
           const giverAgent = giverId === speakerId ? speaker : otherParticipants[0];
-          const warmth = (giverAgent?.personality as any)?.warmth ?? 50;
+          const warmth = giverAgent?.personality?.warmth ?? 50;
           if (warmth > 55) {
             const gift = Math.min(10, Math.round(giverMoney * 0.1));
             if (gift >= 2) {
@@ -1497,7 +1459,7 @@ async function finishCompletedConversation(
     if (!otherId) continue;
     const agent = db.select().from(agents).where(eq(agents.id, pid)).get();
     if (!agent?.personality) continue;
-    const personalityData = agent.personality as any;
+    const personalityData = agent.personality;
     const sharable = getShareableFacts(pid, otherId, personalityData);
     const spokenTexts = messages.filter((m) => m.speakerId === pid).map((m) => m.text);
     if (spokenTexts.length === 0) continue;
@@ -1553,9 +1515,10 @@ async function finishCompletedConversation(
       const debtState = db.select().from(agentStates)
         .where(and(eq(agentStates.agent_id, pid), eq(agentStates.type, 'in_debt'))).get();
       if (debtState) {
-        const meta = { ...((debtState.metadata as any) ?? {}) };
-        meta.beggingFailCount = ((meta.beggingFailCount as number) ?? 0) + 1;
-        if (meta.beggingFailCount >= 3) meta.desperationUnlocked = true;
+        const meta = { ...(debtState.metadata ?? {}) };
+        const beggingFailCount = (typeof meta.beggingFailCount === 'number' ? meta.beggingFailCount : 0) + 1;
+        meta.beggingFailCount = beggingFailCount;
+        if (beggingFailCount >= 3) meta.desperationUnlocked = true;
         db.update(agentStates).set({ metadata: meta }).where(eq(agentStates.id, debtState.id)).run();
       }
     }
@@ -1647,7 +1610,7 @@ async function finishCompletedConversation(
     const alcState = db.select().from(agentStates)
       .where(and(eq(agentStates.agent_id, pid), eq(agentStates.type, 'alcoholic'))).get();
     if (alcState) {
-      const meta = { ...((alcState.metadata as any) ?? {}), recoveryTriggered: true };
+      const meta = { ...(alcState.metadata ?? {}), recoveryTriggered: true };
       db.update(agentStates).set({ metadata: meta }).where(eq(agentStates.id, alcState.id)).run();
     }
   }
@@ -1730,7 +1693,7 @@ async function finishCompletedConversation(
   for (const participantId of participantIds) {
     const agent = db.select().from(agents).where(eq(agents.id, participantId)).get();
     if (agent) {
-      const action = agent.current_action as any;
+      const action = agent.current_action;
       // Only reset if agent is still talking in THIS conversation
       if (action?.type === 'talking' && String(action?.conversationId) === String(fresh.id)) {
         db.update(agents)

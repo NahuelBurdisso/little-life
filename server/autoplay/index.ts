@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { agents, worldEvents } from '../db/schema';
+import { agents, worldEvents, type worldState } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { CONFIG } from '../lib/constants';
 import { gameMinutes } from '../lib/gameClock';
@@ -14,7 +14,7 @@ import {
 import { SmartNudger } from './nudger';
 import type {
   AutoPlayReport, AnalysisWindow, DayPhase,
-  EngagementSnapshot, HealthSnapshot, PerfSnapshot,
+  EngagementSnapshot, HealthSnapshot, NudgeAction, PerfSnapshot,
 } from './types';
 
 /** How many past windows of raw conditions are retained for sustained-pattern checks. */
@@ -121,7 +121,7 @@ class AutoPlayer {
     this.nudger.reset();
   }
 
-  async analyze(worldRow: any): Promise<AutoPlayReport> {
+  async analyze(worldRow: typeof worldState.$inferSelect): Promise<AutoPlayReport> {
     // Captured before the first await. Every write-back below is fenced on it
     // still matching, so a reset() that lands while this call is suspended wins
     // and this window's stale, pre-reset numbers are dropped instead of being
@@ -198,7 +198,7 @@ class AutoPlayer {
       }
 
       // Apply nudges if enabled
-      let nudgesApplied: any[] = [];
+      let nudgesApplied: NudgeAction[] = [];
       if (CONFIG.AUTOPLAY.AUTO_NUDGE && boredScore > CONFIG.AUTOPLAY.BOREDOM_THRESHOLD) {
         nudgesApplied = await this.nudger.applyNudges(diagnoses, window);
       }
@@ -276,7 +276,7 @@ class AutoPlayer {
       return {
         agentId: a.id,
         name: a.name,
-        currentAction: (a.current_action as any)?.type ?? 'idle',
+        currentAction: a.current_action?.type ?? 'idle',
         issues: affecting.map(d => d.type),
         issueCount: affecting.length,
       };

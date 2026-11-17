@@ -216,12 +216,13 @@ export interface Diagnosis {
 
 // ─── Nudge Actions ───────────────────────────────────────────────────────────
 
-export interface NudgeAction {
-  type: string;
-  reason: string;
-  params: Record<string, any>;
-  timestamp: number;
-}
+/** What the boredom nudger did, by kind: `params` is whatever that kind acts on. */
+export type NudgeAction = { reason: string; timestamp: number } & (
+  | { type: 'suggest_talk' | 'force_confront'; params: { agentA: number; agentB: number } }
+  | { type: 'trigger_event'; params: { eventType: string } }
+  | { type: 'suggest_go_to'; params: { agentId: number; locationId: number } }
+  | { type: 'tell_secret'; params: { factId: number; agentId: number } }
+);
 
 // ─── Full Report ─────────────────────────────────────────────────────────────
 

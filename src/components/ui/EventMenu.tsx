@@ -7,11 +7,12 @@ import { eventBlurb, eventFocusLocation, eventIcon, EVENT_UI, formatTimeLeft } f
 import { PLAYER_EVENT_TYPES, WORLD_EVENTS } from "../../../server/data/worldEventCatalog";
 import { eventMinutesLeft } from "../../../server/lib/gameClock";
 import { W } from "./warmClasses";
+import type { WorldEventView } from '../../lib/apiTypes';
 
 interface EventMenuProps {
   isOpen: boolean;
   onClose: () => void;
-  activeEvents: any[];
+  activeEvents: WorldEventView[];
   /**
    * The world clock in game minutes. The "time left" label used to read a
    * `remainingTicks` field nothing produced, so it never showed; it is now
@@ -53,7 +54,7 @@ export function EventMenu({ isOpen, onClose, activeEvents, nowMinutes }: EventMe
 
   if (!isOpen) return null;
 
-  const activeTypes = new Set(activeEvents.map((e: any) => e.type ?? e.eventType));
+  const activeTypes = new Set(activeEvents.map((e) => e.type));
   const currentWeather: string | null = world?.weather ?? null;
   const weatherLeft: number = world?.weather_duration ?? 0;
 
@@ -119,8 +120,8 @@ export function EventMenu({ isOpen, onClose, activeEvents, nowMinutes }: EventMe
           <div className={W.section}>
             <h3 className={W.sectionTitle}>Happening now</h3>
             <div className="space-y-1.5">
-              {activeEvents.map((event: any, i: number) => {
-                const type: string = event.type ?? event.eventType ?? "";
+              {activeEvents.map((event, i) => {
+                const type: string = event.type ?? "";
                 const left =
                   nowMinutes != null && event.started_at != null && event.duration != null
                     ? formatTimeLeft(eventMinutesLeft(event, nowMinutes))

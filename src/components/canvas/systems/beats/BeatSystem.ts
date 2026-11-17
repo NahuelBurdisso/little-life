@@ -92,7 +92,8 @@ class BeatSystem implements CanvasSystem {
     s.activity = data.activity;
     s.agents = data.agents;
     s.relationships = data.relationships;
-    s.events = data.events;
+    // A beat is keyed by its event's id; a row without one (never sent by the server) has no beat.
+    s.events = data.events.filter((e): e is typeof e & { id: number } => e?.id != null);
     // Valid right now only: SpritePool refills it on every update.
     s.removed = this.services.sprites.recentlyRemoved;
     // Activity rows carry wall-clock `real_timestamp`s, so the detector's clock is Date.now().

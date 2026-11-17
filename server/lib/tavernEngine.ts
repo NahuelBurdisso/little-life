@@ -50,7 +50,7 @@ export function tavernTick(nowMinutes: number): void {
       continue;
     }
 
-    const action = (agent.current_action as any)?.type;
+    const action = agent.current_action?.type;
     if (action !== 'socializing' && action !== 'idle' && action !== 'talking') continue;
 
     const personality = getEffectivePersonality(agent.id);

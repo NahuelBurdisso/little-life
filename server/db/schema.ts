@@ -10,6 +10,84 @@ import {
 
 // ─── 11. locations (defined first for foreign key references) ────────────────
 
+/**
+ * What an agent is doing (`agents.current_action`) or will do next (`action_queue`).
+ * Stored as JSON. `type` is always there ('idle', 'walking', 'working', 'talking'...);
+ * `zoneActivity` names the hobby or zone verb of an idle/comfort action. The rest
+ * depends on the type (decisions.ts `buildAction`, routers/nudge.ts) and is read where
+ * it is used, so it stays `unknown` here rather than pretending every action has it.
+ */
+export interface AgentAction {
+  type: string;
+  zoneActivity?: string;
+  /** Cosmetic hint for the renderer ('sitting'...). */
+  pose?: string;
+  /** A reaction the canvas plays once (perception), with its wall-clock stamp. */
+  emote?: string;
+  emote_at?: number;
+  /** Shopping list of a 'shopping' action. */
+  items?: string[];
+  // Walking through a door (movement.ts): the agent is between two tiles for a few ticks.
+  _transitioning?: boolean;
+  _transitionTicks?: number;
+  _fromX?: number;
+  _fromY?: number;
+  _toX?: number;
+  _toY?: number;
+  // On a queued action only, consumed by movement.ts `startQueuedAction` on arrival.
+  _arrivalZone?: string;
+  _arrivalBuilding?: string;
+  _interiorArrivalZone?: string;
+  _interiorArrivalBuilding?: string;
+  _duration?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * A live LLM conversation as the scheduler tracks it (persisted as JSON in
+ * `conversation_scheduler_state.active_llm_conversations`, so new fields are
+ * optional: entries written before them are stamped on first sight).
+ */
+export interface ActiveLLMEntry {
+  conversationId: number;
+  /** WALL-CLOCK ms at dispatch. Only the orphan sweep and wait estimates use it. */
+  startedAt: number;
+  /** GAME MINUTES at dispatch — what the budget is measured from. */
+  startedGameMin?: number;
+  /** GAME MINUTES this conversation may run (tier max turns × allowance). */
+  budgetGameMin?: number;
+  /** Turns it was dispatched with, before any wrap-up lowered `max_turns`. */
+  plannedTurns?: number;
+  /** GAME MINUTES an in-flight turn may still land after a wrap-up begins. */
+  graceGameMin?: number;
+  /**
+   * Player-requested or comfort visit (see isProtectedEntry): needs don't cut
+   * in before the first exchange has landed.
+   */
+  protected?: boolean;
+  /**
+   * Set once the conversation has to end early. `max_turns` is lowered so the
+   * task runner stops after the in-flight turn; it is closed with a farewell
+   * when that turn lands or `sinceGameMin` + grace passes. `leaverId` is the
+   * participant whose needs called time; a budget wrap-up has none — whoever's
+   * turn it is when it closes says goodbye.
+   */
+  wrapUp?: { reason: 'budget' | import('../lib/conversationPacing').NeedsWrapUpReason; sinceGameMin: number; leaverId?: number };
+}
+
+/** One line of a conversation (`conversations.messages`). */
+export interface ConversationMessage {
+  speakerId: number;
+  text: string;
+  // Written by every current code path; absent on lines stored by old builds.
+  sentiment?: number;
+  topics?: string[];
+  timestamp?: number;
+  /** A canned line used because the LLM gave nothing usable; shown as narration. */
+  fallback?: boolean;
+}
+
+
 export const locations = sqliteTable('locations', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
@@ -65,12 +143,12 @@ export const agents = sqliteTable(
       locationId?: number;
     } | null>(),
     current_location: integer('current_location').references(() => locations.id),
-    current_action: text('current_action', { mode: 'json' }).notNull().$type<Record<string, any>>(),
+    current_action: text('current_action', { mode: 'json' }).notNull().$type<AgentAction>(),
     action_started: integer('action_started').notNull(),
     action_duration: integer('action_duration'),
     action_queue: text('action_queue', { mode: 'json' })
       .notNull()
-      .$type<Record<string, any>[]>(),
+      .$type<AgentAction[]>(),
     current_path: text('current_path', { mode: 'json' }).$type<number[][] | null>(),
     schedule: text('schedule', { mode: 'json' })
       .notNull()
@@ -82,7 +160,7 @@ export const agents = sqliteTable(
         lunchTime: number;
         freeTimePreferences: string[];
       }>(),
-    daily_plan: text('daily_plan', { mode: 'json' }).default(null).$type<Record<string, unknown> | null>(),
+    daily_plan: text('daily_plan', { mode: 'json' }).default(null).$type<import('../lib/planning/types').DailyPlan | null>(),
     self_description: text('self_description'),
     home: integer('home').notNull().references(() => locations.id),
     workplace: integer('workplace').references(() => locations.id),
@@ -267,7 +345,7 @@ export const conversations = sqliteTable(
       .$type<number[]>(),
     messages: text('messages', { mode: 'json' })
       .notNull()
-      .$type<Record<string, any>[]>(),
+      .$type<ConversationMessage[]>(),
     location: integer('location').references(() => locations.id),
     trigger_reason: text('trigger_reason').notNull(),
     topic: text('topic'),
@@ -318,7 +396,7 @@ export const conversationSchedulerState = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     active_llm_conversations: text('active_llm_conversations', { mode: 'json' })
       .notNull()
-      .$type<Record<string, any>[]>(),
+      .$type<ActiveLLMEntry[]>(),
     max_concurrent_llm: integer('max_concurrent_llm').notNull(),
     max_queue_size: integer('max_queue_size').notNull(),
     max_turns_deep: integer('max_turns_deep').notNull(),
@@ -390,14 +468,14 @@ export const worldState = sqliteTable('world_state', {
   tick_id: text('tick_id').notNull(),
   pending_transitions: text('pending_transitions', { mode: 'json' })
     .notNull()
-    .$type<Record<string, any>[]>(),
+    .$type<Record<string, unknown>[]>(),
   tax_pool: real('tax_pool').notNull(),
   map_width: integer('map_width').notNull(),
   map_height: integer('map_height').notNull(),
   collision_grid: text('collision_grid').notNull(),
   road_tiles: text('road_tiles', { mode: 'json' }).$type<Array<{x: number; y: number}>>().notNull().$defaultFn(() => []),
   terrain_tiles: text('terrain_tiles', { mode: 'json' }).$type<Array<{x: number; y: number; kind: string}>>().notNull().$defaultFn(() => []),
-  setup_config: text('setup_config', { mode: 'json' }).$type<Record<string, any> | null>(),
+  setup_config: text('setup_config', { mode: 'json' }).$type<Record<string, unknown> | null>(),
   // Rules the player changed while the town runs (the Storyteller presets,
   // `world.setRules`), layered over `setup_config.rules` by lib/worldRules.ts.
   // Kept apart from setup_config so a Restart replays the wizard's scenario
@@ -437,7 +515,7 @@ export const worldEvents = sqliteTable(
     description: text('description').notNull(),
     started_at: integer('started_at').notNull(),
     duration: integer('duration').notNull(),
-    effects: text('effects', { mode: 'json' }).notNull().$type<Record<string, any>>(),
+    effects: text('effects', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
     location_id: integer('location_id').references(() => locations.id),
     triggered_by: text('triggered_by').notNull(),
     is_active: integer('is_active', { mode: 'boolean' }).notNull(),
@@ -457,7 +535,7 @@ export const worldEvents = sqliteTable(
 export const templates = sqliteTable('templates', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   category: text('category').notNull(),
-  conditions: text('conditions', { mode: 'json' }).notNull().$type<Record<string, any>>(),
+  conditions: text('conditions', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
   variants: text('variants', { mode: 'json' })
     .notNull()
     .$type<{ text: string; sentiment: number }[]>(),
@@ -501,7 +579,7 @@ export const agentStates = sqliteTable('agent_states', {
   duration: integer('duration').notNull(),
   target_agent_id: integer('target_agent_id').references(() => agents.id),
   source: text('source').notNull(),
-  metadata: text('metadata', { mode: 'json' }).$type<Record<string, any> | null>(),
+  metadata: text('metadata', { mode: 'json' }).$type<Record<string, unknown> | null>(),
 }, (table) => [
   index('idx_agent_states_agent_id').on(table.agent_id),
   index('idx_agent_states_agent_type').on(table.agent_id, table.type),
@@ -589,7 +667,7 @@ export const interactions = sqliteTable(
     goal_id: integer('goal_id'),
     outcome: text('outcome').notNull(),
     severity: real('severity').notNull(),
-    context: text('context', { mode: 'json' }).$type<Record<string, any> | null>(),
+    context: text('context', { mode: 'json' }).$type<Record<string, unknown> | null>(),
     narration: text('narration'),
     narration_status: text('narration_status').notNull().default('pending'),
     started_at: integer('started_at').notNull(),

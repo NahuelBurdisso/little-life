@@ -1,3 +1,4 @@
+import type { ConversationLite } from '../../../../lib/apiTypes';
 /**
  * Pure helpers behind the player-action effects: curves, timings and "is it over yet"
  * decisions. No PixiJS, so all of it is unit tested; the effects only feed these numbers
@@ -33,7 +34,7 @@ export function pinDone(s: PinState): boolean {
 }
 
 /** Whether two agents are in the same active conversation (ids may be numbers or strings). */
-export function isTalking(conversations: ArrayLike<any> | null | undefined, a: number, b: number): boolean {
+export function isTalking(conversations: ArrayLike<ConversationLite> | null | undefined, a: number, b: number): boolean {
   if (!conversations) return false;
   for (let i = 0; i < conversations.length; i++) {
     const c = conversations[i];

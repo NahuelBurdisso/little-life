@@ -71,8 +71,8 @@ for (const r of rows) {
   for (const b of parsed.blocks ?? []) {
     const block: PlanBlock = {
       id: 'x', start_hour: b.start, end_hour: b.end, broad_action: b.action,
-      location_hint: b.location, status: 'pending', decomposed_actions: null,
-    } as PlanBlock;
+      location_hint: b.location, status: 'pending',
+    };
     total++;
     const kind = classifyBlock(block, ctx);
     byKind[kind ?? 'llm'] = (byKind[kind ?? 'llm'] ?? 0) + 1;

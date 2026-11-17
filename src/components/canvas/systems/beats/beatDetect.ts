@@ -57,7 +57,7 @@ export interface AgentLite {
 }
 
 export interface RelLite { id?: number; agent_a: number; agent_b: number; status?: string }
-export interface EventLite { id: number; type?: string; triggered_by?: string }
+export interface EventLite { id: number; type?: string; triggered_by?: string | null }
 
 export interface BeatSnapshot {
   /** Newest first, as `activity.getRecent` returns it. */

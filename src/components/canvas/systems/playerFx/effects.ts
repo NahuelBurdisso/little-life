@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import type { SpritePool } from "../../SpritePool";
+import type { AgentData, SpritePool } from "../../SpritePool";
 import type { BubbleSystem } from "../../BubbleSystem";
 import type { FrameContext } from "../types";
 import { inView, type ViewRect } from "../view";
@@ -96,7 +96,7 @@ function releaseAll(env: Env, list: Array<PIXI.Sprite | null>): void {
   for (let i = 0; i < list.length; i++) env.pool.release(list[i]);
   list.length = 0;
 }
-function findAgent(agents: ArrayLike<any> | undefined, id: number): any | null {
+function findAgent(agents: ArrayLike<AgentData> | undefined, id: number): AgentData | null {
   if (!agents) return null;
   for (let i = 0; i < agents.length; i++) if (agents[i]?.id === id) return agents[i];
   return null;
@@ -988,3 +988,4 @@ export class PingFx implements Fx {
 
   dispose(env: Env): void { env.pool.release(this.s); }
 }
+

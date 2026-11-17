@@ -12,6 +12,7 @@
 
 import { INTERIOR_ZONES } from '../../../../../server/data/interiors';
 import { openAreaPropBoxes, type PropBox } from '../../zoneProps';
+import type { LocationLite, WorldEventLite } from '../../../../lib/apiTypes';
 
 export const DECOR_URL = '/sprites/fx/decor.png';
 export const DECOR_FRAME_COUNT = 69;
@@ -123,7 +124,7 @@ export interface EventDecorPlan {
  * client can't import a DB module). Null for any other event, including a wedding from an old
  * save that was a random roll with nobody at the altar.
  */
-export function weddingCouple(event: any): [number, number] | null {
+export function weddingCouple(event: WorldEventLite | null | undefined): [number, number] | null {
   if (!event || event.type !== 'wedding' || typeof event.triggered_by !== 'string') return null;
   const m = /^wedding:(\d+)-(\d+)$/.exec(event.triggered_by);
   return m ? [Number(m[1]), Number(m[2])] : null;
@@ -133,7 +134,7 @@ export function weddingCouple(event: any): [number, number] | null {
  * Petals drifting down over each newlywed's head and a slow twinkle beside them, for as long
  * as their wedding runs. Offsets are from the sprite's feet (the head is ~40 px up).
  */
-export function weddingFollowers(event: any): NonNullable<EventDecorPlan['followers']> {
+export function weddingFollowers(event: WorldEventLite): NonNullable<EventDecorPlan['followers']> {
   const couple = weddingCouple(event);
   if (!couple) return [];
   const id = Number.isFinite(event.id) ? (event.id as number) : 0;
@@ -181,7 +182,7 @@ const OPEN_ANCHORS = new Set(['town_square', 'market_square', 'park']);
 
 interface Anchor { rect: Rect; type: string }
 
-function findAnchor(prefer: readonly string[], locations: any[], map: MapPx | null, locationId: unknown): Anchor | null {
+function findAnchor(prefer: readonly string[], locations: LocationLite[], map: MapPx | null, locationId: unknown): Anchor | null {
   // An event tied to an open area decorates that area; a building id (fire, sickness) is handled
   // by the events that care about buildings.
   if (typeof locationId === 'number') {
@@ -190,7 +191,7 @@ function findAnchor(prefer: readonly string[], locations: any[], map: MapPx | nu
   }
   for (const type of prefer) {
     // Lowest id, so a reordered list still picks the same square.
-    let best: any = null;
+    let best: LocationLite | null = null;
     for (const l of locations) {
       if (l?.type === type && l.position && (best === null || l.id < best.id)) best = l;
     }
@@ -639,7 +640,10 @@ const RECIPES: Record<string, { prefer: readonly string[]; recipe: Recipe }> = {
 
 const BURNABLE = new Set(['home', 'shop', 'tavern', 'clinic', 'town_hall', 'bakery', 'workshop', 'pawnshop', 'divebar']);
 
-function fire(event: any, locations: any[], out: DecorPlacement[]): void {
+/** An event `planEvent` is laying out: its id is known (0 when the row had none). */
+type PlacedEvent = WorldEventLite & { id: number };
+
+function fire(event: PlacedEvent, locations: LocationLite[], out: DecorPlacement[]): void {
   const hosts = locations
     .filter(l => l?.position && BURNABLE.has(l.type))
     .sort((a, b) => a.id - b.id);
@@ -663,11 +667,11 @@ function fire(event: any, locations: any[], out: DecorPlacement[]): void {
   out.push(...l.out);
 }
 
-function sickness(event: any, locations: any[], map: MapPx | null, out: DecorPlacement[]): void {
+function sickness(event: PlacedEvent, locations: LocationLite[], map: MapPx | null, out: DecorPlacement[]): void {
   // The clinic first; a town without one still quarantines somewhere, so the sign goes up at the
   // town hall (a building with a door), and failing that on the square itself.
   const lowest = (type: string) => {
-    let best: any = null;
+    let best: LocationLite | null = null;
     for (const l of locations) if (l?.type === type && l.position && (best === null || l.id < best.id)) best = l;
     return best;
   };
@@ -711,7 +715,7 @@ function sicklyAir(l: Layout, x: number, y: number): void {
  * enters town, so they appear to have just walked in. Without roads (or a map) the west edge of
  * the square stands in. Lowest (y, x) breaks ties so every client picks the same tile.
  */
-export function strangerSpot(locations: any[], map: MapPx | null, roads: readonly RoadTile[] | null | undefined): { x: number; y: number } | null {
+export function strangerSpot(locations: LocationLite[], map: MapPx | null, roads: readonly RoadTile[] | null | undefined): { x: number; y: number } | null {
   if (map && roads && roads.length > 0) {
     const wT = Math.floor(map.w / TILE), hT = Math.floor(map.h / TILE);
     let best: RoadTile | null = null, bestD = Infinity;
@@ -727,7 +731,7 @@ export function strangerSpot(locations: any[], map: MapPx | null, roads: readonl
   return { x: Math.round(anchor.rect.x - 12), y: Math.round(anchor.rect.y + anchor.rect.height * 0.62) };
 }
 
-function stranger(event: any, locations: any[], map: MapPx | null, roads: readonly RoadTile[] | null | undefined, out: DecorPlacement[]): void {
+function stranger(event: PlacedEvent, locations: LocationLite[], map: MapPx | null, roads: readonly RoadTile[] | null | undefined, out: DecorPlacement[]): void {
   const spot = strangerSpot(locations, map, roads);
   if (!spot) return;
   const area: Rect = { x: spot.x - 64, y: spot.y - 64, width: 128, height: 96 };
@@ -737,7 +741,7 @@ function stranger(event: any, locations: any[], map: MapPx | null, roads: readon
 }
 
 /** The river's edge as a pixel rect: the park's `riverside` zone, so it follows the zone table. */
-export function riverRect(park: any): Rect | null {
+export function riverRect(park: Pick<LocationLite, 'position'> | null | undefined): Rect | null {
   const zone = INTERIOR_ZONES.park?.find(z => z.id === 'riverside');
   if (!zone || zone.tiles.length === 0 || !park?.position) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -748,8 +752,8 @@ export function riverRect(park: any): Rect | null {
   };
 }
 
-function bountifulCatch(event: any, locations: any[], map: MapPx | null, out: DecorPlacement[]): void {
-  let park: any = null;
+function bountifulCatch(event: PlacedEvent, locations: LocationLite[], map: MapPx | null, out: DecorPlacement[]): void {
+  let park: LocationLite | null = null;
   for (const l of locations) if (l?.type === 'park' && l.position && (park === null || l.id < park.id)) park = l;
   const river = riverRect(park);
   if (park && river) {
@@ -785,7 +789,7 @@ function bountifulCatch(event: any, locations: any[], map: MapPx | null, out: De
  * A newcomer's belongings pull up at their new home's door: a cart rolls in from the east and
  * parks, luggage waits by the door, a welcome banner is strung up beside it.
  */
-function newArrival(event: any, locations: any[], out: DecorPlacement[]): void {
+function newArrival(event: PlacedEvent, locations: LocationLite[], out: DecorPlacement[]): void {
   if (typeof event.location_id !== 'number') return;
   const home = locations.find(l => l?.id === event.location_id);
   if (!home?.position) return;
@@ -808,16 +812,16 @@ function newArrival(event: any, locations: any[], out: DecorPlacement[]): void {
  * The open area an anchored event (festival, blessing, full moon...) decorates, for effects that
  * live outside the decor atlas (light shafts, a moon halo) yet must sit on the same square.
  */
-export function eventAnchorRect(event: any, locations: any[], map: MapPx | null): Rect | null {
+export function eventAnchorRect(event: WorldEventLite | null | undefined, locations: LocationLite[], map: MapPx | null): Rect | null {
   const spec = event && typeof event.type === 'string' ? RECIPES[event.type] : undefined;
   if (!spec || !Array.isArray(locations)) return null;
-  return findAnchor(spec.prefer, locations, map, event.location_id)?.rect ?? null;
+  return findAnchor(spec.prefer, locations, map, event?.location_id)?.rect ?? null;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────────────────────
 
 /** Placements for one event, sorted back to front (by foot y). Empty for undecorated types. */
-export function planEvent(event: any, locations: any[], map: MapPx | null, roads?: readonly RoadTile[] | null): DecorPlacement[] {
+export function planEvent(event: WorldEventLite, locations: LocationLite[], map: MapPx | null, roads?: readonly RoadTile[] | null): DecorPlacement[] {
   if (!event || typeof event.type !== 'string' || !Array.isArray(locations)) return [];
   const id = Number.isFinite(event.id) ? (event.id as number) : 0;
   const out: DecorPlacement[] = [];
@@ -849,7 +853,7 @@ const PER_PLACE = new Set(['fire_outbreak', 'new_arrival']);
  * would stack identical bunting — except events tied to a building, which happen in different
  * places: fires burn different roofs, and two newcomers arrive at two doors.
  */
-export function planEventDecor(events: any[], locations: any[], map: MapPx | null, roads?: readonly RoadTile[] | null): EventDecorPlan[] {
+export function planEventDecor(events: WorldEventLite[], locations: LocationLite[], map: MapPx | null, roads?: readonly RoadTile[] | null): EventDecorPlan[] {
   const plans: EventDecorPlan[] = [];
   const seen = new Set<string>();
   for (const e of events ?? []) {
@@ -859,7 +863,8 @@ export function planEventDecor(events: any[], locations: any[], map: MapPx | nul
     if (placements.length === 0) continue;
     seen.add(e.type);
     const followers = weddingFollowers(e);
-    plans.push(followers.length > 0 ? { eventId: e.id, type: e.type, placements, followers } : { eventId: e.id, type: e.type, placements });
+    const eventId = e.id ?? 0;
+    plans.push(followers.length > 0 ? { eventId, type: e.type, placements, followers } : { eventId, type: e.type, placements });
   }
   return plans;
 }

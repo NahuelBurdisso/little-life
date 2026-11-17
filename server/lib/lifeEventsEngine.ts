@@ -33,7 +33,7 @@ export interface AgentDeathContext {
   season: string;
   /** Game minutes hunger has sat at 0 without a break. */
   hungerZeroMinutes: number;
-  activeStates: Array<{ type: string; started_at: number; severity: number; metadata: any }>;
+  activeStates: ReadonlyArray<{ type: string; started_at: number; severity: number; metadata: Record<string, unknown> | null }>;
   currentAction: string;
   job: string;
   mood: number;
@@ -131,8 +131,7 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     check: (ctx) => {
       const alcState = ctx.activeStates.find(s => s.type === 'alcoholic');
       if (!alcState) return false;
-      const meta = alcState.metadata as any;
-      return meta?.stage === 3 && (ctx.nowMinutes - alcState.started_at) > 10080;
+      return alcState.metadata?.stage === 3 && (ctx.nowMinutes - alcState.started_at) > 10080;
     },
   },
   {
@@ -419,7 +418,7 @@ const DEATH_EFFECTS: DeathEffect[] = [
 export function checkDeathTriggers(
   agent: { id: number; name: string; age: number },
   nowMinutes: number,
-  statesArr: Array<{ type: string; started_at: number; severity: number; metadata: any }>,
+  statesArr: ReadonlyArray<{ type: string; started_at: number; severity: number; metadata: Record<string, unknown> | null }>,
   needsData: { mood: number; hunger: number; energy: number },
   job: string,
   currentAction: string,

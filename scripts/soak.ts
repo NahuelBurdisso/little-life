@@ -61,7 +61,8 @@ const DAYS = Number(arg('days') ?? 5);
 const SEED = arg('seed') ?? 'soak';
 const TICK_SPEED = arg('tick-speed') ? Number(arg('tick-speed')) : undefined;
 const SOURCE_DB = arg('db');
-const SEASON = arg('season');
+// Checked against the four seasons just below, before anything reads it.
+const SEASON = arg('season') as 'spring' | 'summer' | 'autumn' | 'winter' | undefined;
 const PRESET = arg('preset');
 const AGENT_COUNT = arg('agents') ? Number(arg('agents')) : undefined;
 const JSON_OUT = arg('json');
@@ -192,14 +193,14 @@ async function main(): Promise<void> {
     const cast = AGENT_COUNT !== undefined ? buildSoakCast(AGENT_COUNT, SEED) : null;
     const preset = PRESET ? PRESETS.find((p) => p.id === PRESET) : DEFAULT_PRESET;
     if (!preset) throw new Error(`--preset must be one of ${PRESETS.map((p) => p.id).join(', ')} (got "${PRESET}")`);
-    await setupRouter.createCaller({} as any).initialize({
+    await setupRouter.createCaller({}).initialize({
       agents: cast ? cast.agents : getDefaultAgents(),
       relationships: cast ? cast.relationships : getDefaultRelationships(),
       world: { ...DEFAULT_WORLD, ...(SEASON ? { season: SEASON } : {}) },
       rules: ADULT ? { ...DEFAULT_RULES, adultContent: true } : DEFAULT_RULES,
       scenario: { ...preset.values, seed: SEED },
       worldgen: { ...DEFAULT_WORLDGEN, seed: SEED },
-    } as any);
+    });
     // initialize restarts the real tick loop; this script drives ticks itself.
     await stopTickLoopAndWait();
   }
@@ -218,7 +219,7 @@ async function main(): Promise<void> {
       is_paused: false,
       ...(TICK_SPEED ? { tick_speed: TICK_SPEED } : {}),
       // A --db copy keeps its own clock; --season overrides just the season.
-      ...(SEASON && SOURCE_DB ? { time: { ...world0.time!, season: SEASON as any } } : {}),
+      ...(SEASON && SOURCE_DB ? { time: { ...world0.time!, season: SEASON } } : {}),
     })
     .where(eq(worldState.id, world0.id)).run();
   const tickSpeed = TICK_SPEED ?? world0.tick_speed;
@@ -287,9 +288,7 @@ async function main(): Promise<void> {
   const nameById = new Map(db.select({ id: agents.id, name: agents.name }).from(agents).all().map((a) => [a.id, a.name]));
   const locName = new Map(allLocs.map((l) => [l.id, `${l.type}#${l.id}`]));
   let traceLast = '';
-  const jobOf = new Map(db.select({ id: economy.agent_id, job: economy.job }).from(economy).all().map((e) => [e.id, e.job]));
-
-  const maxId = (table: any) => Number(db.select({ m: sql<number>`coalesce(max(id), 0)` }).from(table).get()?.m ?? 0);
+  const maxId = (table: typeof economyTransactions | typeof activityLog | typeof conversations) => Number(db.select({ m: sql<number>`coalesce(max(id), 0)` }).from(table).get()?.m ?? 0);
   let txMark = maxId(economyTransactions);
   let logMark = maxId(activityLog);
   let convoMark = maxId(conversations);
@@ -375,7 +374,7 @@ async function main(): Promise<void> {
       const hourF = clock.hour + clock.minute / 60;
       const inWindow = (from: number, to: number) => from <= to ? hourF >= from && hourF < to : hourF >= from || hourF < to;
       for (const r of rows) {
-        const type = (r.action as any)?.type;
+        const type = r.action?.type;
         const prev = lastPos.get(r.id);
         lastPos.set(r.id, r.pos);
         if (r.workplace != null && r.workplace !== r.home && r.schedule) {
@@ -387,17 +386,17 @@ async function main(): Promise<void> {
             // Where shift time goes when it is not spent at work: the action, or
             // for a walk the action it is walking to.
             if (r.loc !== r.workplace || type === 'walking') {
-              const k = type === 'walking' ? `walk>${(r.queue as any[])?.[0]?.type ?? '?'}` : String(type);
+              const k = type === 'walking' ? `walk>${r.queue?.[0]?.type ?? '?'}` : String(type);
               awayWhy.set(k, (awayWhy.get(k) ?? 0) + tickSpeed);
             }
           }
           shift.set(r.id, s);
         }
         if (TRACE && nameById.get(r.id) === TRACE) {
-          const a = r.action as any;
-          const q = (r.queue as any[])?.[0];
+          const a = r.action;
+          const q = r.queue?.[0];
           const desc = type === 'walking'
-            ? `walking${a?.reason ? `(${a.reason})` : ''} -> ${q?.type ?? '?'}${q?.source ? `/${q.source}` : ''} @ ${locName.get((r.dest as any)?.locationId) ?? 'point'}`
+            ? `walking${a?.reason ? `(${a.reason})` : ''} -> ${q?.type ?? '?'}${q?.source ? `/${q.source}` : ''} @ ${(r.dest?.locationId != null ? locName.get(r.dest.locationId) : undefined) ?? 'point'}`
             : `${type}${a?.source ? `/${a.source}` : ''}${a?.zoneActivity ? `/${a.zoneActivity}` : ''}`;
           const line = `${desc} [at ${locName.get(r.loc as number) ?? 'outside'}]`;
           if (line !== traceLast) {
@@ -416,8 +415,8 @@ async function main(): Promise<void> {
         const key = String(r.started);
         if (walkKey.get(r.id) !== key) {
           walkKey.set(r.id, key);
-          const locId = (r.dest as any)?.locationId as number | undefined;
-          const cat: WalkCat = (r.action as any)?.reason === 'approaching_conversation' ? 'approach'
+          const locId = r.dest?.locationId;
+          const cat: WalkCat = r.action?.reason === 'approaching_conversation' ? 'approach'
             : locId == null ? 'hop' : locId === r.loc ? 'same-place' : 'trip';
           walkCat.set(r.id, cat);
           trips[cat]++;
@@ -439,10 +438,10 @@ async function main(): Promise<void> {
         const run = n.hunger <= 0 ? (hungerZeroRun.get(r.id) ?? 0) + tickSpeed : 0;
         hungerZeroRun.set(r.id, run);
         maxZeroRun = Math.max(maxZeroRun, run);
-        if ((r.action as any)?.type === 'working' && RISKY_JOBS.has(jobOf.get(r.id) ?? '')) {
+        if (r.action?.type === 'working' && RISKY_JOBS.has(jobOf.get(r.id) ?? '')) {
           riskyWork.set(r.id, (riskyWork.get(r.id) ?? 0) + tickSpeed);
         }
-        if ((r.action as any)?.type === 'eating' && r.loc != null) {
+        if (r.action?.type === 'eating' && r.loc != null) {
           eatingSamples++;
           const where = r.loc === r.home ? 'home' : TRADE_RULES[locTypeById.get(r.loc) ?? ''] ? 'out' : 'other';
           meals.set(`${r.id}:${r.started}`, where);
@@ -496,13 +495,13 @@ async function main(): Promise<void> {
     // Deaths log as 'drama' ("X has died. <cause>. The town mourns.").
     const deathCauses = db.select().from(activityLog)
       .where(and(gt(activityLog.id, logMark), eq(activityLog.type, 'drama'))).all()
-      .map((r) => String((r.template_data as any)?.description ?? ''))
+      .map((r) => String(r.template_data?.description ?? ''))
       .filter((d) => d.includes(' has died. '))
       .map((d) => d.replace(/ has died\. /, ': ').replace(/\. The town mourns\.$/, ''));
     // Money-supply crisis events (economy.ts balancer, ratio > 2 / > 3).
     const crisis = db.select().from(activityLog)
       .where(and(gt(activityLog.id, logMark), inArray(activityLog.type, ['drama', 'system']))).all()
-      .map((r) => String((r.template_data as any)?.description ?? (r.template_data as any)?.message ?? ''))
+      .map((r) => String(r.template_data?.description ?? r.template_data?.message ?? ''))
       .filter((d) => /during the economic crisis|traveling scammer|Emergency tax!|Hyperinflation!|is hoarding supplies/.test(d));
     logMark = maxId(activityLog);
     const endedConvos = db.select({ participants: conversations.participants }).from(conversations)
@@ -634,7 +633,7 @@ async function main(): Promise<void> {
     if (errors.length > 0) {
       const kinds = new Map<string, number>();
       for (const e of errors) {
-        const msg = String((e.template_data as any)?.message ?? '').slice(0, 100);
+        const msg = String(e.template_data?.message ?? '').slice(0, 100);
         // The LLM is off on purpose; outage notices about it are expected.
         if (/LLM/.test(msg)) continue;
         kinds.set(msg, (kinds.get(msg) ?? 0) + 1);

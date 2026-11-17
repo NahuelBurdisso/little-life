@@ -35,7 +35,7 @@ export function logActivity(params: LogActivityParams): void {
   const importance = Math.min(1, def.base_importance + (params.severity ?? 0) * 0.3);
 
   const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-  const currentTick = (world?.time as any)?.totalTicks ?? 0;
+  const currentTick = world?.time.totalTicks ?? 0;
   // The in-world instant, for the town timeline's day buckets. `timestamp` above
   // is a tick count and can't be turned into a day once the speed has changed.
   // No world row (a bare test DB) leaves it NULL rather than inventing day 0.

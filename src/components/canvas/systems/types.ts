@@ -2,6 +2,7 @@ import type * as PIXI from "pixi.js";
 import type { SpritePool, AgentData } from "../SpritePool";
 import type { BubbleSystem } from "../BubbleSystem";
 import type { ViewRect } from "./view";
+import type { ActivityView, ConversationLite, LocationLite, RelationshipView, WorldEventLite, WorldLite } from '../../../lib/apiTypes';
 
 /**
  * Pluggable canvas systems: self-contained visual features (ambient life, town event
@@ -34,19 +35,19 @@ export interface CanvasServices {
 export interface DataContext {
   agents: AgentData[];
   /** The world row: day_phase, weather, time { hour, day, season }, map size... */
-  world: any;
+  world: WorldLite | null | undefined;
   /** Active world events (`world.getActiveEvents` rows). */
-  events: any[];
-  locations: any[];
-  conversations: any[];
+  events: WorldEventLite[];
+  locations: LocationLite[];
+  conversations: ConversationLite[];
   /** `relationships.getGraph` rows: agent_a, agent_b, status, tags, romance_ab... */
-  relationships: any[];
+  relationships: RelationshipView[];
   /**
    * Newest `activity_log` rows, newest first (limit 50): id, type, category,
    * initiator_id, target_id, agent_ids, template_data { description, ... },
    * timestamp (tick), real_timestamp (ms). Diff by `id` to find new rows.
    */
-  activity: any[];
+  activity: ActivityView[];
   /**
    * `chronicle.getBrewing` rows (server/lib/brewing.ts): kind, agentIds, text, heat.
    * For `kind: "snap"` the heat is the resident's tension over their snap threshold.

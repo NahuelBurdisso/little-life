@@ -477,8 +477,8 @@ export class PlanGenerator {
       wakeTime: schedule.wakeTime,
       sleepTime: schedule.sleepTime,
       goals: activeGoals.map(g => {
-        const desc = (g as any).description ?? g.type;
-        return (g as any).strategy ? `${desc} (strategy: ${(g as any).strategy})` : desc;
+        const desc = g.description ?? g.type;
+        return g.strategy ? `${desc} (strategy: ${g.strategy})` : desc;
       }),
       reflections,
       yesterdayPlan,

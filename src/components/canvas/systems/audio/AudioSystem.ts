@@ -9,6 +9,7 @@ import { UI_MAX_SPEED } from "../../playbackLabel";
 import { computePlaceStates, readClimate } from "../placeLife/placeState";
 import type { CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
 import { buildAudioPlaces } from "./audioPlaces";
+import type { WorldEventLite } from '../../../../lib/apiTypes';
 
 /**
  * The town's soundscape: weather, time of day, busy places near the camera, story moments and
@@ -132,10 +133,10 @@ class AudioSystem implements CanvasSystem {
     }
   }
 
-  private newEvents(events: any[]): void {
+  private newEvents(events: WorldEventLite[]): void {
     if (this.seenEvents === null) {
       // First poll: events already running are not news.
-      this.seenEvents = new Set(events.map((e) => e.id));
+      this.seenEvents = new Set(eventIds(events));
       return;
     }
     for (const e of events) {
@@ -144,7 +145,7 @@ class AudioSystem implements CanvasSystem {
       const cue = eventCueOf(e.type);
       if (cue) this.enqueue(cue, this.townHall ?? undefined);
     }
-    if (this.seenEvents.size > 200) this.seenEvents = new Set(events.map((e) => e.id));
+    if (this.seenEvents.size > 200) this.seenEvents = new Set(eventIds(events));
   }
 
   private enqueue(cue: StoryCue, at: { x: number; y: number } | undefined): void {
@@ -238,3 +239,10 @@ class AudioSystem implements CanvasSystem {
 }
 
 export const createAudioSystem: SystemFactory = () => new AudioSystem();
+
+/** The ids of the events that have one. */
+function eventIds(events: readonly WorldEventLite[]): number[] {
+  const ids: number[] = [];
+  for (const e of events) if (e?.id != null) ids.push(e.id);
+  return ids;
+}

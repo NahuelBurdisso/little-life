@@ -305,8 +305,8 @@ export function needsTick(): void {
     if (!agentNeeds) continue;
 
     // Step 1-2: Get action type and look up modifiers
-    const actionType: string = (agent.current_action as any)?.type ?? 'idle';
-    const zoneActivity: string | undefined = (agent.current_action as any)?.zoneActivity;
+    const actionType: string = agent.current_action?.type ?? 'idle';
+    const zoneActivity: string | undefined = agent.current_action?.zoneActivity;
     const baseModifiers = ACTION_MODIFIERS[actionType] ?? DEFAULT_MODIFIERS;
     // Override with zone activity modifiers if present
     const zoneOverrides = zoneActivity ? ZONE_ACTIVITY_MODIFIERS[zoneActivity] : undefined;
@@ -474,7 +474,7 @@ export function needsTick(): void {
         (other) => other.id !== agent.id && other.current_location === agent.current_location,
       );
       const performerNearby = coLocated.some(
-        (other) => (other.current_action as any)?.zoneActivity === 'perform',
+        (other) => other.current_action?.zoneActivity === 'perform',
       );
       if (performerNearby) {
         updatedNeeds.fun += 1.5 * gameHoursElapsed; // watching a performance is fun
@@ -486,7 +486,7 @@ export function needsTick(): void {
         const groupSize = coLocated.length + 1;
         const socializingCount = coLocated.filter(
           (other) => {
-            const action = (other.current_action as any)?.type;
+            const action = other.current_action?.type;
             return action === 'socializing' || action === 'talking' || action === 'idle';
           },
         ).length;
@@ -508,7 +508,7 @@ export function needsTick(): void {
       // Mentorship: experienced agents teaching co-located agents with same zone activity
       if (zoneActivity && coLocated.length > 0) {
         for (const other of coLocated) {
-          const otherActivity = (other.current_action as any)?.zoneActivity;
+          const otherActivity = other.current_action?.zoneActivity;
           if (otherActivity !== zoneActivity) continue;
           const mentorHobby = getMentorshipOpportunity(agent.id, other.id);
           if (mentorHobby) {

@@ -338,7 +338,7 @@ export class SmartNudger {
       id: agents.id,
       current_action: agents.current_action,
     }).from(agents).where(eq(agents.is_active, true)).all()
-      .filter(a => (a.current_action as any)?.type !== 'talking' && (a.current_action as any)?.type !== 'sleeping');
+      .filter(a => a.current_action?.type !== 'talking' && a.current_action?.type !== 'sleeping');
 
     if (candidates.length < 2) return null;
 
@@ -439,7 +439,7 @@ export class SmartNudger {
       current_action: agents.current_action,
     }).from(agents).where(eq(agents.is_active, true)).all()
       .filter(a => {
-        const type = (a.current_action as any)?.type;
+        const type = a.current_action?.type;
         return type === 'idle' || type === 'socializing';
       });
 
@@ -449,7 +449,7 @@ export class SmartNudger {
     let bestId = idle[0].id;
     let bestCuriosity = 0;
     for (const a of idle) {
-      const curiosity = (a.personality as any)?.curiosity ?? 50;
+      const curiosity = a.personality?.curiosity ?? 50;
       if (curiosity > bestCuriosity) {
         bestCuriosity = curiosity;
         bestId = a.id;
@@ -485,14 +485,14 @@ export class SmartNudger {
       personality: agents.personality,
       current_action: agents.current_action,
     }).from(agents).where(eq(agents.is_active, true)).all()
-      .filter(a => (a.current_action as any)?.type !== 'sleeping');
+      .filter(a => a.current_action?.type !== 'sleeping');
 
     if (activeAgents.length === 0) return null;
 
     let bestId = activeAgents[0].id;
     let bestWarmth = 0;
     for (const a of activeAgents) {
-      const warmth = (a.personality as any)?.warmth ?? 50;
+      const warmth = a.personality?.warmth ?? 50;
       if (warmth > bestWarmth) {
         bestWarmth = warmth;
         bestId = a.id;
@@ -509,7 +509,7 @@ export class SmartNudger {
       current_action: agents.current_action,
     }).from(agents).where(eq(agents.is_active, true)).all()
       .filter(a => a.id !== excludeId
-        && (a.current_action as any)?.type !== 'sleeping'
+        && a.current_action?.type !== 'sleeping'
         && this.areCoLocated(placements, excludeId, a.id));
 
     if (activeAgents.length === 0) return null;
@@ -517,7 +517,7 @@ export class SmartNudger {
     let bestId = activeAgents[0].id;
     let bestWarmth = 0;
     for (const a of activeAgents) {
-      const warmth = (a.personality as any)?.warmth ?? 50;
+      const warmth = a.personality?.warmth ?? 50;
       if (warmth > bestWarmth) {
         bestWarmth = warmth;
         bestId = a.id;

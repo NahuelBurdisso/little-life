@@ -102,7 +102,7 @@ describe('TalkSystem', () => {
     const dotX = () => {
       const ins = (t.g.context as any).instructions as Array<{ action: string; data: any }>;
       const circle = ins.find(i => i.action === 'fill')!;
-      return circle.data.path.instructions.find((i: any) => i.action === 'circle').data[0] as number;
+      return circle.data.path.instructions.find((i: { action: string }) => i.action === 'circle').data[0] as number;
     };
     t.sys.onData!(t.data([talk(1, [1, 2], [line(1), line(2)])]));
     t.step(1);

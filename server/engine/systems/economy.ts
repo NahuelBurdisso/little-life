@@ -180,11 +180,11 @@ export function quoteMeal(
 ): { item: string; price: number } | null {
   const rule = getTradeRuleForLocation(loc.type);
   if (!rule) return null;
-  const inv = ownerEcon.inventory as { itemId: string; quantity: number }[];
+  const inv = ownerEcon.inventory;
   const item = findMealItem(rule.sells, ownerEcon)
     ?? pickFood(inv.filter((i) => rule.buys.includes(i.itemId)), null);
   if (!item) return null;
-  const stock = getInventoryCount(inv as any[], item);
+  const stock = getInventoryCount(inv, item);
   const market = getMarketPrice(item, season, stock);
   const service = hungerService(loc);
   const base = service && service.cost > 0
@@ -257,7 +257,7 @@ export function serveMeal(
 
   // 2. Own food — at home that is cooking your groceries; elsewhere a packed lunch.
   const preferred = location ? hungerService(location)?.itemRequired ?? null : null;
-  const food = pickFood(eaterEcon.inventory as any[], preferred, productionInputs(eaterEcon.job));
+  const food = pickFood(eaterEcon.inventory, preferred, productionInputs(eaterEcon.job));
   if (food) {
     consumeItem(eaterEcon, food);
     return serve({ source: 'own_food', locationId: location?.id ?? null, item: food });
@@ -352,7 +352,7 @@ function chargeTownFee(
 }
 
 function consumeItem(econ: EconRecord, item: string): void {
-  const inv = removeFromInventory(econ.inventory as any[], item, 1);
+  const inv = removeFromInventory(econ.inventory, item, 1);
   db.update(economy).set({ inventory: inv }).where(eq(economy.id, econ.id)).run();
   econ.inventory = inv;
 }
@@ -392,7 +392,7 @@ const SHOPPING_STOCK_TARGET = 2;
 function findMealItem(sells: readonly string[], ownerEcon: Pick<typeof economy.$inferSelect, 'inventory'>): string | null {
   for (const item of sells) {
     if (ITEM_REGISTRY[item]?.satisfies?.need !== 'hunger') continue;
-    if (getInventoryCount(ownerEcon.inventory as any[], item) > 0) return item;
+    if (getInventoryCount(ownerEcon.inventory, item) > 0) return item;
   }
   return null;
 }
@@ -425,8 +425,8 @@ function sellOneItem(
   location: { id: number; name: string },
   now: number,
 ): void {
-  const newOwnerInv = removeFromInventory(ownerEcon.inventory as any[], item, 1);
-  const newBuyerInv = addToInventory(buyerEcon.inventory as any[], item, 1, now);
+  const newOwnerInv = removeFromInventory(ownerEcon.inventory, item, 1);
+  const newBuyerInv = addToInventory(buyerEcon.inventory, item, 1, now);
   db.update(economy).set({ inventory: newOwnerInv }).where(eq(economy.id, ownerEcon.id)).run();
   ownerEcon.inventory = newOwnerInv;
   db.update(economy).set({ inventory: newBuyerInv }).where(eq(economy.id, buyerEcon.id)).run();
@@ -684,7 +684,7 @@ export function economyTick(): void {
 
   // Check for day_changed transition
   const dayChanged = world.pending_transitions.some(
-    (t: any) => t.type === 'day_changed',
+    (t) => t.type === 'day_changed',
   );
 
   // Location cache for shop lookups
@@ -692,7 +692,7 @@ export function economyTick(): void {
 
   // ========== 1. PRODUCTION (data-driven) ==========
   for (const agent of activeAgents) {
-    const action = agent.current_action as any;
+    const action = agent.current_action;
     if (!action || action.type !== 'working') continue;
 
     const econ = econByAgent.get(agent.id);
@@ -713,7 +713,7 @@ export function economyTick(): void {
       // the tavern restocked into drinks nobody bought (19 in stock after two
       // soak days) and the tavern restocked more — once meals had to be real
       // food (G2) that sink starved the town.
-      if (getInventoryCount(econ.inventory as any[], recipe.output) >= WHOLESALE_STOCK_TARGET) {
+      if (getInventoryCount(econ.inventory, recipe.output) >= WHOLESALE_STOCK_TARGET) {
         // Idle time is not banked: a full shelf doesn't earn a burst later.
         if (econ.production_remainder !== 0) {
           db.update(economy).set({ production_remainder: 0 }).where(eq(economy.id, econ.id)).run();
@@ -725,7 +725,7 @@ export function economyTick(): void {
       const whole = wholeUnitsOf(progress);
       let batches = whole;
       for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
-        batches = Math.min(batches, Math.floor(getInventoryCount(econ.inventory as any[], inputItem) / inputQty));
+        batches = Math.min(batches, Math.floor(getInventoryCount(econ.inventory, inputItem) / inputQty));
       }
       // Batches the inputs couldn't cover are dropped, not banked — only the
       // fraction toward the next batch carries over (so no ingredients means no
@@ -737,7 +737,7 @@ export function economyTick(): void {
       }
       if (batches <= 0) continue;
 
-      let inv = econ.inventory as any[];
+      let inv = econ.inventory;
       for (const [inputItem, inputQty] of Object.entries(recipe.inputs)) {
         inv = removeFromInventory(inv, inputItem, inputQty * batches);
       }
@@ -762,7 +762,7 @@ export function economyTick(): void {
 
       if (wholeUnits > 0) {
         const outputQuantity = wholeUnits * recipe.outputQuantity;
-        const newInv = addToInventory(econ.inventory as any[], recipe.output, outputQuantity, now);
+        const newInv = addToInventory(econ.inventory, recipe.output, outputQuantity, now);
         db.update(economy).set({ inventory: newInv }).where(eq(economy.id, econ.id)).run();
         econ.inventory = newInv;
 
@@ -788,7 +788,7 @@ export function economyTick(): void {
     if (rules.buys.length === 0) continue;
 
     for (const loc of allLocations) {
-      if ((loc as any).type !== locType || !loc.owner) continue;
+      if (loc.type !== locType || !loc.owner) continue;
       const ownerEcon = econByAgent.get(loc.owner);
       if (!ownerEcon) continue;
       let restockBudget = ownerEcon.money * WHOLESALE_MAX_CASH_FRACTION;
@@ -802,11 +802,11 @@ export function economyTick(): void {
           const recipe = getRecipeForJob(agentEcon.job);
           if (!recipe || recipe.output !== buyItem) continue;
 
-          const agentStock = getInventoryCount(agentEcon.inventory as any[], buyItem);
+          const agentStock = getInventoryCount(agentEcon.inventory, buyItem);
           const surplus = agentStock - 3;
           if (surplus <= 0) continue;
 
-          const shopStock = getInventoryCount(ownerEcon.inventory as any[], buyItem);
+          const shopStock = getInventoryCount(ownerEcon.inventory, buyItem);
           const room = WHOLESALE_STOCK_TARGET - shopStock;
           if (room <= 0) continue;
           const price = getMarketPrice(buyItem, season, shopStock);
@@ -817,8 +817,8 @@ export function economyTick(): void {
           const totalCost = price * buyAmount;
           restockBudget -= totalCost;
 
-          const newProducerInv = removeFromInventory(agentEcon.inventory as any[], buyItem, buyAmount);
-          const newShopInv = addToInventory(ownerEcon.inventory as any[], buyItem, buyAmount, now);
+          const newProducerInv = removeFromInventory(agentEcon.inventory, buyItem, buyAmount);
+          const newShopInv = addToInventory(ownerEcon.inventory, buyItem, buyAmount, now);
 
           db.update(economy).set({ inventory: newProducerInv, money: agentEcon.money + totalCost }).where(eq(economy.id, agentEcon.id)).run();
           db.update(economy).set({ inventory: newShopInv, money: ownerEcon.money - totalCost }).where(eq(economy.id, ownerEcon.id)).run();
@@ -873,7 +873,7 @@ export function economyTick(): void {
     const alcoholicState = db.select().from(agentStates)
       .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'alcoholic'))).get();
     if (alcoholicState) {
-      const meta = (alcoholicState.metadata as Record<string, any> | null) ?? {};
+      const meta = alcoholicState.metadata ?? {};
       if (meta.stage === 3) {
         effectiveSalary = Math.floor(econ.salary * 0.6);
       } else {
@@ -962,7 +962,7 @@ export function economyTick(): void {
   // 23 items in a row until she hit $0. Purchases are now tracked per action (see
   // purchasesThisAction): one meal per eating action, one of each item per trip.
   for (const agent of activeAgents) {
-    const action = agent.current_action as any;
+    const action = agent.current_action;
     if (!action) continue;
 
     // A meal not served yet (vendor restocked by wholesale this tick, payday
@@ -1014,14 +1014,14 @@ export function economyTick(): void {
 
       // Only buy what's needed: someone already carrying a couple of this item
       // doesn't restock it. Marked handled so it isn't re-checked all trip.
-      if (getInventoryCount(buyerEcon.inventory as any[], item) >= SHOPPING_STOCK_TARGET) {
+      if (getInventoryCount(buyerEcon.inventory, item) >= SHOPPING_STOCK_TARGET) {
         handled.add(item);
         continue;
       }
 
       // Out of stock / unaffordable stay unhandled, so a restock or payday
       // later in the same trip can still complete the purchase (once).
-      const shopStock = getInventoryCount(ownerEcon.inventory as any[], item);
+      const shopStock = getInventoryCount(ownerEcon.inventory, item);
       if (shopStock <= 0) continue;
 
       // Get price (modified by buyer's reputation)
@@ -1052,7 +1052,7 @@ export function economyTick(): void {
     if (paidAt !== undefined && paidAt !== at) venueVisitPaid.delete(agent.id);
     if (at == null || venueVisitPaid.has(agent.id)) continue;
 
-    const actionType = (agent.current_action as any)?.type;
+    const actionType = agent.current_action?.type;
     if (!PATRON_ACTIONS.has(actionType)) continue;
 
     const venue = locationCache.get(at) ?? allLocations.find((l) => l.id === at);
@@ -1076,9 +1076,9 @@ export function economyTick(): void {
     if (!ownerEcon) continue;
 
     const isCover = (getTradeRuleForLocation(venue.type)?.entertainmentCost ?? 0) > 0;
-    const pours = isCover && getInventoryCount(ownerEcon.inventory as any[], 'drink') > 0;
+    const pours = isCover && getInventoryCount(ownerEcon.inventory, 'drink') > 0;
     if (pours) {
-      const newInv = removeFromInventory(ownerEcon.inventory as any[], 'drink', 1);
+      const newInv = removeFromInventory(ownerEcon.inventory, 'drink', 1);
       db.update(economy).set({ inventory: newInv }).where(eq(economy.id, ownerEcon.id)).run();
       ownerEcon.inventory = newInv;
     }

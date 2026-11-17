@@ -18,6 +18,7 @@ import { endSentence, withSelfAsFirstPerson } from '../factText';
 import { currentWorldEpoch, isStaleWorldEpoch } from '../worldEpoch';
 import { isAdultAge } from '../intimacy/eligibility';
 import { mentionsInventedPerson } from '../../helpers/knownPeople';
+import type { PersonalityProfile } from '../personality';
 
 /** `interaction:completed` beat actions sent as bare nouns, as "I <phrase> with <other>." reads them. */
 const BEAT_ACTION_PHRASES: Record<string, string> = {
@@ -469,7 +470,7 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', `I used to want "${from}". Now I want "${to}" because ${reason}.`, { subtype: 'ambition' }, 0.3, 8);
   });
 
-  simEvents.on('goal:emotional_failure', ({ agentId, importance, personality }: { agentId: number; importance: number; personality: any }) => {
+  simEvents.on('goal:emotional_failure', ({ agentId, importance, personality }: { agentId: number; importance: number; personality: PersonalityProfile }) => {
     memoryService.record(agentId, 'observation', `I feel the weight of failure. My efforts didn't lead anywhere.`, { subtype: 'emotion' }, -0.5, 6);
     // Trigger emotional states based on personality — use state:triggered so cascade engine picks it up
     if (personality.neuroticism > 60) {

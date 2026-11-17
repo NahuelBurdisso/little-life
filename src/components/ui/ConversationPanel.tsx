@@ -6,6 +6,7 @@ import { ConversationViewer } from "./ConversationViewer";
 import { ConversationDetail } from "./ConversationDetail";
 import { EmptyState } from "./EmptyState";
 import { Skeleton } from "./Skeleton";
+import type { ConversationView } from '../../lib/apiTypes';
 
 function realTimeAgo(timestamp: number | null | undefined): string {
   if (!timestamp) return '';
@@ -73,7 +74,7 @@ const ActiveConvoItem = memo(function ActiveConvoItem({
   onToggle,
   onSelectAgent,
 }: {
-  convo: any;
+  convo: ConversationView;
   agentNames: Map<string, string>;
   isExpanded: boolean;
   onToggle: () => void;
@@ -121,7 +122,7 @@ const RecentConvoItem = memo(function RecentConvoItem({
   onDetail,
   onSelectAgent,
 }: {
-  convo: any;
+  convo: ConversationView;
   agentNames: Map<string, string>;
   isExpanded: boolean;
   onToggle: () => void;
@@ -186,7 +187,7 @@ export function ConversationPanel({ onSelectAgent }: ConversationPanelProps) {
   const { agents } = useAgents();
   const { data: recentConversations } = trpc.conversations.getRecent.useQuery({ limit: 10 });
 
-  const agentNames = new Map(agents.map((a: any) => [String(a.id), a.name]));
+  const agentNames = new Map(agents.map((a) => [String(a.id), a.name]));
 
   // Preserve scroll position across re-renders
   useEffect(() => {
@@ -240,7 +241,7 @@ export function ConversationPanel({ onSelectAgent }: ConversationPanelProps) {
             />
           ) : (
             <div className="space-y-1.5">
-              {activeConversations.map((convo: any) => (
+              {activeConversations.map((convo) => (
                 <ActiveConvoItem
                   key={convo.id}
                   convo={convo}
@@ -280,7 +281,7 @@ export function ConversationPanel({ onSelectAgent }: ConversationPanelProps) {
             />
           ) : (
             <div className="space-y-1.5">
-              {recentConversations.map((convo: any) => (
+              {recentConversations.map((convo) => (
                 <RecentConvoItem
                   key={convo.id}
                   convo={convo}

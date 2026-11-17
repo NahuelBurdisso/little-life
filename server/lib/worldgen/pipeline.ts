@@ -24,7 +24,7 @@ const MAX_EXPANSIONS = 3;
 const EXPAND_FACTOR = 1.2;
 
 /** Ordered pipeline — source of truth for stage order. */
-const PIPELINE: Array<Stage<any>> = [
+const PIPELINE: Array<Stage<Partial<WorldContext>>> = [
   dimensionsStage,
   roadsStage,
   layoutStage,
@@ -135,7 +135,7 @@ function runStages(
     description: l.description,
   }));
   const collisionGrid = generateCollisionGridForLocations(
-    rawLocs as any,
+    rawLocs,
     ctx.dimensions!.width,
     ctx.dimensions!.height,
   );

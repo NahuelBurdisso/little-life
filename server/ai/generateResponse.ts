@@ -211,7 +211,7 @@ export async function generateResponse(
   // stage direction) is judged here like any too-short reply: one nudge retry,
   // then the canned fallback — the same path an empty model reply ends up on.
   const lastMsg = conversation.messages.length > 0
-    ? (conversation.messages[conversation.messages.length - 1] as Record<string, any>)?.text as string | undefined
+    ? conversation.messages[conversation.messages.length - 1]?.text
     : undefined;
   const isInvalid = (text: string) => {
     const trimmed = text.trim();

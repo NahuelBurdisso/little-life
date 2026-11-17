@@ -13,6 +13,7 @@ import {
   worldEvents,
   worldState,
 } from '../../db/schema';
+import type { AgentAction } from '../../db/schema';
 import { logActivity } from '../../lib/activityLogger';
 import { findAvailableZone, zoneSlotOffset, fallbackInteriorTile } from '../../lib/interiorGrid';
 import { startQueuedAction } from './movement';
@@ -156,7 +157,7 @@ export function isActionComplete(agent: AgentRow, nowMinutes: number): boolean {
   if (agent.current_action == null) return true;
 
   const actionType =
-    typeof agent.current_action === 'object' ? (agent.current_action as any).type : agent.current_action;
+    typeof agent.current_action === 'object' ? agent.current_action.type : agent.current_action;
 
   // Walking agents are handled by the movement system — BUT if destination is null
   // (e.g. a stale or malformed walking action), treat as complete so the decision
@@ -1105,7 +1106,7 @@ function scoreFreeTimeActions(
     const jealousState = db.select().from(agentStates)
       .where(and(eq(agentStates.agent_id, agent.id), eq(agentStates.type, 'jealous'))).get();
     if (jealousState) {
-      const meta = (jealousState.metadata as Record<string, any> | null) ?? {};
+      const meta = jealousState.metadata ?? {};
       const rivalId = meta.rivalId as number | undefined;
       const loveInterestId = meta.loveInterestId as number | undefined;
       for (const s of scores) {
@@ -1523,7 +1524,7 @@ export function zoneVerbOf(decision: Pick<ScoredAction, 'action' | 'source'>): s
   return decision.action === 'idle' ? decision.source : undefined;
 }
 
-export function buildAction(decision: ScoredAction, shoppingList: string[] = []): Record<string, unknown> {
+export function buildAction(decision: ScoredAction, shoppingList: string[] = []): AgentAction {
   const zoneActivity = zoneVerbOf(decision);
   switch (decision.action) {
     case 'sleeping':
@@ -1677,7 +1678,7 @@ export function tick(world: WorldRow): void {
     // Plan generation: trigger when waking up OR when plan is stale during daytime.
     // The wake-up path catches the normal case; the stale-plan path catches agents
     // who missed a sleep→wake cycle (e.g., sick, depressed, or stuck agents).
-    const completedActionType = (agent.current_action as any)?.type;
+    const completedActionType = agent.current_action?.type;
     const sched = agent.schedule as { wakeTime?: number; sleepTime?: number } | null;
     const wakeTime = sched?.wakeTime ?? 7;
     const sleepTime = sched?.sleepTime ?? 22;
@@ -1685,7 +1686,7 @@ export function tick(world: WorldRow): void {
     const isDaytime = effSleepTime > wakeTime
       ? (world.time.hour >= wakeTime && world.time.hour < effSleepTime)
       : !(world.time.hour >= effSleepTime && world.time.hour < wakeTime);
-    const currentPlan = (agent as any).daily_plan as { day: number; source?: string } | null;
+    const currentPlan = agent.daily_plan;
     const planIsStale = !currentPlan || currentPlan.day < (world.time.day ?? 1);
     // A fallback plan (the LLM failed) is re-requested like a missing one so it
     // gets upgraded once the LLM recovers. That makes this call fire on most
@@ -2124,15 +2125,15 @@ export function tick(world: WorldRow): void {
     //    action type's minimum, so a sleep shortened to end at the wake time
     //    (or a 120-minute mope) was six hours / ten minutes again once walked to.
     // `pose` is a cosmetic hint for the renderer and rides on the action itself.
-    const queuedAction: Record<string, any> = {
-      ...((baseAction as { type?: string }).type === 'walking' ? { type: 'idle' } : baseAction),
+    const queuedAction: AgentAction = {
+      ...(baseAction.type === 'walking' ? { type: 'idle' } : baseAction),
       ...(matchedZoneId && matchedBuildingType
         ? { _arrivalZone: matchedZoneId, _arrivalBuilding: matchedBuildingType }
         : {}),
       ...(seatedZone ? { pose: 'sitting' } : {}),
       // A 'walking' decision can't be started in place (no destination: movement
       // skips it and decisions never re-assigns it); it becomes a short idle.
-      _duration: (baseAction as { type?: string }).type === 'walking'
+      _duration: baseAction.type === 'walking'
         ? (CONFIG.DECISIONS.ACTION_MIN_DURATIONS['idle'] ?? 10)
         : actionDuration,
     };
@@ -2330,7 +2331,7 @@ export function tick(world: WorldRow): void {
       if (!topic && agentPersonality && agentPersonality.honesty < 40 && agentPersonality.curiosity > 60) {
         const gossipFacts = getShareableFacts(agentId, targetId, agentPersonality);
         if (gossipFacts.length > 0) {
-          const subjectName = getAgentName((gossipFacts[0] as any).subject_id);
+          const subjectName = getAgentName(gossipFacts[0].subject_id);
           topic = `gossip about ${subjectName}`;
         }
       }
@@ -2463,7 +2464,7 @@ export function tick(world: WorldRow): void {
   const socialLocTypes = new Set(['tavern', 'town_square', 'park']);
   for (const agent of activeAgents) {
     if (agent.current_location == null) continue;
-    const action = agent.current_action as any;
+    const action = agent.current_action;
     if (action?.type === 'talking' || action?.type === 'sleeping' || action?.type === 'working') continue;
     // A private evening (lib/intimacy/tryst.ts) is not a spare pair for a chance chat.
     if (action?.zoneActivity === 'tryst') continue;
@@ -2556,12 +2557,12 @@ export function tick(world: WorldRow): void {
     const agentEconRow = econMap.get(agent.id);
     if (!agentEconRow || agentEconRow.job !== 'constable') continue;
     if (agent.current_location == null) continue;
-    if ((agent.current_action as any)?.type === 'sleeping') continue;
+    if (agent.current_action?.type === 'sleeping') continue;
 
     // Find co-located agents with high negative fact counts
     for (const other of activeAgents) {
       if (other.id === agent.id || other.current_location !== agent.current_location) continue;
-      if ((other.current_action as any)?.type === 'idle' && other.current_location != null) {
+      if (other.current_action?.type === 'idle' && other.current_location != null) {
         // Check if already at prison (don't re-arrest)
         const loc = allLocations.find(l => l.id === other.current_location);
         if (loc?.type === 'prison') continue;

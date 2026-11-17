@@ -5,6 +5,8 @@ import {
 import type { PlaceClimate, PlaceState } from "./placeState";
 import { inRect, type Pt, type Rect } from "./zoneGeometry";
 import type { GlowShape } from "./placeFrames";
+import type { LocationLite } from '../../../../lib/apiTypes';
+import type { AgentData } from '../../SpritePool';
 
 /**
  * What the town's buildings are doing right now, as a flat list of visual items with stable
@@ -52,9 +54,9 @@ export type PlaceItem =
   | ChickensItem | DustItem;
 
 export interface PlanInput {
-  locations: any[];
+  locations: LocationLite[];
   states: PlaceState[];
-  agents: any[];
+  agents: AgentData[];
   climate: PlaceClimate;
   /** Whether a world box is clear of roads and other buildings (for the laundry line). */
   isFree?: (box: Rect, selfId: number) => boolean;
@@ -179,7 +181,7 @@ export function buildPlacePlan(input: PlanInput): PlaceItem[] {
             const act = a.current_action;
             const type = typeof act === 'string' ? act : act?.type;
             const job = typeof act === 'object' ? act?.zoneActivity : '';
-            if (!FIELD_JOBS.has(type) && !FIELD_JOBS.has(job)) continue;
+            if (!FIELD_JOBS.has(type ?? '') && !FIELD_JOBS.has(job ?? '')) continue;
             if (fields.some((f) => inRect(f, a.position.x, a.position.y, 6))) {
               items.push({ kind: 'dust', key: `dust:${a.id}`, x: a.position.x, y: a.position.y, agentId: a.id });
             }

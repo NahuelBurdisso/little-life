@@ -1,5 +1,6 @@
 import { db } from '../../db';
 import { agents, needs, agentStates, relationships, conversations, conversationQueue, locations } from '../../db/schema';
+import type { AgentAction } from '../../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { simEvents } from '../simEvents';
 import { PERCEPTION_REGISTRY, REACTION_TYPES } from './perceptionRegistry';
@@ -20,7 +21,7 @@ interface AgentData {
   personality: PersonalityProfile | null;
   position: { x: number; y: number };
   current_location: number | null;
-  current_action: Record<string, any>;
+  current_action: AgentAction;
 }
 
 interface NeedData {
@@ -62,7 +63,7 @@ function scorePerception(
 ): number {
   let score = rule.base_score;
   for (const [axis, weight] of Object.entries(rule.personality_weights)) {
-    const value = ((personality as any)[axis] ?? 50) / 100;
+    const value = (personality[axis as keyof PersonalityProfile] ?? 50) / 100;
     score += value * (weight as number) * 100;
   }
   if (rule.relationship_bonus?.friendship_weight) {
@@ -92,7 +93,7 @@ function matchesRule(
   if (obs.max_friendship != null && observerRelation.friendship > obs.max_friendship) return false;
   if (obs.min_romance != null && observerRelation.romance < obs.min_romance) return false;
   if (obs.target_action) {
-    const actionType = (target.current_action as any)?.type;
+    const actionType = target.current_action?.type;
     if (!obs.target_action.includes(actionType)) return false;
   }
 
@@ -510,8 +511,8 @@ export class PerceptionSystem {
           // `scan` runs after every system phase, so nothing overwrites
           // `current_action` before the client polls; next tick's decisions
           // phase replaces it, which is what makes the marker short-lived.
-          const stamped = {
-            ...(observer.current_action ?? {}),
+          const stamped: AgentAction = {
+            ...observer.current_action,
             emote: reaction.emote ?? 'wave',
             emote_at: Date.now(),
           };

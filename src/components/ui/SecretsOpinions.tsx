@@ -86,14 +86,14 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
 
   // Filter to secrets (sensitivity >= 2), sort by sensitivity desc
   const secrets = (knownFacts ?? [])
-    .filter((f: any) => f.sensitivity >= 2)
-    .sort((a: any, b: any) => b.sensitivity - a.sensitivity)
+    .filter((f) => f.sensitivity >= 2)
+    .sort((a, b) => b.sensitivity - a.sensitivity)
     .slice(0, 8);
 
   // Top 5 relationships by absolute friendship strength
   const topRelationships = (relationships ?? [])
-    .filter((r: any) => r.otherAgent !== null)
-    .sort((a: any, b: any) => {
+    .filter((r): r is typeof r & { otherAgent: NonNullable<typeof r.otherAgent> } => r.otherAgent !== null)
+    .sort((a, b) => {
       const isAa = a.relationship.agent_a === agentId;
       const isAb = b.relationship.agent_a === agentId;
       const aFriend = Math.abs(isAa ? a.relationship.friendship_ab : a.relationship.friendship_ba);
@@ -119,7 +119,7 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
           />
         ) : (
           <div className="space-y-1.5">
-            {secrets.map((fact: any) => {
+            {secrets.map((fact) => {
               const isHighSecret = fact.sensitivity >= 3;
               return (
                 <div
@@ -173,7 +173,7 @@ export function SecretsOpinions({ agentId, agentName }: SecretsOpinionsProps) {
           />
         ) : (
           <div className="space-y-1.5">
-            {topRelationships.map((entry: any) => {
+            {topRelationships.map((entry) => {
               const rel = entry.relationship;
               const other = entry.otherAgent;
               const isA = rel.agent_a === agentId;

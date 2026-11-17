@@ -7,7 +7,7 @@ import { pruneEndedConversations } from '../conversations';
 function insert(status: string, endedAt: number | null) {
   return db.insert(conversations).values({
     participants: [1, 2],
-    messages: [{ text: 'hi' }],
+    messages: [{ speakerId: 1, text: 'hi' }],
     trigger_reason: 'test',
     status,
     started_at: 0,

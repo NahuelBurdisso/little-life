@@ -192,8 +192,8 @@ export class HealthCollector {
       }).from(conversationSchedulerState).limit(1).get();
 
       if (scheduler) {
-        slotsInUse = (scheduler.active_llm_conversations as any[]).length;
-        timeoutsTotal = (scheduler.stats as any)?.queueTimeoutsTotal ?? 0;
+        slotsInUse = scheduler.active_llm_conversations.length;
+        timeoutsTotal = scheduler.stats?.queueTimeoutsTotal ?? 0;
       }
     } catch { /* fresh DB */ }
 

@@ -916,7 +916,7 @@ export function deactivateStaleFacts(): void {
           .from(agents)
           .where(eq(agents.id, fact.subject_id))
           .get();
-        const actionType = (agentRow?.current_action as any)?.type;
+        const actionType = agentRow?.current_action?.type;
         if (actionType === 'working') {
           stale = true;
         }

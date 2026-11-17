@@ -1,5 +1,5 @@
 // server/lib/cascade/RippleEngine.ts
-import type { RippleRule, RippleContext, CascadeMetadata } from './cascadeTypes';
+import type { RippleRule, RippleContext, CascadeMetadata, RipplePayload } from './cascadeTypes';
 import type { PersonalityProfile } from '../personality';
 import { rippleRules as RIPPLE_RULES } from './rippleRules';
 import { simEvents } from '../simEvents';
@@ -23,7 +23,7 @@ const RIPPLE_MOOD_MINUTES = 360;
 
 interface QueueItem {
   rule: RippleRule;
-  payload: any;
+  payload: RipplePayload;
   metadata: CascadeMetadata;
 }
 
@@ -169,7 +169,7 @@ export class RippleEngine {
    * under the agent the event was about instead, so one crowd reaction per source
    * event window is what actually gets capped.
    */
-  private cooldownAgent(rule: RippleRule, resolvedAgentId: number, payload: any): number {
+  private cooldownAgent(rule: RippleRule, resolvedAgentId: number, payload: RipplePayload): number {
     if (rule.target === 'witness' || rule.target === 'random_present') {
       return payload?.agentId ?? payload?.perpetratorId ?? resolvedAgentId;
     }
@@ -231,7 +231,7 @@ export class RippleEngine {
    * `isChainDepthExceeded`, the per-tick cap and per-rule cooldowns, so only the
    * immediate self-loop needs blocking here.
    */
-  shouldSkipForDedup(rule: RippleRule, payload: any): boolean {
+  shouldSkipForDedup(rule: RippleRule, payload: RipplePayload): boolean {
     if (payload === null || typeof payload !== 'object') return false;
     const parentRuleId = payload._cascade?.parentRuleId;
     return parentRuleId != null && parentRuleId === rule.id;
@@ -242,7 +242,7 @@ export class RippleEngine {
   checkRequirementsPublic(
     requires: RippleRule['requires'],
     agentId: number,
-    payload: any,
+    payload: RipplePayload,
     ctx: RippleContext,
   ): boolean {
     return this.checkRequirementsWithCtx(requires, agentId, payload, ctx);
@@ -251,7 +251,7 @@ export class RippleEngine {
   private checkRequirementsWithCtx(
     requires: RippleRule['requires'],
     agentId: number,
-    payload: any,
+    payload: RipplePayload,
     ctx: RippleContext,
   ): boolean {
     if (!requires) return true;
@@ -320,7 +320,11 @@ export class RippleEngine {
     return true;
   }
 
-  private getRelField(rel: any, field: string, isA: boolean): number {
+  private getRelField(
+    rel: Pick<typeof relationships.$inferSelect, 'friendship_ab' | 'friendship_ba' | 'romance_ab' | 'romance_ba' | 'trust_ab' | 'trust_ba'>,
+    field: string,
+    isA: boolean,
+  ): number {
     switch (field) {
       case 'friendship': return isA ? rel.friendship_ab : rel.friendship_ba;
       case 'romance': return isA ? rel.romance_ab : rel.romance_ba;
@@ -332,7 +336,7 @@ export class RippleEngine {
   private checkRequirements(
     rule: RippleRule,
     agentId: number,
-    payload: any,
+    payload: RipplePayload,
     ctx?: RippleContext,
   ): boolean {
     const context = ctx ?? this.buildContext(payload);
@@ -372,7 +376,7 @@ export class RippleEngine {
     }
 
     for (const source of sourceEvents) {
-      simEvents.on(source, (payload: any) => {
+      simEvents.on(source, (payload: RipplePayload) => {
         this.handleEvent(source, payload);
       });
     }
@@ -380,7 +384,7 @@ export class RippleEngine {
 
   // ─── Main event handler ────────────────────────────────────────────────────────
 
-  private handleEvent(source: string, payload: any): void {
+  private handleEvent(source: string, payload: RipplePayload): void {
     const nowMinutes = gameMinutesNow();
     // One context for every filter of this event: nothing below writes before
     // the queue runs, so each rule's filter would read the same answers. It was
@@ -420,7 +424,7 @@ export class RippleEngine {
           chainId,
           chainDepth: parentDepth + 1,
           parentRuleId: payload?._cascade?.parentRuleId,
-          locationId: payload?.locationId ?? this.getAgentLocation(agentId),
+          locationId: payload?.locationId ?? this.getAgentLocation(agentId) ?? undefined,
           perpetratorId: payload?.perpetratorId ?? payload?.agentId,
           victimId: payload?.victimId,
         },
@@ -431,7 +435,7 @@ export class RippleEngine {
     this.processQueue();
   }
 
-  private resolveTargetAgent(rule: RippleRule, payload: any): number | null {
+  private resolveTargetAgent(rule: RippleRule, payload: RipplePayload): number | null {
     switch (rule.target) {
       case 'self':
         return payload?.agentId ?? null;
@@ -476,7 +480,7 @@ export class RippleEngine {
 
   private evaluateAndFire(
     rule: RippleRule,
-    payload: any,
+    payload: RipplePayload,
     chainId: string,
     depth: number,
   ): void {
@@ -486,7 +490,8 @@ export class RippleEngine {
     // Per-tick cap (depth 1 exempt)
     if (this.isTickCapReached() && !this.isExemptFromCap(depth)) return;
 
-    const agentId: number = payload._resolvedAgentId;
+    const agentId = payload._resolvedAgentId;
+    if (agentId == null) return; // only queued events reach here, and handleEvent stamps every one
     const nowMinutes = gameMinutesNow();
 
     // Get personality for probability calculation
@@ -586,7 +591,7 @@ export class RippleEngine {
   private describeRumor(
     rule: RippleRule,
     agentId: number,
-    payload: any,
+    payload: RipplePayload,
   ): { subjectId: number; targetId: number | null; context: FactContext | undefined } | 'skip' | null {
     if (rule.source === 'state:triggered' && payload?.state === 'jealous') {
       const jealous = db.select({ target: agentStates.target_agent_id, metadata: agentStates.metadata })
@@ -622,7 +627,7 @@ export class RippleEngine {
    * context before firing anything (evaluateAndFire checks requirements before
    * executing effects), so a field read late sees what an eager read would have.
    */
-  private buildContext(payload: any): RippleContext {
+  private buildContext(payload: RipplePayload): RippleContext {
     const agentId = payload?._resolvedAgentId ?? payload?.agentId ?? 0;
 
     const agentRow = once(() => agentId
@@ -728,7 +733,7 @@ export class RippleEngine {
 
   private getCurrentTick(): number {
     const world = db.select({ time: worldState.time }).from(worldState).limit(1).get();
-    return (world?.time as any)?.totalTicks ?? 0;
+    return world?.time.totalTicks ?? 0;
   }
 
   private getAgentPersonality(id: number): PersonalityProfile | null {
@@ -765,7 +770,7 @@ export class RippleEngine {
     rule: RippleRule,
     agentId: number,
     metadata: CascadeMetadata,
-    payload: any,
+    payload: RipplePayload,
   ): void {
     const fx = rule.effects;
     const currentTick = this.getCurrentTick();
@@ -968,7 +973,7 @@ export class RippleEngine {
       if (row) {
         const field = fx.economyEffect.field;
         const delta = fx.economyEffect.delta;
-        const current = (row as any)[field] as number;
+        const current = row[field];
         const newValue = Math.max(0, current + delta);
         db.update(economy)
           .set({ [field]: newValue })

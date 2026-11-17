@@ -25,7 +25,7 @@ const AXIS_VOICE_MAP: Record<string, { high: string; low: string }> = {
 };
 
 // Personality combo voices — when two axes are both extreme, use richer description
-const COMBO_VOICES: Array<{ axisA: string; dirA: 'high' | 'low'; axisB: string; dirB: 'high' | 'low'; voice: string }> = [
+const COMBO_VOICES: Array<{ axisA: keyof PersonalityAxes; dirA: 'high' | 'low'; axisB: keyof PersonalityAxes; dirB: 'high' | 'low'; voice: string }> = [
   { axisA: 'honesty', dirA: 'high', axisB: 'aggression', dirB: 'high', voice: "You're brutally frank. You say exactly what others are afraid to say, and you don't care if it stings." },
   { axisA: 'warmth', dirA: 'high', axisB: 'curiosity', dirB: 'high', voice: "You're genuinely fascinated by people. You ask deep questions because you truly care about the answers." },
   { axisA: 'vanity', dirA: 'high', axisB: 'sensuality', dirB: 'high', voice: "You're a flirtatious show-off. Every conversation is a stage and everyone is your audience." },
@@ -74,8 +74,8 @@ export function generateVoiceDirective(agentId: number, personality: Personality
   // Check for personality combos first (richer than individual axes)
   const usedAxes = new Set<string>();
   for (const combo of COMBO_VOICES) {
-    const valA = (personality as any)[combo.axisA] as number;
-    const valB = (personality as any)[combo.axisB] as number;
+    const valA = personality[combo.axisA];
+    const valB = personality[combo.axisB];
     const matchA = combo.dirA === 'high' ? valA >= HIGH_THRESHOLD : valA <= LOW_THRESHOLD;
     const matchB = combo.dirB === 'high' ? valB >= HIGH_THRESHOLD : valB <= LOW_THRESHOLD;
     if (matchA && matchB && !usedAxes.has(combo.axisA) && !usedAxes.has(combo.axisB)) {

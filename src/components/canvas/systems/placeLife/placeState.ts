@@ -1,5 +1,7 @@
 import { isOpenAt } from "../../../../../server/lib/gameClock";
 import { inRect, zoneRect, type Rect } from "./zoneGeometry";
+import type { LocationLite, WorldEventLite, WorldLite } from '../../../../lib/apiTypes';
+import type { AgentData } from '../../SpritePool';
 
 /**
  * Who is where doing what, boiled down to one small record per location. Every reactive
@@ -47,7 +49,7 @@ const PERFORM_ACTIVITIES: ReadonlySet<string> = new Set(['perform', 'sing', 'pla
 const NOT_PERFORMING: ReadonlySet<string> = new Set(['walking', 'sleeping', 'eating']);
 const COLD_WEATHER: ReadonlySet<string> = new Set(['rainy', 'stormy', 'snowy', 'foggy']);
 
-export function readClimate(world: any, events: any[] | undefined): PlaceClimate {
+export function readClimate(world: WorldLite | null | undefined, events: WorldEventLite[] | undefined): PlaceClimate {
   let meeting = false;
   if (events) for (const e of events) if (e?.type === 'town_meeting') { meeting = true; break; }
   return {
@@ -59,13 +61,13 @@ export function readClimate(world: any, events: any[] | undefined): PlaceClimate
   };
 }
 
-function actionParts(a: any): { type: string; activity: string } {
+function actionParts(a: AgentData): { type: string; activity: string } {
   const ca = a?.current_action;
   if (typeof ca === 'string') return { type: ca, activity: '' };
   return { type: ca?.type ?? 'idle', activity: ca?.zoneActivity ?? '' };
 }
 
-function hasState(a: any, type: string): boolean {
+function hasState(a: AgentData, type: string): boolean {
   const states = a?.activeStates;
   if (!states) return false;
   for (let i = 0; i < states.length; i++) {
@@ -76,7 +78,7 @@ function hasState(a: any, type: string): boolean {
 }
 
 /** One record per location, in the order given. Called on data polls, not per frame. */
-export function computePlaceStates(locations: any[], agents: any[], climate: PlaceClimate): PlaceState[] {
+export function computePlaceStates(locations: LocationLite[], agents: AgentData[], climate: PlaceClimate): PlaceState[] {
   const byId = new Map<number, PlaceState>();
   const out: PlaceState[] = [];
   const stages = new Map<number, Rect>();
@@ -96,9 +98,9 @@ export function computePlaceStates(locations: any[], agents: any[], climate: Pla
   }
 
   for (const a of agents) {
-    const work = byId.get(a.workplace);
+    const work = a.workplace != null ? byId.get(a.workplace) : undefined;
     if (work) work.staffAssigned++;
-    const st = byId.get(a.current_location);
+    const st = a.current_location != null ? byId.get(a.current_location) : undefined;
     if (!st) continue;
     if (work === st) st.staffInside++;
     const { type, activity } = actionParts(a);

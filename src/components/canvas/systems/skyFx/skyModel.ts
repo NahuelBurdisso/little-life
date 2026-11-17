@@ -6,6 +6,7 @@
 
 import { eventAnchorRect, strangerSpot, type MapPx, type Rect, type RoadTile } from "../townEvents/eventDecor";
 import type { ViewRect } from "../view";
+import type { LocationLite, WorldEventLite } from '../../../../lib/apiTypes';
 
 // ── Deterministic random ────────────────────────────────────────────────────────────────────
 
@@ -173,8 +174,8 @@ export type SkyPiece =
  * event type is drawn once (a second festival would stack, so a second moon would too).
  */
 export function planSky(
-  events: readonly any[] | null | undefined,
-  locations: any[],
+  events: ReadonlyArray<WorldEventLite | null | undefined> | null | undefined,
+  locations: LocationLite[],
   map: MapPx | null,
   roads?: readonly RoadTile[] | null,
 ): SkyPiece[] {
@@ -199,6 +200,6 @@ export function planSky(
 }
 
 /** Whether the event list holds a starry night (the sky system schedules shooting stars). */
-export function hasStarryNight(events: readonly any[] | null | undefined): boolean {
+export function hasStarryNight(events: ReadonlyArray<WorldEventLite | null | undefined> | null | undefined): boolean {
   return (events ?? []).some(e => e?.type === "starry_night");
 }

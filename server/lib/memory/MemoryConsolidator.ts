@@ -75,7 +75,7 @@ export class MemoryConsolidator {
       // Never deactivate significant memories
       if (m.importance >= 7) return false;
       // Summaries are never re-consolidated
-      if ((m.metadata as any)?.subtype === 'summary') return false;
+      if (m.metadata?.subtype === 'summary') return false;
 
       // Routine (1-3): deactivate after 5 days
       if (m.importance <= 3 && m.created_at < routineCutoff) return true;
@@ -153,12 +153,14 @@ export class MemoryConsolidator {
     const agentMentions = new Map<string, number>();
 
     for (const m of group.memories) {
-      const meta = m.metadata as Record<string, any>;
-      const subtype = meta?.subtype ?? group.type;
+      const meta = m.metadata;
+      const subtype = typeof meta?.subtype === 'string' ? meta.subtype : group.type;
       subtypeCounts.set(subtype, (subtypeCounts.get(subtype) ?? 0) + 1);
 
-      if (meta?.location_name) locationMentions.set(meta.location_name, (locationMentions.get(meta.location_name) ?? 0) + 1);
-      if (meta?.otherName) agentMentions.set(meta.otherName, (agentMentions.get(meta.otherName) ?? 0) + 1);
+      const place = meta?.location_name;
+      if (typeof place === 'string' && place) locationMentions.set(place, (locationMentions.get(place) ?? 0) + 1);
+      const other = meta?.otherName;
+      if (typeof other === 'string' && other) agentMentions.set(other, (agentMentions.get(other) ?? 0) + 1);
     }
 
     const parts: string[] = [];

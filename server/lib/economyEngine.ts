@@ -11,7 +11,7 @@ import type { Recipe, TradeRule } from '../data/economyData';
 
 // --- Types ---
 
-type InventoryItem = { itemId: string; quantity: number; acquiredAt: number };
+export type InventoryItem = { itemId: string; quantity: number; acquiredAt: number };
 
 // --- Price Engine ---
 

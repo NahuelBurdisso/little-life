@@ -1,4 +1,5 @@
 // server/lib/cascade/WitnessAmplifier.ts
+import type { RipplePayload } from './cascadeTypes';
 import type { PersonalityProfile } from '../personality';
 import { db } from '../../db';
 import { needs, relationships, agents, locations } from '../../db/schema';
@@ -72,7 +73,7 @@ const STATE_PHRASES: Record<string, ActPhrase> = {
  */
 type Actor = 'agent' | 'perpetrator';
 
-const SOURCE_PHRASES: Record<string, { actor: Actor; phrase: (payload: any) => ActPhrase | null }> = {
+const SOURCE_PHRASES: Record<string, { actor: Actor; phrase: (payload: RipplePayload) => ActPhrase | null }> = {
   'economy:theft_caught': { actor: 'perpetrator', phrase: () => (v) => `was caught stealing${v ? ` from ${v}` : ''}` },
   'economy:theft_success': { actor: 'perpetrator', phrase: () => () => 'was seen stealing' },
   'confrontation:occurred': {
@@ -116,7 +117,7 @@ export interface WitnessedAct {
  */
 export function describeWitnessedAct(
   source: string,
-  payload: any,
+  payload: RipplePayload,
   nameOf: (agentId: number) => string,
 ): WitnessedAct | null {
   const describer = SOURCE_PHRASES[source];
@@ -200,7 +201,7 @@ export class WitnessAmplifier {
           // event that fired the rule, i.e. what actually happened in front of them.
           // The subject is whoever did what was seen, which is not always
           // the chain's perpetrator (see SOURCE_PHRASES).
-          const seen = describeWitnessedAct(String(metadata.source ?? ''), metadata.payload, getAgentName);
+          const seen = describeWitnessedAct(String(metadata.source ?? ''), (metadata.payload ?? {}) as RipplePayload, getAgentName);
           if (!seen || seen.actorId === witnessId) break;
           createFact(
             'rumor',

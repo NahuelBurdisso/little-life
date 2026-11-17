@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { agents, needs, economy, conversations, relationships, locations, worldState, agentStates, shared_knowledge, goals } from '../db/schema';
+import type { ConversationMessage } from '../db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 
 import { getEffectivePersonality, getActiveStatePrompts, getAgentStates } from '../lib/states';
@@ -7,7 +8,7 @@ import { getShareableFacts, getAgentName } from '../lib/gossip';
 import type { MemoryRow } from '../ai/prompts';
 import { isFallbackMessage } from '../ai/sanitizeDialogue';
 import { contextBuilder, memoryService } from '../lib/memory/instance';
-import { generateSituationalPrompt } from '../lib/personality';
+import { generateSituationalPrompt, type PersonalityProfile } from '../lib/personality';
 import { getReputation, getReputationLabel } from '../lib/reputationEngine';
 import { getAgentHobbies } from '../lib/hobbyEngine';
 import { getMoodMomentum } from '../lib/moodMomentum';
@@ -19,19 +20,20 @@ import { isNewcomer } from '../lib/newcomers';
 import { selfFactsFor } from './selfFactsStore';
 import { repeatedSubjects } from '../lib/topicMemory';
 import { rosterLine } from '../lib/townRoster';
+import type { AgentEnrichment } from '../ai/prompts';
 
 // ─── Conversation Context Cache ───────────────────────────────────────────────
 // Caches agent identity, relationship, and enrichment data per conversation.
 // These don't change mid-conversation, saving ~10 DB queries per turn.
 
 interface CachedIdentity {
-  speaker: any;
-  otherAgent: any;
-  relationship: any;
-  location: any;
-  effectivePersonality: any;
-  enrichment: any;
-  speakerEcon: any;
+  speaker: typeof agents.$inferSelect;
+  otherAgent: typeof agents.$inferSelect;
+  relationship: typeof relationships.$inferSelect | undefined;
+  location: typeof locations.$inferSelect;
+  effectivePersonality: PersonalityProfile | null;
+  enrichment: AgentEnrichment;
+  speakerEcon: typeof economy.$inferSelect | undefined;
   otherJobTitle: string | null;
 }
 
@@ -114,7 +116,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     const relationship = db.select().from(relationships)
       .where(and(eq(relationships.agent_a, a), eq(relationships.agent_b, b))).get();
 
-    const effectivePersonality = getEffectivePersonality(speaker.id) ?? (speaker.personality as any);
+    const effectivePersonality = getEffectivePersonality(speaker.id) ?? speaker.personality;
     const speakerEcon = db.select().from(economy).where(eq(economy.agent_id, speakerId)).get();
 
     const rep = getReputation(speakerId);
@@ -183,7 +185,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     const jealousState = db.select().from(agentStates)
       .where(and(eq(agentStates.agent_id, speakerId), eq(agentStates.type, 'jealous'))).get();
     if (jealousState) {
-      const meta = (jealousState.metadata as Record<string, any> | null) ?? {};
+      const meta = jealousState.metadata ?? {};
       const rivalId = meta.rivalId as number | undefined;
       const loveInterestId = meta.loveInterestId as number | undefined;
       if (rivalId && loveInterestId && otherId === rivalId) {
@@ -248,7 +250,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     }));
 
   const gossipFacts = effectivePersonality
-    ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality as any)
+    ? getShareableFacts(speakerId, otherAgent!.id, effectivePersonality)
     : [];
 
   // Every townsperson's name, so the dialogue sanitiser can spot a reply that
@@ -311,10 +313,10 @@ export function addMessage(
   // `max_turns` to the transcript length, and a reply landing after that would
   // follow the goodbye. The runner never starts a turn past `max_turns`, so
   // this only ever refuses such a late line.
-  if ((conversation.messages as unknown[]).length >= conversation.max_turns) return null;
+  if (conversation.messages.length >= conversation.max_turns) return null;
 
-  const messages = [
-    ...(conversation.messages as Array<Record<string, unknown>>),
+  const messages: ConversationMessage[] = [
+    ...conversation.messages,
     {
       speakerId,
       text,

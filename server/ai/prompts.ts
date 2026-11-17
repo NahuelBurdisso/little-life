@@ -17,6 +17,7 @@ import { maturityDirective } from './contentRating';
 import { intimacyLinesFor } from './intimacyContext';
 import { isAdultContent } from '../lib/worldRules';
 import { isAdultAge } from '../lib/intimacy/eligibility';
+import type { ConversationMessage } from '../db/schema';
 
 /**
  * Conversation topic of a marriage proposal (queued by lib/milestonesEngine.ts,
@@ -143,7 +144,7 @@ export interface RelationshipRow {
 
 export interface ConversationRow {
   id: number;
-  messages: Array<Record<string, any>>;
+  messages: ConversationMessage[];
   trigger_reason: string;
   topic: string | null;
   sentiment: number;
@@ -766,9 +767,9 @@ export function buildConversationPrompt(
   const contextItems = selectConversationContext({
     memories: memories.map(m => ({
       description: m.description,
-      emotional_valence: (m as any).emotional_valence ?? 0,
+      emotional_valence: m.emotional_valence ?? 0,
       created_at: m.created_at,
-      metadata: (m as any).metadata ?? {},
+      metadata: m.metadata ?? {},
     })),
     facts: gossipFacts ?? [],
     statePrompts: statePrompts ?? [],
@@ -840,9 +841,9 @@ export function buildConversationPrompt(
     : 0;
   // Get sentiment from last message (if any)
   const lastMsg = conversation.messages.length > 0
-    ? conversation.messages[conversation.messages.length - 1] as Record<string, any>
+    ? conversation.messages[conversation.messages.length - 1]
     : null;
-  const lastSentiment = lastMsg?.sentiment as number | undefined;
+  const lastSentiment = lastMsg?.sentiment;
 
   // The listener by the name the speaker calls them: the model echoes the form
   // the instruction uses, and "Start talking to Priya Sharma" came back as

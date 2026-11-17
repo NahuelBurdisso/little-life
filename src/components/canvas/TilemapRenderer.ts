@@ -15,6 +15,8 @@ import {
 import { doorSide, doorStartTile, pathRects, routeDoorPath } from "../../lib/doorRoute";
 
 import { OPEN_AREA_TYPES, OUTDOOR_TYPES } from "../../../server/lib/worldgen/buildingTemplates";
+import type { AgentView, LocationLite } from '../../lib/apiTypes';
+import type { AgentData } from './SpritePool';
 
 // ── Autotiled ground shapes ──────────────────────────────────────────────────
 // Roads, dirt patches and junction wear are rasterised on a 2px cell grid
@@ -112,7 +114,7 @@ const ZONE_TEXTURE: Record<string, string> = {
 // Green = active/working, yellow = idle/socializing,
 // blue = sleeping/resting, red = stressed/in conflict.
 // Exported for unit tests.
-export function activityDotColor(agent: any): number {
+export function activityDotColor(agent: Pick<AgentData, 'current_action' | 'activeStates'> | null | undefined): number {
   if (!agent) return 0xeab308; // yellow: unknown → treat as idle
   const action = agent.current_action;
   const actionType: string =
@@ -129,7 +131,7 @@ export function activityDotColor(agent: any): number {
   }
   // Conflict/stress — check active states first
   // A plain loop: this runs for every occupant on every data refresh.
-  const activeStates: any[] = agent.activeStates ?? [];
+  const activeStates = agent.activeStates ?? [];
   for (let i = 0; i < activeStates.length; i++) {
     const s = activeStates[i];
     const state: string = typeof s === 'string' ? s : s.type;
@@ -161,7 +163,7 @@ export class TilemapRenderer {
   private occupancyDots: PIXI.Graphics[] = [];
   /** Fill colour each pooled dot currently shows, so a dot only redraws when its colour changes. */
   private occupancyDotColors: number[] = [];
-  private occupantScratch: any[] = [];
+  private occupantScratch: AgentView[] = [];
   private terrainContainer: PIXI.Container;
   private roadContainer: PIXI.Container;
   private doorPathContainer: PIXI.Container;
@@ -237,7 +239,7 @@ export class TilemapRenderer {
    * plaza, etc. are visually distinct from the default grass background.
    * Idempotent — re-running replaces prior patches.
    */
-  setOpenAreaZones(locations: any[]): void {
+  setOpenAreaZones(locations: LocationLite[]): void {
     // Detach first: `destroy()` splices the child out of `children`, so
     // iterating the live array skips every second entry and leaks it.
     for (const child of this.openAreaContainer.removeChildren()) child.destroy();
@@ -386,7 +388,7 @@ export class TilemapRenderer {
    * straight L crossed neighbouring houses in tight organic blocks. A door with no
    * short clean route simply gets no path. Idempotent — re-running replaces prior paths.
    */
-  setDoorPaths(locations: any[], roadTiles: Array<{ x: number; y: number }>): void {
+  setDoorPaths(locations: LocationLite[], roadTiles: Array<{ x: number; y: number }>): void {
     // Detach first: `destroy()` splices the child out of `children`, so
     // iterating the live array skips every second entry and leaks it.
     for (const child of this.doorPathContainer.removeChildren()) child.destroy();
@@ -797,7 +799,7 @@ export class TilemapRenderer {
     g.ellipse(cx - r * 0.25, cy - r * 0.25, r * 0.5, r * 0.35).fill({ color: 0x8b8377 });
   }
 
-  updateOccupancy(agents: any[], locations: any[]): void {
+  updateOccupancy(agents: AgentView[], locations: LocationLite[]): void {
     // Dots live in a pool that is repositioned, recoloured and shown/hidden in place: this runs on
     // every data refresh (~1 Hz) and used to destroy and recreate every Graphics each time.
     let used = 0;

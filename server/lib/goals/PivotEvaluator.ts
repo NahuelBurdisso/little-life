@@ -84,7 +84,7 @@ export class PivotEvaluator {
     }
   }
 
-  private async attemptPivot(goal: any, agent: any, nowMinutes: number): Promise<void> {
+  private async attemptPivot(goal: typeof goals.$inferSelect, agent: typeof agents.$inferSelect, nowMinutes: number): Promise<void> {
     const recentMems = db.select({ description: memories.description }).from(memories)
       .where(and(eq(memories.agent_id, agent.id), eq(memories.is_active, 1)))
       .orderBy(desc(memories.created_at)).limit(10).all();
@@ -130,15 +130,15 @@ export class PivotEvaluator {
         description: goal.description ?? goal.type,
         newStrategy: result.new_strategy,
       });
-    } catch (error: any) {
+    } catch (error) {
       if (isStaleWorldEpoch(worldEpoch)) return;
-      const errMsg = error?.message ?? String(error);
+      const errMsg = error instanceof Error ? error.message : String(error);
       logActivity({ type: 'error', templateData: { system: 'goals', message: `Pivot LLM failed for ${agent.name}: ${errMsg}` } });
       this.abandonGoal(goal, agent.id, 'failed to find alternative approach', nowMinutes);
     }
   }
 
-  private abandonGoal(goal: any, agentId: number, reason: string, nowMinutes: number): void {
+  private abandonGoal(goal: typeof goals.$inferSelect, agentId: number, reason: string, nowMinutes: number): void {
     db.update(goals)
       .set({ status: 'abandoned', completed_at: nowMinutes })
       .where(eq(goals.id, goal.id))

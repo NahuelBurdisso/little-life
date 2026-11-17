@@ -44,6 +44,9 @@ const WATER_KINDS: ReadonlySet<string> = new Set(['water', 'pond', 'river', 'lak
 const OBSTACLE_KINDS: ReadonlySet<string> = new Set(['tree', 'bush', 'rock']);
 const GROUND_KINDS: ReadonlySet<string> = new Set(['grass_tuft', 'flowers', 'dirt_patch']);
 
+/** Whichever critter a pool holds: the shared slot code only moves and fades it. */
+type AnyState = BirdState | ButterflyState | MothState | CatState | DuckState;
+
 interface Slot<S> {
   st: S;
   sprite: PIXI.Sprite;
@@ -155,14 +158,15 @@ class AmbientLifeSystem implements CanvasSystem {
   /** Terrain, roads-independent obstacles, buildings, homes and the well: only on change. */
   private rebuildWorld(data: DataContext): void {
     const world = data.world;
-    const terrain: any[] = world.terrain_tiles ?? [];
+    if (!world) return;
+    const terrain = world.terrain_tiles ?? [];
     const locs = data.locations;
     const mapW = world.map_width ?? 0, mapH = world.map_height ?? 0;
     const first = terrain[0], last = terrain[terrain.length - 1];
     const sig = [
       mapW, mapH, terrain.length, first ? first.x + ',' + first.y + first.kind : '',
       last ? last.x + ',' + last.y + last.kind : '', locs.length,
-    ].join('|') + locs.map((l: any) => l.id + l.type + l.position.x + ',' + l.position.y).join(';');
+    ].join('|') + locs.map((l) => l.id + l.type + l.position.x + ',' + l.position.y).join(';');
     if (sig === this.worldSig) return;
     this.worldSig = sig;
 
@@ -263,7 +267,7 @@ class AmbientLifeSystem implements CanvasSystem {
     }
   }
 
-  private pool(kind: Kind): Slot<any>[] {
+  private pool(kind: Kind): Slot<AnyState>[] {
     return this[kind];
   }
 
@@ -358,7 +362,7 @@ class AmbientLifeSystem implements CanvasSystem {
     for (let i = 0; i < KINDS.length; i++) {
       const kind = KINDS[(this.spawnTurn + i) % KINDS.length];
       const pool = this.pool(kind);
-      let live = 0, free: Slot<any> | null = null;
+      let live = 0, free: Slot<AnyState> | null = null;
       for (const s of pool) {
         if (s.active) { if (!s.retiring) live++; } else if (!free) free = s;
       }
@@ -367,17 +371,17 @@ class AmbientLifeSystem implements CanvasSystem {
     }
   }
 
-  private trySpawn(kind: Kind, slot: Slot<any>, view: ViewRect): boolean {
+  private trySpawn(kind: Kind, slot: Slot<AnyState>, view: ViewRect): boolean {
     switch (kind) {
-      case 'birds': return this.spawnBird(slot, view);
-      case 'butterflies': return this.spawnButterfly(slot, view);
-      case 'moths': return this.spawnMoth(slot, view);
-      case 'cats': return this.spawnCat(slot, view);
-      case 'ducks': return this.spawnDuck(slot, view);
+      case 'birds': return this.spawnBird(slot as Slot<BirdState>, view);
+      case 'butterflies': return this.spawnButterfly(slot as Slot<ButterflyState>, view);
+      case 'moths': return this.spawnMoth(slot as Slot<MothState>, view);
+      case 'cats': return this.spawnCat(slot as Slot<CatState>, view);
+      case 'ducks': return this.spawnDuck(slot as Slot<DuckState>, view);
     }
   }
 
-  private activate(slot: Slot<any>, layer: PIXI.Container): void {
+  private activate(slot: Slot<AnyState>, layer: PIXI.Container): void {
     slot.active = true;
     slot.retiring = false;
     slot.fade = 0;
@@ -387,7 +391,7 @@ class AmbientLifeSystem implements CanvasSystem {
     if (slot.sprite.parent !== layer) layer.addChild(slot.sprite);
   }
 
-  private deactivate(slot: Slot<any>): void {
+  private deactivate(slot: Slot<AnyState>): void {
     slot.active = false;
     slot.retiring = false;
     slot.sprite.visible = false;
@@ -397,14 +401,14 @@ class AmbientLifeSystem implements CanvasSystem {
     for (const kind of KINDS) for (const s of this.pool(kind)) if (s.active) this.deactivate(s);
   }
 
-  private setFrame(slot: Slot<any>, frame: number): void {
+  private setFrame(slot: Slot<AnyState>, frame: number): void {
     if (slot.frame === frame || !this.tex) return;
     slot.frame = frame;
     slot.sprite.texture = this.tex[frame];
   }
 
   /** Fade toward 1 (or toward 0 while retiring) and recycle once invisible. Returns alpha. */
-  private fadeOf(slot: Slot<any>, dt: number): number {
+  private fadeOf(slot: Slot<AnyState>, dt: number): number {
     if (slot.retiring) {
       slot.fade -= dt * FADE_OUT;
       if (slot.fade <= 0) { this.deactivate(slot); return 0; }
@@ -414,7 +418,7 @@ class AmbientLifeSystem implements CanvasSystem {
     return slot.fade;
   }
 
-  private tooClose(pool: Slot<any>[], x: number, y: number, r: number): boolean {
+  private tooClose(pool: Slot<AnyState>[], x: number, y: number, r: number): boolean {
     for (const s of pool) {
       if (!s.active) continue;
       const dx = s.st.x - x, dy = s.st.y - y;

@@ -1,6 +1,7 @@
 import type { PlaceSound } from "../../../../lib/audio/soundscape";
 import type { PlaceState } from "../placeLife/placeState";
 import { furnitureSpot } from "../placeLife/zoneGeometry";
+import type { LocationLite } from '../../../../lib/apiTypes';
 
 /**
  * Which buildings are making noise, and from where — the audio side of place life.
@@ -20,14 +21,14 @@ const CROWD_FULL = 8;
 const SQUARE_FULL = 10;
 const OPEN_CROWD_TYPES: ReadonlySet<string> = new Set(['town_square', 'park']);
 
-export function buildAudioPlaces(locations: any[], states: PlaceState[], night: boolean): PlaceSound[] {
+export function buildAudioPlaces(locations: LocationLite[], states: PlaceState[], night: boolean): PlaceSound[] {
   const out: PlaceSound[] = [];
-  const byId = new Map<number, any>();
+  const byId = new Map<number, LocationLite>();
   for (const l of locations) if (l?.id != null) byId.set(l.id, l);
   for (const st of states) {
     const loc = byId.get(st.id);
     const pos = loc?.position;
-    if (!pos?.width) continue;
+    if (!loc || !pos?.width) continue;
     const cx = pos.x + pos.width / 2;
     const cy = pos.y + pos.height / 2;
     switch (st.type) {

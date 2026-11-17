@@ -1,5 +1,6 @@
 import { db } from '../../db';
 import { agents, locations } from '../../db/schema';
+import type { AgentAction } from '../../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from '../../lib/activityLogger';
 import { CONFIG } from '../../lib/constants';
@@ -300,17 +301,19 @@ function handleArrival(agent: AgentRow, world: WorldRow): void {
   }
 
   const queue = [...agent.action_queue];
-  let next: Record<string, any> = queue.shift() ?? { type: 'idle' };
+  let next: AgentAction = queue.shift() ?? { type: 'idle' };
 
   // Compat for queues saved before walks went straight to the spot: those
   // carried the spot as `zoneX/zoneY` for a second walk (indoors) or a 5-tick
   // lerp (open areas) started here. Walk there now, the modern way; nothing
   // new writes these fields.
-  if (next.zoneX !== undefined && next.zoneY !== undefined) {
-    const { zoneX, zoneY, targetZone, targetBuildingType, ...rest } = next;
+  const { zoneX, zoneY, targetZone, targetBuildingType, ...rest } = next;
+  if (typeof zoneX === 'number' && typeof zoneY === 'number') {
     next = {
       ...rest,
-      ...(targetZone && targetBuildingType ? { _arrivalZone: targetZone, _arrivalBuilding: targetBuildingType } : {}),
+      ...(typeof targetZone === 'string' && typeof targetBuildingType === 'string'
+        ? { _arrivalZone: targetZone, _arrivalBuilding: targetBuildingType }
+        : {}),
     };
     if (distance(agent.position, { x: zoneX, y: zoneY }) >= CONFIG.MOVEMENT.ARRIVAL_THRESHOLD_PX) {
       db.update(agents)
@@ -350,14 +353,14 @@ function handleArrival(agent: AgentRow, world: WorldRow): void {
 export function startQueuedAction(
   agentId: number,
   locationId: number | null,
-  action: Record<string, any>,
-  queue: Record<string, any>[],
+  action: AgentAction,
+  queue: AgentAction[],
   time: { day: number; hour: number; minute: number },
 ): void {
   const {
     _arrivalZone, _arrivalBuilding, _interiorArrivalZone, _interiorArrivalBuilding, _duration, ...clean
   } = action;
-  const resolved: Record<string, any> = clean.type ? clean : { type: 'idle' };
+  const resolved: AgentAction = clean.type ? clean : { type: 'idle' };
   const zone: string | undefined = _arrivalZone ?? _interiorArrivalZone;
   const building: string | undefined = _arrivalBuilding ?? _interiorArrivalBuilding;
   if (zone && building) {
@@ -465,17 +468,17 @@ export function tick(world: WorldRow): void {
   for (const agent of activeAgents) {
     // Compat: an agent saved mid-way through the old 5-tick open-area lerp.
     // Finish it on the spot; nothing new starts one (walks go to the spot).
-    const action = agent.current_action as any;
+    const action = agent.current_action;
     if (action?._transitioning) {
       const { _transitioning, _transitionTicks, _fromX, _fromY, _toX, _toY, ...cleanAction } = action;
       executeZoneAction(cleanAction.zoneActivity ?? cleanAction.type, agent.id);
-      db.update(agents).set({ position: { x: _toX, y: _toY }, current_action: cleanAction })
+      db.update(agents).set({ position: { x: _toX ?? agent.position.x, y: _toY ?? agent.position.y }, current_action: cleanAction })
         .where(eq(agents.id, agent.id)).run();
       dirty = true;
       continue;
     }
 
-    if (agent.current_destination === null || (agent.current_action as any)?.type !== 'walking') {
+    if (agent.current_destination === null || agent.current_action?.type !== 'walking') {
       walkOrigin.set(agent.id, agent.current_location);
       continue;
     }
