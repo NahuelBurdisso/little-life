@@ -23,7 +23,7 @@ import { StateType, type AgentStateRow } from '../../../lib/states';
 import { isIntimacyEligible } from '../../../lib/intimacy/eligibility';
 import { createFact, getAgentName, jealousRumorContext } from '../../../lib/gossip';
 import { taskRunner } from '../../../ai/taskRunner';
-import { simEvents } from '../../../lib/simEvents';
+import { simEvents, type SimEventPayloads } from '../../../lib/simEvents';
 import { contagionMultiplier, getRules, sicknessMultiplier, type LiveRules } from '../../../lib/worldRules';
 import { zoneOccupancy } from '../../../lib/interiorGrid';
 import { giveImpulsiveGift } from '../../../lib/giftEngine';
@@ -362,6 +362,14 @@ function worsenUntreatedSickness(
         .where(eq(agentStates.id, state.id))
         .run();
       const grave = isGravelyIll(next);
+      if (grave && meta.grave !== true) {
+        // The first time it turns grave. `metadata.grave` is what goals.ts
+        // reads to send friends to an ill neighbour at any severity (it was
+        // read but nothing wrote it); `health:grave` lets later systems react.
+        meta = { ...meta, grave: true };
+        const payload: SimEventPayloads['health:grave'] = { agentId: agent.id, severity: next.severity };
+        simEvents.emit('health:grave', payload);
+      }
       logActivity({
         type: 'drama',
         initiator: agent.id,

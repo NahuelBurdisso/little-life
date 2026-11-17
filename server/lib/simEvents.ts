@@ -13,4 +13,9 @@ export { simEvents };
 export interface SimEventPayloads {
   /** A sentence ran out (engine/systems/states.ts). `locationId`: the prison they walk out of. */
   'crime:released': { agentId: number; locationId: number | null };
+  /**
+   * An untreated illness has just turned grave (engine/systems/states/effects.ts):
+   * once per illness, when `metadata.grave` is first set. `severity` is the new one.
+   */
+  'health:grave': { agentId: number; severity: number };
 }
