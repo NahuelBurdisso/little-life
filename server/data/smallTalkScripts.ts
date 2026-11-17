@@ -126,7 +126,26 @@ export interface ChatContext {
    * say something in particular, and the fallback must not be the weather.
    */
   trigger?: string | null;
+  /**
+   * News about the listener that the opener knows (lib/partnerView.ts `newsKeyOf`):
+   * just out of jail, out of work, thinking of leaving, a birthday, in debt. The
+   * `their_news` script is written for it, so a template chat doesn't greet a man
+   * just out of jail with the weather. Optional: contexts built before it have none.
+   */
+  news?: ChatNews | null;
 }
+
+/** What `ChatContext.news` can be (lib/partnerView.ts decides which, if any). */
+export type ChatNews = 'released' | 'lost_job' | 'birthday' | 'leaving' | 'in_debt';
+
+/** Words every line of `their_news` carries, per piece of news. */
+export const NEWS_ANCHORS: Record<ChatNews, string[]> = {
+  released: ['back'],
+  lost_job: ['work'],
+  birthday: ['birthday'],
+  leaving: ['leav', 'stay'],
+  in_debt: ['money', 'times'],
+};
 
 /** The queued topic is a flirt (perception crush / infatuation, personality pick). */
 export const isFlirtIntent = (c: ChatContext) => /^(?:flirting|romance)$/i.test(c.intent ?? '');
@@ -1567,6 +1586,127 @@ export const SMALL_TALK_SCRIPTS: TopicScript[] = [
     close: [
       { text: "I'm done here.", s: -0.4 },
       { text: "I've nothing more to say to you here.", s: -0.5 },
+    ],
+  },
+
+  // ===== news about the listener that the opener has heard =====
+  // Out of jail, out of work, thinking of leaving, a birthday, money trouble
+  // (lib/partnerView.ts decides what the opener knows). Preferred when there is
+  // news (templateChat.ts `preferredScripts`): nobody greets a man just out of
+  // jail with "lovely day". Every line carries its news's anchor (NEWS_ANCHORS).
+  {
+    id: 'their_news',
+    cooldownHours: 12,
+    when: (c) => civil(c) && c.news != null,
+    weight: () => 6,
+    topic: (c) => c.news === 'released' ? 'being back' : c.news === 'lost_job' ? 'losing work'
+      : c.news === 'leaving' ? 'leaving town' : c.news === 'birthday' ? 'a birthday' : 'hard times',
+    anchors: (c) => c.news ? NEWS_ANCHORS[c.news] : [...new Set(Object.values(NEWS_ANCHORS).flat())],
+    openers: [
+      {
+        kind: 'ask', text: 'Good to have you back, {you}. Are you keeping well?', s: 0.1,
+        when: (c) => c.news === 'released',
+        replies: [
+          { text: "Well enough. It's good to be back home.", s: 0.1, stance: 'agree' },
+          { text: "I'd rather not talk about where I've been. But it's good to be back.", s: 0, stance: 'neutral' },
+          { text: 'Back, and everyone staring at me. I know what they think.', s: -0.2, stance: 'disagree', voice: ['gruff', 'shy', 'plain'] },
+        ],
+      },
+      {
+        kind: 'tell', text: 'I heard you were back, {you}. Welcome home.', s: 0.1,
+        when: (c) => c.news === 'released',
+        replies: [
+          { text: "Thank you. It's good to be back where I belong.", s: 0.1, stance: 'agree' },
+          { text: 'Back, yes. Not everyone is as kind about it as you.', s: 0, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'ask', text: 'I heard about your work, {you}. What will you do now?', s: 0,
+        when: (c) => c.news === 'lost_job',
+        replies: [
+          { text: 'Find other work. I have to.', s: 0, stance: 'neutral' },
+          { text: "I don't know yet. Without work the days are long.", s: -0.2, stance: 'agree' },
+          { text: "There's always work for someone who looks. I'll manage.", s: 0.1, stance: 'disagree', voice: ['gruff', 'plain'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "I'm sorry about your work, {you}. It's a hard thing.", s: 0.1,
+        when: (c) => c.news === 'lost_job',
+        replies: [
+          { text: "It is. I'll look for work elsewhere.", s: 0, stance: 'agree' },
+          { text: "Thank you. I'm not finished with work yet.", s: 0.1, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'ask', text: "Is it true you're thinking of leaving town, {you}?", s: 0,
+        when: (c) => c.news === 'leaving',
+        replies: [
+          { text: "I've been thinking of leaving. There's not much keeping me.", s: -0.2, stance: 'agree' },
+          { text: "Maybe. I haven't made up my mind to leave or stay.", s: 0, stance: 'neutral' },
+          { text: "Who told you I'm leaving? I'll stay or go as I please.", s: -0.3, stance: 'disagree', voice: ['gruff'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "I'd be sorry to see you leave, {you}.", s: 0.1,
+        when: (c) => c.news === 'leaving',
+        replies: [
+          { text: "That's kind. Maybe I'll stay a while yet.", s: 0.1, stance: 'agree' },
+          { text: "I've not decided to leave. Not yet.", s: 0, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'ask', text: 'Happy birthday, {you}! Doing anything for your birthday?', s: 0.1,
+        when: (c) => c.news === 'birthday',
+        replies: [
+          { text: 'Nothing much. A quiet birthday suits me.', s: 0.1, stance: 'neutral' },
+          { text: "A drink tonight, I think. It's not every day it's my birthday.", s: 0.3, stance: 'agree' },
+          { text: 'Birthdays are for children.', s: -0.1, stance: 'disagree', voice: ['gruff'] },
+        ],
+      },
+      {
+        kind: 'tell', text: 'Many happy returns, {you}. Happy birthday.', s: 0.1,
+        when: (c) => c.news === 'birthday',
+        replies: [
+          { text: 'Thank you! You remembered my birthday.', s: 0.3, stance: 'agree' },
+          { text: 'Thank you. Another birthday, another year older.', s: 0.1, stance: 'neutral' },
+        ],
+      },
+      {
+        kind: 'ask', text: 'How are you managing for money, {you}? I heard times are hard.', s: 0,
+        when: (c) => c.news === 'in_debt',
+        replies: [
+          { text: "Hard times, but I'll get by.", s: 0, stance: 'neutral' },
+          { text: "Not well. Money's tighter than it's ever been.", s: -0.2, stance: 'agree' },
+          { text: 'My money is my own business.', s: -0.3, stance: 'disagree', voice: ['gruff', 'shy'] },
+        ],
+      },
+      {
+        kind: 'tell', text: "Times are hard for you, {you}, I know. If you're short of money, say so.", s: 0.1,
+        when: (c) => c.news === 'in_debt',
+        replies: [
+          { text: "That's kind. Times will turn, I hope.", s: 0.1, stance: 'agree' },
+          { text: "I'll manage. I won't take anyone's money.", s: -0.1, stance: 'disagree' },
+        ],
+      },
+    ],
+    follow: [
+      { text: "Whatever's past, you're back among your own now.", s: 0.1, when: (c) => c.news === 'released' },
+      { text: "Something will turn up. There's always work for willing hands.", s: 0.1, when: (c) => c.news === 'lost_job' },
+      { text: 'Stay, {you}. The place would be poorer without you.', s: 0.1, when: (c) => c.news === 'leaving' },
+      { text: 'I hope this birthday is a good one.', s: 0.1, when: (c) => c.news === 'birthday' },
+      { text: 'Hard times never last, {you}.', s: 0.1, when: (c) => c.news === 'in_debt' },
+    ],
+    close: [
+      { text: 'Welcome back, {you}.', s: 0.1, when: (c, me) => c.news === 'released' && byOpener(c, me) },
+      { text: "Thank you, {you}. It's good to be back.", s: 0.1, when: (c, me) => c.news === 'released' && !byOpener(c, me) },
+      { text: 'Chin up, {you}. Work will come.', s: 0.1, when: (c, me) => c.news === 'lost_job' && byOpener(c, me) },
+      { text: "Thank you, {you}. I'll find work soon enough.", s: 0.1, when: (c, me) => c.news === 'lost_job' && !byOpener(c, me) },
+      { text: "Don't leave without saying goodbye, {you}.", s: 0.1, when: (c, me) => c.news === 'leaving' && byOpener(c, me) },
+      { text: "I'll think about whether to stay, {you}.", s: 0.1, when: (c, me) => c.news === 'leaving' && !byOpener(c, me) },
+      { text: 'Happy birthday again, {you}.', s: 0.1, when: (c, me) => c.news === 'birthday' && byOpener(c, me) },
+      { text: "Thank you, {you}. It's a better birthday for seeing you.", s: 0.1, when: (c, me) => c.news === 'birthday' && !byOpener(c, me) },
+      { text: 'Better times are coming, {you}.', s: 0.1, when: (c, me) => c.news === 'in_debt' && byOpener(c, me) },
+      { text: 'Thank you, {you}. Better times, I hope.', s: 0.1, when: (c, me) => c.news === 'in_debt' && !byOpener(c, me) },
     ],
   },
 ];

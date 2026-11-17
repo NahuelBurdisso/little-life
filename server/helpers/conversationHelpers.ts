@@ -85,6 +85,7 @@ export function goalPromptLines(
     });
 }
 import { getDrinkCount } from '../lib/tavernEngine';
+import { partnerViewFor, partnerViewLine, pronounsFor } from '../lib/partnerView';
 
 export async function getConversationContext(conversationId: number, speakerId: number) {
   // Load conversation and world state first (needed to derive otherId and currentTick)
@@ -265,6 +266,19 @@ export async function getConversationContext(conversationId: number, speakerId: 
   // Subjects the speaker kept returning to in other conversations today.
   const recentSubjects = world.time ? repeatedSubjects(speakerId, gameMinutes(world.time)) : [];
 
+  // What the speaker can see of the listener (ill, mourning, drunk) and knows
+  // (out of jail, in debt, a feud's sides) — only what they could plausibly know.
+  let partnerLine: string | null = null;
+  try {
+    partnerLine = partnerViewLine(
+      partnerViewFor(speakerId, otherId, world.time ? gameMinutes(world.time) : undefined),
+      firstName(otherAgent.name),
+      pronounsFor(otherAgent.gender),
+    );
+  } catch (err) {
+    console.warn('[conversation] partner view failed:', (err as Error).message);
+  }
+
   const newcomer: 'speaker' | 'listener' | null = isNewcomer(speaker.created_at, currentTick)
     ? 'speaker'
     : isNewcomer(otherAgent.created_at, currentTick) ? 'listener' : null;
@@ -290,6 +304,7 @@ export async function getConversationContext(conversationId: number, speakerId: 
     newcomer,
     otherJobTitle,
     recentSubjects,
+    partnerLine,
   };
 }
 

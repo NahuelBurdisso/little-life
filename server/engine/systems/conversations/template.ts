@@ -14,6 +14,7 @@ import { queuedTopic } from '../../../ai/prompts';
 import { composeTemplateChat } from '../../../lib/templateChat';
 import { recordTownTemplate, townRecentTemplates } from '../../../lib/templateVariety';
 import { buildTemplateChatContext } from '../../../helpers/templateChatContext';
+import { newsKeyOf, partnerViewFor } from '../../../lib/partnerView';
 import { simEvents } from '../../../lib/simEvents';
 import { extractTopics } from '../../../ai/topics';
 import { clamp } from '../../../lib/utils';
@@ -67,6 +68,9 @@ export async function processTimedOutEntry(
     ...buildTemplateChatContext(agentList, locationId, world),
     intent: entry.topic ?? null,
     trigger: entry.trigger_reason,
+    // What the opener has heard of the listener (out of jail, out of work…): the
+    // same knowledge gate the LLM tier's prompt uses (lib/partnerView.ts).
+    news: newsKeyOf(partnerViewFor(agentList[0].id, agentList[1].id, gameMinutes(world.time))),
   };
   const chat = composeTemplateChat(chatContext, {
     lastUsed: scriptLastUsed(orderedA, orderedB),

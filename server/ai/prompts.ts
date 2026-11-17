@@ -717,6 +717,11 @@ export interface ConversationPromptParams {
   otherJobTitle?: string | null;
   /** Words the speaker kept returning to in other conversations today (lib/topicMemory.ts). */
   recentSubjects?: string[];
+  /**
+   * What the speaker can see or knows of the listener right now (lib/partnerView.ts):
+   * ill, in mourning, just out of jail, in a feud... One or two short lines, or null.
+   */
+  partnerLine?: string | null;
 }
 
 /**
@@ -813,6 +818,10 @@ export function buildConversationPrompt(
   // "the Mayor" and nothing tied that title to Thomas. The full name appears
   // once here (memories use it); everything after uses the spoken name.
   userParts.push(buildListenerLine(otherAgent, params.otherJobTitle ?? null));
+  // How they are right now, as far as the speaker can tell (lib/partnerView.ts):
+  // the listener's states used to be invisible, so a neighbour talked weather to
+  // a man with a fever and small talk to a widow the day after the funeral.
+  if (params.partnerLine) userParts.push(params.partnerLine);
 
   // Relationship tag
   const otherRomance = relationship

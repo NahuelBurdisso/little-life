@@ -12,6 +12,7 @@ import {
 import {
   EVENT_TALK,
   JOB_NOUNS,
+  type ChatNews,
   FLIRT_SCRIPT_IDS,
   SMALL_TALK_SCRIPTS,
   type ChatContext,
@@ -113,8 +114,13 @@ function randomContext(rng: Rng): ChatContext {
       bartender: rng() < 0.6 ? 'Pablo' : undefined,
     },
     intent: rng() < 0.35 ? pick(INTENTS) : null,
+    // News the opener has heard (lib/partnerView.ts), now and then: the last draw, so
+    // every context before it is the same as it was.
+    news: rng() < 0.1 ? pick(NEWS) : null,
   };
 }
+
+const NEWS: readonly ChatNews[] = ['released', 'lost_job', 'birthday', 'leaving', 'in_debt'];
 
 const lower = (s: string) => s.toLowerCase();
 

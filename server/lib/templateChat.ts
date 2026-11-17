@@ -299,7 +299,8 @@ export const TOWN_REPEAT_FACTOR = 0.2;
  * helping hand, comfort → the rough-day script first, a couple's "catching
  * up" → sweethearts. Whatever the intent, a grieving listener is owed
  * condolences and a sick one is asked after (their state is why anyone would
- * stop to talk, and the fallback chat for a queued visit must not ignore it).
+ * stop to talk, and the fallback chat for a queued visit must not ignore it),
+ * and news the opener has heard of them is mentioned (`their_news`).
  */
 export function preferredScripts(c: ChatContext): Set<string> {
   const intent = (c.intent ?? '').trim().toLowerCase();
@@ -311,6 +312,10 @@ export function preferredScripts(c: ChatContext): Set<string> {
   if (couple && (intent === 'catching up' || intent === '')) out.add('sweethearts');
   if (isGrieving(c.people[1])) out.add('condolence');
   if (isSick(c.people[1])) out.add('feeling_poorly');
+  // News the opener has heard about them (lib/partnerView.ts): out of jail, out of
+  // work, leaving, a birthday, money trouble. The same "what you know of them"
+  // the LLM tier's prompt carries.
+  if (c.news) out.add('their_news');
   return out;
 }
 

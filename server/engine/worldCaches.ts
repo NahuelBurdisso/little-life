@@ -77,6 +77,7 @@ import { clearFamilyState, familySnapshotStore } from '../lib/familyState';
 import { clearSocialCallState, socialCallsSnapshotStore } from '../lib/socialCalls';
 import { clearGatheringState, gatheringsSnapshotStore } from '../lib/gatherings';
 import { clearFactions, factionsSnapshotStore } from '../lib/factions/store';
+import { clearPartnerNews } from '../lib/partnerView';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
 import type { SnapshotStore } from './snapshotCodec';
 
@@ -232,6 +233,8 @@ export function clearPerWorldCaches(): void {
   clearGatheringState();
   // Feuds, who took whose side, the side-taking caps and thaws (lib/factions): agent ids and game minutes.
   clearFactions();
+  // Recent news about each resident the dialogue prompt may mention (lib/partnerView.ts): agent ids and game minutes.
+  clearPartnerNews();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();

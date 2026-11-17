@@ -85,3 +85,23 @@ export function nameWords(names: Iterable<string>): Set<string> {
   for (const n of names) for (const w of n.toLowerCase().match(/[a-z']+/g) ?? []) out.add(w.replace(/'s$/, ''));
   return out;
 }
+
+/** Pronouns for a resident's `gender`: she/her, he/him, or they/them when unknown. */
+export interface Pronouns {
+  subj: string;
+  obj: string;
+  pos: string;
+  /** "is"/"are" after `subj`. */
+  be: string;
+}
+
+/**
+ * The one pronoun helper (feed lines, eulogies, the dialogue prompt). Several
+ * modules had their own inline ternary, and the eulogy templates had none at all:
+ * every dead man and woman was "them".
+ */
+export function pronounsFor(gender: string | null | undefined): Pronouns {
+  return gender === 'female' ? { subj: 'she', obj: 'her', pos: 'her', be: 'is' }
+    : gender === 'male' ? { subj: 'he', obj: 'him', pos: 'his', be: 'is' }
+      : { subj: 'they', obj: 'them', pos: 'their', be: 'are' };
+}
