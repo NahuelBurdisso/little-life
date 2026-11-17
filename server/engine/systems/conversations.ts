@@ -51,6 +51,7 @@ import {
   isPastBedtime,
   needsWrapUpReason,
   queueDeadlineGameMin,
+  type ConversationPlan,
   type NeedsWrapUpReason,
 } from '../../lib/conversationPacing';
 import { simEvents } from '../../lib/simEvents';
@@ -302,635 +303,881 @@ function partnerDistressState(states: readonly string[]): string | null {
   return states.find((s) => DISTRESS_STATES.includes(s)) ?? (states.includes('sick') ? 'sick' : null);
 }
 
-export async function conversationsTick(): Promise<void> {
+type SchedulerStateRow = typeof conversationSchedulerState.$inferSelect;
+
+/** An LLM conversation opened in the transaction, handed to the task runner after it. */
+interface ConversationDispatch {
+  conversationId: number;
+  speakerId: number;
+  participantIds: number[];
+  participantNames: string[];
+  /** The queue row it came from, restored if the task runner refuses it. */
+  entry: QueueRow;
+  /** Game minute to stamp as the latency probe, if this dispatch is one. */
+  probeAt: number | null;
+}
+
+/**
+ * What the sync pass leaves for the async pass. Filled inside the transaction
+ * and read only after it has committed: everything here is work that must not
+ * run inside it (the task runner, awaited template and completion processing,
+ * the dirty-channel emits).
+ */
+interface ConversationTickOutcome {
   // Collected LLM dispatch tasks — executed OUTSIDE the transaction (fire-and-forget async)
-  const dispatches: Array<{
-    conversationId: number;
-    speakerId: number;
-    participantIds: number[];
-    participantNames: string[];
-    /** The queue row it came from, restored if the task runner refuses it. */
-    entry: QueueRow;
-    /** Game minute to stamp as the latency probe, if this dispatch is one. */
-    probeAt: number | null;
-  }> = [];
+  dispatches: ConversationDispatch[];
   // Completed LLM conversations to process asynchronously — OUTSIDE the transaction.
   // `truncated` marks conversations the game-minute budget cut before their
   // planned turns, so downstream consumers can tell a cut-short exchange from a
   // natural one (or from someone leaving to sleep or eat).
-  const completedConversations: Array<{ conversation: ConversationRow; world: WorldRow; truncated: boolean }> = [];
+  completedConversations: Array<{ conversation: ConversationRow; world: WorldRow; truncated: boolean }>;
   // Timed-out queue entries needing template fallback — OUTSIDE the transaction
-  const timedOutQueue: Array<{ entry: QueueRow; world: WorldRow }> = [];
+  timedOutQueue: Array<{ entry: QueueRow; world: WorldRow }>;
   // Conversations Step A closed this tick: any LLM turn still running for them
   // is cancelled after the transaction, freeing its runner and LLM slots.
-  const closedIds: number[] = [];
-
-  let changed = false;
+  closedIds: number[];
+  changed: boolean;
   // Set when Step A puts an agent back to idle; the agent snapshot has to be
   // re-pushed to the client even though no conversation row changed.
-  let agentsReleased = false;
+  agentsReleased: boolean;
+}
+
+/**
+ * Everything the steps of the sync pass read and mutate, built once per tick
+ * inside the transaction. `out` is what crosses over to the async pass.
+ */
+interface ConversationTickState {
+  out: ConversationTickOutcome;
+  world: WorldRow;
+  schedulerState: SchedulerStateRow;
+  /** The scheduler's entries as read at the start of the tick (Step A mutates them in place). */
+  activeLLM: ActiveLLMEntry[];
+  llmTotal: number;
+  templateTotal: number;
+  queueTimeouts: number;
+  /** WALL-CLOCK ms. */
+  now: number;
+  // Conversation budgets and queue waits are GAME minutes (see
+  // conversationPacing.ts), so the conversation rate follows the game clock.
+  nowGameMin: number;
+  // Who is tied up in a conversation this tick — see "Participant claims" below.
+  // Built from the scheduler's OWN entries, not from every `active` row: a row
+  // whose completion crashed stayed `active` forever, and reading busy-ness off
+  // the table locked its participants out of every future conversation.
+  // Entries Step A completes this tick still count (they're processed after the
+  // transaction, and their participants are still `talking` until then).
+  busyAgents: Set<number>;
+  /** Pair key → topic of the live conversation between them. */
+  livePairs: Map<string, string | null>;
+  /** Agent → game minute by which the conversation holding them must be over. */
+  agentFreeAt: Map<number, number>;
+  /** Agents claimed by a conversation started (or being staged) this pass. */
+  claimedAgents: Set<number>;
+  /** Pairs a higher-priority LLM entry is waiting on this pass (slots full). */
+  reservedPairs: Set<string>;
+  /** LLM conversations running after Step A plus those opened this pass. */
+  currentActive: number;
+  /** Chains the task runner can still take, read when the queue pass starts. */
+  runnerFreeSlots: number;
+  /** The scheduler entries written back at the end of the pass. */
+  fillEntries: ActiveLLMEntry[];
+}
+
+export async function conversationsTick(): Promise<void> {
+  const out: ConversationTickOutcome = {
+    dispatches: [],
+    completedConversations: [],
+    timedOutQueue: [],
+    closedIds: [],
+    changed: false,
+    agentsReleased: false,
+  };
 
   // ── Sync part: all DB reads and writes inside a single transaction ──────────
-  db.transaction(() => {
-    const world = db.select().from(worldState).get();
-    if (!world) return;
-
-    // Read scheduler state singleton
-    const schedulerState = db.select().from(conversationSchedulerState).get();
-    if (!schedulerState) return;
-
-    const activeLLM: ActiveLLMEntry[] = [
-      ...(schedulerState.active_llm_conversations as ActiveLLMEntry[]),
-    ];
-    let llmTotal = schedulerState.stats.llmConversationsTotal;
-    let templateTotal = schedulerState.stats.templateConversationsTotal;
-    let queueTimeouts = schedulerState.stats.queueTimeoutsTotal;
-
-    // --- Step A: Check active LLM conversations ---
-    const toRemove = new Set<number>();
-    const orphanAgeMs = schedulerState.max_turns_deep * ORPHAN_MS_PER_DEEP_TURN;
-    const now = Date.now();
-    // Conversation budgets and queue waits are GAME minutes (see
-    // conversationPacing.ts), so the conversation rate follows the game clock.
-    const nowGameMin = gameMinutes(world.time);
-
-    // Who is tied up in a conversation this tick — see "Participant claims" below.
-    // Built from the scheduler's OWN entries, not from every `active` row: a row
-    // whose completion crashed stayed `active` forever, and reading busy-ness off
-    // the table locked its participants out of every future conversation.
-    // Entries Step A completes this tick still count (they're processed after the
-    // transaction, and their participants are still `talking` until then).
-    const busyAgents = new Set<number>();
-    /** Pair key → topic of the live conversation between them. */
-    const livePairs = new Map<string, string | null>();
-    /** Agent → game minute by which the conversation holding them must be over. */
-    const agentFreeAt = new Map<number, number>();
-    const registerLive = (participants: number[], topic: string | null, freeAt: number): void => {
-      for (const id of participants) {
-        busyAgents.add(id);
-        agentFreeAt.set(id, Math.max(agentFreeAt.get(id) ?? 0, freeAt));
-      }
-      livePairs.set(conversationPairKey(participants), topic);
-    };
-
-    for (const entry of activeLLM) {
-      const conversation = db
-        .select()
-        .from(conversations)
-        .where(eq(conversations.id, entry.conversationId))
-        .get();
-
-      if (!conversation) {
-        // Row is gone — nothing downstream will ever evict its cached identities.
-        clearConversationCache(entry.conversationId);
-        toRemove.add(entry.conversationId);
-        continue;
-      }
-
-      // Already ended by someone outside this system — `markConversationEnded`
-      // (LLM context lost) or `deactivateAgent` (participant died).
-      // `processCompletedConversation` bails immediately on `status === 'ended'`,
-      // so routing this arm there dequeued the entry and did nothing at all,
-      // stranding both agents in `current_action = 'talking'` forever. Release
-      // them and drop the caches here instead.
-      if (conversation.status === 'ended') {
-        if (releaseTalkingParticipants(conversation)) agentsReleased = true;
-        clearConversationCache(conversation.id);
-        toRemove.add(entry.conversationId);
-        changed = true;
-        continue;
-      }
-
-      const messages = conversation.messages as ConversationMessage[];
-
-      // Entries dispatched before game-time budgets existed carry only the
-      // wall-clock stamp: start their budget now rather than guess.
-      entry.startedGameMin ??= nowGameMin;
-      entry.plannedTurns ??= conversation.max_turns;
-      entry.budgetGameMin ??= conversationBudgetGameMinutes(entry.plannedTurns);
-      const graceGameMin = entry.graceGameMin ?? CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES;
-      const deadlineGameMin = entry.startedGameMin + entry.budgetGameMin;
-
-      // `truncated` = the CLOCK stopped it before its planned turns. Not set for
-      // a needs wrap-up (someone chose to leave) nor when the last planned turn
-      // landed in time (nothing was actually cut).
-      let completion: { truncated: boolean } | null = null;
-
-      if (!entry.wrapUp && messages.length >= conversation.max_turns) {
-        completion = { truncated: false };
-      } else {
-        if (!entry.wrapUp) {
-          // The turn the task runner is working on now (or would start next).
-          const inFlightSpeaker = nextSpeaker(conversation);
-          let target: number | null = null;
-          // Budget first: it is measured from the deadline itself, so the grace
-          // below runs from when the budget ran out, not from whichever tick
-          // noticed — the hard stop is always start + budget + grace.
-          if (nowGameMin >= deadlineGameMin) {
-            entry.wrapUp = { reason: 'budget', sinceGameMin: deadlineGameMin };
-            // Let the turn in flight land and, if nobody has spoken yet, the
-            // reply to it too (so an exchange that is merely slow still happens);
-            // the runner starts nothing beyond that. Grace bounds both.
-            target = Math.max(messages.length + 1, CONFIG.CONVERSATIONS.MIN_LLM_TURNS);
-          } else if (!entry.protected || messages.length >= CONFIG.CONVERSATIONS.MIN_LLM_TURNS) {
-            // Needs can end a conversation — but one the player asked for gets
-            // its first exchange before anyone's stomach or bedtime cuts in.
-            const needy = findNeedsInterrupt(conversation.participants as number[], world);
-            if (needy) {
-              entry.wrapUp = { reason: needy.reason, sinceGameMin: nowGameMin, leaverId: needy.agentId };
-              // The leaver's farewell must follow the OTHER person's line: when the
-              // turn in flight is the leaver's own, the farewell replaces it
-              // (closes now); otherwise the partner's reply may land first.
-              target = inFlightSpeaker === needy.agentId ? messages.length : messages.length + 1;
-            }
-          }
-          if (target != null) {
-            target = Math.min(conversation.max_turns, target);
-            if (target !== conversation.max_turns) {
-              db.update(conversations).set({ max_turns: target }).where(eq(conversations.id, conversation.id)).run();
-              conversation.max_turns = target;
-            }
-            changed = true;
-          }
-        }
-        if (entry.wrapUp) {
-          const landed = messages.length >= conversation.max_turns;
-          if (landed || nowGameMin >= entry.wrapUp.sinceGameMin + graceGameMin) {
-            if (!landed) {
-              // The turn in flight never landed. Book how long it had been running
-              // as a (censored) latency sample: a model too slow to finish any
-              // turn would otherwise never be measured at all. Only for a turn
-              // that really is running in this process — a chain that died on a
-              // throw, or a scheduler entry a restart left behind, has no turn in
-              // flight, and booking its whole age sent the median through the roof
-              // (the town then ran on templates, even at 1x). Capped at what one
-              // turn can legitimately take: every attempt timing out.
-              const inFlightMs = taskRunner.inFlightTurnMs(conversation.id, now);
-              if (inFlightMs != null) {
-                recordTurnLatency(Math.min(inFlightMs, CONFIG.AI.TIMEOUT_MS * CONFIG.AI.RETRY_ATTEMPTS), nowGameMin);
-              }
-            }
-            closeWrappedTranscript(
-              conversation,
-              entry.wrapUp.leaverId ?? nextSpeaker(conversation),
-              entry.wrapUp.reason,
-              entry.plannedTurns,
-            );
-            completion = {
-              truncated: entry.wrapUp.reason === 'budget' && messages.length < entry.plannedTurns,
-            };
-          }
-        }
-      }
-
-      registerLive(
-        conversation.participants as number[],
-        conversation.topic,
-        completion
-          ? nowGameMin
-          : (entry.wrapUp ? entry.wrapUp.sinceGameMin : deadlineGameMin) + graceGameMin,
-      );
-
-      if (completion) {
-        // Force-ends go through the SAME completion pipeline as natural ends.
-        // The previous inline hand-rolled ending skipped quality scoring,
-        // relationship events, memories and cache eviction, and emitted
-        // `conversation:ended` exactly once — for participants[0], with an empty
-        // otherName — so every listener silently dropped participant #2.
-        completedConversations.push({ conversation, world, truncated: completion.truncated });
-        closedIds.push(conversation.id);
-        toRemove.add(entry.conversationId);
-        llmTotal++;
-        changed = true;
-      }
-    }
-
-    const updatedActiveLLM = activeLLM.filter(
-      (e) => !toRemove.has(e.conversationId),
-    );
-
-    // --- Step B: Sweep orphaned `active` rows ---
-    // A conversation row is `active` only while the scheduler tracks it. One the
-    // scheduler has dropped without it ever reaching `ended` (a completion that
-    // threw, a crash between dispatch and bookkeeping) was never cleaned up and
-    // left its participants `talking` for good. Anything untracked and older than
-    // the longest a conversation may run is ended here and its agents released.
-    // Rows in `activeLLM` (including those Step A is completing) are skipped: their
-    // completion runs after this transaction.
-    const trackedIds = new Set(activeLLM.map((e) => e.conversationId));
-    for (const orphan of db
-      .select()
-      .from(conversations)
-      .where(and(eq(conversations.status, 'active'), lt(conversations.started_at, now - orphanAgeMs)))
-      .all()) {
-      if (trackedIds.has(orphan.id)) continue;
-      db.update(conversations)
-        .set({ status: 'ended', ended_at: now })
-        .where(eq(conversations.id, orphan.id))
-        .run();
-      if (releaseTalkingParticipants(orphan)) agentsReleased = true;
-      clearConversationCache(orphan.id);
-      changed = true;
-    }
-
-    // --- Participant claims ---
-    // Nothing downstream stopped one agent from being in two conversations at
-    // once: the queue can hold [A,B] and [B,A] (both decided to socialize with
-    // each other in the same decisions pass), or [A,B] and [A,C], and Steps C–E
-    // turned every entry into a conversation independently — four started in the
-    // same millisecond in one playtest. Every path that starts a conversation now
-    // claims its participants first; an agent can be claimed once per pass, and
-    // never while a live conversation (`busyAgents`, from Step A) still holds them.
-    const claimedAgents = new Set<number>();
-    /** Pairs a higher-priority LLM entry is waiting on this pass (slots full). */
-    const reservedPairs = new Set<string>();
-    /**
-     * 'duplicate': this exact pair already has a live conversation or one started
-     *   this pass — the entry is redundant and should be dropped. Not for a
-     *   protected entry with a different topic: a player's "tell her the secret"
-     *   while the two are already chatting is a new conversation, to be had once
-     *   the current one ends.
-     * 'busy': someone is tied up with a different partner — the entry can wait.
-     */
-    const claimParticipants = (
-      entry: QueueRow,
-      { peek = false, freeAt = nowGameMin }: { peek?: boolean; freeAt?: number } = {},
-    ): 'ok' | 'duplicate' | 'busy' => {
-      const p = entry.participants as number[];
-      const key = conversationPairKey(p);
-      if (livePairs.has(key)) {
-        return isProtectedEntry(entry) && livePairs.get(key) !== entry.topic ? 'busy' : 'duplicate';
-      }
-      if (reservedPairs.has(key)) return 'busy';
-      if (p.some((id) => busyAgents.has(id) || claimedAgents.has(id))) return 'busy';
-      if (peek) return 'ok';
-      for (const id of p) {
-        claimedAgents.add(id);
-        agentFreeAt.set(id, Math.max(agentFreeAt.get(id) ?? 0, freeAt));
-      }
-      livePairs.set(key, entry.topic);
-      return 'ok';
-    };
-    /**
-     * A protected entry (player nudge, comfort visit) that timed out only because
-     * a participant is mid-conversation waits for that conversation instead of
-     * being dropped. Bounded: the new deadline is when the blocking conversation
-     * must be over at the latest, plus a margin — never open-ended. Returns true
-     * when the wait was extended and the entry stays queued.
-     */
-    const extendProtectedWait = (entry: QueueRow): boolean => {
-      if (!isProtectedEntry(entry)) return false;
-      const blockers = (entry.participants as number[])
-        .map((id) => agentFreeAt.get(id))
-        .filter((t): t is number => t != null);
-      if (blockers.length === 0) return false; // not held by a conversation
-      const deadline = Math.max(...blockers) + CONFIG.CONVERSATIONS.PROTECTED_WAIT_MARGIN_GAME_MINUTES;
-      if (deadline <= nowGameMin) return false;
-      db.update(conversationQueue)
-        .set({ deadline_game_min: deadline })
-        .where(eq(conversationQueue.id, entry.id))
-        .run();
-      return true;
-    };
-
-    // --- Steps C–E: work the queue, highest priority first ---
-    // One pass over the whole queue (sorted by priority, descending) for every
-    // path that can start a conversation: timed-out fallbacks (C), the template
-    // tier (D) and LLM slots (E). They used to run as separate passes in that
-    // order, so a low-priority timed-out or template chat could claim an agent a
-    // higher-priority LLM conversation needed in the same tick.
-    const queueEntries = db
-      .select()
-      .from(conversationQueue)
-      .orderBy(desc(conversationQueue.priority))
-      .all();
-
-    let currentActive = updatedActiveLLM.length;
-    const runnerFreeSlots = taskRunner.freeConversationSlots;
-    const fillEntries = [...updatedActiveLLM];
-
-    for (const entry of queueEntries) {
-      // Queue waits run on the game clock: at 4x an entry used to wait four
-      // times the game time (10 s = 40 game minutes), so the conversation rate
-      // tracked real time. Producers write a 1x-equivalent `max_wait`; the
-      // deadline is derived once and stored, so a later speed change can't move it.
-      // Above 1x it gets a real-time floor: the LLM slot an entry waits for
-      // frees in real seconds (conversationPacing.queueDeadlineGameMin).
-      if (entry.deadline_game_min == null) {
-        entry.deadline_game_min = queueDeadlineGameMin(entry, nowGameMin, world.tick_speed);
-        db.update(conversationQueue)
-          .set({ deadline_game_min: entry.deadline_game_min })
-          .where(eq(conversationQueue.id, entry.id))
-          .run();
-      }
-      if (nowGameMin > entry.deadline_game_min) {
-        // Step C: timed out — delete; async template processing happens outside.
-        // A timed-out entry has nowhere left to wait, so if its participants are
-        // taken it is simply dropped rather than becoming a parallel template chat
-        // — unless it's a protected entry held up by a live conversation (checked
-        // first: a nudged pair is often still walking toward each other).
-        const peek = claimParticipants(entry, { peek: true });
-        if (peek === 'busy' && extendProtectedWait(entry)) continue;
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        queueTimeouts++;
-        changed = true;
-        // A dropped entry is gone without a trace; for a player's nudge that
-        // used to mean a toast saying "on their way" and then silence. The
-        // player-outcome reporter (lib/playerOutcomes.ts) turns this into a feed
-        // line. 'duplicate' is not a drop from the player's point of view: the
-        // pair is already talking to each other.
-        if (peek === 'busy') {
-          simEvents.emit('conversation:queue_dropped', { entry, reason: 'busy' });
-          continue;
-        }
-        if (peek !== 'ok') continue;
-        // Liveness/proximity before claiming: a pair that walked apart (or died)
-        // can't have the template chat, and must not claim agents on the way out.
-        if (!loadTemplatePair(entry.participants as number[])) {
-          simEvents.emit('conversation:queue_dropped', { entry, reason: 'apart' });
-          continue;
-        }
-        claimParticipants(entry);
-        timedOutQueue.push({ entry, world });
-        templateTotal++;
-        continue;
-      }
-
-      if (entry.tier === 'template') {
-        // Step D: template tier — processed immediately, no LLM.
-        // Busy participants keep the entry queued; it runs once they're free or
-        // ages out through Step C. A pair that can't talk is dropped unclaimed.
-        if (!loadTemplatePair(entry.participants as number[])) {
-          db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-          changed = true;
-          continue;
-        }
-        const claim = claimParticipants(entry);
-        if (claim === 'busy') continue;
-        // Process as template — no LLM needed for trivial conversations
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        if (claim === 'duplicate') {
-          changed = true;
-          continue;
-        }
-        timedOutQueue.push({ entry, world });
-        templateTotal++;
-        changed = true;
-        continue;
-      }
-
-      // Step E: fill open LLM slots. `continue`, not `break`, once they're full:
-      // lower-priority template entries further down still get their turn — but
-      // not for this pair: a same-pair template must not jump the queue just
-      // because the slot this entry is waiting for isn't free yet.
-      // Also full when the task runner has no chain free: a closed conversation
-      // keeps its runner slot until its aborted turn unwinds, and a dispatch the
-      // runner rejects is only re-queued after this pass (see below).
-      if (currentActive >= schedulerState.max_concurrent_llm || dispatches.length >= runnerFreeSlots) {
-        if (claimParticipants(entry, { peek: true }) === 'ok') {
-          reservedPairs.add(conversationPairKey(entry.participants as number[]));
-        }
-        continue;
-      }
-
-      // Peek only: the pair claim is taken once the conversation actually opens
-      // below. A staging entry reserves just the agents (see there).
-      const claim = claimParticipants(entry, { peek: true });
-      if (claim === 'duplicate') {
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        changed = true;
-        continue;
-      }
-      if (claim === 'busy') continue;
-
-      // Depressed agents skip conversations — remove from queue.
-      // Checked for every participant, not just the initiator: a depressed agent
-      // queued as the *target* was still dragged into a full LLM conversation.
-      const anyDepressed = entry.participants.some((pid) =>
-        getAgentStates(pid).includes('depressed'),
-      );
-      if (anyDepressed) {
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        continue;
-      }
-
-      const isProtected = isProtectedEntry(entry);
-
-      // Don't open a conversation someone is about to walk out of. An ordinary
-      // entry waits (unclaimed) instead: many are one-shot — a perception
-      // reaction (PerceptionSystem) is never queued again — so deleting lost
-      // them. If the need clears in time it opens then; otherwise it ages out
-      // through Step C into a brief template chat. A protected one — the player
-      // asked for it — goes ahead, and Step A lets its first exchange land
-      // before needs can end it.
-      if (!isProtected && findNeedsInterrupt(entry.participants as number[], world)) continue;
-
-      // Size the conversation to the game time it may take (see
-      // planConversation): a turn costs the model's latency × tick_speed game
-      // minutes, so at 4x a 20 s turn is 80 game minutes and the tier's full
-      // length would eat the evening.
-      const plan = planConversation({
-        tierMaxTurns: entry.tier === 'llm_deep' ? schedulerState.max_turns_deep : schedulerState.max_turns_standard,
-        tickSpeed: world.tick_speed,
-        isProtected,
-        observedLatencyMs: turnLatencyEstimateMs(nowGameMin),
-        probeDue: latencyProbeDue(nowGameMin),
-      });
-      if (plan.tier === 'template') {
-        // Not even one exchange fits: have it as a template chat now instead of
-        // an LLM one the budget would cut before anyone finished a sentence.
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        changed = true;
-        if (!loadTemplatePair(entry.participants as number[])) continue;
-        claimParticipants(entry);
-        timedOutQueue.push({ entry, world });
-        templateTotal++;
-        continue;
-      }
-      const maxTurns = plan.maxTurns;
-
-      // Verify both participants exist and are co-located
-      const firstParticipant = db
-        .select()
-        .from(agents)
-        .where(eq(agents.id, entry.participants[0]))
-        .get();
-      const secondParticipant = entry.participants[1]
-        ? db.select().from(agents).where(eq(agents.id, entry.participants[1])).get()
-        : null;
-
-      if (!firstParticipant || !secondParticipant) {
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        continue;
-      }
-
-      // Remove queue entry if either participant has died since it was queued
-      if (!firstParticipant.is_active || !secondParticipant.is_active) {
-        db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-        continue;
-      }
-
-      // Skip if agents are not at the same location or too far apart
-      const sameLocation = firstParticipant.current_location != null &&
-        firstParticipant.current_location === secondParticipant.current_location;
-      if (!sameLocation) {
-        const dx = firstParticipant.position.x - secondParticipant.position.x;
-        const dy = firstParticipant.position.y - secondParticipant.position.y;
-        if (dx * dx + dy * dy > 64 * 64) {
-          // A player's nudge walks both agents to a meeting point, so on its
-          // first pass the pair is almost always still apart. Deleting it here
-          // lost every confrontation/"make them talk" between people in
-          // different places without a word; it waits for them instead, and
-          // if they never meet it ages out through Step C (reported as 'apart').
-          if (isProtected) continue;
-          // Too far apart — remove from queue, they'll re-queue when close
-          db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-          continue;
-        }
-      }
-
-      // Physical staging: two agents 60px apart shouldn't teleport into a
-      // conversation. Walk the initiator over first and open the conversation on
-      // a later tick, once they're adjacent. The queue entry is deliberately NOT
-      // deleted — if they never converge it ages out via `max_wait` into the
-      // template path, which reads as "they gave up".
-      const stageDx = secondParticipant.position.x - firstParticipant.position.x;
-      const stageDy = secondParticipant.position.y - firstParticipant.position.y;
-      const stageDist = Math.hypot(stageDx, stageDy);
-      if (stageDist > TALK_DISTANCE_PX) {
-        const moverAction = (firstParticipant.current_action?.type ?? 'idle') as string;
-        // Don't yank someone out of sleep, death, or another conversation.
-        if (moverAction === 'sleeping' || moverAction === 'dead' || moverAction === 'talking') {
-          continue;
-        }
-        const targetX = secondParticipant.position.x - (stageDx / stageDist) * TALK_STAGE_OFFSET_PX;
-        const targetY = secondParticipant.position.y - (stageDy / stageDist) * TALK_STAGE_OFFSET_PX;
-        // Re-issuing the order every tick would null `current_path` every tick and
-        // freeze them in place, so only write it when the destination has actually
-        // drifted (the partner moved) or they aren't walking yet.
-        const dest = firstParticipant.current_destination;
-        const alreadyHeaded =
-          moverAction === 'walking' &&
-          dest != null &&
-          Math.hypot(dest.x - targetX, dest.y - targetY) <= TALK_STAGE_REISSUE_PX;
-        if (!alreadyHeaded) {
-          db.update(agents)
-            .set({
-              current_action: { type: 'walking', reason: 'approaching_conversation' },
-              current_destination: { x: targetX, y: targetY },
-              current_path: null,
-              action_started: gameMinutes(world.time),
-              action_duration: null,
-            })
-            .where(eq(agents.id, firstParticipant.id))
-            .run();
-          changed = true;
-        }
-        // Reserve both agents for the rest of this pass: the initiator is walking
-        // over to talk, so a lower-priority entry must not grab either of them.
-        // The pair key is not claimed, so this entry opens normally next tick.
-        for (const id of entry.participants as number[]) claimedAgents.add(id);
-        continue;
-      }
-
-      const locationId = firstParticipant.current_location;
-      if (!locationId) {
-        // Can't start a conversation without a location; skip for now
-        continue;
-      }
-
-      // Over by its budget plus the wrap-up grace at the latest.
-      claimParticipants(entry, { freeAt: nowGameMin + plan.budgetGameMin + plan.graceGameMin });
-
-      // Create conversation record
-      const result = db
-        .insert(conversations)
-        .values({
-          participants: entry.participants,
-          messages: [],
-          location: locationId,
-          trigger_reason: entry.trigger_reason,
-          topic: queuedTopic(entry),
-          status: 'active',
-          started_at: now,
-          ended_at: null,
-          sentiment: 0,
-          max_turns: maxTurns,
-        })
-        .returning({ id: conversations.id })
-        .get();
-
-      const conversationId = result.id;
-
-      // Update both agents' currentAction to "talking"
-      for (const participantId of entry.participants) {
-        db.update(agents)
-          .set({
-            current_action: {
-              type: 'talking',
-              conversationId,
-            },
-            action_started: gameMinutes(world.time),
-            // Game minutes, like every action duration. Informational only:
-            // isActionComplete never ends `talking` on a timer, the conversation
-            // system does.
-            action_duration: maxTurns * 2,
-          })
-          .where(eq(agents.id, participantId))
-          .run();
-      }
-
-      // Collect dispatch — actual startConversation() call goes outside transaction.
-      // `conversation:started` is emitted there, only once the task runner accepts:
-      // emitting here recorded memories and cascades for conversations that were
-      // deleted moments later when all runner slots were full.
-      dispatches.push({
-        conversationId,
-        speakerId: entry.participants[0],
-        participantIds: entry.participants as number[],
-        participantNames: [firstParticipant.name, secondParticipant.name],
-        entry,
-        // Stamped only once the runner accepts it: a rejected dispatch measures
-        // nothing and must not use up the probe.
-        probeAt: plan.probe ? nowGameMin : null,
-      });
-
-      fillEntries.push({
-        conversationId,
-        startedAt: now,
-        startedGameMin: nowGameMin,
-        budgetGameMin: plan.budgetGameMin,
-        plannedTurns: maxTurns,
-        graceGameMin: plan.graceGameMin,
-        protected: isProtected,
-      });
-      currentActive++;
-      changed = true;
-
-      // Remove from queue
-      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
-    }
-
-    // --- Update scheduler state ---
-    db.update(conversationSchedulerState)
-      .set({
-        active_llm_conversations: fillEntries,
-        stats: {
-          llmConversationsTotal: llmTotal,
-          templateConversationsTotal: templateTotal,
-          // Was never written (always 0); now the median turn latency the
-          // scheduler sizes conversations by, so diagnostics can see it.
-          averageResponseTimeMs: Math.round(turnLatencyEstimateMs(nowGameMin) ?? schedulerState.stats.averageResponseTimeMs),
-          queueTimeoutsTotal: queueTimeouts,
-        },
-      })
-      .where(eq(conversationSchedulerState.id, schedulerState.id))
-      .run();
-  });
+  db.transaction(() => runSyncPass(out));
 
   // ── Async part: dispatch LLM calls outside transaction ─────────────────────
-  for (const id of closedIds) taskRunner.abortConversation(id);
-  for (const d of dispatches) {
+  await runAsyncPass(out);
+}
+
+/**
+ * The body of the tick's single transaction: every step runs synchronously, in
+ * order, and must stay free of `await` (better-sqlite3 transactions are sync).
+ */
+function runSyncPass(out: ConversationTickOutcome): void {
+  const world = db.select().from(worldState).get();
+  if (!world) return;
+
+  // Read scheduler state singleton
+  const schedulerState = db.select().from(conversationSchedulerState).get();
+  if (!schedulerState) return;
+
+  const state: ConversationTickState = {
+    out,
+    world,
+    schedulerState,
+    activeLLM: [
+      ...(schedulerState.active_llm_conversations as ActiveLLMEntry[]),
+    ],
+    llmTotal: schedulerState.stats.llmConversationsTotal,
+    templateTotal: schedulerState.stats.templateConversationsTotal,
+    queueTimeouts: schedulerState.stats.queueTimeoutsTotal,
+    now: Date.now(),
+    nowGameMin: gameMinutes(world.time),
+    busyAgents: new Set<number>(),
+    livePairs: new Map<string, string | null>(),
+    agentFreeAt: new Map<number, number>(),
+    claimedAgents: new Set<number>(),
+    reservedPairs: new Set<string>(),
+    currentActive: 0,
+    runnerFreeSlots: 0,
+    fillEntries: [],
+  };
+
+  const updatedActiveLLM = checkActiveConversations(state);
+  sweepOrphanedConversations(state);
+  workQueue(state, updatedActiveLLM);
+  saveSchedulerState(state);
+}
+
+/** Mark a live conversation's participants busy until `freeAt` (game minutes). */
+function registerLive(
+  state: ConversationTickState,
+  participants: number[],
+  topic: string | null,
+  freeAt: number,
+): void {
+  for (const id of participants) {
+    state.busyAgents.add(id);
+    state.agentFreeAt.set(id, Math.max(state.agentFreeAt.get(id) ?? 0, freeAt));
+  }
+  state.livePairs.set(conversationPairKey(participants), topic);
+}
+
+/**
+ * Step A: check every LLM conversation the scheduler tracks — wrap up, close or
+ * keep it — and register who is still tied up. Returns the entries that stay.
+ */
+function checkActiveConversations(state: ConversationTickState): ActiveLLMEntry[] {
+  // --- Step A: Check active LLM conversations ---
+  const toRemove = new Set<number>();
+
+  for (const entry of state.activeLLM) {
+    checkActiveEntry(state, entry, toRemove);
+  }
+
+  const updatedActiveLLM = state.activeLLM.filter(
+    (e) => !toRemove.has(e.conversationId),
+  );
+  return updatedActiveLLM;
+}
+
+/** Step A for one scheduler entry; adds its id to `toRemove` when it leaves the scheduler. */
+function checkActiveEntry(
+  state: ConversationTickState,
+  entry: ActiveLLMEntry,
+  toRemove: Set<number>,
+): void {
+  const { world, nowGameMin } = state;
+  const conversation = db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, entry.conversationId))
+    .get();
+
+  if (!conversation) {
+    // Row is gone — nothing downstream will ever evict its cached identities.
+    clearConversationCache(entry.conversationId);
+    toRemove.add(entry.conversationId);
+    return;
+  }
+
+  // Already ended by someone outside this system — `markConversationEnded`
+  // (LLM context lost) or `deactivateAgent` (participant died).
+  // `processCompletedConversation` bails immediately on `status === 'ended'`,
+  // so routing this arm there dequeued the entry and did nothing at all,
+  // stranding both agents in `current_action = 'talking'` forever. Release
+  // them and drop the caches here instead.
+  if (conversation.status === 'ended') {
+    if (releaseTalkingParticipants(conversation)) state.out.agentsReleased = true;
+    clearConversationCache(conversation.id);
+    toRemove.add(entry.conversationId);
+    state.out.changed = true;
+    return;
+  }
+
+  const messages = conversation.messages as ConversationMessage[];
+
+  // Entries dispatched before game-time budgets existed carry only the
+  // wall-clock stamp: start their budget now rather than guess.
+  entry.startedGameMin ??= nowGameMin;
+  entry.plannedTurns ??= conversation.max_turns;
+  entry.budgetGameMin ??= conversationBudgetGameMinutes(entry.plannedTurns);
+  const graceGameMin = entry.graceGameMin ?? CONFIG.CONVERSATIONS.WRAP_UP_GRACE_GAME_MINUTES;
+  const deadlineGameMin = entry.startedGameMin + entry.budgetGameMin;
+
+  const completion = decideCompletion(state, entry, conversation, messages, deadlineGameMin, graceGameMin);
+
+  registerLive(
+    state,
+    conversation.participants as number[],
+    conversation.topic,
+    completion
+      ? nowGameMin
+      : (entry.wrapUp ? entry.wrapUp.sinceGameMin : deadlineGameMin) + graceGameMin,
+  );
+
+  if (completion) {
+    // Force-ends go through the SAME completion pipeline as natural ends.
+    // The previous inline hand-rolled ending skipped quality scoring,
+    // relationship events, memories and cache eviction, and emitted
+    // `conversation:ended` exactly once — for participants[0], with an empty
+    // otherName — so every listener silently dropped participant #2.
+    state.out.completedConversations.push({ conversation, world, truncated: completion.truncated });
+    state.out.closedIds.push(conversation.id);
+    toRemove.add(entry.conversationId);
+    state.llmTotal++;
+    state.out.changed = true;
+  }
+}
+
+/**
+ * Whether a live conversation is over this tick: all its turns landed, or it is
+ * wrapping up (budget or a participant's needs) and its last turn landed or the
+ * grace ran out. Starts the wrap-up when one is due, lowering `max_turns`.
+ * Returns null while it keeps going.
+ */
+function decideCompletion(
+  state: ConversationTickState,
+  entry: ActiveLLMEntry,
+  conversation: ConversationRow,
+  messages: ConversationMessage[],
+  deadlineGameMin: number,
+  graceGameMin: number,
+): { truncated: boolean } | null {
+  const { world, now, nowGameMin } = state;
+  // `entry.plannedTurns` is always set here: checkActiveEntry defaults it first.
+  // `truncated` = the CLOCK stopped it before its planned turns. Not set for
+  // a needs wrap-up (someone chose to leave) nor when the last planned turn
+  // landed in time (nothing was actually cut).
+  let completion: { truncated: boolean } | null = null;
+
+  if (!entry.wrapUp && messages.length >= conversation.max_turns) {
+    completion = { truncated: false };
+  } else {
+    if (!entry.wrapUp) {
+      // The turn the task runner is working on now (or would start next).
+      const inFlightSpeaker = nextSpeaker(conversation);
+      let target: number | null = null;
+      // Budget first: it is measured from the deadline itself, so the grace
+      // below runs from when the budget ran out, not from whichever tick
+      // noticed — the hard stop is always start + budget + grace.
+      if (nowGameMin >= deadlineGameMin) {
+        entry.wrapUp = { reason: 'budget', sinceGameMin: deadlineGameMin };
+        // Let the turn in flight land and, if nobody has spoken yet, the
+        // reply to it too (so an exchange that is merely slow still happens);
+        // the runner starts nothing beyond that. Grace bounds both.
+        target = Math.max(messages.length + 1, CONFIG.CONVERSATIONS.MIN_LLM_TURNS);
+      } else if (!entry.protected || messages.length >= CONFIG.CONVERSATIONS.MIN_LLM_TURNS) {
+        // Needs can end a conversation — but one the player asked for gets
+        // its first exchange before anyone's stomach or bedtime cuts in.
+        const needy = findNeedsInterrupt(conversation.participants as number[], world);
+        if (needy) {
+          entry.wrapUp = { reason: needy.reason, sinceGameMin: nowGameMin, leaverId: needy.agentId };
+          // The leaver's farewell must follow the OTHER person's line: when the
+          // turn in flight is the leaver's own, the farewell replaces it
+          // (closes now); otherwise the partner's reply may land first.
+          target = inFlightSpeaker === needy.agentId ? messages.length : messages.length + 1;
+        }
+      }
+      if (target != null) {
+        target = Math.min(conversation.max_turns, target);
+        if (target !== conversation.max_turns) {
+          db.update(conversations).set({ max_turns: target }).where(eq(conversations.id, conversation.id)).run();
+          conversation.max_turns = target;
+        }
+        state.out.changed = true;
+      }
+    }
+    if (entry.wrapUp) {
+      const landed = messages.length >= conversation.max_turns;
+      if (landed || nowGameMin >= entry.wrapUp.sinceGameMin + graceGameMin) {
+        if (!landed) {
+          // The turn in flight never landed. Book how long it had been running
+          // as a (censored) latency sample: a model too slow to finish any
+          // turn would otherwise never be measured at all. Only for a turn
+          // that really is running in this process — a chain that died on a
+          // throw, or a scheduler entry a restart left behind, has no turn in
+          // flight, and booking its whole age sent the median through the roof
+          // (the town then ran on templates, even at 1x). Capped at what one
+          // turn can legitimately take: every attempt timing out.
+          const inFlightMs = taskRunner.inFlightTurnMs(conversation.id, now);
+          if (inFlightMs != null) {
+            recordTurnLatency(Math.min(inFlightMs, CONFIG.AI.TIMEOUT_MS * CONFIG.AI.RETRY_ATTEMPTS), nowGameMin);
+          }
+        }
+        closeWrappedTranscript(
+          conversation,
+          entry.wrapUp.leaverId ?? nextSpeaker(conversation),
+          entry.wrapUp.reason,
+          entry.plannedTurns!,
+        );
+        completion = {
+          truncated: entry.wrapUp.reason === 'budget' && messages.length < entry.plannedTurns!,
+        };
+      }
+    }
+  }
+  return completion;
+}
+
+/**
+ * Step B: end `active` rows the scheduler no longer tracks and release their
+ * participants. Reads `activeLLM` as the tick found it, before Step A's removals.
+ */
+function sweepOrphanedConversations(state: ConversationTickState): void {
+  const { activeLLM, now } = state;
+  const orphanAgeMs = state.schedulerState.max_turns_deep * ORPHAN_MS_PER_DEEP_TURN;
+  // --- Step B: Sweep orphaned `active` rows ---
+  // A conversation row is `active` only while the scheduler tracks it. One the
+  // scheduler has dropped without it ever reaching `ended` (a completion that
+  // threw, a crash between dispatch and bookkeeping) was never cleaned up and
+  // left its participants `talking` for good. Anything untracked and older than
+  // the longest a conversation may run is ended here and its agents released.
+  // Rows in `activeLLM` (including those Step A is completing) are skipped: their
+  // completion runs after this transaction.
+  const trackedIds = new Set(activeLLM.map((e) => e.conversationId));
+  for (const orphan of db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.status, 'active'), lt(conversations.started_at, now - orphanAgeMs)))
+    .all()) {
+    if (trackedIds.has(orphan.id)) continue;
+    db.update(conversations)
+      .set({ status: 'ended', ended_at: now })
+      .where(eq(conversations.id, orphan.id))
+      .run();
+    if (releaseTalkingParticipants(orphan)) state.out.agentsReleased = true;
+    clearConversationCache(orphan.id);
+    state.out.changed = true;
+  }
+}
+
+// --- Participant claims ---
+// Nothing downstream stopped one agent from being in two conversations at
+// once: the queue can hold [A,B] and [B,A] (both decided to socialize with
+// each other in the same decisions pass), or [A,B] and [A,C], and Steps C–E
+// turned every entry into a conversation independently — four started in the
+// same millisecond in one playtest. Every path that starts a conversation now
+// claims its participants first; an agent can be claimed once per pass, and
+// never while a live conversation (`busyAgents`, from Step A) still holds them.
+/**
+ * 'duplicate': this exact pair already has a live conversation or one started
+ *   this pass — the entry is redundant and should be dropped. Not for a
+ *   protected entry with a different topic: a player's "tell her the secret"
+ *   while the two are already chatting is a new conversation, to be had once
+ *   the current one ends.
+ * 'busy': someone is tied up with a different partner — the entry can wait.
+ */
+function claimParticipants(
+  state: ConversationTickState,
+  entry: QueueRow,
+  { peek = false, freeAt = state.nowGameMin }: { peek?: boolean; freeAt?: number } = {},
+): 'ok' | 'duplicate' | 'busy' {
+  const { livePairs, reservedPairs, busyAgents, claimedAgents, agentFreeAt } = state;
+  const p = entry.participants as number[];
+  const key = conversationPairKey(p);
+  if (livePairs.has(key)) {
+    return isProtectedEntry(entry) && livePairs.get(key) !== entry.topic ? 'busy' : 'duplicate';
+  }
+  if (reservedPairs.has(key)) return 'busy';
+  if (p.some((id) => busyAgents.has(id) || claimedAgents.has(id))) return 'busy';
+  if (peek) return 'ok';
+  for (const id of p) {
+    claimedAgents.add(id);
+    agentFreeAt.set(id, Math.max(agentFreeAt.get(id) ?? 0, freeAt));
+  }
+  livePairs.set(key, entry.topic);
+  return 'ok';
+}
+
+/**
+ * A protected entry (player nudge, comfort visit) that timed out only because
+ * a participant is mid-conversation waits for that conversation instead of
+ * being dropped. Bounded: the new deadline is when the blocking conversation
+ * must be over at the latest, plus a margin — never open-ended. Returns true
+ * when the wait was extended and the entry stays queued.
+ */
+function extendProtectedWait(state: ConversationTickState, entry: QueueRow): boolean {
+  const { agentFreeAt, nowGameMin } = state;
+  if (!isProtectedEntry(entry)) return false;
+  const blockers = (entry.participants as number[])
+    .map((id) => agentFreeAt.get(id))
+    .filter((t): t is number => t != null);
+  if (blockers.length === 0) return false; // not held by a conversation
+  const deadline = Math.max(...blockers) + CONFIG.CONVERSATIONS.PROTECTED_WAIT_MARGIN_GAME_MINUTES;
+  if (deadline <= nowGameMin) return false;
+  db.update(conversationQueue)
+    .set({ deadline_game_min: deadline })
+    .where(eq(conversationQueue.id, entry.id))
+    .run();
+  return true;
+}
+
+/**
+ * Steps C–E: one pass over the queue, highest priority first. `updatedActiveLLM`
+ * is what Step A left running; the LLM conversations opened here join it.
+ */
+function workQueue(state: ConversationTickState, updatedActiveLLM: ActiveLLMEntry[]): void {
+  // --- Steps C–E: work the queue, highest priority first ---
+  // One pass over the whole queue (sorted by priority, descending) for every
+  // path that can start a conversation: timed-out fallbacks (C), the template
+  // tier (D) and LLM slots (E). They used to run as separate passes in that
+  // order, so a low-priority timed-out or template chat could claim an agent a
+  // higher-priority LLM conversation needed in the same tick.
+  const queueEntries = db
+    .select()
+    .from(conversationQueue)
+    .orderBy(desc(conversationQueue.priority))
+    .all();
+
+  state.currentActive = updatedActiveLLM.length;
+  state.runnerFreeSlots = taskRunner.freeConversationSlots;
+  state.fillEntries = [...updatedActiveLLM];
+
+  for (const entry of queueEntries) {
+    workQueueEntry(state, entry);
+  }
+}
+
+/** One queue entry: stamp its deadline, then route it to Step C, D or E. */
+function workQueueEntry(state: ConversationTickState, entry: QueueRow): void {
+  const { world, nowGameMin } = state;
+  // Queue waits run on the game clock: at 4x an entry used to wait four
+  // times the game time (10 s = 40 game minutes), so the conversation rate
+  // tracked real time. Producers write a 1x-equivalent `max_wait`; the
+  // deadline is derived once and stored, so a later speed change can't move it.
+  // Above 1x it gets a real-time floor: the LLM slot an entry waits for
+  // frees in real seconds (conversationPacing.queueDeadlineGameMin).
+  if (entry.deadline_game_min == null) {
+    entry.deadline_game_min = queueDeadlineGameMin(entry, nowGameMin, world.tick_speed);
+    db.update(conversationQueue)
+      .set({ deadline_game_min: entry.deadline_game_min })
+      .where(eq(conversationQueue.id, entry.id))
+      .run();
+  }
+  if (nowGameMin > entry.deadline_game_min) {
+    handleTimedOutEntry(state, entry);
+    return;
+  }
+
+  if (entry.tier === 'template') {
+    handleTemplateEntry(state, entry);
+    return;
+  }
+
+  fillLLMSlot(state, entry);
+}
+
+/** Step C: an entry past its deadline is dropped or becomes a template chat. */
+function handleTimedOutEntry(state: ConversationTickState, entry: QueueRow): void {
+  const { world } = state;
+  // Step C: timed out — delete; async template processing happens outside.
+  // A timed-out entry has nowhere left to wait, so if its participants are
+  // taken it is simply dropped rather than becoming a parallel template chat
+  // — unless it's a protected entry held up by a live conversation (checked
+  // first: a nudged pair is often still walking toward each other).
+  const peek = claimParticipants(state, entry, { peek: true });
+  if (peek === 'busy' && extendProtectedWait(state, entry)) return;
+  db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+  state.queueTimeouts++;
+  state.out.changed = true;
+  // A dropped entry is gone without a trace; for a player's nudge that
+  // used to mean a toast saying "on their way" and then silence. The
+  // player-outcome reporter (lib/playerOutcomes.ts) turns this into a feed
+  // line. 'duplicate' is not a drop from the player's point of view: the
+  // pair is already talking to each other.
+  if (peek === 'busy') {
+    simEvents.emit('conversation:queue_dropped', { entry, reason: 'busy' });
+    return;
+  }
+  if (peek !== 'ok') return;
+  // Liveness/proximity before claiming: a pair that walked apart (or died)
+  // can't have the template chat, and must not claim agents on the way out.
+  if (!loadTemplatePair(entry.participants as number[])) {
+    simEvents.emit('conversation:queue_dropped', { entry, reason: 'apart' });
+    return;
+  }
+  claimParticipants(state, entry);
+  state.out.timedOutQueue.push({ entry, world });
+  state.templateTotal++;
+}
+
+/** Step D: a template-tier entry is had now, as a template chat, if the pair is free. */
+function handleTemplateEntry(state: ConversationTickState, entry: QueueRow): void {
+  const { world } = state;
+  // Step D: template tier — processed immediately, no LLM.
+  // Busy participants keep the entry queued; it runs once they're free or
+  // ages out through Step C. A pair that can't talk is dropped unclaimed.
+  if (!loadTemplatePair(entry.participants as number[])) {
+    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    state.out.changed = true;
+    return;
+  }
+  const claim = claimParticipants(state, entry);
+  if (claim === 'busy') return;
+  // Process as template — no LLM needed for trivial conversations
+  db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+  if (claim === 'duplicate') {
+    state.out.changed = true;
+    return;
+  }
+  state.out.timedOutQueue.push({ entry, world });
+  state.templateTotal++;
+  state.out.changed = true;
+}
+
+/**
+ * Step E: try to open an LLM conversation for this entry — or leave it queued,
+ * drop it, turn it into a template chat, or walk the initiator over first.
+ */
+function fillLLMSlot(state: ConversationTickState, entry: QueueRow): void {
+  const { world, schedulerState, nowGameMin } = state;
+  // Step E: fill open LLM slots. `continue`, not `break`, once they're full:
+  // lower-priority template entries further down still get their turn — but
+  // not for this pair: a same-pair template must not jump the queue just
+  // because the slot this entry is waiting for isn't free yet.
+  // Also full when the task runner has no chain free: a closed conversation
+  // keeps its runner slot until its aborted turn unwinds, and a dispatch the
+  // runner rejects is only re-queued after this pass (see below).
+  if (state.currentActive >= schedulerState.max_concurrent_llm || state.out.dispatches.length >= state.runnerFreeSlots) {
+    if (claimParticipants(state, entry, { peek: true }) === 'ok') {
+      state.reservedPairs.add(conversationPairKey(entry.participants as number[]));
+    }
+    return;
+  }
+
+  // Peek only: the pair claim is taken once the conversation actually opens
+  // below. A staging entry reserves just the agents (see there).
+  const claim = claimParticipants(state, entry, { peek: true });
+  if (claim === 'duplicate') {
+    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    state.out.changed = true;
+    return;
+  }
+  if (claim === 'busy') return;
+
+  // Depressed agents skip conversations — remove from queue.
+  // Checked for every participant, not just the initiator: a depressed agent
+  // queued as the *target* was still dragged into a full LLM conversation.
+  const anyDepressed = entry.participants.some((pid) =>
+    getAgentStates(pid).includes('depressed'),
+  );
+  if (anyDepressed) {
+    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    return;
+  }
+
+  const isProtected = isProtectedEntry(entry);
+
+  // Don't open a conversation someone is about to walk out of. An ordinary
+  // entry waits (unclaimed) instead: many are one-shot — a perception
+  // reaction (PerceptionSystem) is never queued again — so deleting lost
+  // them. If the need clears in time it opens then; otherwise it ages out
+  // through Step C into a brief template chat. A protected one — the player
+  // asked for it — goes ahead, and Step A lets its first exchange land
+  // before needs can end it.
+  if (!isProtected && findNeedsInterrupt(entry.participants as number[], world)) return;
+
+  // Size the conversation to the game time it may take (see
+  // planConversation): a turn costs the model's latency × tick_speed game
+  // minutes, so at 4x a 20 s turn is 80 game minutes and the tier's full
+  // length would eat the evening.
+  const plan = planConversation({
+    tierMaxTurns: entry.tier === 'llm_deep' ? schedulerState.max_turns_deep : schedulerState.max_turns_standard,
+    tickSpeed: world.tick_speed,
+    isProtected,
+    observedLatencyMs: turnLatencyEstimateMs(nowGameMin),
+    probeDue: latencyProbeDue(nowGameMin),
+  });
+  if (plan.tier === 'template') {
+    // Not even one exchange fits: have it as a template chat now instead of
+    // an LLM one the budget would cut before anyone finished a sentence.
+    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    state.out.changed = true;
+    if (!loadTemplatePair(entry.participants as number[])) return;
+    claimParticipants(state, entry);
+    state.out.timedOutQueue.push({ entry, world });
+    state.templateTotal++;
+    return;
+  }
+  const maxTurns = plan.maxTurns;
+
+  // Verify both participants exist and are co-located
+  const firstParticipant = db
+    .select()
+    .from(agents)
+    .where(eq(agents.id, entry.participants[0]))
+    .get();
+  const secondParticipant = entry.participants[1]
+    ? db.select().from(agents).where(eq(agents.id, entry.participants[1])).get()
+    : null;
+
+  if (!firstParticipant || !secondParticipant) {
+    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    return;
+  }
+
+  // Remove queue entry if either participant has died since it was queued
+  if (!firstParticipant.is_active || !secondParticipant.is_active) {
+    db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+    return;
+  }
+
+  // Skip if agents are not at the same location or too far apart
+  const sameLocation = firstParticipant.current_location != null &&
+    firstParticipant.current_location === secondParticipant.current_location;
+  if (!sameLocation) {
+    const dx = firstParticipant.position.x - secondParticipant.position.x;
+    const dy = firstParticipant.position.y - secondParticipant.position.y;
+    if (dx * dx + dy * dy > 64 * 64) {
+      // A player's nudge walks both agents to a meeting point, so on its
+      // first pass the pair is almost always still apart. Deleting it here
+      // lost every confrontation/"make them talk" between people in
+      // different places without a word; it waits for them instead, and
+      // if they never meet it ages out through Step C (reported as 'apart').
+      if (isProtected) return;
+      // Too far apart — remove from queue, they'll re-queue when close
+      db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+      return;
+    }
+  }
+
+  if (stageApproach(state, entry, firstParticipant, secondParticipant)) return;
+
+  const locationId = firstParticipant.current_location;
+  if (!locationId) {
+    // Can't start a conversation without a location; skip for now
+    return;
+  }
+
+  openLLMConversation(state, entry, {
+    plan, maxTurns, isProtected, firstParticipant, secondParticipant, locationId,
+  });
+}
+
+/**
+ * Walk the initiator over when the pair is not yet within talking distance.
+ * Returns true when the entry is done for this pass (staged, or the initiator
+ * can't be moved); false when they are close enough to open the conversation.
+ */
+function stageApproach(
+  state: ConversationTickState,
+  entry: QueueRow,
+  firstParticipant: AgentRow,
+  secondParticipant: AgentRow,
+): boolean {
+  const { world } = state;
+  // Physical staging: two agents 60px apart shouldn't teleport into a
+  // conversation. Walk the initiator over first and open the conversation on
+  // a later tick, once they're adjacent. The queue entry is deliberately NOT
+  // deleted — if they never converge it ages out via `max_wait` into the
+  // template path, which reads as "they gave up".
+  const stageDx = secondParticipant.position.x - firstParticipant.position.x;
+  const stageDy = secondParticipant.position.y - firstParticipant.position.y;
+  const stageDist = Math.hypot(stageDx, stageDy);
+  if (stageDist > TALK_DISTANCE_PX) {
+    const moverAction = (firstParticipant.current_action?.type ?? 'idle') as string;
+    // Don't yank someone out of sleep, death, or another conversation.
+    if (moverAction === 'sleeping' || moverAction === 'dead' || moverAction === 'talking') {
+      return true;
+    }
+    const targetX = secondParticipant.position.x - (stageDx / stageDist) * TALK_STAGE_OFFSET_PX;
+    const targetY = secondParticipant.position.y - (stageDy / stageDist) * TALK_STAGE_OFFSET_PX;
+    // Re-issuing the order every tick would null `current_path` every tick and
+    // freeze them in place, so only write it when the destination has actually
+    // drifted (the partner moved) or they aren't walking yet.
+    const dest = firstParticipant.current_destination;
+    const alreadyHeaded =
+      moverAction === 'walking' &&
+      dest != null &&
+      Math.hypot(dest.x - targetX, dest.y - targetY) <= TALK_STAGE_REISSUE_PX;
+    if (!alreadyHeaded) {
+      db.update(agents)
+        .set({
+          current_action: { type: 'walking', reason: 'approaching_conversation' },
+          current_destination: { x: targetX, y: targetY },
+          current_path: null,
+          action_started: gameMinutes(world.time),
+          action_duration: null,
+        })
+        .where(eq(agents.id, firstParticipant.id))
+        .run();
+      state.out.changed = true;
+    }
+    // Reserve both agents for the rest of this pass: the initiator is walking
+    // over to talk, so a lower-priority entry must not grab either of them.
+    // The pair key is not claimed, so this entry opens normally next tick.
+    for (const id of entry.participants as number[]) state.claimedAgents.add(id);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Open the LLM conversation: claim the pair, insert the row, set both agents
+ * talking, and collect the dispatch the async pass hands to the task runner.
+ */
+function openLLMConversation(
+  state: ConversationTickState,
+  entry: QueueRow,
+  opening: {
+    plan: ConversationPlan;
+    maxTurns: number;
+    isProtected: boolean;
+    firstParticipant: AgentRow;
+    secondParticipant: AgentRow;
+    locationId: number;
+  },
+): void {
+  const { world, now, nowGameMin } = state;
+  const { plan, maxTurns, isProtected, firstParticipant, secondParticipant, locationId } = opening;
+  // Over by its budget plus the wrap-up grace at the latest.
+  claimParticipants(state, entry, { freeAt: nowGameMin + plan.budgetGameMin + plan.graceGameMin });
+
+  // Create conversation record
+  const result = db
+    .insert(conversations)
+    .values({
+      participants: entry.participants,
+      messages: [],
+      location: locationId,
+      trigger_reason: entry.trigger_reason,
+      topic: queuedTopic(entry),
+      status: 'active',
+      started_at: now,
+      ended_at: null,
+      sentiment: 0,
+      max_turns: maxTurns,
+    })
+    .returning({ id: conversations.id })
+    .get();
+
+  const conversationId = result.id;
+
+  // Update both agents' currentAction to "talking"
+  for (const participantId of entry.participants) {
+    db.update(agents)
+      .set({
+        current_action: {
+          type: 'talking',
+          conversationId,
+        },
+        action_started: gameMinutes(world.time),
+        // Game minutes, like every action duration. Informational only:
+        // isActionComplete never ends `talking` on a timer, the conversation
+        // system does.
+        action_duration: maxTurns * 2,
+      })
+      .where(eq(agents.id, participantId))
+      .run();
+  }
+
+  // Collect dispatch — actual startConversation() call goes outside transaction.
+  // `conversation:started` is emitted there, only once the task runner accepts:
+  // emitting here recorded memories and cascades for conversations that were
+  // deleted moments later when all runner slots were full.
+  state.out.dispatches.push({
+    conversationId,
+    speakerId: entry.participants[0],
+    participantIds: entry.participants as number[],
+    participantNames: [firstParticipant.name, secondParticipant.name],
+    entry,
+    // Stamped only once the runner accepts it: a rejected dispatch measures
+    // nothing and must not use up the probe.
+    probeAt: plan.probe ? nowGameMin : null,
+  });
+
+  state.fillEntries.push({
+    conversationId,
+    startedAt: now,
+    startedGameMin: nowGameMin,
+    budgetGameMin: plan.budgetGameMin,
+    plannedTurns: maxTurns,
+    graceGameMin: plan.graceGameMin,
+    protected: isProtected,
+  });
+  state.currentActive++;
+  state.out.changed = true;
+
+  // Remove from queue
+  db.delete(conversationQueue).where(eq(conversationQueue.id, entry.id)).run();
+}
+
+/** Write the scheduler's entries and running totals back: the last write of the pass. */
+function saveSchedulerState(state: ConversationTickState): void {
+  const { schedulerState, nowGameMin } = state;
+  // --- Update scheduler state ---
+  db.update(conversationSchedulerState)
+    .set({
+      active_llm_conversations: state.fillEntries,
+      stats: {
+        llmConversationsTotal: state.llmTotal,
+        templateConversationsTotal: state.templateTotal,
+        // Was never written (always 0); now the median turn latency the
+        // scheduler sizes conversations by, so diagnostics can see it.
+        averageResponseTimeMs: Math.round(turnLatencyEstimateMs(nowGameMin) ?? schedulerState.stats.averageResponseTimeMs),
+        queueTimeoutsTotal: state.queueTimeouts,
+      },
+    })
+    .where(eq(conversationSchedulerState.id, schedulerState.id))
+    .run();
+}
+
+/**
+ * Everything after the transaction has committed, in the original order: abort
+ * closed conversations' turns and hand new ones to the task runner (both
+ * synchronous, before the first await), then the template chats and
+ * completions one at a time, then the dirty-channel emits.
+ */
+async function runAsyncPass(out: ConversationTickOutcome): Promise<void> {
+  startDispatchedConversations(out);
+
+  // Process timed-out queue entries with template fallback
+  for (const { entry, world } of out.timedOutQueue) {
+    try {
+      await processTimedOutEntry(entry, world);
+    } catch (err) {
+      console.error('[conversations] Error processing timed-out entry:', err);
+    }
+  }
+
+  // Process completed LLM conversations
+  for (const { conversation, world, truncated } of out.completedConversations) {
+    try {
+      await processCompletedConversation(conversation, world, truncated);
+    } catch (err) {
+      console.error('[conversations] Error processing completed conversation:', err);
+    }
+  }
+
+  if (out.changed) {
+    emitter.markDirty('conversations');
+  }
+  if (out.agentsReleased) {
+    // Releasing an agent changes no conversation row, so the agent snapshot has to
+    // be pushed explicitly or the client keeps rendering them as talking.
+    emitter.markDirty('agents.all');
+  }
+}
+
+/**
+ * Cancel the turns of conversations Step A closed, then start the ones the pass
+ * opened; a dispatch the runner refuses is undone and its queue entry restored.
+ */
+function startDispatchedConversations(out: ConversationTickOutcome): void {
+  for (const id of out.closedIds) taskRunner.abortConversation(id);
+  for (const d of out.dispatches) {
     const accepted = taskRunner.startConversation(d.conversationId, d.speakerId);
     if (accepted) {
       if (d.probeAt != null) markLatencyProbe(d.probeAt);
@@ -952,33 +1199,6 @@ export async function conversationsTick(): Promise<void> {
           .run();
       }
     }
-  }
-
-  // Process timed-out queue entries with template fallback
-  for (const { entry, world } of timedOutQueue) {
-    try {
-      await processTimedOutEntry(entry, world);
-    } catch (err) {
-      console.error('[conversations] Error processing timed-out entry:', err);
-    }
-  }
-
-  // Process completed LLM conversations
-  for (const { conversation, world, truncated } of completedConversations) {
-    try {
-      await processCompletedConversation(conversation, world, truncated);
-    } catch (err) {
-      console.error('[conversations] Error processing completed conversation:', err);
-    }
-  }
-
-  if (changed) {
-    emitter.markDirty('conversations');
-  }
-  if (agentsReleased) {
-    // Releasing an agent changes no conversation row, so the agent snapshot has to
-    // be pushed explicitly or the client keeps rendering them as talking.
-    emitter.markDirty('agents.all');
   }
 }
 
