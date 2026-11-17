@@ -45,7 +45,7 @@ import path from 'path';
 import { buildSoakCast } from './soakCast';
 import { createIntimacyTally, findMinorsInIntimacy, formatIntimacyReport } from './soakIntimacy';
 import {
-  createHealthTracker, evaluateHealthWarnings, formatCallsTable, formatHealthTable,
+  createHealthTracker, evaluateHealthWarnings, formatCallsTable, formatGatheringsTable, formatHealthTable,
   type DayHealth,
 } from './soakHealth';
 
@@ -721,6 +721,13 @@ async function main(): Promise<void> {
   out(tally.length === 0
     ? 'calls promised: none'
     : `calls promised/made/expired/dropped: ${tally.map(([k, t]) => `${k} ${t.scheduled}/${t.made}/${t.expired}/${t.dropped}`).join(' · ')}`);
+  out('');
+  // Gatherings (server/lib/gatherings): per kind, how many were held, how many came on
+  // average, and of those asked at `must`/`should`, how many came. A kind scheduled but
+  // never held was called off (the leaver died, the couple's event vanished).
+  out('Gatherings (server/lib/gatherings): held / called off; avg came = everyone seen at the venue;');
+  out('asked/came = invited at must or should, and of them who came (the rest are the "may" crowd).');
+  for (const r of formatGatheringsTable((await import('../server/lib/gatherings/engine')).gatheringTally())) out(r);
   out('');
   const tickSummary = health.runTickSummary();
   const phaseSummary = health.runPhaseSummary();

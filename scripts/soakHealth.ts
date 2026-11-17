@@ -206,6 +206,37 @@ export function formatCallsTable(days: readonly DayHealth[]): string[] {
   ];
 }
 
+/** What the gatherings engine counts per kind (server/lib/gatherings/engine.ts `gatheringTally`). */
+export interface GatheringTallyRow {
+  scheduled: number;
+  held: number;
+  cancelled: number;
+  invited: number;
+  invitedCame: number;
+  attended: number;
+}
+
+/**
+ * Gatherings per kind for the whole run: held / called off, average attendance (everyone
+ * seen at the venue), and of those asked at `must`/`should`, how many came. Kinds that
+ * never happened are left out (the report says which kinds the run saw).
+ */
+export function formatGatheringsTable(tally: Readonly<Record<string, GatheringTallyRow>>): string[] {
+  const kinds = Object.keys(tally).sort();
+  if (kinds.length === 0) return ['(no gatherings)'];
+  const head = [pad('kind', 12), pad('held', 4), pad('off', 3), pad('avg came', 8), pad('asked', 5), pad('came', 4), pad('came %', 6)].join(' | ');
+  const rows = kinds.map((k) => {
+    const t = tally[k];
+    return [
+      pad(k, 12), pad(t.held, 4), pad(t.cancelled, 3),
+      pad(t.held > 0 ? (t.attended / t.held).toFixed(1) : '-', 8),
+      pad(t.invited, 5), pad(t.invitedCame, 4),
+      pad(t.invited > 0 ? `${Math.round((100 * t.invitedCame) / t.invited)}%` : '-', 6),
+    ].join(' | ');
+  });
+  return [head, head.replace(/[^|]/g, '-').replace(/\|/g, '+'), ...rows];
+}
+
 /** Run-level p50/p95/mean per phase over every tick of every day, plus each phase's share of the mean tick. */
 export function summarizePhases(perTick: Record<string, readonly number[]>, totals: readonly number[]): Array<{ phase: string } & PhaseStat & { share: number }> {
   const meanTotal = totals.length ? totals.reduce((s, v) => s + v, 0) / totals.length : 0;

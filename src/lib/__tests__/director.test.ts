@@ -7,6 +7,7 @@ import {
   pickRoamStop,
   scoreAlert,
   scoreConversation,
+  GATHERING_SHOT_BONUS,
   scoreEvent,
   stepDirector,
   type Candidate,
@@ -98,6 +99,12 @@ describe('scoring', () => {
     const template = scoreConversation(convo({ id: 3, trigger_reason: 'needs_social (template)' }), ctx);
     expect(deep).toBeGreaterThan(standard);
     expect(standard).toBeGreaterThan(template);
+  });
+
+  it('a chat at a gathering is a better shot than the same chat alone', () => {
+    const alone = scoreConversation(convo({ id: 1, trigger_reason: 'location_encounter:town_square' }), ctx);
+    const atFuneral = scoreConversation(convo({ id: 1, trigger_reason: 'gathering:funeral' }), ctx);
+    expect(atFuneral - alone).toBe(GATHERING_SHOT_BONUS);
   });
 
   it('prefers confrontation, secret and romance topics over small talk', () => {

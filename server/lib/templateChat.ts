@@ -34,6 +34,7 @@ import {
   type Voice,
 } from '../data/smallTalkScripts';
 import { SOCIAL_CALL_SCRIPTS } from '../data/socialCallScripts';
+import { GATHERING_SCRIPTS } from '../data/gatheringScripts';
 import type { PersonalityProfile } from './personality';
 
 export type Rng = () => number;
@@ -372,8 +373,15 @@ export function composeTemplateChat(c: ChatContext, opts: ComposeOptions = {}): 
   return null;
 }
 
-/** The call scripts this chat's trigger asks for, whose own `when` holds (empty for any other chat). */
-export function callScriptsFor(c: ChatContext, scripts: readonly TopicScript[] = SOCIAL_CALL_SCRIPTS): TopicScript[] {
+/**
+ * Scripts played first for the trigger they name: a social call's (the caller
+ * came to say something in particular) and a gathering's (two mourners at a
+ * funeral talk about the dead, not the weather).
+ */
+const TRIGGERED_SCRIPTS: readonly TopicScript[] = [...SOCIAL_CALL_SCRIPTS, ...GATHERING_SCRIPTS];
+
+/** The triggered scripts this chat's trigger asks for, whose own `when` holds (empty for any other chat). */
+export function callScriptsFor(c: ChatContext, scripts: readonly TopicScript[] = TRIGGERED_SCRIPTS): TopicScript[] {
   if (!c.trigger) return [];
   return scripts.filter((s) => s.trigger === c.trigger && s.when(c));
 }

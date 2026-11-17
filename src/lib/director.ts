@@ -237,6 +237,9 @@ function favouriteBonus(agentIds: readonly number[], favorites: ReadonlySet<stri
   return stars >= 2 ? 22 : 16;
 }
 
+/** What a chat at a gathering adds to its shot score (below a player's own nudge, +18). */
+export const GATHERING_SHOT_BONUS = 10;
+
 export function scoreConversation(
   c: DirectorConversation,
   ctx: { brewing: readonly DirectorBrewing[]; favorites: ReadonlySet<string> },
@@ -245,6 +248,10 @@ export function scoreConversation(
   let score = TIER_BASE[inferTier(c)];
   score += topicWeight(c.topic);
   if ((c.trigger_reason ?? '').startsWith('player_')) score += 18;
+  // A chat at a gathering (server/lib/gatherings: a funeral, a fire, a send-off)
+  // is the town doing something together: the crowd in the background makes it
+  // a better shot than the same two chatting alone.
+  if ((c.trigger_reason ?? '').startsWith('gathering:')) score += GATHERING_SHOT_BONUS;
   score += Math.abs(c.sentiment ?? 0) * 12;
   // Nothing said yet → nothing to caption; give the pair a moment to speak first.
   score += lines === 0 ? -12 : Math.min(lines, 4) * 2;

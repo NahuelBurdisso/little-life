@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import {
-  createHealthTracker, evaluateHealthWarnings, formatCallsTable, formatHealthTable, percentile, summarizePhases,
+  createHealthTracker, evaluateHealthWarnings, formatCallsTable, formatGatheringsTable, formatHealthTable, percentile, summarizePhases,
   type DayHealth,
 } from '../soakHealth';
 import { buildSoakCast } from '../soakCast';
@@ -94,6 +94,17 @@ describe('formatHealthTable / summarizePhases', () => {
     expect(t[3].replace(/\s+/g, '')).toBe('2|1|1|2');
     expect(t[4].replace(/\s+/g, '')).toBe('all|3|1|4');
     expect(formatCallsTable([day(1)])).toEqual(['(no social calls)']);
+  });
+
+  it('tables the gatherings per kind: held, average turnout, asked vs came', () => {
+    const t = formatGatheringsTable({
+      market: { scheduled: 2, held: 2, cancelled: 0, invited: 6, invitedCame: 3, attended: 9 },
+      funeral: { scheduled: 1, held: 1, cancelled: 0, invited: 4, invitedCame: 4, attended: 7 },
+    });
+    expect(t[0]).toMatch(/kind \| held \| off \| avg came \| asked \| came \| came %/);
+    expect(t[2].replace(/\s+/g, '')).toBe('funeral|1|0|7.0|4|4|100%');
+    expect(t[3].replace(/\s+/g, '')).toBe('market|2|0|4.5|6|3|50%');
+    expect(formatGatheringsTable({})).toEqual(['(no gatherings)']);
   });
 
   it('ranks phases by mean and gives each its share of the tick', () => {

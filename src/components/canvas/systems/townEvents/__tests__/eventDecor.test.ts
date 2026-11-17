@@ -164,6 +164,16 @@ describe('planEvent', () => {
     for (const p of atHome) expect(inside(p, square.position)).toBe(true);
   });
 
+  it('a funeral held on a named square (lib/gatherings) mourns there, never with festival bunting', () => {
+    const f = planEvent(ev(1, 'funeral', { location_id: square.id, triggered_by: 'death:3' }), LOCS, MAP);
+    expect(f.length).toBeGreaterThan(0);
+    for (const p of f) expect(inside(p, square.position)).toBe(true);
+    const frames = f.map(p => p.frame);
+    expect(frames).toContain(DECOR_FRAMES.wreath);
+    expect(frames).not.toContain(DECOR_FRAMES.bunting);
+    expect(frames).not.toContain(DECOR_FRAMES.buntingWhite);
+  });
+
   it('drops the well exclusion when the anchor is not a town square', () => {
     expect(wellBox(market.position, 'market_square')).toBeNull();
     expect(wellBox(square.position, 'town_square')).not.toBeNull();
