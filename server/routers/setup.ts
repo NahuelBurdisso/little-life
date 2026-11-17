@@ -391,39 +391,56 @@ function seedHookHistory(
 
 // ─── Helper: seed world from config ──────────────────────────────────────────
 
+type SetupConfig = z.infer<typeof SetupConfigSchema>;
+type GeneratedWorld = ReturnType<typeof generateWorld>;
+type Scenario = ReturnType<typeof buildScenario>;
+
 /**
- * Persist `config` plus an already-generated world.
- *
- * `genResult` is a parameter rather than something this function produces,
- * because `generateWorld` throws (unfittable content, dimensions cap) and every
- * caller clears the database first — so generating in here meant a failed
- * generation left an empty database behind. `replaceWorld` now generates before
- * it destroys anything.
+ * What the seeding steps share. Built once by `seedWorld`; the two maps start
+ * empty and are filled by `insertLocations` and `insertAgents`, and every later
+ * step resolves names through them, so the steps must run in `seedWorld`'s order.
  */
-function seedWorld(
-  config: z.infer<typeof SetupConfigSchema>,
-  genResult: ReturnType<typeof generateWorld>,
-  /**
-   * The scenario the sliders describe: secrets, romance threads, rivalries,
-   * starting money and starting mood — `buildScenario(config.scenario,
-   * config.agents)`, or null when no sliders were posted. Seeded, so the
-   * wizard's Preview step, the Start that follows it and any later `restart` of
-   * the saved config all produce the same town. Indices below are positions in
-   * `config.agents`, which is exactly the array handed to the generator.
-   *
-   * A parameter because `replaceWorld` needs it *before* generating the world
-   * (its romance threads and rivalries decide who lives next to whom), and
-   * building it twice would be two chances for the placement and the seeded
-   * relationships to disagree.
-   */
-  scenario: ReturnType<typeof buildScenario> | null,
-): { agentCount: number; locationCount: number } {
-  const now = Date.now();
+interface SeedContext {
+  config: SetupConfig;
+  genResult: GeneratedWorld;
+  /** The `scenario` parameter of `seedWorld` (null when no sliders were posted). */
+  scenario: Scenario | null;
+  /** One wall-clock stamp for every `Date.now()` column the seed writes. */
+  now: number;
+  /** The world's starting game minute: the clock for starting mood modifiers and the hook goal. */
+  startMinute: number;
+  /** Location name → id, filled by `insertLocations`. */
+  locationMap: Map<string, number>;
+  /** Agent name → id, filled by `insertAgents`. */
+  agentMap: Map<string, number>;
+}
 
-  const dynamicLocations = genResult.locations;
-  const dynamicCollisionGrid = genResult.collisionGrid;
+/**
+ * The shared state for one seed. `startMinute` is computed here rather than at
+ * step 4 where it is first read: `gameMinutes` is pure, so the value is the same,
+ * and the hook history at step 10b reads it too.
+ */
+function createSeedContext(
+  config: SetupConfig,
+  genResult: GeneratedWorld,
+  scenario: Scenario | null,
+): SeedContext {
+  return {
+    config,
+    genResult,
+    scenario,
+    now: Date.now(),
+    startMinute: gameMinutes({ day: config.world.startDay, hour: config.world.startHour, minute: 0 }),
+    locationMap: new Map<string, number>(),
+    agentMap: new Map<string, number>(),
+  };
+}
 
-  const locationMap = new Map<string, number>();
+/** Insert every generated location, unowned (owners are set at step 5), and fill `ctx.locationMap`. */
+function insertLocations(ctx: SeedContext): void {
+  const { locationMap } = ctx;
+  const dynamicLocations = ctx.genResult.locations;
+
   for (const loc of dynamicLocations) {
     const inserted = db
       .insert(locations)
@@ -443,9 +460,19 @@ function seedWorld(
       .get();
     locationMap.set(loc.name, inserted.id);
   }
+}
+
+/**
+ * Step 3: insert each agent with its aspiration and fill `ctx.agentMap`.
+ * Returns who starts inside each location, for `registerStartOccupants`.
+ * Throws when an agent's home is not a generated location; the caller's
+ * transaction rolls the whole seed back.
+ */
+function insertAgents(ctx: SeedContext): Map<number, number[]> {
+  const { config, scenario, locationMap, agentMap } = ctx;
+  const dynamicLocations = ctx.genResult.locations;
 
   // 3. Insert agents, build name → ID map
-  const agentMap = new Map<string, number>();
   /** Who starts inside each location, flushed to `current_occupants` after the loop. */
   const startOccupants = new Map<number, number[]>();
 
@@ -547,6 +574,11 @@ function seedWorld(
     }).run();
   }
 
+  return startOccupants;
+}
+
+/** Step 3b: write each location's starting occupants, as collected by `insertAgents`. */
+function registerStartOccupants(startOccupants: ReadonlyMap<number, number[]>): void {
   // 3b. Register the starting occupants.
   //
   // Worldgen emits every location with `current_occupants: []`, and movement.ts
@@ -561,9 +593,17 @@ function seedWorld(
       .where(eq(locations.id, locationId))
       .run();
   }
+}
+
+/**
+ * Step 4: one needs row and one economy row per agent, in cast order. The
+ * unseeded `Math.random()` draws stay in exactly this order (mood, stress, work
+ * performance, daily expenses), each only when its fallback is reached.
+ */
+function insertNeedsAndEconomy(ctx: SeedContext): void {
+  const { config, scenario, agentMap, startMinute } = ctx;
 
   // 4. Insert needs + economy for each agent
-  const startMinute = gameMinutes({ day: config.world.startDay, hour: config.world.startHour, minute: 0 });
   // The crime slider decides inequality: it flattens everyone toward 60-80 at
   // low crime and pulls the tails apart at high crime. Falls back to the job
   // table when no scenario was posted. A hook debtor starts nearly broke: the
@@ -611,6 +651,11 @@ function seedWorld(
       production_remainder: 0,
     }).run();
   }
+}
+
+/** Step 5: hand each owner-type agent's workplace to them, first come first served. */
+function assignLocationOwners(ctx: SeedContext): void {
+  const { config, locationMap, agentMap } = ctx;
 
   // 5. Set location owners — map job-based workplaces to their agent owners
   //    Ownership: whichever agent's workplaceName matches a location and their
@@ -641,54 +686,101 @@ function seedWorld(
       }
     }
   }
+}
 
+/** A relationship row being assembled by the step-6 staging passes, before insert. */
+interface StagedRel {
+  agent_a: number;
+  agent_b: number;
+  friendship_ab: number;
+  friendship_ba: number;
+  romance_ab: number;
+  romance_ba: number;
+  trust_ab: number;
+  trust_ba: number;
+  familiarity: number;
+  tags: string[];
+  status: string;
+}
+
+/** The staged rows, keyed by `pairKey`. */
+type StagedRels = Map<string, StagedRel>;
+
+/** Agent index in `config.agents` → agent id, or undefined when that agent was not seeded. */
+type AgentIdOf = (agentIdx: number) => number | undefined;
+
+/** The staging key of a pair, the same whichever way round it is given. */
+function pairKey(a: number, b: number): string {
+  return `${Math.min(a, b)}:${Math.max(a, b)}`;
+}
+
+/**
+ * Fetch or create the row for a pair, always stored with `agent_a < agent_b`.
+ * Every reader normalises with Math.min/Math.max before querying, so a row
+ * stored the other way round is invisible to the engine.
+ */
+function relFor(staged: StagedRels, x: number, y: number): StagedRel {
+  const key = pairKey(x, y);
+  const existing = staged.get(key);
+  if (existing) return existing;
+  const fresh: StagedRel = {
+    agent_a: Math.min(x, y),
+    agent_b: Math.max(x, y),
+    friendship_ab: 0,
+    friendship_ba: 0,
+    romance_ab: 0,
+    romance_ba: 0,
+    trust_ab: 0,
+    trust_ba: 0,
+    familiarity: 5,
+    tags: [],
+    status: 'acquaintance',
+  };
+  staged.set(key, fresh);
+  return fresh;
+}
+
+/** Write a directional field, respecting canonical pair order. */
+function setDirectional(
+  row: StagedRel,
+  from: number,
+  field: 'friendship' | 'romance' | 'trust',
+  apply: (current: number) => number,
+): void {
+  const key = (from === row.agent_a ? `${field}_ab` : `${field}_ba`) as keyof StagedRel;
+  (row[key] as number) = apply(row[key] as number);
+}
+
+/**
+ * Step 6: stage every starting relationship (structural ties, authored rows,
+ * the scenario), apply the adults-only rule, and insert. Returns the inserted
+ * rows for orientation assignment and the adult ids the secret steps check.
+ */
+function seedRelationships(ctx: SeedContext): { stagedRows: StagedRel[]; adultIds: Set<number> } {
   // 6. Insert relationships from config, with the scenario folded in.
   //
   // Rows are staged in a map first because the scenario's trust delta, romance
   // threads and rival pairs all edit pairs that may or may not appear in
   // `config.relationships`, and `idx_relationships_pair` is unique — a second
   // INSERT for the same pair would throw and roll the whole seed back.
-  interface StagedRel {
-    agent_a: number;
-    agent_b: number;
-    friendship_ab: number;
-    friendship_ba: number;
-    romance_ab: number;
-    romance_ba: number;
-    trust_ab: number;
-    trust_ba: number;
-    familiarity: number;
-    tags: string[];
-    status: string;
-  }
-  const staged = new Map<string, StagedRel>();
-  const pairKey = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`;
+  const staged: StagedRels = new Map<string, StagedRel>();
 
-  /**
-   * Fetch or create the row for a pair, always stored with `agent_a < agent_b`.
-   * Every reader normalises with Math.min/Math.max before querying, so a row
-   * stored the other way round is invisible to the engine.
-   */
-  const relFor = (x: number, y: number): StagedRel => {
-    const key = pairKey(x, y);
-    const existing = staged.get(key);
-    if (existing) return existing;
-    const fresh: StagedRel = {
-      agent_a: Math.min(x, y),
-      agent_b: Math.max(x, y),
-      friendship_ab: 0,
-      friendship_ba: 0,
-      romance_ab: 0,
-      romance_ba: 0,
-      trust_ab: 0,
-      trust_ba: 0,
-      familiarity: 5,
-      tags: [],
-      status: 'acquaintance',
-    };
-    staged.set(key, fresh);
-    return fresh;
-  };
+  const structuralTags = stageStructuralTies(ctx, staged);
+  stageAuthoredRelationships(ctx, staged, structuralTags);
+  if (ctx.scenario) stageScenarioRelationships(ctx, ctx.scenario, staged);
+
+  const { stagedRows, adultIds } = sanitizeStagedRelationships(ctx, staged);
+  insertStagedRelationships(ctx, stagedRows);
+  return { stagedRows, adultIds };
+}
+
+/**
+ * Step 6a: stage housemates, coworkers and neighbours. Returns each tie's
+ * structural tags by pair key, which the authored rows keep alongside theirs.
+ */
+function stageStructuralTies(ctx: SeedContext, staged: StagedRels): Map<string, string[]> {
+  const { config, agentMap } = ctx;
+  const dynamicLocations = ctx.genResult.locations;
 
   // 6a. Structural ties first: housemates, coworkers and next-door neighbours
   //     already know each other (lib/startingTies.ts has the why). Staged before
@@ -704,7 +796,7 @@ function seedWorld(
     const aId = agentMap.get(tie.a);
     const bId = agentMap.get(tie.b);
     if (aId === undefined || bId === undefined) continue;
-    const row = relFor(aId, bId);
+    const row = relFor(staged, aId, bId);
     const flipped = aId > bId;
     row.friendship_ab = flipped ? tie.friendshipBA : tie.friendshipAB;
     row.friendship_ba = flipped ? tie.friendshipAB : tie.friendshipBA;
@@ -715,6 +807,16 @@ function seedWorld(
     row.tags = [...tie.tags];
     structuralTags.set(pairKey(aId, bId), tie.tags);
   }
+  return structuralTags;
+}
+
+/** Step 6b: stage the wizard's (or saved config's) relationship rows over the structural ties. */
+function stageAuthoredRelationships(
+  ctx: SeedContext,
+  staged: StagedRels,
+  structuralTags: ReadonlyMap<string, string[]>,
+): void {
+  const { config, agentMap } = ctx;
 
   // 6b. Authored rows (wizard / saved config). Their values win outright; only
   //     the structural tags are kept alongside theirs, since "they share a house"
@@ -724,7 +826,7 @@ function seedWorld(
     const agentBId = agentMap.get(relCfg.agentBName);
     if (agentAId === undefined || agentBId === undefined) continue;
 
-    const row = relFor(agentAId, agentBId);
+    const row = relFor(staged, agentAId, agentBId);
     // `*AB` in the config means "A's feeling toward B". If the config listed the
     // pair in the opposite order to the canonical one, the directional halves
     // swap with it.
@@ -739,143 +841,151 @@ function seedWorld(
     row.tags = [...new Set([...relCfg.tags, ...(structuralTags.get(pairKey(agentAId, agentBId)) ?? [])])];
     row.status = relCfg.status;
   }
+}
 
-  if (scenario) {
-    const idOf = (agentIdx: number): number | undefined =>
-      agentMap.get(config.agents[agentIdx]?.name ?? '');
+/**
+ * The scenario's part of step 6: the trust slider's calibration, the romance
+ * threads, the rival pairs, then the opening hooks, which are applied last so
+ * they win.
+ */
+function stageScenarioRelationships(ctx: SeedContext, scenario: Scenario, staged: StagedRels): void {
+  const { config, agentMap } = ctx;
+  const idOf: AgentIdOf = (agentIdx: number): number | undefined =>
+    agentMap.get(config.agents[agentIdx]?.name ?? '');
 
-    /** Write a directional field, respecting canonical pair order. */
-    const setDirectional = (
-      row: StagedRel,
-      from: number,
-      field: 'friendship' | 'romance' | 'trust',
-      apply: (current: number) => number,
-    ) => {
-      const key = (from === row.agent_a ? `${field}_ab` : `${field}_ba`) as keyof StagedRel;
-      (row[key] as number) = apply(row[key] as number);
-    };
-
-    // The trust slider shifts the whole town's baseline, so it only touches
-    // pairs that already exist — it is a calibration, not a relationship source.
-    if (scenario.trustDelta !== 0) {
-      for (const row of staged.values()) {
-        row.trust_ab = clamp(row.trust_ab + scenario.trustDelta, -100, 100);
-        row.trust_ba = clamp(row.trust_ba + scenario.trustDelta, -100, 100);
-      }
-    }
-
-    for (const thread of scenario.romanceThreads) {
-      for (const rv of thread.romance_values) {
-        const from = idOf(rv.from);
-        const to = idOf(rv.to);
-        if (from === undefined || to === undefined || from === to) continue;
-        const row = relFor(from, to);
-        setDirectional(row, from, 'romance', () => clamp(rv.value, 0, 100));
-        row.familiarity = Math.max(row.familiarity, 40);
-        if (!row.tags.includes('romantic')) row.tags.push('romantic');
-      }
-      for (const fd of thread.friendship_deltas) {
-        const from = idOf(fd.from);
-        const to = idOf(fd.to);
-        if (from === undefined || to === undefined || from === to) continue;
-        setDirectional(relFor(from, to), from, 'friendship', (c) => clamp(c + fd.delta, -100, 100));
-      }
-      for (const td of thread.trust_deltas) {
-        const from = idOf(td.from);
-        const to = idOf(td.to);
-        if (from === undefined || to === undefined || from === to) continue;
-        setDirectional(relFor(from, to), from, 'trust', (c) => clamp(c + td.delta, -100, 100));
-      }
-    }
-
-    for (const [ai, bi] of scenario.rivalPairs) {
-      const a = idOf(ai);
-      const b = idOf(bi);
-      if (a === undefined || b === undefined || a === b) continue;
-      const row = relFor(a, b);
-      row.friendship_ab = clamp(Math.min(row.friendship_ab, -35), -100, 100);
-      row.friendship_ba = clamp(Math.min(row.friendship_ba, -35), -100, 100);
-      row.trust_ab = clamp(Math.min(row.trust_ab, -30), -100, 100);
-      row.trust_ba = clamp(Math.min(row.trust_ba, -30), -100, 100);
-      row.familiarity = Math.max(row.familiarity, 45);
-      row.status = 'rival';
-      if (!row.tags.includes('rival')) row.tags.push('rival');
-    }
-
-    // The opening hooks (lib/dramaHooks.ts). Applied last so they win over
-    // the authored rows and the slider's threads for the pairs they name.
-    const { triangle, rivalry, debt, campaign } = scenario.hooks;
-    const V = HOOK_VALUES;
-    const addTags = (row: StagedRel, ...tags: string[]) => {
-      for (const t of tags) if (!row.tags.includes(t)) row.tags.push(t);
-    };
-    if (triangle) {
-      const [a, b] = triangle.spouses.map(idOf);
-      const s = idOf(triangle.straying);
-      const t = idOf(triangle.admirer);
-      if (a !== undefined && b !== undefined && s !== undefined && t !== undefined) {
-        // The couple: a marriage (or engagement) is a pair of tags the relationship
-        // pass never derives or strips (lib/marriage.ts); `partner` is what code
-        // asking "are they together?" reads. Romance over the partnership line so
-        // an engaged pair also reads as partners on its numbers.
-        const couple = relFor(a, b);
-        setDirectional(couple, a, 'romance', (c) => Math.max(c, V.spouseRomance[0]));
-        setDirectional(couple, b, 'romance', (c) => Math.max(c, V.spouseRomance[1]));
-        setDirectional(couple, a, 'friendship', (c) => Math.max(c, V.spouseMinFriendship));
-        setDirectional(couple, b, 'friendship', (c) => Math.max(c, V.spouseMinFriendship));
-        couple.familiarity = Math.max(couple.familiarity, 85);
-        couple.status = 'partners';
-        addTags(couple, triangle.bond, 'partner', 'romantic');
-        // The pull outside it: half returned, below the partnership line, so the
-        // exclusivity rule leaves them a crush (relationships.ts updateTags).
-        const pull = relFor(s, t);
-        setDirectional(pull, s, 'romance', (c) => Math.max(c, V.strayRomance));
-        setDirectional(pull, t, 'romance', (c) => Math.max(c, V.admirerRomance));
-        setDirectional(pull, s, 'friendship', (c) => clamp(Math.max(c + 10, 15), -100, 100));
-        setDirectional(pull, t, 'friendship', (c) => clamp(Math.max(c + 10, 15), -100, 100));
-        pull.familiarity = Math.max(pull.familiarity, 45);
-        pull.status = 'romantic_interest';
-        addTags(pull, 'romantic');
-      }
-    }
-    if (rivalry) {
-      const [a, b] = rivalry.pair.map(idOf);
-      if (a !== undefined && b !== undefined) {
-        const row = relFor(a, b);
-        for (const from of [a, b]) {
-          setDirectional(row, from, 'friendship', (c) => Math.min(c, V.rivalFriendship));
-          setDirectional(row, from, 'trust', (c) => Math.min(c, V.rivalTrust));
-        }
-        row.familiarity = Math.max(row.familiarity, 60);
-        row.status = 'rivals';
-        // `rival` lapses above −50 (relationships.ts updateTags); `grudge` is
-        // never derived, so the feud outlives a thaw until a real reconciliation
-        // (conversationBeats.ts) lifts it. confrontationEngine reads both.
-        addTags(row, 'rival', 'grudge');
-      }
-    }
-    if (debt) {
-      const d = idOf(debt.debtor);
-      const c = idOf(debt.creditor);
-      if (d !== undefined && c !== undefined) {
-        const row = relFor(d, c);
-        setDirectional(row, c, 'friendship', (v) => clamp(Math.min(v + V.creditorFriendshipDelta, V.creditorFriendshipMax), -100, 100));
-        setDirectional(row, c, 'trust', (v) => clamp(Math.min(v + V.creditorTrustDelta, V.creditorTrustMax), -100, 100));
-        setDirectional(row, d, 'friendship', (v) => clamp(v - 5, -100, 100));
-        row.familiarity = Math.max(row.familiarity, 40);
-      }
-    }
-    if (campaign) {
-      const x = idOf(campaign.challenger);
-      const m = idOf(campaign.mayor);
-      if (x !== undefined && m !== undefined) {
-        const row = relFor(x, m);
-        setDirectional(row, x, 'friendship', (v) => clamp(v + V.challengerFriendshipDelta, -100, 100));
-        setDirectional(row, x, 'trust', (v) => clamp(v + V.challengerTrustDelta, -100, 100));
-        row.familiarity = Math.max(row.familiarity, 40);
-      }
+  // The trust slider shifts the whole town's baseline, so it only touches
+  // pairs that already exist — it is a calibration, not a relationship source.
+  if (scenario.trustDelta !== 0) {
+    for (const row of staged.values()) {
+      row.trust_ab = clamp(row.trust_ab + scenario.trustDelta, -100, 100);
+      row.trust_ba = clamp(row.trust_ba + scenario.trustDelta, -100, 100);
     }
   }
+
+  for (const thread of scenario.romanceThreads) {
+    for (const rv of thread.romance_values) {
+      const from = idOf(rv.from);
+      const to = idOf(rv.to);
+      if (from === undefined || to === undefined || from === to) continue;
+      const row = relFor(staged, from, to);
+      setDirectional(row, from, 'romance', () => clamp(rv.value, 0, 100));
+      row.familiarity = Math.max(row.familiarity, 40);
+      if (!row.tags.includes('romantic')) row.tags.push('romantic');
+    }
+    for (const fd of thread.friendship_deltas) {
+      const from = idOf(fd.from);
+      const to = idOf(fd.to);
+      if (from === undefined || to === undefined || from === to) continue;
+      setDirectional(relFor(staged, from, to), from, 'friendship', (c) => clamp(c + fd.delta, -100, 100));
+    }
+    for (const td of thread.trust_deltas) {
+      const from = idOf(td.from);
+      const to = idOf(td.to);
+      if (from === undefined || to === undefined || from === to) continue;
+      setDirectional(relFor(staged, from, to), from, 'trust', (c) => clamp(c + td.delta, -100, 100));
+    }
+  }
+
+  for (const [ai, bi] of scenario.rivalPairs) {
+    const a = idOf(ai);
+    const b = idOf(bi);
+    if (a === undefined || b === undefined || a === b) continue;
+    const row = relFor(staged, a, b);
+    row.friendship_ab = clamp(Math.min(row.friendship_ab, -35), -100, 100);
+    row.friendship_ba = clamp(Math.min(row.friendship_ba, -35), -100, 100);
+    row.trust_ab = clamp(Math.min(row.trust_ab, -30), -100, 100);
+    row.trust_ba = clamp(Math.min(row.trust_ba, -30), -100, 100);
+    row.familiarity = Math.max(row.familiarity, 45);
+    row.status = 'rival';
+    if (!row.tags.includes('rival')) row.tags.push('rival');
+  }
+
+  stageOpeningHookRelationships(scenario, staged, idOf);
+}
+
+/** The opening hooks' pairs: the couple and the pull outside it, the feud, the debt, the campaign. */
+function stageOpeningHookRelationships(scenario: Scenario, staged: StagedRels, idOf: AgentIdOf): void {
+  // The opening hooks (lib/dramaHooks.ts). Applied last so they win over
+  // the authored rows and the slider's threads for the pairs they name.
+  const { triangle, rivalry, debt, campaign } = scenario.hooks;
+  const V = HOOK_VALUES;
+  const addTags = (row: StagedRel, ...tags: string[]) => {
+    for (const t of tags) if (!row.tags.includes(t)) row.tags.push(t);
+  };
+  if (triangle) {
+    const [a, b] = triangle.spouses.map(idOf);
+    const s = idOf(triangle.straying);
+    const t = idOf(triangle.admirer);
+    if (a !== undefined && b !== undefined && s !== undefined && t !== undefined) {
+      // The couple: a marriage (or engagement) is a pair of tags the relationship
+      // pass never derives or strips (lib/marriage.ts); `partner` is what code
+      // asking "are they together?" reads. Romance over the partnership line so
+      // an engaged pair also reads as partners on its numbers.
+      const couple = relFor(staged, a, b);
+      setDirectional(couple, a, 'romance', (c) => Math.max(c, V.spouseRomance[0]));
+      setDirectional(couple, b, 'romance', (c) => Math.max(c, V.spouseRomance[1]));
+      setDirectional(couple, a, 'friendship', (c) => Math.max(c, V.spouseMinFriendship));
+      setDirectional(couple, b, 'friendship', (c) => Math.max(c, V.spouseMinFriendship));
+      couple.familiarity = Math.max(couple.familiarity, 85);
+      couple.status = 'partners';
+      addTags(couple, triangle.bond, 'partner', 'romantic');
+      // The pull outside it: half returned, below the partnership line, so the
+      // exclusivity rule leaves them a crush (relationships.ts updateTags).
+      const pull = relFor(staged, s, t);
+      setDirectional(pull, s, 'romance', (c) => Math.max(c, V.strayRomance));
+      setDirectional(pull, t, 'romance', (c) => Math.max(c, V.admirerRomance));
+      setDirectional(pull, s, 'friendship', (c) => clamp(Math.max(c + 10, 15), -100, 100));
+      setDirectional(pull, t, 'friendship', (c) => clamp(Math.max(c + 10, 15), -100, 100));
+      pull.familiarity = Math.max(pull.familiarity, 45);
+      pull.status = 'romantic_interest';
+      addTags(pull, 'romantic');
+    }
+  }
+  if (rivalry) {
+    const [a, b] = rivalry.pair.map(idOf);
+    if (a !== undefined && b !== undefined) {
+      const row = relFor(staged, a, b);
+      for (const from of [a, b]) {
+        setDirectional(row, from, 'friendship', (c) => Math.min(c, V.rivalFriendship));
+        setDirectional(row, from, 'trust', (c) => Math.min(c, V.rivalTrust));
+      }
+      row.familiarity = Math.max(row.familiarity, 60);
+      row.status = 'rivals';
+      // `rival` lapses above −50 (relationships.ts updateTags); `grudge` is
+      // never derived, so the feud outlives a thaw until a real reconciliation
+      // (conversationBeats.ts) lifts it. confrontationEngine reads both.
+      addTags(row, 'rival', 'grudge');
+    }
+  }
+  if (debt) {
+    const d = idOf(debt.debtor);
+    const c = idOf(debt.creditor);
+    if (d !== undefined && c !== undefined) {
+      const row = relFor(staged, d, c);
+      setDirectional(row, c, 'friendship', (v) => clamp(Math.min(v + V.creditorFriendshipDelta, V.creditorFriendshipMax), -100, 100));
+      setDirectional(row, c, 'trust', (v) => clamp(Math.min(v + V.creditorTrustDelta, V.creditorTrustMax), -100, 100));
+      setDirectional(row, d, 'friendship', (v) => clamp(v - 5, -100, 100));
+      row.familiarity = Math.max(row.familiarity, 40);
+    }
+  }
+  if (campaign) {
+    const x = idOf(campaign.challenger);
+    const m = idOf(campaign.mayor);
+    if (x !== undefined && m !== undefined) {
+      const row = relFor(staged, x, m);
+      setDirectional(row, x, 'friendship', (v) => clamp(v + V.challengerFriendshipDelta, -100, 100));
+      setDirectional(row, x, 'trust', (v) => clamp(v + V.challengerTrustDelta, -100, 100));
+      row.familiarity = Math.max(row.familiarity, 40);
+    }
+  }
+}
+
+/** The adults-only rule on the staged rows, in staging order. Also returns the adult ids. */
+function sanitizeStagedRelationships(
+  ctx: SeedContext,
+  staged: StagedRels,
+): { stagedRows: StagedRel[]; adultIds: Set<number> } {
+  const { config, agentMap } = ctx;
 
   // The adults-only rule at seed time: whatever fed the staged rows (the wizard's
   // typed romance, the generator's threads, a scenario secret's companion tag) a
@@ -885,6 +995,12 @@ function seedWorld(
   const seedAgents = config.agents.map((a) => ({ id: agentMap.get(a.name)!, age: a.age }));
   const stagedRows = sanitizeSeedRomance(seedAgents, [...staged.values()]);
   const adultIds = adultIdSet(seedAgents);
+  return { stagedRows, adultIds };
+}
+
+/** Insert the sanitised relationship rows, in staging order (row ids are autoincrement). */
+function insertStagedRelationships(ctx: SeedContext, stagedRows: ReadonlyArray<StagedRel>): void {
+  const { config, now } = ctx;
 
   for (const row of stagedRows) {
     db.insert(relationships).values({
@@ -899,6 +1015,14 @@ function seedWorld(
       last_updated: now,
     }).run();
   }
+}
+
+/**
+ * Step 6b (second): each agent's orientation, rolled from the one rng forked off
+ * the world seed. Reads the sanitised relationship rows.
+ */
+function seedOrientations(ctx: SeedContext, stagedRows: ReadonlyArray<StagedRel>): void {
+  const { config, genResult, agentMap } = ctx;
 
   // 6b. Orientation, now that the romance threads exist: a scenario that pairs
   //     two men has made them each other's crush, and a free roll must not turn
@@ -912,6 +1036,11 @@ function seedWorld(
   for (const [agentId, orientation] of orientations) {
     db.update(agents).set({ orientation }).where(eq(agents.id, agentId)).run();
   }
+}
+
+/** Step 7: each agent's authored backstory plus the lines its opening hooks add. */
+function seedBackstoryMemories(ctx: SeedContext): void {
+  const { config, scenario, agentMap } = ctx;
 
   // 7. Insert backstory memories from each agent's backstoryMemories, plus the
   //    lines the opening hooks add (a marriage, a debt, a grudge the authored
@@ -937,6 +1066,11 @@ function seedWorld(
       }).run();
     }
   }
+}
+
+/** Step 7b: the default cast's authored secrets, written only when the named residents exist. */
+function seedDefaultCastDrama(ctx: SeedContext, adultIds: ReadonlySet<number>): void {
+  const { agentMap, now } = ctx;
 
   // 7b. Seed initial drama shared_knowledge (only if matching agents exist)
   const diegoId = agentMap.get('Diego Santos');
@@ -980,62 +1114,71 @@ function seedWorld(
       created_at: now, is_active: true, source: 'backstory',
     }).run();
   }
+}
+
+/** Step 7c: the scenario's secrets (slider secrets, romance-thread secrets, hook secrets), for any cast. */
+function seedScenarioSecrets(ctx: SeedContext, scenario: Scenario, adultIds: ReadonlySet<number>): void {
+  const { config, agentMap, now } = ctx;
 
   // 7c. Scenario secrets. The block above is keyed to the default cast's names
   // and produces nothing for an edited or renamed town; these come from the
   // drama/crime sliders and work for any cast.
-  if (scenario) {
-    const idOfAgent = (agentIdx: number | null): number | undefined =>
-      agentIdx === null ? undefined : agentMap.get(config.agents[agentIdx]?.name ?? '');
+  const idOfAgent = (agentIdx: number | null): number | undefined =>
+    agentIdx === null ? undefined : agentMap.get(config.agents[agentIdx]?.name ?? '');
 
-    const scenarioSecrets = [
-      ...scenario.secrets,
-      ...scenario.romanceThreads.flatMap((t) => (t.secret ? [t.secret] : [])),
-      ...scenario.hooks.secrets,
+  const scenarioSecrets = [
+    ...scenario.secrets,
+    ...scenario.romanceThreads.flatMap((t) => (t.secret ? [t.secret] : [])),
+    ...scenario.hooks.secrets,
+  ];
+
+  for (const secret of scenarioSecrets) {
+    const subjectId = idOfAgent(secret.subject_index);
+    if (subjectId === undefined) continue;
+    const targetId = idOfAgent(secret.target_index) ?? null;
+    // A romantic secret (crush, affair, a sighting of one) never names a minor.
+    // The generator already picks adults for these; this is the backstop for a
+    // scenario built any other way.
+    if (!mayKeepSeedSecret(adultIds, { ...secret, subjectId, targetId })) continue;
+
+    const knownBy = [
+      ...new Set(
+        secret.known_by_indices
+          .map((i) => idOfAgent(i))
+          .filter((id): id is number => id !== undefined),
+      ),
     ];
+    // The generator decides who knows (setupGenerator.ts): for a sighting —
+    // "A saw B sneaking out" — the fact is about B and only A knows, so B must
+    // NOT be added here. This used to push the subject unconditionally, which
+    // told every person who was seen that they had been seen (B17). Only a
+    // secret nobody would know falls back to its subject.
+    if (knownBy.length === 0) knownBy.push(subjectId);
 
-    for (const secret of scenarioSecrets) {
-      const subjectId = idOfAgent(secret.subject_index);
-      if (subjectId === undefined) continue;
-      const targetId = idOfAgent(secret.target_index) ?? null;
-      // A romantic secret (crush, affair, a sighting of one) never names a minor.
-      // The generator already picks adults for these; this is the backstop for a
-      // scenario built any other way.
-      if (!mayKeepSeedSecret(adultIds, { ...secret, subjectId, targetId })) continue;
-
-      const knownBy = [
-        ...new Set(
-          secret.known_by_indices
-            .map((i) => idOfAgent(i))
-            .filter((id): id is number => id !== undefined),
-        ),
-      ];
-      // The generator decides who knows (setupGenerator.ts): for a sighting —
-      // "A saw B sneaking out" — the fact is about B and only A knows, so B must
-      // NOT be added here. This used to push the subject unconditionally, which
-      // told every person who was seen that they had been seen (B17). Only a
-      // secret nobody would know falls back to its subject.
-      if (knownBy.length === 0) knownBy.push(subjectId);
-
-      db.insert(shared_knowledge).values({
-        type: secret.type,
-        subject_id: subjectId,
-        target_id: targetId,
-        content: secret.content,
-        sensitivity: secret.sensitivity,
-        known_by: knownBy,
-        // `now`, not 0: gossipTick expires theft/rumor/seduction/confession on
-        // `Date.now() - created_at`, so a 0 here deactivates the secret on the
-        // first pass — it reads as ~57 years old.
-        created_at: now,
-        is_active: true,
-        source: 'backstory',
-      }).run();
-    }
+    db.insert(shared_knowledge).values({
+      type: secret.type,
+      subject_id: subjectId,
+      target_id: targetId,
+      content: secret.content,
+      sensitivity: secret.sensitivity,
+      known_by: knownBy,
+      // `now`, not 0: gossipTick expires theft/rumor/seduction/confession on
+      // `Date.now() - created_at`, so a 0 here deactivates the secret on the
+      // first pass — it reads as ~57 years old.
+      created_at: now,
+      is_active: true,
+      source: 'backstory',
+    }).run();
   }
+}
 
-  // 8. (no conversation-template rows: chats are played from data/smallTalkScripts.ts and
-  //    nothing reads the `templates` table any more — see the note on it in schema.ts.)
+/**
+ * Step 9: the world row (clock, weather, map, treasury, the config itself).
+ * Must follow step 4: the money target is read back from the economy rows.
+ * Returns the starting day phase, which the opening log line names.
+ */
+function insertWorldState(ctx: SeedContext): string {
+  const { config, genResult, now } = ctx;
 
   // 9. Create worldState. The rules are read back from `setup_config` (below),
   // through lib/worldRules.ts: a copy in the clock JSON would not survive the
@@ -1070,7 +1213,7 @@ function seedWorld(
     ),
     map_width: genResult.dimensions.width,
     map_height: genResult.dimensions.height,
-    collision_grid: dynamicCollisionGrid,
+    collision_grid: genResult.collisionGrid,
     road_tiles: genResult.roads,
     terrain_tiles: genResult.terrainTiles,
     setup_config: config,
@@ -1078,6 +1221,11 @@ function seedWorld(
     world_id: randomUUID(),
   }).run();
 
+  return dayPhase;
+}
+
+/** Step 10: the conversation scheduler's singleton row, at the configured limits. */
+function insertSchedulerState(): void {
   // 10. Create conversationSchedulerState singleton
   db.insert(conversationSchedulerState).values({
     active_llm_conversations: [],
@@ -1093,10 +1241,12 @@ function seedWorld(
       queueTimeoutsTotal: 0,
     },
   }).run();
+}
 
-  // 10b. The opening hooks' history, after the world row: the relationship_events
-  //      trigger stamps each row with the world clock's game minute.
-  if (scenario) seedHookHistory(config, scenario.hooks, agentMap, now, startMinute);
+/** Step 11: the activity log's opening line. */
+function logWorldCreated(ctx: SeedContext, dayPhase: string): void {
+  const { config, agentMap } = ctx;
+  const startHour = config.world.startHour;
 
   // 11. Create initial activity log entry
   const seasonLabel =
@@ -1105,8 +1255,65 @@ function seedWorld(
     type: 'system',
     templateData: { message: `Little Life begins. Day ${config.world.startDay}, ${seasonLabel} ${dayPhase}. ${agentMap.size} residents ${startHour >= 17 || startHour < 5 ? 'go about their evening' : 'start their day'}.` },
   });
+}
 
-  return { agentCount: agentMap.size, locationCount: locationMap.size };
+/**
+ * Persist `config` plus an already-generated world.
+ *
+ * `genResult` is a parameter rather than something this function produces,
+ * because `generateWorld` throws (unfittable content, dimensions cap) and every
+ * caller clears the database first — so generating in here meant a failed
+ * generation left an empty database behind. `replaceWorld` now generates before
+ * it destroys anything.
+ *
+ * The steps below run in a fixed order: row ids are autoincrement, later steps
+ * resolve names through the maps earlier ones fill, and step 4 draws from
+ * `Math.random()` in cast order.
+ */
+function seedWorld(
+  config: z.infer<typeof SetupConfigSchema>,
+  genResult: ReturnType<typeof generateWorld>,
+  /**
+   * The scenario the sliders describe: secrets, romance threads, rivalries,
+   * starting money and starting mood — `buildScenario(config.scenario,
+   * config.agents)`, or null when no sliders were posted. Seeded, so the
+   * wizard's Preview step, the Start that follows it and any later `restart` of
+   * the saved config all produce the same town. Indices below are positions in
+   * `config.agents`, which is exactly the array handed to the generator.
+   *
+   * A parameter because `replaceWorld` needs it *before* generating the world
+   * (its romance threads and rivalries decide who lives next to whom), and
+   * building it twice would be two chances for the placement and the seeded
+   * relationships to disagree.
+   */
+  scenario: ReturnType<typeof buildScenario> | null,
+): { agentCount: number; locationCount: number } {
+  const ctx = createSeedContext(config, genResult, scenario);
+
+  insertLocations(ctx);
+  const startOccupants = insertAgents(ctx);
+  registerStartOccupants(startOccupants);
+  insertNeedsAndEconomy(ctx);
+  assignLocationOwners(ctx);
+  const { stagedRows, adultIds } = seedRelationships(ctx);
+  seedOrientations(ctx, stagedRows);
+  seedBackstoryMemories(ctx);
+  seedDefaultCastDrama(ctx, adultIds);
+  if (scenario) seedScenarioSecrets(ctx, scenario, adultIds);
+
+  // 8. (no conversation-template rows: chats are played from data/smallTalkScripts.ts and
+  //    nothing reads the `templates` table any more — see the note on it in schema.ts.)
+
+  const dayPhase = insertWorldState(ctx);
+  insertSchedulerState();
+
+  // 10b. The opening hooks' history, after the world row: the relationship_events
+  //      trigger stamps each row with the world clock's game minute.
+  if (scenario) seedHookHistory(config, scenario.hooks, ctx.agentMap, ctx.now, ctx.startMinute);
+
+  logWorldCreated(ctx, dayPhase);
+
+  return { agentCount: ctx.agentMap.size, locationCount: ctx.locationMap.size };
 }
 
 /**
