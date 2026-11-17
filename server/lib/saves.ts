@@ -4,7 +4,7 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { eq, getTableName } from 'drizzle-orm';
 import { db, sqlite, initSchema } from '../db';
-import { agents, worldState } from '../db/schema';
+import { agents, appMeta, worldState } from '../db/schema';
 import { ALL_TABLES } from '../db/worldTables';
 import { isTickLoopRunning, startTickLoop, stopTickLoopAndWait } from '../engine/tick';
 import { taskRunner } from '../ai/taskRunner';
@@ -374,7 +374,7 @@ function copiedTables(): string[] {
   // under another model then gets re-embedded by the day-change backfill
   // instead of being ranked against incomparable query vectors. A save with
   // no marker reads as the legacy model, which is the same backfill's rule.
-  return [...ALL_TABLES.map((t) => getTableName(t)), 'app_meta'];
+  return [...ALL_TABLES.map((t) => getTableName(t)), getTableName(appMeta)];
 }
 
 function columnsOf(schema: string, table: string): string[] {

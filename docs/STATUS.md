@@ -2,9 +2,64 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-09-30 — `tsc` 0 errors, vitest 345 files / 4132 tests passing, `npm run deadcode` 0/0 (drama unblock + legibility on `feat/drama-unblock`, off `feat/loop-features` 1e5e82b, A/B soaked 12 days on seed `playtest4`, live-checked on a demo copy with Gemma; see "Drama unblock" below).
-Branch `fix/playtest-findings` (off `aa6ca8a`, where `feat/loop-features` started; before it `feat/intimacy-realism`, off `feat/living-agents-phase1`, which carried the engine/gameplay fixes and the
-worldgen v2 tracks, `docs/superpowers/plans/2026-09-28-worldgen-v2.md`).
+**Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors, `eslint` 0 errors (656 warnings, 653 of them
+`no-explicit-any`), vitest 348 files / 4144 tests (Vitest 5, ~54 s). Branch `chore/hygiene-and-debt` off `master`
+(the only other branch; the September feature branches and all agent worktrees are merged and gone).
+
+## Hygiene and debt pass (2026-11-17, branch `chore/hygiene-and-debt`)
+
+One commit each, `npm run check` green before every commit.
+
+- **Repo:** `.env` is no longer tracked (`.env.example` is; copy it), `data/play/` ignored.
+- **One schema mechanism** (`server/db/schemaMigrations.ts`, `server/db/migrations/0000_baseline.sql`). The old
+  chain stopped at 0001, tests used `drizzle-kit push`, the game added 28 columns and 4 tables by hand at boot, and
+  **nothing created the base tables at runtime: a fresh clone booted into 5 tables and could not start.** Now the
+  chain generated from `schema.ts` is applied at every start (game, tests, soak, scripts). A pre-chain file is
+  upgraded additively (frozen `LEGACY_COLUMNS` + any missing baseline table/index) and stamped; checked on scratch
+  copies of the live world and of `data/backup-2026-09-29-pre-gameclock`. Runs inside a save load's transaction, so it
+  does not use drizzle's `migrate()` (which issues its own BEGIN). `app_meta` is declared in `schema.ts`.
+  **Workflow: edit `schema.ts`, `npm run db:generate`, commit the `.sql`.**
+- **Sickness can kill** (`server/lib/sickness.ts`): untreated, an illness has ~2%/game hour to take a turn for the
+  worse (severity +0.2, +12 h, `illness` drama beat; twice as likely at 65+; scaled by the Sickness Rate rule). Two
+  turns at severity >= 0.75 is grave, and only a grave illness nobody treated in the last 3 h has a death hazard
+  (0.04%/min). With a healer in town it is a scare (the patient walks to the clinic above 0.4); 6 `illness` beats and
+  no death in a 10-day 13-resident soak. Not yet seen: an actual death from it (needs the doctor gone).
+- **Fun** (`needs.ts`, `WORK_FUN_NOTE`): a shift drained ~40-55 fun and an evening could restore ~13, so 5 of 13
+  residents sat at fun 0, which pinned stress near 80 and energy near 20. Work 1.3 -> 0.85, eating 0.9 -> 0.6, and
+  idle at home under fun 40 restores slowly (`HOME_PASTIME`). 10-day soak, seed `base1`, 4x, LLM off: at fun 0
+  5 -> 1 of 13, the rest 30-100; mood 62-74 -> 74-78. (Work at 0.4 overshot: everyone 82-100, mood 83.)
+- **Client:** WS reconnect backs off 0.5 s -> 5 s (`src/lib/wsRetry.ts`, was a flat 1 s: I7); the wizard and the six
+  big modals are lazy chunks (`App.tsx`), still mounted as before.
+- **Tooling:** ESLint (`eslint.config.js`: TS syntax rules + React hooks) in the gate, errors only; Vitest 2 -> 5;
+  dependencies updated within their ranges. Vitest 5 gives every test file its own DB copy, so `testSetup.ts` now
+  removes them in `teardown` (a run left ~350 files in `data/`).
+
+Measured and found stale, nothing changed:
+- **Tick time is fine.** 13 residents p50 22 / p95 43-60 ms; 32 residents p50 46 / p95 86 ms (3-day soak, 4x, LLM
+  off). The "p95 433 ms at 32" further down is an older measurement that no longer reproduces.
+- **Town roster in prompts** exists (`server/lib/townRoster.ts`, dialogue, plans, gazette) since 2026-09-30.
+- **P2's stress overwrite** is fixed (`carriedStress`, `needs.ts`).
+- **TopBar's 2 s `getLLMStats` poll** is deliberate (the semaphore has no dirty channel; a pushed version would need
+  the same throttle) and React Query already pauses it in a hidden tab.
+
+Tried and reverted:
+- **Sparse social graph (P5).** Giving everyone one tie-less social candidate (not only the curious) changed nothing:
+  strangers 22 -> 21 of 78 pairs, acquaintances 39 -> 38. 66 of 78 pairs do talk within 10 days; what keeps them
+  strangers is that a template chat between people with no tie moves friendship by almost nothing. With the LLM on,
+  A5's feelings change this, so measure it there before tuning.
+
+Still open from this pass:
+- **Gossip share** (164 of 227 drama rows in the base soak, LLM off). Presentation already treats retellings as
+  texture (B1, gazette); lowering their importance changes Highlights and needs a look in the client first.
+- **God-functions**, unchanged: `states.ts` `processStateEffects` 923 lines / `evaluateTriggers` 688;
+  `decisions.ts` `tick` 1120 / `scoreFreeTimeActions` 682; `conversations.ts` `finishCompletedConversation` 731 /
+  `conversationsTick` 684; `routers/setup.ts` `seedWorld` 739. The files are big because these are; each needs its
+  own careful session, not a file shuffle. `App.tsx` still holds 22 `useState`.
+- **No git remote**; `data/` holds ~650 MB of old backups and scratch DBs (left alone: the player's call).
+- **Real-LLM playtest** of family, calendar, overnight plans, the adult layer, and now grave illness and the fun
+  rebalance: still the most informative next step.
+- Uncommitted from before this pass, not touched: `.claude/launch.json`, `docs/superpowers/plans/2026-09-30-feature-loop.md`,
+  four `docs/scratch/intimacy-*.jpg`.
 
 ## Where the project is
 
@@ -159,8 +214,8 @@ Evidence in the session scratchpad; line numbers approximate.
   `conversations.ts` `finishCompletedConversation`.
 - Remaining per-agent queries in `states.ts` (heartbreak check ~679, conversation windows) and
   `needs.ts:602` (13 Drizzle updates/tick). Profile with `npx tsx scripts/tick-profile.ts`.
-- DB migration chain stale (see CLAUDE.md gotchas); now also `clockMigration.ts` via user_version.
-- `.env` tracked. (README added 2026-09-29; `playwright` is a devDependency — browsers need `npx playwright install chromium`.)
+- Data one-shots for old worlds still key on `PRAGMA user_version` (`clockMigration.ts`, `wageFloorMigration.ts`).
+- (README added 2026-09-29; `playwright` is a devDependency — browsers need `npx playwright install chromium`.)
 
 ## Autonomous improvement session (2026-09-29, parallel agents in worktrees, merged)
 
@@ -291,8 +346,7 @@ Player-facing:
   channel, recap card yields to the Director, partners at romance min > 65 & avg > 70 + reciprocity,
   2-day cooldown per random event type); **dev**: vite no longer watches `.claude/**`/`data/**`
   (with 54 worktrees it sat at 100% CPU); the ✦ You feed rows read "You gave …".
-- Open from wave 7: sickness can't kill anyone (sick states last ≤ 24 h, death needs > 5 days,
-  `lifeEventsEngine.ts:116`); gossip is still ~86–92% of beats; mood creeps up late in long runs
+- Open from wave 7: (sickness can kill since 2026-11-17, `lib/sickness.ts`); gossip is still ~86–92% of beats; mood creeps up late in long runs
   (`moodMomentum.ts`); the model invents townsfolk names ("Silas") — no roster in the prompt;
   `observers` goal triggers still skipped (`goals.ts:~189`); ousted mayor becomes unemployed;
   `envious` state has no client styling; no live playtest yet of family/calendar/overnight plans.
@@ -423,8 +477,7 @@ Open, found in the same run:
 - **P1 [M]** Ollama was down ~02:00–10:24; ~20 game days of LLM conversations were 100%
   fallback lines, sentiment 0, no Gazette — and nothing in the UI said so. (Deliberately not
   fixed on this branch.)
-- **P2 [M]** `fun` is bimodal (6 residents at 0–6, others 90+): it decays idle at home and only
-  leisure restores it (`needs.ts:95-118`); `comfort` sits at ~99 for everyone (home service
+- **P2 [M]** (`fun` bimodal and the stress overwrite: fixed 2026-11-17, see the top.) `comfort` sits at ~99 for everyone (home service
   +5/h, `worldgen/stages/homes.ts:66`); stress is recomputed from needs every tick, so cascade
   stress deltas are overwritten (`needs.ts:582-586` vs `RippleEngine.ts:894`, `SnapResolver.ts:175`).
 - **P3 [L]** `death` facts never expire and newcomers are never added to event/public facts'
@@ -624,7 +677,7 @@ partner who shares the guest's home) and no scandal (I5). The minors check is cl
 - **I6 [L]** `llm-smoke.ts` was not run against a model (Ollama was down): the two `intimacy.consent` cases (a warm yes must
   parse as accepted, a polite no as refused) are added but unverified. Run `npx tsx scripts/llm-smoke.ts --only intimacy.consent`
   with Ollama up.
-- **I7 [L]** The client retries `ws://localhost:3001` about 500 times (console errors) while the server boots; nothing after
+- **I7 [L]** (Backoff added 2026-11-17, `src/lib/wsRetry.ts`.) The client retries `ws://localhost:3001` about 500 times (console errors) while the server boots; nothing after
   it connects.
 - Found and fixed on the way. **Night owls slept at 19:00** (`sleepSchedule.ts`: `sleepTime` 1 was clamped to 19:00, so the
   wizard's bartender and musician were asleep through the evening; 2827af2). **`llm-smoke.ts` opened `data/little-life.db`**
@@ -768,7 +821,6 @@ before merging.
    family, calendar festivals/election, overnight planning and the story-health pass.
 2. Tune from what you see: pregnancy chance (`family.ts` `PREGNANCY_CHANCE_PER_DAY`), gossip share,
    flirt odds (`templateBeats.ts`), arrest threshold (`decisions.ts:~2383`).
-3. Give prompts a roster of real townsfolk so the model stops inventing names.
-4. Clean up merged agent worktrees.
+3. (done) Roster of real townsfolk in prompts; agent worktrees removed.
 5. Play a world with "Adult content (18+)" on and the real LLM for a few evenings: first live run of the consent chat,
    a tryst, a dawn walk and the Cinematic fade; then look at I9 (how fast it spreads) and whether partner exclusivity (I8, done) leaves enough couples.
