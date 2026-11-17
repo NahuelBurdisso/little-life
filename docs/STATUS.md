@@ -277,8 +277,7 @@ Evidence in the session scratchpad; line numbers approximate.
 
 ## Tech debt
 
-- God-functions: `states.ts` `processStateEffects`, `evaluateTriggers`; `decisions.ts` `tick()`;
-  `conversations.ts` `finishCompletedConversation`.
+- God-functions: split 2026-11-17 (see the top). Left: `replaceWorld`, `processTimedOutEntry`, `checkConditionalExits`.
 - Remaining per-agent queries in `states.ts` (heartbreak check ~679, conversation windows) and
   `needs.ts:602` (13 Drizzle updates/tick). Profile with `npx tsx scripts/tick-profile.ts`.
 - Data one-shots for old worlds still key on `PRAGMA user_version` (`clockMigration.ts`, `wageFloorMigration.ts`).
