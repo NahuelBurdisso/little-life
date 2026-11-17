@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
-import { agents, agentStates, needs } from '../../../db/schema';
+import { agents, agentStates, economy, locations, needs } from '../../../db/schema';
 import { simEvents } from '../../../lib/simEvents';
 import { createStatesTickContext } from '../states/context';
 import { evaluateTriggers } from '../states/triggers';
+import { processStateEffects } from '../states/effects';
 import { NOW, PERSONALITY, freshTown, insertResident } from '../../../lib/__tests__/populationFixtures';
 
 /**
@@ -47,5 +48,44 @@ describe('triggerStressed', () => {
     expect(statesOf(id).map((s) => s.type)).toContain('stressed');
     expect(eventsNamed('state:triggered').filter((e) => (e as { state: string }).state === 'stressed'))
       .toEqual([{ agentId: id, state: 'stressed', cause: 'needs:multiple_low' }]);
+  });
+});
+
+describe('stealItem', () => {
+  /** A desperate thief alone in a baker's shop, and the roll that says whether anyone saw. */
+  function steal(caughtRoll: number) {
+    const town = freshTown();
+    const owner = insertResident('Baker Bea', town.homes[0], {});
+    db.update(locations).set({ owner }).where(eq(locations.id, town.bakery)).run();
+    db.update(economy).set({ inventory: [{ itemId: 'bread', quantity: 3, acquiredAt: 0 }] })
+      .where(eq(economy.agent_id, owner)).run();
+    const thief = insertResident('Thief Tom', town.homes[1], {
+      current_location: town.bakery,
+      personality: { ...PERSONALITY, morality: 20 },
+    });
+    db.insert(agentStates).values({
+      agent_id: thief, type: 'in_debt', severity: 0.5, started_at: NOW - 60, duration: 999999,
+      source: 'test', metadata: {},
+    }).run();
+
+    // The theft roll passes, then the detection roll decides.
+    vi.mocked(Math.random).mockReturnValueOnce(0).mockReturnValueOnce(caughtRoll);
+    const all = [agentRow(owner), agentRow(thief)];
+    processStateEffects(agentRow(thief), statesOf(thief), all, NOW, 10_000, 1, createStatesTickContext());
+
+    return eventsNamed('interaction:completed')
+      .filter((e) => (e as { agentId: number }).agentId === thief) as Array<{ action: string }>;
+  }
+
+  it('an uncaught thief still remembers the theft, without "and got caught"', () => {
+    const memories = steal(0.99);
+    expect(memories).toHaveLength(1);
+    expect(memories[0].action).toMatch(/^stole .* from The Bakery$/);
+  });
+
+  it('a caught thief remembers it once, with "and got caught"', () => {
+    const memories = steal(0);
+    expect(memories).toHaveLength(1);
+    expect(memories[0].action).toMatch(/^stole .* from The Bakery and got caught$/);
   });
 });

@@ -799,16 +799,19 @@ function stealItem(
         action: `saw ${agent.name} steal from ${loc.name}`,
       });
     }
-    // Thief's own memory
-    simEvents.emit('interaction:completed', {
-      agentId: agent.id,
-      otherName: loc.name,
-      action: `stole ${itemPhrase(targetItem.itemId)} from ${loc.name}${caught ? ' and got caught' : ''}`,
-    });
   } else {
     const updatedMeta = { ...meta, theftCount: ((meta.theftCount as number) ?? 0) + 1 };
     db.update(agentStates).set({ metadata: updatedMeta }).where(eq(agentStates.id, state.id)).run();
   }
+
+  // Thief's own memory, caught or not. It sat inside the `caught` branch, so a
+  // thief only remembered the thefts someone saw, though the text was always
+  // written for both outcomes.
+  simEvents.emit('interaction:completed', {
+    agentId: agent.id,
+    otherName: loc.name,
+    action: `stole ${itemPhrase(targetItem.itemId)} from ${loc.name}${caught ? ' and got caught' : ''}`,
+  });
 }
 
 /**
