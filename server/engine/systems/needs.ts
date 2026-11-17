@@ -86,14 +86,35 @@ function writeNeedsRow(
 
 // Need names for iteration
 const NEED_KEYS = ['hunger', 'energy', 'social', 'comfort', 'fun'] as const;
+
+/*
+ * WORK_FUN_NOTE. Why work barely costs fun, and why home gives a little back.
+ *
+ * Work used to drain fun at 1.3x the base rate: an 8.7 h shift cost ~40 points, ~55 once
+ * stress amplified it, while the evening left after it (2-3 h, most of it spent walking)
+ * can earn back ~13 at the tavern. No full-time worker could break even, so in a 10-day
+ * soak 5 of 13 residents sat at fun 0. That is not just one flat bar: stress is computed
+ * from the lowest need, so fun 0 pinned their stress near 80, stress amplifies every
+ * other decay, and they ended each shift at energy ~20, went home instead of out, and
+ * never recovered. The shopkeeper, the doctor and the baker were permanently miserable
+ * for no reason the player could see or fix.
+ *
+ * Now a shift costs ~12 and a meal ~1, which an ordinary evening out covers. And someone
+ * bored at home (fun under HOME_PASTIME.BELOW) potters about: a book, mending, the stove.
+ * It lifts them slowly toward that line and no further, so home takes the edge off
+ * boredom but going out is still the only way to be properly entertained.
+ */
+export const HOME_PASTIME = { BELOW: 40, FUN_MODIFIER: -0.6 } as const;
+
 type NeedKey = (typeof NEED_KEYS)[number];
 
 // Action modifier table: how each action affects need decay
 // Negative = restorative, >1 = accelerated decay, <1 = slowed, 0 = no change
 const ACTION_MODIFIERS: Record<string, Record<NeedKey, number>> = {
   sleeping:    { hunger: 0.5,  energy: -2.3, social: 1,    comfort: -0.5, fun: 0    },
-  eating:      { hunger: -4.0, energy: 0.8,  social: 0.8,  comfort: -0.3, fun: 0.9  },
-  working:     { hunger: 1.2,  energy: 1.5,  social: 0.9,  comfort: 1.2,  fun: 1.3  },
+  eating:      { hunger: -4.0, energy: 0.8,  social: 0.8,  comfort: -0.3, fun: 0.6  },
+  // fun 0.85, not 1.3: see WORK_FUN_NOTE below.
+  working:     { hunger: 1.2,  energy: 1.5,  social: 0.9,  comfort: 1.2,  fun: 0.85 },
   talking:     { hunger: 1,    energy: 1.1,  social: -2.5, comfort: 1,    fun: -0.5 },
   socializing: { hunger: 1,    energy: 1.1,  social: -3.0, comfort: -0.3, fun: -1.5 },
   idle:        { hunger: 0.8,  energy: -0.5, social: 1,    comfort: -1.0, fun: 1.2  },
@@ -290,6 +311,10 @@ export function needsTick(): void {
     // Override with zone activity modifiers if present
     const zoneOverrides = zoneActivity ? ZONE_ACTIVITY_MODIFIERS[zoneActivity] : undefined;
     let modifiers = zoneOverrides ? { ...baseModifiers, ...zoneOverrides } : baseModifiers;
+    if (actionType === 'idle' && !zoneActivity && agent.home != null && agent.current_location === agent.home
+      && agentNeeds.fun < HOME_PASTIME.BELOW) {
+      modifiers = { ...modifiers, fun: HOME_PASTIME.FUN_MODIFIER };
+    }
 
     // A meal needs food (G2): serveMeal buys it from the vendor the agent is
     // eating at, or consumes an item they hold, or — broke or starving, at home,
