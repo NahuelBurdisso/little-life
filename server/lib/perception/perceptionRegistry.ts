@@ -173,7 +173,7 @@ export const PERCEPTION_REGISTRY: PerceptionRule[] = [
   },
   {
     id: 'constable_sees_criminal',
-    observes: { target_states: ['in_debt'] },
+    observes: { target_states: ['in_debt'], observer_jobs: ['constable'] },
     reaction: 'approach_investigate',
     base_score: 35,
     personality_weights: { morality: 0.5 },

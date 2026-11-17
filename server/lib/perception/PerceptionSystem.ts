@@ -1,5 +1,5 @@
 import { db } from '../../db';
-import { agents, needs, agentStates, relationships, conversations, conversationQueue, locations } from '../../db/schema';
+import { agents, needs, agentStates, relationships, conversations, conversationQueue, locations, economy } from '../../db/schema';
 import type { AgentAction } from '../../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { simEvents } from '../simEvents';
@@ -98,6 +98,12 @@ function matchesRule(
   }
 
   return true;
+}
+
+/** Whether `rule` is one this observer's trade lets them act on (`observes.observer_jobs`). */
+export function observerQualifies(rule: PerceptionRule, observerJob: string | null | undefined): boolean {
+  const jobs = rule.observes.observer_jobs;
+  return !jobs || (observerJob != null && jobs.includes(observerJob));
 }
 
 /**
@@ -283,6 +289,12 @@ export class PerceptionSystem {
       .from(relationships)
       .all();
 
+    // Trades, for rules only some observers act on (`observer_jobs`).
+    const jobByAgent = new Map<number, string>(
+      db.select({ agent_id: economy.agent_id, job: economy.job }).from(economy).all()
+        .map((e) => [e.agent_id, e.job]),
+    );
+
     // ── 2. Build lookup Maps ────────────────────────────────────────────────
 
     const needsByAgent = new Map<number, number>(); // agentId → mood
@@ -414,6 +426,8 @@ export class PerceptionSystem {
               !kindCooldownLifted(stamp, pairRomance, pairStatus)
             ) continue;
           }
+
+          if (!observerQualifies(rule, jobByAgent.get(observer.id))) continue;
 
           // Handle target_is_state_target separately (needs state records)
           if (rule.observes.target_is_state_target) {

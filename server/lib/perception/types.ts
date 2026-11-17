@@ -9,6 +9,11 @@ export interface PerceptionRule {
     max_friendship?: number;
     min_romance?: number;
     target_action?: string[];
+    /**
+     * Only observers in one of these trades notice this (`economy.job`). Without
+     * it `constable_sees_criminal` sent anyone at all to "investigate" a debtor.
+     */
+    observer_jobs?: string[];
   };
   reaction: string;
   base_score: number;
