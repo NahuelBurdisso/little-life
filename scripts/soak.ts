@@ -729,6 +729,31 @@ async function main(): Promise<void> {
   out('asked/came = invited at must or should, and of them who came (the rest are the "may" crowd).');
   for (const r of formatGatheringsTable((await import('../server/lib/gatherings/engine')).gatheringTally())) out(r);
   out('');
+  // Taking sides (server/lib/factions) and reciprocity (server/lib/socialCalls/reciprocity.ts):
+  // whole-run counts, then the feud feed rows per game day by beat.
+  const { factionTally } = await import('../server/lib/factions/store');
+  const { reciprocityTally } = await import('../server/lib/socialCalls/reciprocity');
+  const ft = factionTally();
+  const rt = reciprocityTally();
+  out('Taking sides (server/lib/factions) and reciprocity, whole run:');
+  out(`feuds started ${ft.started} · sides taken ${ft.sided} · neutral ${ft.neutral} · torn ${ft.torn} · `
+    + `mediations tried/succeeded ${ft.mediationsTried}/${ft.mediationsSucceeded} · town feuds started/ended ${ft.townStarted}/${ft.townEnded} · `
+    + `ended reconciled/gone/faded ${ft.ended.reconciled}/${ft.ended.gone}/${ft.ended.faded}`);
+  out(`favours returned ${rt.favoursReturned} · ingratitude slights ${rt.ingratitude}`);
+  const feudRows = sqlite.prepare("select game_minute as m, metadata as md from activity_log where type = 'feud'").all() as Array<{ m: number | null; md: string | null }>;
+  const feudByDay = new Map<number, Record<string, number>>();
+  for (const r of feudRows) {
+    if (r.m == null) continue;
+    const day = Math.floor(r.m / 1440);
+    const beat = (JSON.parse(r.md ?? '{}') as { beat?: string }).beat ?? '?';
+    const t = feudByDay.get(day) ?? {};
+    t[beat] = (t[beat] ?? 0) + 1;
+    feudByDay.set(day, t);
+  }
+  out(feudByDay.size === 0
+    ? 'feud rows: none'
+    : `feud rows by day: ${[...feudByDay].sort(([a], [b]) => a - b).map(([d, t]) => `d${d} ${Object.entries(t).map(([k, v]) => `${k}×${v}`).join(',')}`).join(' · ')}`);
+  out('');
   const tickSummary = health.runTickSummary();
   const phaseSummary = health.runPhaseSummary();
   out(`Tick time over ${tickSummary.ticks} ticks at ${health.startPopulation()} residents: p50 ${tickSummary.p50.toFixed(1)} ms, p95 ${tickSummary.p95.toFixed(1)} ms, max ${tickSummary.max.toFixed(0)} ms `
