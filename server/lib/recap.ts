@@ -109,6 +109,8 @@ const BEAT_ICONS: Record<string, string> = {
   welcome_home: '🏠', cold_shoulder: '❄', loan: '💰', loan_repaid: '💰', loan_unpaid: '💸',
   // Gatherings (lib/gatherings): the town doing something together.
   funeral: '🕯', wake: '🍺', send_off: '👋', market_day: '🧺', fire_saved: '🔥', fire_lost: '🔥', toast: '🥂', round: '🍺',
+  // Taking sides and feuds (lib/factions), and a kindness never returned (socialCalls/reciprocity.ts).
+  took_sides: '⚖', torn: '💔', town_feud: '⚔', feud_ended: '🕊', mediation: '🕊', ingratitude: '🥀',
 };
 const CATEGORY_ICONS: Record<string, string> = {
   world_event: '~', aspiration: '★', goal: '▶', relationship: '♦', social: '💬', drama: '!',

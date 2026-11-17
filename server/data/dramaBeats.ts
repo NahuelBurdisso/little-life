@@ -31,7 +31,10 @@ export type DramaBeat =
   | 'welcome' | 'consolation' | 'plea_to_stay' | 'welcome_home' | 'cold_shoulder'
   | 'loan' | 'loan_repaid' | 'loan_unpaid'
   // Gatherings (lib/gatherings): several residents in one place for a shared reason.
-  | 'funeral' | 'wake' | 'send_off' | 'market_day' | 'fire_saved' | 'fire_lost' | 'toast' | 'round';
+  | 'funeral' | 'wake' | 'send_off' | 'market_day' | 'fire_saved' | 'fire_lost' | 'toast' | 'round'
+  // Consequence that travels (lib/factions, socialCalls/reciprocity.ts): friends taking sides in a
+  // falling-out, a feud that splits the town and ends, a peacemaker, a kindness never returned.
+  | 'took_sides' | 'torn' | 'town_feud' | 'feud_ended' | 'mediation' | 'ingratitude';
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday' | 'kiss';
 
@@ -125,6 +128,16 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   fire_lost: null,
   toast: null,
   round: null,
+  // Taking sides and the feuds it makes (lib/factions, `feud` rows): people choosing whom to
+  // stand with is a summary of days of decisions, not a moment to draw; a feud that splits or
+  // heals the town is its own news, but the camps keeping apart in the street are the picture.
+  // A mediated peace is tagged `reconciliation` (romance FX) by performReconciliation itself.
+  took_sides: null,
+  torn: null,
+  town_feud: null,
+  feud_ended: null,
+  mediation: null,
+  ingratitude: null,
 };
 
 export function isDramaBeat(v: unknown): v is DramaBeat {

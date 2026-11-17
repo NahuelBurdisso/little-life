@@ -28,6 +28,7 @@ import './lib/intimacy'; // Kisses, longing and the adult layer (opt-in)
 import './lib/family'; // Children of married couples: a parent's death or departure
 import './lib/socialCalls'; // Residents calling on someone because of what happened to them
 import './lib/gatherings'; // The town doing things together: funerals, send-offs, market day, fires
+import './lib/factions'; // Friends taking sides when two residents fall out; town feuds and peacemakers
 import { initBirthdays } from './lib/agingEngine';
 import { initPersonalityDrift } from './lib/personalityDrift';
 import { initFavorTracking } from './lib/favorEngine';

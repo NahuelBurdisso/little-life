@@ -101,6 +101,17 @@ function markConfronted(a: number, b: number, nowMinutes: number): void {
   pendingConfrontations.delete(pairKey(a, b));
 }
 
+/**
+ * The pair has just made peace (a mediated reconciliation, lib/factions): the
+ * same rest a confrontation gives, so the hourly roll doesn't stage a brawl
+ * between them the next time they share a room, while their numbers are still
+ * climbing back out of feud territory. A pending cascade scene goes too.
+ */
+export function notePeaceMade(a: number, b: number, nowMinutes: number): void {
+  confrontationCooldown.set(pairKey(a, b), nowMinutes);
+  pendingConfrontations.delete(pairKey(a, b));
+}
+
 /** What the hourly roll needs to know about a co-located pair. */
 export interface ConfrontationOdds {
   avgFriendship: number;

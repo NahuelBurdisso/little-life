@@ -203,7 +203,13 @@ export function performConfession(
  * trust), the drama row. `MEND_EVENT` in storyBeats.ts — the chronicle turns a rivalry that gets
  * one of these into a reconciliation arc.
  */
-export function performReconciliation(rel: RelRow, forgiver: BeatAgent, forgiven: BeatAgent): void {
+export function performReconciliation(
+  rel: RelRow,
+  forgiver: BeatAgent,
+  forgiven: BeatAgent,
+  /** The feed line, when someone else brought it about (a peacemaker, lib/factions). */
+  opts: { description?: string; initiator?: number } = {},
+): void {
   const tags = rel.tags as string[];
   db.update(relationships).set({ tags: tags.filter((t) => t !== 'grudge') }).where(eq(relationships.id, rel.id)).run();
   db.insert(relationshipEvents).values({
@@ -217,9 +223,10 @@ export function performReconciliation(rel: RelRow, forgiver: BeatAgent, forgiven
   }).run();
   logActivity({
     type: 'drama',
-    initiator: forgiver.id,
+    initiator: opts.initiator ?? forgiver.id,
     target: forgiven.id,
-    templateData: { description: `${forgiver.name} and ${forgiven.name} have reconciled.` },
+    ...(opts.initiator != null ? { agents: [opts.initiator, forgiver.id, forgiven.id] } : {}),
+    templateData: { description: opts.description ?? `${forgiver.name} and ${forgiven.name} have reconciled.` },
     metadata: { beat: 'reconciliation' },
   });
   // Making up is what a befriend (or courtship) goal on either side was hoping for.

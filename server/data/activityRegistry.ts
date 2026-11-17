@@ -107,6 +107,10 @@ export const ACTIVITY_REGISTRY: Record<string, ActivityDef> = {
   // ONE row per gathering, at its end, naming who came and who conspicuously did not.
   // `severity` lifts it: funerals, wakes, send-offs and fires go in at 0.6 and up.
   gathering:       { category: 'social', base_importance: 0.5, retention: 'long', template: '{description}' },
+  // A falling-out that spreads through the town (lib/factions): friends taking
+  // sides (one summary row per batch of decisions, 0.55-0.6), a peacemaker who
+  // fails, a feud that splits the town or ends (severity lifts those to 0.75+).
+  feud:            { category: 'social', base_importance: 0.55, retention: 'long', template: '{description}' },
 
   // ─── Life milestones (lib/milestonesEngine.ts) ──────────────────────────────
   // Their own types rather than `drama` rows: the client's story beats key on

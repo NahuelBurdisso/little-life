@@ -26,6 +26,7 @@ interface LogActivityParams {
     /** The shared_knowledge row a gossip beat retells (gazette.ts: old news). */ factId?: number;
     /** A `social_call` row's kind (lib/socialCalls): the soak counts calls per kind by it. */ callKind?: string;
     /** A `gathering` row's kind (lib/gatherings): the soak counts gatherings per kind by it. */ gatheringKind?: string;
+    /** A `feud` row's feud (lib/factions): the rows of one falling-out, from first sides to the end. */ feudId?: number;
   } | null;
 }
 

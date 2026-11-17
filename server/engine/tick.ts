@@ -30,6 +30,7 @@ import { lonelinessCheck } from '../lib/lonelinessEngine';
 // Also registers the social-call listeners (a side-effect module, like giftEngine).
 import { socialCallsHourly } from '../lib/socialCalls';
 import { gatheringsTick } from '../lib/gatherings';
+import { factionsHourly } from '../lib/factions';
 import { dailyLifeHourly } from '../lib/dailyLife';
 import { smallMisdeedsHourly } from '../lib/smallMisdeeds';
 import { personalEventsHourly } from '../lib/personalEvents';
@@ -390,6 +391,9 @@ export async function gameTick(): Promise<void> {
     // loans repaid or gone sour. One transaction: a repayment is two balances,
     // a ledger row, a feed row and memories.
     runGuarded('socialCalls', () => db.transaction(() => socialCallsHourly(nowMinutes)));
+    // Taking sides (lib/factions): friends of two people who fell out make up their
+    // minds, a peacemaker sets off, a feud splits the town or burns out.
+    runGuarded('factions', () => db.transaction(() => factionsHourly(nowMinutes)));
     // In a transaction like the phases around it: a confrontation writes a feed row,
     // a relationship event, reputation and goal progress, all or nothing.
     runGuarded('confrontation', () => db.transaction(() => confrontationCheck(nowMinutes)));

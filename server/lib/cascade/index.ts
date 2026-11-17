@@ -84,6 +84,20 @@ export function relieveTension(agentId: number): void {
   tensionTracker?.onPositiveConversation(agentId);
 }
 
+/**
+ * Tension from outside the ripple rules: someone torn between two friends who
+ * have fallen out (lib/factions). The grievance is named for the Brewing card.
+ * A no-op before `initCascade`.
+ */
+export function addTensionFor(agentId: number, amount: number, description: string, agentInvolved?: string): void {
+  tensionTracker?.addTension(agentId, amount, {
+    event: 'feud:torn',
+    description,
+    tick: getCurrentTick(),
+    ...(agentInvolved ? { agentInvolved } : {}),
+  });
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function getCurrentTick(): number {

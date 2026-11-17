@@ -31,6 +31,13 @@ export const CALL_TOPIC = {
   lend_money: 'an offer of a loan',
 } as const;
 
+/** A peacemaker's call (lib/factions/mediate.ts): the topic names the other side of the quarrel. */
+export const MEDIATE_TOPIC_PREFIX = 'a word about the quarrel with ';
+
+export function mediateTopic(otherFirst: string): string {
+  return `${MEDIATE_TOPIC_PREFIX}${otherFirst}`;
+}
+
 /** The trigger_reason a call's conversation is queued with. */
 export function callTrigger(kind: string): string {
   return `social_call:${kind}`;
@@ -48,7 +55,12 @@ export function callKindOfTrigger(trigger: string | null | undefined): string | 
  * they say why.
  */
 export function socialCallIntent(topic: string, other: string): string | null {
-  switch (topic.trim().toLowerCase()) {
+  const t = topic.trim();
+  if (t.toLowerCase().startsWith(MEDIATE_TOPIC_PREFIX)) {
+    const third = t.slice(MEDIATE_TOPIC_PREFIX.length).trim() || 'someone';
+    return `${other} has fallen out with ${third}, and you care about them both. You came to talk ${other} round: hear them out, don't take sides, and say what you think it would take to make peace.`;
+  }
+  switch (t.toLowerCase()) {
     case CALL_TOPIC.sick_visit:
       return `${other} is ill, and you have walked over to see how they are. Ask after their health, offer what help you can, and don't tire them.`;
     case CALL_TOPIC.vigil:

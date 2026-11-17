@@ -76,6 +76,7 @@ import { clearVacancies } from '../lib/vacancies';
 import { clearFamilyState, familySnapshotStore } from '../lib/familyState';
 import { clearSocialCallState, socialCallsSnapshotStore } from '../lib/socialCalls';
 import { clearGatheringState, gatheringsSnapshotStore } from '../lib/gatherings';
+import { clearFactions, factionsSnapshotStore } from '../lib/factions/store';
 import { loadSnapshots, saveSnapshots } from './simSnapshots';
 import type { SnapshotStore } from './snapshotCodec';
 
@@ -98,7 +99,8 @@ import type { SnapshotStore } from './snapshotCodec';
  * and the intimacy state (how many times a pair kissed, an invitation waiting
  * for its answer, longing and suspicion — the `kissed`/`lovers` tags are in the DB),
  * and the social calls (who promised to visit whom, who came to a vigil or a
- * birthday — the loans themselves are a table).
+ * birthday — the loans themselves are a table), and the feuds (who has taken
+ * whose side, who is still deciding, a peacemaker on the way — lib/factions).
  *
  * Out, deliberately:
  *   - LLM backoffs (`planLLMGate`, goal reviewer/pivot stamps): they describe
@@ -128,6 +130,7 @@ const PERSISTED_STORES: readonly SnapshotStore[] = [
   intimacySnapshotStore,
   socialCallsSnapshotStore,
   gatheringsSnapshotStore,
+  factionsSnapshotStore,
 ];
 
 /** Checkpoint every persisted store for the current world. Never throws. */
@@ -227,6 +230,8 @@ export function clearPerWorldCaches(): void {
   clearSocialCallState();
   // Funerals set for tomorrow, send-offs at dawn, who came to the last one, the rounds' cooldowns (lib/gatherings).
   clearGatheringState();
+  // Feuds, who took whose side, the side-taking caps and thaws (lib/factions): agent ids and game minutes.
+  clearFactions();
   clearWorkSkipCounts();
   // Game-minute stamps keyed on agent-id pairs: both restart with a new world.
   clearDateAnnouncements();
