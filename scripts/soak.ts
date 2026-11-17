@@ -42,7 +42,6 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
 import { buildSoakCast } from './soakCast';
 import { createIntimacyTally, findMinorsInIntimacy, formatIntimacyReport } from './soakIntimacy';
 import {
@@ -101,15 +100,10 @@ if (SOURCE_DB) {
   for (const sfx of ['-wal', '-shm']) {
     if (fs.existsSync(src + sfx)) fs.copyFileSync(src + sfx, tmpDb + sfx);
   }
-} else {
-  // Same schema path as the test suite (server/db/testSetup.ts): the migration
-  // chain is stale, drizzle-kit push derives the tables from schema.ts.
-  execFileSync('npx', ['drizzle-kit', 'push', '--force'], {
-    env: { ...process.env, DATABASE_PATH: tmpDb },
-    stdio: 'pipe',
-    shell: process.platform === 'win32',
-  });
 }
+// No source DB: nothing to do here. Importing server/db on a path with no file
+// creates it from the migration chain (server/db/schemaMigrations.ts), the same
+// way the game builds a new player's database.
 // server/db reads this once at import; every server import below is dynamic
 // so it happens after this line. dotenv does not override an existing value.
 process.env.DATABASE_PATH = tmpDb;

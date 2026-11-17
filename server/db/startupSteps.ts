@@ -3,7 +3,7 @@
  * skips the next.
  *
  * They used to share a single try in `initSchema`: a swallowed "no such table"
- * from a migrateSchema backfill skipped the one-shot tick → game-minute rebase
+ * from a row backfill skipped the one-shot tick → game-minute rebase
  * behind it. New code then went on writing game minutes, and a later start
  * would rebase those already-converted values as if they were ticks.
  *

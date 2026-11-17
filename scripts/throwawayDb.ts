@@ -11,7 +11,6 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 /** The repo root, from this file rather than the cwd: a script run from another directory must not resolve `data/` elsewhere. */
@@ -41,14 +40,9 @@ if (process.env.DATABASE_PATH) {
 } else {
   const tmp = path.join(os.tmpdir(), `little-life-script-${process.pid}.db`);
   const template = path.resolve(REPO_ROOT, 'data/test.db');
-  if (fs.existsSync(template)) {
-    copyDbWithSidecars(template, tmp);
-  } else {
-    // A fresh clone has no test DB yet: derive the tables from schema.ts, like the soak and the tests do.
-    execFileSync('npx', ['drizzle-kit', 'push', '--force'], {
-      env: { ...process.env, DATABASE_PATH: tmp }, stdio: 'pipe', shell: process.platform === 'win32', cwd: REPO_ROOT,
-    });
-  }
+  // A fresh clone has no test DB yet: then the path stays empty and server/db builds
+  // the tables from the migration chain when the script imports it.
+  if (fs.existsSync(template)) copyDbWithSidecars(template, tmp);
   process.env.DATABASE_PATH = tmp;
   process.on('exit', () => {
     for (const sfx of ['', '-wal', '-shm']) { try { fs.rmSync(tmp + sfx, { force: true }); } catch { /* still open */ } }

@@ -8,11 +8,13 @@ import { execFileSync } from 'child_process';
  * .env — that is the live simulation's world. Start from a deleted file so a
  * run can't inherit rows from the previous one.
  *
- * Tables come from `drizzle-kit push` rather than the migration chain: the
- * chain is missing the tables added after 0001 (goals, aspirations,
- * interactions, interaction_participants, interaction_cooldowns), so replaying
- * it yields a database the app can't actually use. Pushing derives the schema
- * from schema.ts, which is what the code queries.
+ * Tables come from the migration chain, through the same code the game runs at
+ * boot (`server/db/migrate.ts` just opens the file and closes it). It used to be
+ * `drizzle-kit push`, because the chain was stale; that meant the suite tested a
+ * schema the running game never built (see schemaMigrations.ts).
+ *
+ * A child process, not an import: this is vitest's main process, and a connection
+ * left open here would hold the template while the workers copy it.
  */
 const TEST_DB = './data/test.db';
 
@@ -27,7 +29,7 @@ export async function setup() {
     if (f.startsWith('test-worker-')) fs.rmSync(`./data/${f}`, { force: true });
   }
   try {
-    execFileSync('npx', ['drizzle-kit', 'push', '--force'], {
+    execFileSync('npx', ['tsx', 'server/db/migrate.ts'], {
       env: { ...process.env, DATABASE_PATH: TEST_DB },
       // 'pipe', not 'ignore': a failed push used to surface as hundreds of
       // "no such table" test failures with the actual cause discarded.
@@ -37,7 +39,7 @@ export async function setup() {
   } catch (err) {
     const e = err as { stdout?: Buffer; stderr?: Buffer };
     const output = [e.stdout?.toString(), e.stderr?.toString()].filter(Boolean).join('\n');
-    if (output) console.error(`[testSetup] drizzle-kit push failed:\n${output}`);
+    if (output) console.error(`[testSetup] building the test database failed:\n${output}`);
     throw err;
   }
 }

@@ -30,7 +30,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 | Server | Node + `tsx`, Express 5, tRPC 11 over **WebSocket only** (`ws://localhost:3001`) |
 | DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
 | Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
-| LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything, qwen3-embedding:0.6b for memory; config in `.env`, Ollama flags in `start-game.bat` |
+| LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything, qwen3-embedding:0.6b for memory; config in `.env` (copy `.env.example`; `.env` is not tracked), Ollama flags in `start-game.bat` |
 | Tests | Vitest 2, ~210 files / ~2300 tests (server + pure client modules) |
 
 ## Commands
@@ -92,10 +92,12 @@ directly — keep those free of Node/DB imports.
 
 ## Gotchas (learned the hard way)
 
-- **DB schema has three mechanisms.** Drizzle migrations stop at `0001` (missing goals,
-  aspirations, interactions tables) → `npm run db:migrate` is stale. Runtime uses
-  `addColumnIfMissing` in `server/db/index.ts`; tests use `drizzle-kit push` from
-  `schema.ts`. **When you add a column: edit `schema.ts` AND add an `addColumnIfMissing`.**
+- **DB schema has one mechanism:** the migration chain in `server/db/migrations/`, generated
+  from `schema.ts` and applied at every start by `server/db/schemaMigrations.ts` (game, tests,
+  soak and scripts alike). **To change the schema: edit `schema.ts`, run `npm run db:generate`,
+  commit the new `.sql`.** Files from before the chain are upgraded once by the frozen
+  `LEGACY_COLUMNS` list there; never add to it. Data fixes for old worlds (not schema) stay
+  as startup steps in `server/db/index.ts`.
 - **Tests must never touch the live DB.** `vite.config.ts` pins `DATABASE_PATH=./data/test.db`;
   each worker copies it (`server/db/testWorker.ts`). Don't import `server/db` before setup.
 - **Lots of sim state is in-memory only** (hobby skills, favors, tension, mood momentum,
@@ -113,9 +115,9 @@ directly — keep those free of Node/DB imports.
   Changing `num_ctx` per call makes Ollama reload the model — it is pinned in `CONFIG.AI.NUM_CTX`
   (chat) and `CONFIG.AI.EMBED_NUM_CTX` (embeddings). Prompts that imagine town life include
   `TOWN_SETTING` (`server/ai/setting.ts`, around 1900).
-- **New tables** go in `schema.ts` (tests) *and* a `CREATE TABLE IF NOT EXISTS` in
-  `server/db/index.ts` (runtime), plus `ALL_TABLES` in `db/worldTables.ts` (world replace *and*
-  save load) and `db/seed.ts` if the rows belong to one world.
+- **New tables** go in `schema.ts` + `npm run db:generate`, plus `ALL_TABLES` in
+  `db/worldTables.ts` (world replace *and* save load) and `db/seed.ts` if the rows belong to
+  one world.
 - Vitest 2 quirk: a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
   when the throw is caught. Use `mockClear()` + `mockImplementationOnce(() => { throw ... })`.
 

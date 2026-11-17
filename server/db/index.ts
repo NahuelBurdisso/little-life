@@ -13,6 +13,7 @@ import {
 } from './relationshipEventClock';
 import { backfillActivityLogGameMinutes } from './activityLogClock';
 import { runStartupSteps } from './startupSteps';
+import { applyMigrations } from './schemaMigrations';
 import { raiseWagesToFloor } from './wageFloorMigration';
 import { repairLegacySightingFacts } from './sightingFactRepair';
 import { repairUndefinedGossipMemories } from './gossipMemoryRepair';
@@ -74,125 +75,10 @@ function createPerfIndexes() {
   }
 }
 
-// ─── Schema migrations (additive columns) ─────────────────────────────────
-function migrateSchema() {
-  const addColumnIfMissing = (table: string, column: string, type: string, dflt?: string) => {
-    try {
-      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}${dflt ? ` DEFAULT ${dflt}` : ''}`);
-    } catch (err) {
-      // Only two outcomes are expected: the column is already there, or the
-      // table itself does not exist yet on a fresh DB (retried by the
-      // initSchema() call at the end of migrate.ts). A blanket catch also hid
-      // SQLITE_BUSY, which silently skipped the column add and then surfaced as
-      // an unrelated failure on the backfill below.
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/duplicate column/i.test(message) && !/no such table/i.test(message)) throw err;
-    }
-  };
-
-  // The Town Crier (server/lib/gazette.ts). A whole table, not a column: the
-  // migration chain is stale, so new tables are created here too.
-  sqlite.exec(`CREATE TABLE IF NOT EXISTS gazette_issues (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    day INTEGER NOT NULL,
-    season TEXT NOT NULL,
-    headline TEXT NOT NULL,
-    articles TEXT NOT NULL,
-    gossip TEXT,
-    covers_to_tick INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
-  )`);
-
-  // Small key/value store for facts about the DB itself (which embedding model
-  // made the stored vectors — see lib/memory/embeddingBackfill.ts).
-  sqlite.exec('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-
-  // Checkpoints of in-memory sim state (server/engine/simSnapshots.ts). The rows
-  // belong to one world, so the table is in both ALL_TABLES lists and a world
-  // replace wipes it together with everything else.
-  sqlite.exec(`CREATE TABLE IF NOT EXISTS sim_snapshots (
-    key TEXT PRIMARY KEY NOT NULL,
-    world_id INTEGER NOT NULL,
-    version INTEGER NOT NULL,
-    game_minute INTEGER NOT NULL,
-    data TEXT NOT NULL,
-    saved_at INTEGER NOT NULL
-  )`);
-
-  // Babies of married residents (server/lib/family.ts). One world's rows, like
-  // sim_snapshots: in ALL_TABLES, wiped on a replace, swapped on a save load.
-  sqlite.exec(`CREATE TABLE IF NOT EXISTS children (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    sex TEXT NOT NULL,
-    birth_game_minute INTEGER NOT NULL,
-    mother_id INTEGER NOT NULL REFERENCES agents(id),
-    father_id INTEGER REFERENCES agents(id),
-    true_father_id INTEGER REFERENCES agents(id),
-    home INTEGER REFERENCES locations(id),
-    alive INTEGER NOT NULL DEFAULT 1,
-    paternity_fact_id INTEGER,
-    paternity_revealed INTEGER NOT NULL DEFAULT 0
-  )`);
-  sqlite.exec('CREATE INDEX IF NOT EXISTS idx_children_mother ON children(mother_id)');
-  sqlite.exec('CREATE INDEX IF NOT EXISTS idx_children_father ON children(father_id)');
-
-  // Goals table extensions
-  // Stable self facts for dialogue (lib/selfFacts.ts), derived lazily.
-  addColumnIfMissing('agents', 'years_in_town', 'INTEGER');
-  addColumnIfMissing('agents', 'job_years', 'INTEGER');
-  // Sexual orientation (lib/intimacy/eligibility.ts); backfilled at startup.
-  addColumnIfMissing('agents', 'orientation', 'TEXT');
-  addColumnIfMissing('goals', 'description', 'TEXT');
-  addColumnIfMissing('goals', 'strategy', 'TEXT');
-  addColumnIfMissing('goals', 'mapped_interactions', 'TEXT');
-  addColumnIfMissing('goals', 'pivot_count', 'INTEGER', '0');
-  addColumnIfMissing('goals', 'source', 'TEXT', "'reactive'");
-  addColumnIfMissing('goals', 'completed_at', 'INTEGER');
-
-  // Aspirations table extensions
-  addColumnIfMissing('aspirations', 'description', 'TEXT');
-  addColumnIfMissing('aspirations', 'shifted_reason', 'TEXT');
-
-  // Relationship decay clock (game minutes; see schema.ts)
-  addColumnIfMissing('relationships', 'last_interaction_minute', 'INTEGER');
-  // When the pair reached its current status (game minutes; see schema.ts).
-  // Old rows stay NULL: lib/milestonesEngine.ts starts their clock when it
-  // first meets them rather than guessing how long a couple has been together.
-  addColumnIfMissing('relationships', 'status_since_minute', 'INTEGER');
-
-  // Story-arc / retention clock (game minutes; see schema.ts). Filled by a TEMP
-  // trigger on insert, old rows by backfillRelationshipEventGameMinutes.
-  addColumnIfMissing('relationship_events', 'game_minute', 'INTEGER');
-
-  // Activity log extensions
-  addColumnIfMissing('activity_log', 'metadata', 'TEXT');
-  // Timeline clock (game minutes; see schema.ts). Stamped by logActivity, old
-  // rows by backfillActivityLogGameMinutes.
-  addColumnIfMissing('activity_log', 'game_minute', 'INTEGER');
-
-  // Conversation pacing on the game clock (see schema.ts)
-  addColumnIfMissing('conversation_queue', 'deadline_game_min', 'INTEGER');
-  addColumnIfMissing('template_usage', 'used_game_min', 'INTEGER');
-
-  // Shared knowledge extensions
-  addColumnIfMissing('shared_knowledge', 'is_public', 'INTEGER', '0');
-  addColumnIfMissing('shared_knowledge', 'revealed_at', 'INTEGER');
-  // Sentence served for this fact (game minute it ends; lib/arrests.ts).
-  addColumnIfMissing('shared_knowledge', 'paid_at', 'INTEGER');
-
-  // World state extensions
-  addColumnIfMissing('world_state', 'road_tiles', 'TEXT', "'[]'");
-  addColumnIfMissing('world_state', 'terrain_tiles', 'TEXT', "'[]'");
-  addColumnIfMissing('world_state', 'money_target_per_capita', 'REAL');
-  addColumnIfMissing('world_state', 'treasury_ramp_left', 'INTEGER');
-  // Live rule overrides (Storyteller / world.setRules), see lib/worldRules.ts.
-  addColumnIfMissing('world_state', 'rule_overrides', 'TEXT');
-  // Per-world identity for saves (schema.ts has why).
-  addColumnIfMissing('world_state', 'world_id', 'TEXT');
-  // The town calendar's bookkeeping and the running election (lib/townCalendar.ts).
-  addColumnIfMissing('world_state', 'civic', 'TEXT');
-
+// ─── Data backfills ────────────────────────────────────────────────────────
+// Tables and columns come from the migration chain (schemaMigrations.ts). What is
+// left here is data: rows an older build wrote in a shape the current one fixes up.
+function backfillLegacyRows() {
   // Backfills. Each runs independently — sharing one catch meant a failure on
   // the goals backfill skipped the aspirations one entirely. The first real
   // error is still rethrown, after every statement has had its turn.
@@ -399,25 +285,28 @@ export function getTableWriteVersion(table: CountedTable): number {
  * re-run after tables are created on a fresh database.
  */
 export function initSchema(): void {
+  // First and outside runStartupSteps (which forgives "no such table"): everything
+  // below assumes the tables and columns exist, and a failure here must stop the boot
+  // with its own message instead of surfacing later as a missing column.
+  applyMigrations(sqlite);
   createPerfIndexes();
   installAgentStatesWriteHook();
   for (const table of COUNTED_TABLES) installTableWriteHook(table);
   // Independent steps (see runStartupSteps): the clock rebase must not depend
-  // on migrateSchema succeeding. It still runs after it, since the column
+  // on the row backfills succeeding. It still runs after them, since the
   // migrations add goals.completed_at, and it skips columns a file lacks.
   runStartupSteps([
-    migrateSchema,
+    backfillLegacyRows,
     // One-shot (PRAGMA user_version); logs to the console when it rewrites a world.
     () => rebaseTickStampsToGameMinutes(sqlite),
     // One-shot (user_version 3), after the rebase: old worlds' wages to the E5 floor.
     () => raiseWagesToFloor(sqlite, CONFIG.ECONOMY.WAGE_FLOOR),
     // Every start, whatever user_version says: no started-at stamp in the future.
     () => clampFutureGameMinuteStamps(sqlite),
-    // After migrateSchema, which adds the column; a no-op once filled.
+    // a no-op once filled.
     () => backfillRelationshipInteractionMinutes(sqlite),
     // Same shape for relationship_events.game_minute: the trigger stamps new
     // rows (and must exist before the tick writes any), the backfill old ones.
-    // After migrateSchema, which adds the column the trigger writes.
     () => installRelationshipEventMinuteTrigger(sqlite),
     () => backfillRelationshipEventGameMinutes(sqlite),
     // activity_log.game_minute: logActivity stamps new rows, this heals old ones.
@@ -426,7 +315,7 @@ export function initSchema(): void {
     () => repairLegacySightingFacts(sqlite),
     // Every start; matches only the old "I told undefined ..." lead-ins, so a no-op once healed.
     () => { repairUndefinedGossipMemories(sqlite); },
-    // After migrateSchema, which adds the column; fills only NULL rows, so a
+    // fills only NULL rows, so a
     // no-op once every resident has one (also runs on save load via initSchema).
     () => { backfillOrientations(sqlite); },
     // Every start: an older assignment could roll `gay` for a man seeded in love
@@ -443,7 +332,7 @@ export function initSchema(): void {
     // after their residents, so a no-op once a world is named (homeNames.ts).
     () => { nameHomes(sqlite, { onlyGeneric: true }); },
   ]);
-  // Again, for indexes on columns migrateSchema only just added: on an old file
+  // Again: on an old file from before the migration chain
   // the first pass above failed on idx_relationship_events_game_minute (and
   // swallowed it) because `game_minute` didn't exist yet. Idempotent.
   createPerfIndexes();

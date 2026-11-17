@@ -69,6 +69,7 @@ match `OLLAMA_NUM_PARALLEL`.
 
 ```bash
 npm install
+cp .env.example .env   # once; edit it if your models or ports differ
 npm run dev        # server + client together
 ```
 
@@ -133,7 +134,8 @@ npm run deadcode       # orphan files and unused exports
 | `npx tsx scripts/embed-eval.ts --a m1 --b m2 --trace t.jsonl` | Blind retrieval eval of two embedders |
 | `npx tsx scripts/diagnose.ts` | Dump live DB state (table sizes, world clock) |
 | `node scripts/shot-gallery.mjs day` | Playwright screenshots of :5173 (needs `npm run dev` running) |
-| `npm run db:seed` / `db:reset` | Seed or reset the DB (`db:migrate` is stale, see CLAUDE.md) |
+| `npm run db:seed` / `db:reset` | Seed or reset the DB |
+| `npm run db:generate` | After editing `server/db/schema.ts`: write the next migration. It is applied at the next start (`db:migrate` applies it now) |
 
 `playwright` is a devDependency (it comes with `npm install`), but browser binaries are not: run
 `npx playwright install chromium` once before `shot-gallery.mjs`. `docs/STATUS.md` still says it

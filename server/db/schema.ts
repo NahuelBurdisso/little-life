@@ -713,8 +713,7 @@ export const gazetteIssues = sqliteTable('gazette_issues', {
 // in a table (hobby skills, favors, tension, mood momentum, personality drift
 // baselines, state trackers — see server/engine/simSnapshots.ts). One row per
 // store, JSON blob, rewritten every game hour and on graceful shutdown, read
-// back at boot. Created at runtime by CREATE TABLE IF NOT EXISTS in
-// server/db/index.ts.
+// back at boot. Created by the baseline migration like every other table.
 
 export const simSnapshots = sqliteTable('sim_snapshots', {
   /** Store name, e.g. 'hobbies'. One row per store: the DB holds one world. */
@@ -768,3 +767,15 @@ export const children = sqliteTable('children', {
   index('idx_children_mother').on(table.mother_id),
   index('idx_children_father').on(table.father_id),
 ]);
+
+// ─── 27. app_meta ─────────────────────────────────────────────────────────────
+// Small key/value store for facts about the DB file itself, not about a world:
+// which embedding model made the stored vectors (lib/memory/embeddingBackfill.ts),
+// the speed to give back after an interrupted night skip (engine/nightSkip.ts).
+// Read and written with raw SQL; declared here so the baseline migration creates
+// it. Not in ALL_TABLES: a world replace must not wipe it (saves.ts copies it by name).
+
+export const appMeta = sqliteTable('app_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});

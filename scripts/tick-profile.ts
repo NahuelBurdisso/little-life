@@ -31,7 +31,6 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
 import Database from 'better-sqlite3';
 
 // ─── Args ─────────────────────────────────────────────────────────────────────
@@ -65,13 +64,8 @@ if (SOURCE_DB) {
   for (const sfx of ['-wal', '-shm']) {
     if (fs.existsSync(src + sfx)) fs.copyFileSync(src + sfx, tmpDb + sfx);
   }
-} else {
-  execFileSync('npx', ['drizzle-kit', 'push', '--force'], {
-    env: { ...process.env, DATABASE_PATH: tmpDb },
-    stdio: 'pipe',
-    shell: process.platform === 'win32',
-  });
 }
+// No source DB: server/db builds the empty file from the migration chain on import.
 process.env.DATABASE_PATH = tmpDb;
 process.env.AUTOSAVE = '0';
 

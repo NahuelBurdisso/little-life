@@ -1,12 +1,16 @@
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { db, initSchema } from './index';
+/**
+ * Build or upgrade the database at DATABASE_PATH, then close it.
+ *
+ * Importing `./index` is the whole job: it opens the file, applies the migration
+ * chain (schemaMigrations.ts) and runs the data backfills. The game does the same
+ * at every start, so this script exists for the callers that need a schema-complete
+ * file BEFORE anything else opens it: vitest's global setup, the soak, the tick
+ * profiler and the prompt scripts (see scripts/freshDb.ts).
+ *
+ * The explicit close matters: it checkpoints the WAL, so a plain file copy of the
+ * result (server/db/testWorker.ts) has every table in it.
+ */
+import { sqlite } from './index';
 
-migrate(db, { migrationsFolder: './server/db/migrations' });
-
-// The `import './index'` above already ran initSchema() at module load — i.e.
-// before any table existed on a fresh DB, so every perf index and additive
-// column was skipped and nothing re-ran it. Re-run it now that the tables are
-// there; every statement in it is idempotent.
-initSchema();
-
-console.log('Migrations complete.');
+sqlite.close();
+console.log('Database schema is up to date.');
