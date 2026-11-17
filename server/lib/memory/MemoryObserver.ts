@@ -278,9 +278,19 @@ export function initMemoryObserver(memoryService: MemoryService): void {
 
   simEvents.on(
     'state:triggered',
-    ({ agentId, state, cause }: { agentId: number; state: string; cause?: string }) => {
+    ({ agentId, state, cause, memory }: { agentId: number; state: string; cause?: string; memory?: StateMemory }) => {
+      const meta = { subtype: 'state', state, ...(cause !== undefined ? { cause } : {}) };
+      // A state that knows why it happened (a death's mourners: lifeEventsEngine)
+      // brings its own first-person line; "I started feeling grieving." said
+      // nothing about whom.
+      if (memory) {
+        memoryService.record(agentId, 'observation', memory.description,
+          { ...meta, ...(memory.relatedAgentId != null ? { related_agents: [memory.relatedAgentId] } : {}) },
+          memory.valence, memory.importance);
+        return;
+      }
       const description = describeEvent('state_triggered', { state });
-      memoryService.record(agentId, 'observation', description, { subtype: 'state', state, ...(cause !== undefined ? { cause } : {}) });
+      memoryService.record(agentId, 'observation', description, meta);
     },
   );
 
@@ -531,6 +541,14 @@ export function initMemoryObserver(memoryService: MemoryService): void {
       `Today is my birthday! I turned ${age}. Another year gone by.`,
       { subtype: 'life_event' }, 0.5, 7);
   });
+}
+
+/** Optional `memory` of a `state:triggered` payload: the line to keep instead of the generic one. */
+export interface StateMemory {
+  description: string;
+  valence: number;
+  importance: number;
+  relatedAgentId?: number;
 }
 
 /** Payload of `gift:given`. `reason` is set by state-driven (impulsive) gifts. */

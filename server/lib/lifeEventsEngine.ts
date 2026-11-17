@@ -56,6 +56,12 @@ interface DeathEffectContext {
   causeDescription: string;
   /** CLOCK: GAME MINUTES — stamps the survivors' `grieving` states. */
   nowMinutes: number;
+  /**
+   * Who got a `grieving` row from triggerGrieving: filled by that step and read
+   * by createMemorialMemories, so only the residents who actually mourn hear
+   * `state:triggered` (everyone else gets a death memory without a state).
+   */
+  mourners: Set<number>;
 }
 
 interface DeathEffect {
@@ -255,6 +261,7 @@ function triggerGrieving(ctx: DeathEffectContext): void {
       source: `event:death_of_${ctx.agentId}`,
       metadata: null,
     }).run();
+    ctx.mourners.add(otherId);
   }
 }
 
@@ -356,38 +363,73 @@ function createFuneralEvent(ctx: DeathEffectContext): void {
   });
 }
 
+/** Statuses that make the deceased someone the survivor never got on with. */
+const HOSTILE_TIES = new Set(['rivals', 'enemies', 'estranged']);
+
+/**
+ * The line one survivor keeps about a death, by their tie to the deceased: a
+ * mourner (they got the `grieving` state), a rival, an acquaintance, or
+ * someone who barely knew them. Valence and importance go with it — a rival's
+ * memory of the death is not a sad one, and a stranger's matters less.
+ */
+export function deathMemoryFor(
+  deceasedName: string,
+  causeDescription: string,
+  tie: { friendship: number; status: string | null; mourner: boolean },
+): { description: string; valence: number; importance: number } {
+  if (tie.mourner) {
+    return tie.friendship > 70
+      ? { description: `${deceasedName} is gone. I've lost one of my closest friends. Nothing feels the same.`, valence: -0.9, importance: 9 }
+      : { description: `${deceasedName} is gone. ${causeDescription}. They were a good friend, and I keep expecting to see them around.`, valence: -0.8, importance: 8 };
+  }
+  if ((tie.status != null && HOSTILE_TIES.has(tie.status)) || tie.friendship < -20) {
+    return { description: `I heard ${deceasedName} died. ${causeDescription}. We never got along, and now we never will. It's a strange thing to feel.`, valence: -0.1, importance: 6 };
+  }
+  if (tie.friendship > 10) {
+    return { description: `${deceasedName} passed away. ${causeDescription}. We weren't the closest, but I'll miss seeing them around town.`, valence: -0.5, importance: 6 };
+  }
+  return { description: `I heard ${deceasedName} died. ${causeDescription}. I barely knew them, but it's a small town, and it feels a bit emptier.`, valence: -0.3, importance: 4 };
+}
+
+/**
+ * Every survivor's memory of the death. The mourners (triggerGrieving gave
+ * them the state) get `state:triggered` "grieving" carrying their own line as
+ * `memory`; this used to go to every living resident, enemies included, with
+ * no state row behind it — each stored the generic "I started feeling
+ * grieving." and got a dramatic replan, while the personal text sat unused in
+ * `cause`. The rest of the town remembers through `life:milestone`, which the
+ * memory stream records as written and nothing replans on.
+ */
 function createMemorialMemories(ctx: DeathEffectContext): void {
   const activeAgents = db.select({ id: agents.id, name: agents.name }).from(agents)
     .where(eq(agents.is_active, true)).all();
 
   for (const other of activeAgents) {
-    // Get friendship for personalized memory
     const rel = db.select().from(relationships).where(
-      or(
-        and(eq(relationships.agent_a, Math.min(other.id, ctx.agentId)), eq(relationships.agent_b, Math.max(other.id, ctx.agentId))),
-      )
+      and(eq(relationships.agent_a, Math.min(other.id, ctx.agentId)), eq(relationships.agent_b, Math.max(other.id, ctx.agentId))),
     ).get();
+    // The survivor's own regard for the deceased: `_ab` is how agent_a feels.
+    const friendship = rel ? (other.id < ctx.agentId ? rel.friendship_ab : rel.friendship_ba) : 0;
+    const mourner = ctx.mourners.has(other.id);
+    const memory = deathMemoryFor(ctx.agentName, ctx.causeDescription, { friendship, status: rel?.status ?? null, mourner });
 
-    const friendship = rel
-      ? (other.id < ctx.agentId ? rel.friendship_ab : rel.friendship_ba)
-      : 0;
-
-    let reflection: string;
-    if (friendship > 70) {
-      reflection = `${ctx.agentName} is gone. I've lost one of my closest friends. Nothing feels the same.`;
-    } else if (friendship > 40) {
-      reflection = `${ctx.agentName} passed away. We weren't the closest, but I'll miss seeing them around town.`;
-    } else if (friendship > 0) {
-      reflection = `${ctx.agentName} died. ${ctx.causeDescription}. Life in Little Life feels a bit emptier.`;
+    if (mourner) {
+      simEvents.emit('state:triggered', {
+        agentId: other.id,
+        state: 'grieving',
+        // Prose, so the replan line reads "started feeling grieving: mourning Tom".
+        cause: `mourning ${ctx.agentName}`,
+        memory: { ...memory, relatedAgentId: ctx.agentId },
+      });
     } else {
-      reflection = `I heard ${ctx.agentName} died. ${ctx.causeDescription}. Strange how quickly things change.`;
+      simEvents.emit('life:milestone', {
+        agentId: other.id,
+        description: memory.description,
+        valence: memory.valence,
+        importance: memory.importance,
+        relatedAgentId: ctx.agentId,
+      });
     }
-
-    simEvents.emit('state:triggered', {
-      agentId: other.id,
-      state: 'grieving',
-      cause: reflection,
-    });
   }
 }
 
@@ -461,6 +503,7 @@ export function processAgentDeath(agentId: number, agentName: string, cause: str
     cause,
     causeDescription,
     nowMinutes,
+    mourners: new Set<number>(),
   };
 
   for (const effect of DEATH_EFFECTS) {
@@ -472,8 +515,8 @@ export function processAgentDeath(agentId: number, agentName: string, cause: str
   }
 
   // After the whole pipeline, so a listener (director, sound, outcomes) sees
-  // the funeral, the fact and the inheritance already in place. The per-person
-  // `state:triggered` grieving events above are about the survivors; this one
+  // the funeral, the fact and the inheritance already in place. The mourners'
+  // `state:triggered` and everyone's memorial memory above are about the survivors; this one
   // is about the death itself.
   simEvents.emit('life:death', { agentId, name: agentName, cause, causeDescription });
 }
