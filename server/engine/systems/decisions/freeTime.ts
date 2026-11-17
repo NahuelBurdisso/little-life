@@ -239,9 +239,20 @@ function intimacyPullFor(f: FreeTimeContext): IntimacyPull {
   return { adultLayer, neglectedBy, ownLonging, intimacySeed };
 }
 
+/**
+ * Where to go to spend time with `other`: their building, or — when they are
+ * out in the street (`current_location` null) — the town square nearest them,
+ * the fallback comfortVisitPhase uses. A null target sent the seeker
+ * "socialising" wherever they stood. The movement layer can't follow a person,
+ * only walk to a place. No dice: tests sequence this file's Math.random() draws.
+ */
+function meetingPlaceFor(other: AgentRow, allLocations: LocationRow[]): number | undefined {
+  return other.current_location ?? nearestLocation(other.position, allLocations, 'town_square')?.id;
+}
+
 /** One socializing option per candidate, scored by `socialScoreFor`. */
 function scoreSocializing(f: FreeTimeContext, socialCandidates: AgentRow[], pull: IntimacyPull): void {
-  const { agent, scores } = f;
+  const { agent, scores, allLocations } = f;
   // Socialize per agent
   for (const other of socialCandidates) {
     if (other.id === agent.id || !other.is_active) continue;
@@ -249,7 +260,7 @@ function scoreSocializing(f: FreeTimeContext, socialCandidates: AgentRow[], pull
       action: 'socializing',
       score: socialScoreFor(f, other, pull),
       targetAgentId: other.id,
-      targetLocationId: other.current_location ?? undefined,
+      targetLocationId: meetingPlaceFor(other, allLocations),
     });
   }
 }
@@ -407,7 +418,7 @@ function infatuationOverride(f: FreeTimeContext): ScoredAction[] | null {
             action: 'socializing',
             score: 9000,
             targetAgentId: targetAgent.id,
-            targetLocationId: targetAgent.current_location ?? undefined,
+            targetLocationId: meetingPlaceFor(targetAgent, f.allLocations),
           },
         ];
       }
