@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import type { DepartureReason } from './populationFlow';
 
 const simEvents = new EventEmitter();
 simEvents.setMaxListeners(30);
@@ -18,4 +19,11 @@ export interface SimEventPayloads {
    * once per illness, when `metadata.grave` is first set. `severity` is the new one.
    */
   'health:grave': { agentId: number; severity: number };
+  /**
+   * A resident has started to think about leaving town (lib/populationFlow.ts);
+   * they decide the next day. `reason` is the first of `reasons`.
+   */
+  'life:thinking_of_leaving': { agentId: number; reason: DepartureReason; reasons: DepartureReason[] };
+  /** A resident who was thinking of leaving has decided to stay (lib/populationFlow.ts). */
+  'life:decided_to_stay': { agentId: number };
 }

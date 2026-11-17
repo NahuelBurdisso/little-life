@@ -188,8 +188,12 @@ describe('leaving town', () => {
     const friend = ids[6];
     relate(leaver, friend, { friendship_ab: 60, friendship_ba: 60 });
     makeMiserable(leaver);
+    const thinking = vi.fn();
+    simEvents.on('life:thinking_of_leaving', thinking);
 
     daily(TIME.day);
+    simEvents.off('life:thinking_of_leaving', thinking);
+    expect(thinking.mock.calls).toEqual([[{ agentId: leaver, reason: 'unhappy', reasons: ['unhappy', 'broke'] }]]);
     expect(getPopulationFlowState().thinking).toMatchObject([{ agentId: leaver, reasons: ['unhappy', 'broke'] }]);
     expect(leavingThoughts()).toEqual([{ agentId: leaver, reasons: ['unhappy', 'broke'], decided: false }]);
     expect(recorded.some((r) => r.agentId === leaver && /think about leaving town/.test(r.description))).toBe(true);
@@ -231,7 +235,11 @@ describe('leaving town', () => {
 
     simEvents.emit('conversation:ended', { agentId: leaver, perpetratorId: friend, sentiment: 0.1, turns: 4 });
     expect(getPopulationFlowState().thinking[0].caredBy).toBe('Resident');
+    const stayed = vi.fn();
+    simEvents.on('life:decided_to_stay', stayed);
     daily(TIME.day + 1);
+    simEvents.off('life:decided_to_stay', stayed);
+    expect(stayed.mock.calls).toEqual([[{ agentId: leaver }]]);
     const flow = getPopulationFlowState();
     // Stays, and does not start brooding again the same night.
     expect(flow.thinking).toHaveLength(0);

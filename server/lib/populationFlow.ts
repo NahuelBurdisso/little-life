@@ -58,7 +58,7 @@ import { getReputation } from './reputationEngine';
 import { spouseOf } from './marriage';
 import { logActivity } from './activityLogger';
 import { memoryService } from './memory/instance';
-import { simEvents } from './simEvents';
+import { simEvents, type SimEventPayloads } from './simEvents';
 import { gameMinutes, type ClockTime } from './gameClock';
 import { makeRng, stringToSeed } from './worldgen/rng';
 import { startWorldEvent } from '../engine/systems/events';
@@ -574,6 +574,12 @@ export function populationFlowDaily(time: ClockTime, nowMinutes: number): void {
       memoryService.record(pick.agentId, 'reflection',
         `${why}. I've started to think about leaving town for good — somewhere else, a fresh start.`,
         { subtype: 'thinking_of_leaving', reasons: pick.reasons }, -0.6, 7);
+      // The day of doubt is the town's chance to notice (a friend's talk keeps
+      // them: onConversationEnded). Until now only the Brewing tab knew.
+      const thinking: SimEventPayloads['life:thinking_of_leaving'] = {
+        agentId: pick.agentId, reason: pick.reasons[0], reasons: [...pick.reasons],
+      };
+      simEvents.emit('life:thinking_of_leaving', thinking);
       changed = true;
     }
   }
@@ -602,6 +608,8 @@ function stays(t: LeavingThought): void {
   memoryService.record(t.agentId, 'reflection',
     `I came close to leaving town, but I'm staying — ${why}.`,
     { subtype: 'decided_to_stay' }, 0.5, 7);
+  const stayed: SimEventPayloads['life:decided_to_stay'] = { agentId: t.agentId };
+  simEvents.emit('life:decided_to_stay', stayed);
   logActivity({
     type: 'drama',
     initiator: t.agentId,
