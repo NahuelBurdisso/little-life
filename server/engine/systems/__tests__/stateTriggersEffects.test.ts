@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
-import { agents, agentStates, economy, locations, needs } from '../../../db/schema';
+import { activityLog, agents, agentStates, conversations, economy, locations, needs } from '../../../db/schema';
 import { simEvents } from '../../../lib/simEvents';
 import { createStatesTickContext } from '../states/context';
 import { evaluateTriggers } from '../states/triggers';
@@ -87,5 +87,30 @@ describe('stealItem', () => {
     const memories = steal(0);
     expect(memories).toHaveLength(1);
     expect(memories[0].action).toMatch(/^stole .* from The Bakery and got caught$/);
+  });
+});
+
+describe('effectConfident', () => {
+  it('logs and announces confidence shattering into anger', () => {
+    const vain = insertResident('Vain Val', homes[0], { personality: { ...PERSONALITY, vanity: 80 } });
+    const critic = insertResident('Critic Cal', homes[1], {});
+    db.insert(agentStates).values({
+      agent_id: vain, type: 'confident', severity: 0.6, started_at: NOW - 60, duration: 600,
+      source: 'test', metadata: null,
+    }).run();
+    db.insert(conversations).values({
+      participants: [vain, critic], messages: [], location: null, trigger_reason: 'test',
+      status: 'ended', started_at: Date.now(), ended_at: Date.now(), sentiment: -0.8, max_turns: 4,
+    }).run();
+
+    const all = [agentRow(vain), agentRow(critic)];
+    processStateEffects(agentRow(vain), statesOf(vain), all, NOW, 10_000, 1, createStatesTickContext());
+
+    expect(statesOf(vain).map((s) => s.type)).toEqual(['angry']);
+    const feed = db.select().from(activityLog).where(eq(activityLog.initiator_id, vain)).all()
+      .map((r) => [r.type, r.template_data.state]);
+    expect(feed).toEqual(expect.arrayContaining([['state_lost', 'confident'], ['state_gained', 'angry']]));
+    expect(eventsNamed('state:cleared')).toEqual([{ agentId: vain, state: 'confident' }]);
+    expect(eventsNamed('state:triggered')).toEqual([{ agentId: vain, state: 'angry', cause: 'cascade:confident_vanity' }]);
   });
 });

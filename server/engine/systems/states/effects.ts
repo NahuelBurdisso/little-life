@@ -546,6 +546,22 @@ function effectConfident(e: EffectContext, state: AgentStateRow) {
 
   // Remove confident state since it shattered
   db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
+
+  // The swap used to happen silently: no feed rows and no events, so the
+  // listeners never learned the confidence was gone or the anger had come.
+  // Same calls as a state ending in states.ts and a state starting in triggers.ts.
+  logActivity({
+    type: 'state_lost',
+    initiator: agent.id,
+    templateData: { agent: agent.name, state: 'confident' },
+  });
+  simEvents.emit('state:cleared', { agentId: agent.id, state: 'confident' });
+  logActivity({
+    type: 'state_gained',
+    initiator: agent.id,
+    templateData: { agent: agent.name, state: 'angry' },
+  });
+  simEvents.emit('state:triggered', { agentId: agent.id, state: 'angry', cause: 'cascade:confident_vanity' });
 }
 
 /**
