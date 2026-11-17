@@ -110,6 +110,10 @@ const FACT_GENERATORS: Record<string, (s: string, t: string | undefined, ctx?: F
   speech: (s, _t, ctx) =>
     ctx?.detail ? `${s} gave a public speech: ${ctx.detail}` :
     `${s} addressed the town from the podium`,
+  // A served sentence (engine/systems/states.ts): `detail` is how long, "8 hours".
+  released: (s, _t, ctx) =>
+    ctx?.detail ? `${s} served ${ctx.detail} in jail and is out again` :
+    `${s} served their sentence and is out of jail`,
   escape: (s) =>
     `${s} escaped from prison`,
   escape_failed: (s) =>

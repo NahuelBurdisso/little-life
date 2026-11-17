@@ -4,3 +4,13 @@ const simEvents = new EventEmitter();
 simEvents.setMaxListeners(30);
 
 export { simEvents };
+
+/**
+ * Payloads of the newer sim events, by name. Emit sites type their payload as
+ * `SimEventPayloads['name']` so the shape a listener reads is written down in
+ * one place. Older events (most of them) predate this map and are not in it.
+ */
+export interface SimEventPayloads {
+  /** A sentence ran out (engine/systems/states.ts). `locationId`: the prison they walk out of. */
+  'crime:released': { agentId: number; locationId: number | null };
+}

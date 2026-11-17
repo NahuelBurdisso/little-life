@@ -21,8 +21,8 @@ import {
   type AgentStateRow,
 } from '../../lib/states';
 import { emitter } from '../emitter';
-import { deactivateStaleFacts } from '../../lib/gossip';
-import { simEvents } from '../../lib/simEvents';
+import { createFact, deactivateStaleFacts } from '../../lib/gossip';
+import { simEvents, type SimEventPayloads } from '../../lib/simEvents';
 import { checkDeathTriggers, processAgentDeath } from '../../lib/lifeEventsEngine';
 import { isDeathEnabled } from '../../lib/worldRules';
 import { chancePerTick, dayChanged, gameMinutes } from '../../lib/gameClock';
@@ -271,6 +271,7 @@ function expireTimedStates(
         },
         metadata: { beat: 'release' },
       });
+      releaseFromJail(agent, state);
     } else {
       logActivity({
         type: 'state_lost',
@@ -282,6 +283,33 @@ function expireTimedStates(
     collectExpiryCascades(state, agent, pendingCascades);
     db.delete(agentStates).where(eq(agentStates.id, state.id)).run();
   }
+}
+
+/**
+ * A served sentence becomes news. The comment above promised a gossip fact for
+ * a long time and nothing made one, so the town never heard its prisoner was
+ * back on the street. The fact is known to the arresting constable (the state's
+ * target) and to everyone who knew of the arrest: they are the ones who would
+ * notice. `crime:released` lets later systems react (a welcome home, a wary
+ * neighbour); nothing listens yet.
+ */
+function releaseFromJail(agent: AgentRow, state: AgentStateRow): void {
+  const arrestKnowers = db.select({ known_by: shared_knowledge.known_by }).from(shared_knowledge)
+    .where(and(
+      eq(shared_knowledge.type, 'arrest'),
+      eq(shared_knowledge.subject_id, agent.id),
+      eq(shared_knowledge.is_active, true),
+    ))
+    .all()
+    .flatMap((f) => f.known_by as number[]);
+  const constableId = state.target_agent_id;
+  const hours = Math.max(1, Math.round(state.duration / 60));
+  createFact('released', agent.id, null, 1,
+    [agent.id, ...(constableId != null ? [constableId] : []), ...arrestKnowers],
+    'event', { detail: `${hours} ${hours === 1 ? 'hour' : 'hours'}` });
+  const prisonId = (state.metadata as { prison_id?: number } | null)?.prison_id ?? agent.current_location ?? null;
+  const payload: SimEventPayloads['crime:released'] = { agentId: agent.id, locationId: prisonId };
+  simEvents.emit('crime:released', payload);
 }
 
 // ─── Day change: blackmail self-exposure ──────────────────────────────────────
