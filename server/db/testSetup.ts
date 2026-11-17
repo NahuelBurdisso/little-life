@@ -18,6 +18,15 @@ import { execFileSync } from 'child_process';
  */
 const TEST_DB = './data/test.db';
 
+function removeWorkerCopies(): void {
+  for (const f of fs.readdirSync('./data')) {
+    if (!f.startsWith('test-worker-')) continue;
+    // A worker that is still letting go of its file (Windows) is not worth failing
+    // the run for: the next setup removes what this one could not.
+    try { fs.rmSync(`./data/${f}`, { force: true }); } catch { /* still open */ }
+  }
+}
+
 export async function setup() {
   process.env.DATABASE_PATH = TEST_DB;
   for (const suffix of ['', '-wal', '-shm']) {
@@ -25,9 +34,7 @@ export async function setup() {
   }
   // Per-worker copies from the previous run, or they'd carry its rows forward.
   // `server/db/testWorker.ts` only copies the template when the copy is absent.
-  for (const f of fs.readdirSync('./data')) {
-    if (f.startsWith('test-worker-')) fs.rmSync(`./data/${f}`, { force: true });
-  }
+  removeWorkerCopies();
   try {
     execFileSync('npx', ['tsx', 'server/db/migrate.ts'], {
       env: { ...process.env, DATABASE_PATH: TEST_DB },
@@ -42,4 +49,14 @@ export async function setup() {
     if (output) console.error(`[testSetup] building the test database failed:\n${output}`);
     throw err;
   }
+}
+
+/**
+ * After the run: since Vitest 3 a worker is not reused across files by default, so
+ * every test file gets its own copy (`VITEST_WORKER_ID` is unique per file) and a full
+ * run left ~350 databases, over a thousand files with their WAL sidecars, in data/.
+ * Left running watch mode is fine: setup clears them again before the next run.
+ */
+export async function teardown() {
+  removeWorkerCopies();
 }
