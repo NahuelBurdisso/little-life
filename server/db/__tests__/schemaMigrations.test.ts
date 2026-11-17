@@ -71,6 +71,8 @@ describe('applyMigrations', () => {
     sqlite.exec('DROP INDEX IF EXISTS idx_children_mother');
     sqlite.exec('DROP INDEX IF EXISTS idx_children_father');
     sqlite.exec('DROP TABLE children');
+    // Tables added by migrations after the baseline can't be in a pre-chain file either.
+    sqlite.exec('DROP TABLE loans');
     sqlite.prepare("INSERT INTO app_meta (key, value) VALUES ('embedding_model', 'kept')").run();
 
     expect(run().kind).toBe('legacy');
@@ -80,7 +82,9 @@ describe('applyMigrations', () => {
     const indexes = (sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'children'").all() as Array<{ name: string }>).map((r) => r.name);
     expect(indexes).toEqual(expect.arrayContaining(['idx_children_mother', 'idx_children_father']));
     expect(sqlite.prepare("SELECT value FROM app_meta WHERE key = 'embedding_model'").get()).toEqual({ value: 'kept' });
-    expect(stamps(sqlite)).toBe(2);
+    expect(columnsOf(sqlite, 'loans')).toContain('borrower_id');
+    // The old chain's stamp, the baseline's, and one per migration after it (0001 loans).
+    expect(stamps(sqlite)).toBe(3);
     expect(run().kind).toBe('current');
   });
 

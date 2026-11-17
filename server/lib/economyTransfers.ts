@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { economy, worldState } from '../db/schema';
+import { economy, economyTransactions, worldState } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
 /**
@@ -30,6 +30,28 @@ export function payTavernRound(drinkerId: number, tavernOwnerId: number | null, 
     if (world) db.update(worldState).set({ tax_pool: world.tax_pool + price }).where(eq(worldState.id, world.id)).run();
   }
   return price;
+}
+
+/**
+ * A resident pays another (a loan, its repayment — lib/socialCalls/loans.ts):
+ * the payer's money goes down by exactly what the payee's goes up, with an
+ * `economy_transactions` row so the ledger and the economy stats see it. Never
+ * more than the payer has. Returns what was paid (0 = nothing).
+ */
+export function payResident(fromId: number, toId: number, amount: number, reason: string): number {
+  if (fromId === toId || !(amount > 0)) return 0;
+  const from = db.select().from(economy).where(eq(economy.agent_id, fromId)).get();
+  const to = db.select().from(economy).where(eq(economy.agent_id, toId)).get();
+  if (!from || !to) return 0;
+  const paid = Math.round(Math.min(amount, Math.max(0, from.money)) * 100) / 100;
+  if (paid <= 0) return 0;
+  db.update(economy).set({ money: from.money - paid }).where(eq(economy.id, from.id)).run();
+  db.update(economy).set({ money: to.money + paid }).where(eq(economy.id, to.id)).run();
+  db.insert(economyTransactions).values({
+    from_agent: fromId, to_agent: toId, amount: paid, reason, items_exchanged: null, location_id: null,
+    timestamp: Date.now(), // ledger timestamps are wall-clock ms everywhere
+  }).run();
+  return paid;
 }
 
 /**

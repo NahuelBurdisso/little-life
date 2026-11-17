@@ -857,3 +857,27 @@ export const appMeta = sqliteTable('app_meta', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
 });
+
+// ─── 28. loans ────────────────────────────────────────────────────────────────
+// Money one resident lent another who had fallen on hard times
+// (lib/socialCalls/loans.ts). A table rather than in-memory state because a
+// debt is the kind of thing that has to outlive a restart and travel with a
+// save; the money itself moved through economyTransfers like any other
+// resident-to-resident payment. Rows belong to one world (db/worldTables.ts).
+
+export const loans = sqliteTable('loans', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  lender_id: integer('lender_id').notNull().references(() => agents.id),
+  borrower_id: integer('borrower_id').notNull().references(() => agents.id),
+  amount: real('amount').notNull(),
+  /** Game minute of the loan. */
+  lent_at_min: integer('lent_at_min').notNull(),
+  /** Game minute after which an unpaid loan sours the friendship. */
+  due_at_min: integer('due_at_min').notNull(),
+  /** 'open' | 'overdue' (past due, still owed) | 'repaid' | 'void' (a party died or left). */
+  status: text('status').notNull(),
+  settled_at_min: integer('settled_at_min'),
+}, (table) => [
+  index('idx_loans_borrower').on(table.borrower_id),
+  index('idx_loans_lender').on(table.lender_id),
+]);

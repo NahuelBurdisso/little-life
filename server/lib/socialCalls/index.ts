@@ -18,6 +18,7 @@ import {
   allPendingCalls, callOf, clearSocialCalls, dropCallsInvolving, finishCall, runDueWatches, socialCallKind, startLinger,
 } from './engine';
 import { clearProducerState, defaultJudge, producers, registerBuiltInKinds } from './kinds';
+import { loansHourly, onHardTimes } from './loans';
 import { callKindOfTrigger } from './topics';
 
 export {
@@ -76,6 +77,7 @@ export function socialCallsHourly(nowMin: number): void {
     if (nowMin > c.expiresAtMin) finishCall(c.id, 'expired', nowMin);
   }
   runDueWatches(nowMin);
+  loansHourly(nowMin);
 }
 
 // ─── Wiring ──────────────────────────────────────────────────────────────────
@@ -104,12 +106,14 @@ function initSocialCalls(): void {
     switch (p.state) {
       case 'sick': producers.onSick(p.agentId, now); break;
       case 'heartbroken': producers.onHeartbroken(p.agentId, now); break;
+      case 'in_debt': onHardTimes(p.agentId, now); break;
       case 'grieving':
         // Only a death's mourners (lifeEventsEngine.ts): "mourning <name>".
         if (typeof p.cause === 'string' && p.cause.startsWith('mourning ')) producers.onMourning(p.agentId, p.cause.slice('mourning '.length), now);
         break;
     }
   }));
+  simEvents.on('economy:distress', guarded<{ agentId: number }>('economy:distress', (p) => onHardTimes(p.agentId, gameMinutesNow())));
   simEvents.on('health:grave', guarded<SimEventPayloads['health:grave']>('health:grave', (p) => producers.onGrave(p.agentId, gameMinutesNow())));
   simEvents.on('agent:birthday', guarded<{ agentId: number }>('agent:birthday', (p) => producers.onBirthday(p.agentId, gameMinutesNow())));
   simEvents.on('life:arrived', guarded<{ agentId: number }>('life:arrived', (p) => producers.onArrived(p.agentId, gameMinutesNow())));

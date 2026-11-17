@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../db';
 import {
-  activityLog, agentStates, economy, needs, relationshipEvents,
+  activityLog, agents, agentStates, economy, loans, needs, relationshipEvents, shared_knowledge,
 } from '../../db/schema';
 import { clearEffectivePersonalities, setEffectivePersonality } from '../states';
 import { clearSocialCallState, onCallConversationEnded, socialCallsHourly } from '../socialCalls';
 import { callOf, callsMadeTo, lingerOf, pendingCallsFor } from '../socialCalls/engine';
 import { producers } from '../socialCalls/kinds';
+import { loansHourly, onHardTimes } from '../socialCalls/loans';
 import { setSocialCallRng } from '../socialCalls/produce';
 import { simEvents } from '../simEvents';
 import { callTrigger } from '../socialCalls/topics';
@@ -318,6 +319,86 @@ describe('social calls: each kind end to end', () => {
       expect(rowsWithBeat('cold_shoulder')).toHaveLength(1);
       const ev = db.select().from(relationshipEvents).all().find((e) => e.event_type === 'reproach')!;
       expect(Math.min(ev.friendship_delta_ab, ev.friendship_delta_ba)).toBeLessThan(0);
+    });
+  });
+
+  describe('lend_money', () => {
+    function lendingPair(): { debtor: number; lender: number } {
+      const debtor = insertResident('Broke Bob', town.homes[0], {}, { money: 2 });
+      const lender = insertResident('Rich Ruth', town.homes[1], {}, { money: 300 });
+      setEffectivePersonality(lender, WARM);
+      relate(debtor, lender, { friendship_ab: 70, friendship_ba: 70 });
+      return { debtor, lender };
+    }
+    const money = (id: number) => db.select().from(economy).where(eq(economy.agent_id, id)).get()!.money;
+
+    it('a well-off warm friend lends real money, recorded as a loan', () => {
+      const { debtor, lender } = lendingPair();
+      onHardTimes(debtor, NOW);
+      const call = callOf(lender)!;
+      expect(call.kind).toBe('lend_money');
+      visit(call);
+      const loan = db.select().from(loans).get()!;
+      expect(loan).toMatchObject({ lender_id: lender, borrower_id: debtor, status: 'open' });
+      expect(money(lender)).toBeCloseTo(300 - loan.amount);
+      expect(money(debtor)).toBeCloseTo(2 + loan.amount);
+      expect(rowsWithBeat('loan')).toHaveLength(1);
+      // At most one loan at a time.
+      onHardTimes(debtor, NOW + 60);
+      expect(pendingCallsFor(debtor, 'lend_money')).toHaveLength(0);
+    });
+
+    it('a poor or cold friend does not lend', () => {
+      const debtor = insertResident('Broke Bob', town.homes[0], {}, { money: 2 });
+      const poor = insertResident('Poor Pat', town.homes[1], {}, { money: 40 });
+      const cold = insertResident('Cold Cal', town.homes[2], {}, { money: 400 });
+      setEffectivePersonality(poor, WARM);
+      setEffectivePersonality(cold, { ...PERSONALITY, warmth: 10 });
+      relate(debtor, poor, { friendship_ab: 70, friendship_ba: 70 });
+      relate(debtor, cold, { friendship_ab: 70, friendship_ba: 70 });
+      onHardTimes(debtor, NOW);
+      expect(pendingCallsFor(debtor)).toHaveLength(0);
+    });
+
+    it('is repaid once the borrower is back on their feet', () => {
+      const { debtor, lender } = lendingPair();
+      onHardTimes(debtor, NOW);
+      visit(callOf(lender)!);
+      const loan = db.select().from(loans).get()!;
+      db.update(economy).set({ money: 200 }).where(eq(economy.agent_id, debtor)).run();
+      const before = money(lender);
+      loansHourly(NOW + DAY);
+      expect(db.select().from(loans).get()!.status).toBe('repaid');
+      expect(money(lender)).toBeCloseTo(before + loan.amount);
+      expect(money(debtor)).toBeCloseTo(200 - loan.amount);
+      expect(rowsWithBeat('loan_repaid')).toHaveLength(1);
+    });
+
+    it('unpaid after two weeks, it sours into a debt the lender knows of', () => {
+      const { debtor, lender } = lendingPair();
+      onHardTimes(debtor, NOW);
+      visit(callOf(lender)!);
+      db.update(economy).set({ money: 5 }).where(eq(economy.agent_id, debtor)).run();
+      loansHourly(NOW + 13 * DAY);
+      expect(db.select().from(loans).get()!.status).toBe('open');
+      loansHourly(NOW + 15 * DAY);
+      expect(db.select().from(loans).get()!.status).toBe('overdue');
+      const fact = db.select().from(shared_knowledge).where(eq(shared_knowledge.type, 'debt')).get()!;
+      expect(fact).toMatchObject({ subject_id: debtor, target_id: lender });
+      expect(fact.known_by as number[]).toContain(lender);
+      expect(rowsWithBeat('loan_unpaid')).toHaveLength(1);
+      // Once.
+      loansHourly(NOW + 16 * DAY);
+      expect(rowsWithBeat('loan_unpaid')).toHaveLength(1);
+    });
+
+    it('is voided when the borrower is gone', () => {
+      const { debtor, lender } = lendingPair();
+      onHardTimes(debtor, NOW);
+      visit(callOf(lender)!);
+      db.update(agents).set({ is_active: false }).where(eq(agents.id, debtor)).run();
+      loansHourly(NOW + DAY);
+      expect(db.select().from(loans).get()!.status).toBe('void');
     });
   });
 

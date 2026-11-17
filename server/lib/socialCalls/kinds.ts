@@ -31,6 +31,7 @@ import { produceCalls, rngFor } from './produce';
 import type { TieKind } from './pickCallers';
 import { CALL_TOPIC } from './topics';
 import type { CallWatch, SocialCall, SocialCallKind, VisitResult } from './types';
+import { LEND_MONEY_KIND } from './loans';
 
 const HOUR = 60;
 const DAY = 24 * HOUR;
@@ -547,7 +548,7 @@ function onReleased(agentId: number, nowMin: number): void {
 // ─── The table ───────────────────────────────────────────────────────────────
 
 export const SOCIAL_CALL_KINDS: readonly SocialCallKind[] = [
-  SICK_VISIT, VIGIL, CONDOLENCE, CONGRATULATE, BIRTHDAY_WISH, WELCOME, CONSOLE, PLEAD_TO_STAY, MEET_AT_GATE,
+  SICK_VISIT, VIGIL, CONDOLENCE, CONGRATULATE, BIRTHDAY_WISH, WELCOME, CONSOLE, PLEAD_TO_STAY, MEET_AT_GATE, LEND_MONEY_KIND,
 ];
 
 export function registerBuiltInKinds(): void {

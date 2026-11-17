@@ -25,6 +25,7 @@ import {
   gazetteIssues,
   simSnapshots,
   children,
+  loans,
 } from './schema';
 
 /**
@@ -41,6 +42,7 @@ import {
  */
 export const ALL_TABLES = [
   // References agents and locations: gone before either.
+  loans,
   children,
   simSnapshots,
   gazetteIssues,
