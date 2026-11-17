@@ -5,6 +5,7 @@ import { logActivity } from './activityLogger';
 import { getEffectivePersonality } from './states';
 import { adjustReputation } from './reputationEngine';
 import { payTavernRound } from './economyTransfers';
+import { simEvents } from './simEvents';
 
 // ─── Tavern Engine ────────────────────────────────────────────────────────────
 // Tracks drink count per agent when at tavern. More drinks = more social,
@@ -131,6 +132,12 @@ export function tavernTick(nowMinutes: number): void {
           templateData: { description: `${agent.name} is now drunk at the tavern!` },
           metadata: { beat: 'drunk' },
         });
+        // Announced like every other new state (states/triggers.ts triggerDrunk):
+        // without it the ripple rules (drunk_incident), the memory stream and the
+        // replanner never heard of the town's most common drunk. No recursion:
+        // the `drunk` rules emit interaction/fact effects, never another `drunk`,
+        // and the cascade skips creating a state the agent already has.
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'drunk', cause: 'tavern_drinking', locationId: agent.current_location });
       }
     }
 

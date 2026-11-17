@@ -3,6 +3,7 @@ import { agents, needs, relationships, agentStates } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logActivity } from './activityLogger';
 import { getEffectivePersonality } from './states';
+import { simEvents } from './simEvents';
 
 // ─── Loneliness Engine ────────────────────────────────────────────────────────
 // Tracks chronic low social need. When social stays < 20 for extended periods,
@@ -94,6 +95,10 @@ export function lonelinessCheck(nowMinutes: number): void {
           templateData: { description: `${agent.name} has become lonely and withdrawn` },
           metadata: { beat: 'lonely' },
         });
+        // Announced like the states phase's own `lonely` (states/triggers.ts), so
+        // the memory stream and the replanner know. No ripple rule chains off
+        // `lonely` itself.
+        simEvents.emit('state:triggered', { agentId: agent.id, state: 'lonely', cause: 'chronic_low_social' });
 
         // Trigger warm neighbor intervention
         triggerComfortVisit(agent.id, activeAgents, nowMinutes);

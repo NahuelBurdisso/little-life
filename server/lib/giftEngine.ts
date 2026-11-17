@@ -483,6 +483,13 @@ function checkGiftJealousy(giverId: number, receiverId: number): void {
       rivalId: receiverId,
       trigger: 'gift_witnessed',
     });
+    // The state itself, announced like states/triggers.ts triggerJealous does:
+    // `jealousy:triggered` only reaches gift_jealousy_spiral, so the jealous
+    // rules (confrontation, gossip about the rival — RippleEngine.describeRumor
+    // reads this row's rivalId) and the memory stream never saw a gift-born
+    // jealousy. One-shot per witness: the existing-state check above skips them
+    // next time, and the jealous rules create no `jealous` themselves.
+    simEvents.emit('state:triggered', { agentId: witness.id, state: 'jealous', cause: 'gift_witnessed' });
   }
 }
 
