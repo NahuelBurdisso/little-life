@@ -37,6 +37,7 @@ import {
 } from '../../../lib/gatherings/engine';
 import { rngFor } from '../../../lib/gatherings/common';
 import { gatheringTrigger } from '../../../lib/gatherings/topics';
+import { opposedInTownFeud } from '../../../lib/factions/store';
 import type { Gathering, InviteLevel } from '../../../lib/gatherings/types';
 import type { AgentRow, ScoredAction } from './types';
 import { seekParty } from './seek';
@@ -165,7 +166,9 @@ export function queueGatheringEncounters(d: DecisionTickContext): void {
     let j = Math.floor(rng() * (free.length - 1));
     if (j >= i) j++;
     const [a, b] = [free[i], free[j]];
-    if (pairOnCooldown(a.id, b.id)) continue;
+    // Opposite camps of a town feud don't sit down together (lib/factions). Checked
+    // after the draws, so the dice sequence is the same whoever is feuding.
+    if (pairOnCooldown(a.id, b.id) || opposedInTownFeud(a.id, b.id)) continue;
     const aStates = getAgentStates(a.id);
     const bStates = getAgentStates(b.id);
     if ((aStates as string[]).includes('depressed') || (bStates as string[]).includes('depressed')) continue;

@@ -121,6 +121,30 @@ export interface ElectionInput {
   secrets: readonly Scandal[];
   /** Campaign endorsement points, candidateId → voterId → points (-10..10). */
   support: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  /**
+   * The camps of each town feud, principals included (lib/factions `townCamps`).
+   * Optional: fixtures written before it need no change.
+   */
+  camps?: ReadonlyArray<{ a: readonly number[]; b: readonly number[] }>;
+}
+
+/** A voter on a candidate's own side of a town feud, and on the other side. */
+export const FEUD_CAMP_BONUS = 6;
+export const FEUD_CAMP_PENALTY = 8;
+
+/**
+ * A town feud splits the vote: a voter leans to a candidate of their own camp
+ * and away from one of the other. Nothing when either is outside every feud.
+ */
+export function campLean(voterId: number, candidateId: number, camps: ElectionInput['camps']): number {
+  let lean = 0;
+  for (const c of camps ?? []) {
+    const cand = c.a.includes(candidateId) ? 'a' : c.b.includes(candidateId) ? 'b' : null;
+    const voter = c.a.includes(voterId) ? 'a' : c.b.includes(voterId) ? 'b' : null;
+    if (cand == null || voter == null) continue;
+    lean += cand === voter ? FEUD_CAMP_BONUS : -FEUD_CAMP_PENALTY;
+  }
+  return lean;
 }
 
 /** Axes where thinking alike wins a vote: values, not temperament. */
@@ -148,6 +172,7 @@ export function voteScore(voterId: number, voterPersonality: Profile | null, c: 
   let score = tie.friendship * 0.5 + tie.trust * 0.2 + c.reputation * 0.3;
   score += alignment(voterPersonality, c.personality);
   score += (input.support[String(c.id)]?.[String(voterId)] ?? 0) * 3;
+  score += campLean(voterId, c.id, input.camps);
   if (c.incumbent) score += 3;
   let complicity = 0;
   for (const s of input.secrets) {

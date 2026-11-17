@@ -31,8 +31,9 @@ import { isCommonKnowledge } from '../engine/systems/gossipEngine';
 import { leavingThoughts, REASON_PHRASES, type DepartureReason } from './populationFlow';
 import { electionBrewing, type ElectionBrewing } from './townCalendar';
 import { worldState } from '../db/schema';
+import { activeFeuds, sideCounts } from './factions/store';
 
-export type BrewingKind = 'snap' | 'secret' | 'confrontation' | 'nudge' | 'goal' | 'relationship' | 'leaving' | 'election';
+export type BrewingKind = 'snap' | 'secret' | 'confrontation' | 'nudge' | 'goal' | 'relationship' | 'leaving' | 'election' | 'feud';
 
 export interface BrewingItem {
   /** Stable across recomputes so the UI can key rows and animate heat. */
@@ -86,6 +87,7 @@ const SOURCE_PHRASES: Record<string, string> = {
   'state:triggered': 'stress piling up',
   'need:critical': 'needs going unmet',
   'agent:birthday': 'a birthday',
+  'feud:torn': 'being caught between two friends',
 };
 
 function sourcePhrase(event: string): string {
@@ -166,6 +168,35 @@ export interface BrewingInput {
   leaving?: { agentId: number; reasons: DepartureReason[]; decided: boolean }[];
   /** The running mayoral campaign (lib/townCalendar.ts `electionBrewing`). Optional for old fixtures. */
   election?: ElectionBrewing | null;
+  /**
+   * Falling-outs the town is taking sides in (lib/factions). Optional for old fixtures.
+   * `causeText` is how the town speaks of it, never a secret's content.
+   */
+  feuds?: Array<{ id: number; aId: number; bId: number; sideA: number[]; sideB: number[]; deciding: number; town: boolean; causeText: string }>;
+}
+
+/**
+ * A falling-out people are taking sides in, as one card. A town feud is hot
+ * (the camps avoid each other, the election may split along it); one still
+ * gathering sides warms with every person drawn in.
+ */
+export function feudItem(f: NonNullable<BrewingInput['feuds']>[number], nameOf: (id: number) => string | undefined): BrewingItem | null {
+  const A = nameOf(f.aId), B = nameOf(f.bId);
+  if (!A || !B) return null;
+  const sideA = f.sideA.filter((id) => nameOf(id)), sideB = f.sideB.filter((id) => nameOf(id));
+  const drawn = sideA.length + sideB.length;
+  if (drawn === 0 && f.deciding === 0) return null;
+  const tally = drawn > 0 ? ` — ${sideA.length} with ${A}, ${sideB.length} with ${B}` : '';
+  const pending = f.deciding > 0 ? `${drawn > 0 ? ', and ' : ' — '}${f.deciding} still making up their mind${f.deciding === 1 ? '' : 's'}` : '';
+  return {
+    id: `feud-${f.id}`,
+    kind: 'feud',
+    agentIds: [f.aId, f.bId, ...sideA, ...sideB],
+    text: f.town
+      ? `The feud between ${A} and ${B} has split the town${tally}${pending}`
+      : `${A} and ${B} have fallen out over ${f.causeText}, and their friends are taking sides${tally}${pending}`,
+    heat: clamp01(f.town ? 0.75 + 0.02 * drawn : 0.45 + 0.05 * drawn),
+  };
 }
 
 /** Campaign support ahead of the runner-up by at least this reads as "has the edge". */
@@ -397,6 +428,12 @@ export function buildBrewing(input: BrewingInput): BrewingItem[] {
     if (item) items.push(item);
   }
 
+  // ── Feuds the town is taking sides in ─────────────────────────────────────
+  for (const f of input.feuds ?? []) {
+    const item = feudItem(f, (id) => nameOf.get(id));
+    if (item) items.push(item);
+  }
+
   // Ties broken by id so the order is stable between recomputes.
   items.sort((x, y) => y.heat - x.heat || x.id.localeCompare(y.id));
   return items.slice(0, MAX_ITEMS);
@@ -453,6 +490,13 @@ export function getBrewing(now: number = Date.now()): BrewingItem[] {
     relationships: db.select().from(relationships).all(),
     leaving: leavingThoughts(),
     election: electionBrewingNow(),
+    feuds: activeFeuds().map((f) => {
+      const c = sideCounts(f);
+      return {
+        id: f.id, aId: f.aId, bId: f.bId, sideA: c.a, sideB: c.b, deciding: f.pending.size,
+        town: f.townSinceMin != null, causeText: f.causeText,
+      };
+    }),
   });
   cache = { at: now, items };
   return items;

@@ -28,6 +28,8 @@ import {
 } from './storyBeats';
 import { ADULT_ONLY_EVENT_TYPES, ADULT_ONLY_SCANDAL_TYPES } from './intimacy/eligibility';
 import { isAdultContent } from './worldRules';
+import { activeFeuds, sideCounts } from './factions/store';
+import { firstName } from '../ai/names';
 
 export type ArcKind =
   | 'romance'
@@ -35,7 +37,8 @@ export type ArcKind =
   | 'reconciliation'
   | 'love_triangle'
   | 'downfall'
-  | 'scandal';
+  | 'scandal'
+  | 'feud';
 
 export interface ArcBeat {
   /**
@@ -223,6 +226,13 @@ export function detectStoryArcs(): StoryArc[] {
         .where(eq(shared_knowledge.is_active, true))
         .all(),
       adultContent: isAdultContent(),
+      feuds: activeFeuds().map((f) => {
+        const c = sideCounts(f);
+        return {
+          id: f.id, aId: f.aId, bId: f.bId, sideA: c.a, sideB: c.b,
+          town: f.townSinceMin != null, causeText: f.causeText, log: f.log,
+        };
+      }),
     },
     gameMinutes(world.time),
   );
@@ -246,7 +256,19 @@ export interface ChronicleInput {
    * unwed pregnancy. Required, so a caller cannot forget it and leak the layer's past.
    */
   adultContent: boolean;
+  /**
+   * Falling-outs the town has taken sides in (lib/factions), with their story so far
+   * (`log`, game minutes). Optional: fixtures written before it need no change.
+   * `causeText` is how the town speaks of it, never a secret's content.
+   */
+  feuds?: Array<{
+    id: number; aId: number; bId: number; sideA: number[]; sideB: number[];
+    town: boolean; causeText: string; log: Array<{ min: number; text: string }>;
+  }>;
 }
+
+/** People drawn onto the sides before a falling-out is a story the Stories tab carries. */
+const FEUD_ARC_MIN_SIDES = 2;
 
 /**
  * The detector proper, split from the queries so it can be exercised on
@@ -555,6 +577,35 @@ export function buildArcs(input: ChronicleInput, now: number): StoryArc[] {
       Math.min(1, secret.sensitivity / 5 + holders / agentRows.length),
     );
     if (arc) push(arc);
+  }
+
+  // --- Feuds: a falling-out the town took sides in ----------------------------
+  // Not a pair's events (the side-taking is spread over a dozen pairs) but the
+  // feud's own log, kept by lib/factions. Its id is the two principals', so the
+  // row stays expanded while the sides grow.
+  for (const f of input.feuds ?? []) {
+    if (!nameOf.has(f.aId) || !nameOf.has(f.bId)) continue;
+    const sideA = f.sideA.filter((id) => nameOf.has(id));
+    const sideB = f.sideB.filter((id) => nameOf.has(id));
+    if (sideA.length + sideB.length < FEUD_ARC_MIN_SIDES && !f.town) continue;
+    const nameA = nameOf.get(f.aId)!, nameB = nameOf.get(f.bId)!;
+    const list = (ids: number[]) => ids.map((id) => firstName(nameOf.get(id)!)).join(', ');
+    const sides = [
+      sideA.length ? `${list(sideA)} with ${firstName(nameA)}` : '',
+      sideB.length ? `${list(sideB)} with ${firstName(nameB)}` : '',
+    ].filter(Boolean).join('; ');
+    const arc = makeArc(
+      'feud',
+      [f.aId, f.bId, ...sideA, ...sideB],
+      f.town ? `The ${nameA.split(' ').pop()}–${nameB.split(' ').pop()} feud` : `${nameA} and ${nameB}: taking sides`,
+      `It began with ${f.causeText}. ${sides ? `${sides}.` : ''}`.trim(),
+      f.log.map((l) => ({ gameMinute: l.min, eventType: 'feud', description: l.text, weight: 0.6 })),
+      undefined,
+    );
+    if (!arc) continue;
+    arc.id = `feud:${Math.min(f.aId, f.bId)}-${Math.max(f.aId, f.bId)}`;
+    if (f.town) arc.heat = Math.max(arc.heat, 0.6);
+    push(arc);
   }
 
   return arcs.sort((x, y) => y.heat - x.heat || y.lastActivity - x.lastActivity).slice(0, MAX_ARCS);

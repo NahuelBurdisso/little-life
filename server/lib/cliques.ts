@@ -13,6 +13,7 @@
 import { db } from '../db';
 import { agents, relationships } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { feudSocialPenalty } from './factions/store';
 
 export interface Clique {
   /** Stable across recomputes: derived from the sorted member list. */
@@ -205,9 +206,13 @@ export function cliqueIdOf(agentId: number): string | null {
  * to be shut out of, and penalising them would leave them permanently alone.
  */
 export function cliqueSocialModifier(agentA: number, agentB: number): number {
+  // A feud's camps keep apart (lib/factions): opposite sides of a town feud, or a
+  // side-taker and the one they stood against. The same seam as the circles —
+  // who you spend free time with — and no dice: freeTime.ts's draws are untouched.
+  const feud = feudSocialPenalty(agentA, agentB);
   const { membership } = current();
   const a = membership.get(agentA);
   const b = membership.get(agentB);
-  if (a == null || b == null) return 0;
-  return a === b ? IN_GROUP_BONUS : OUT_GROUP_PENALTY;
+  if (a == null || b == null) return feud;
+  return (a === b ? IN_GROUP_BONUS : OUT_GROUP_PENALTY) + feud;
 }

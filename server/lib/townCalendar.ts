@@ -41,6 +41,7 @@ import { startWorldEvent } from '../engine/systems/events';
 import { emitter } from '../engine/emitter';
 import { logActivity } from './activityLogger';
 import { simEvents, type SimEventPayloads } from './simEvents';
+import { townCamps } from './factions/store';
 import { createFact } from './gossip';
 import { getHobbyLevel } from './hobbyEngine';
 import { adjustReputation, getReputation } from './reputationEngine';
@@ -475,6 +476,8 @@ function countVotes(civic: CivicState, now: number): void {
       .filter((s) => s.sensitivity >= 2)
       .map((s) => ({ subjectId: s.subject_id, sensitivity: s.sensitivity, isPublic: !!s.is_public, knownBy: (s.known_by ?? []) as number[] })),
     support: e.support,
+    // A town feud splits the vote along its camps (lib/factions).
+    camps: townCamps(),
   };
   const tally = tallyElection(input, rngFor(`election:${e.electionDay}`));
   if (!tally) return;

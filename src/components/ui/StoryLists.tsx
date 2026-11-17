@@ -19,6 +19,7 @@ const ARC_KINDS: Record<ArcKind, { icon: string; color: string }> = {
   love_triangle:  { icon: '△', color: '#9b7ab0' },
   downfall:       { icon: '▼', color: '#c07840' },
   scandal:        { icon: '◉', color: '#c8a84b' },
+  feud:           { icon: '⚖', color: '#b05838' },
 };
 
 /**
@@ -35,6 +36,7 @@ const BREWING_KINDS: Partial<Record<BrewingKind, { icon: string; label: string }
   relationship:  { icon: '♥', label: 'About to change' },
   leaving:       { icon: '🧳', label: 'Thinking of leaving' },
   election:      { icon: '🗳', label: 'Election campaign' },
+  feud:          { icon: '⚖', label: 'Taking sides' },
 };
 const BREWING_FALLBACK = { icon: '•', label: 'Brewing' };
 const brewingKind = (kind: string) => BREWING_KINDS[kind as BrewingKind] ?? BREWING_FALLBACK;
