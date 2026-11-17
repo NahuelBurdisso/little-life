@@ -75,30 +75,15 @@ export function lonelinessCheck(nowMinutes: number): void {
       const since = lonelySince.get(agent.id);
       if (!since) {
         lonelySince.set(agent.id, nowMinutes);
-      } else if (nowMinutes - since > LONELY_DURATION_MINUTES && !hasLonelyState) {
-        // Agent has been lonely long enough — create lonely state
-        db.insert(agentStates).values({
-          agent_id: agent.id,
-          type: 'lonely',
-          severity: Math.min(1.0, (LONELY_THRESHOLD - agentNeeds.social) / LONELY_THRESHOLD),
-          // agentStates.started_at is in game minutes: states.ts expires with
-          // `started_at + duration <= nowMinutes`.
-          started_at: nowMinutes,
-          duration: 2880, // 2 game days
-          source: 'chronic_low_social',
-          metadata: null,
-        }).run();
-
-        logActivity({
-          type: 'drama',
-          initiator: agent.id,
-          templateData: { description: `${agent.name} has become lonely and withdrawn` },
-          metadata: { beat: 'lonely' },
-        });
-        // Announced like the states phase's own `lonely` (states/triggers.ts), so
-        // the memory stream and the replanner know. No ripple rule chains off
-        // `lonely` itself.
-        simEvents.emit('state:triggered', { agentId: agent.id, state: 'lonely', cause: 'chronic_low_social' });
+      } else if (nowMinutes - since > LONELY_DURATION_MINUTES) {
+        // Twelve hours under 20 social. The states phase (states/triggers.ts
+        // triggerLonely) usually made them `lonely` after the first hour, and
+        // this branch used to require `!hasLonelyState` — so it never ran, and
+        // the comfort visit below, the town's only proactive "go to them", never
+        // happened. The state is only inserted when missing; the visit is asked
+        // for either way, once per twelve lonely hours (the streak restarts).
+        lonelySince.set(agent.id, nowMinutes);
+        if (!hasLonelyState) insertLonelyState(agent, agentNeeds.social, nowMinutes);
 
         // Trigger warm neighbor intervention
         triggerComfortVisit(agent.id, activeAgents, nowMinutes);
@@ -110,11 +95,43 @@ export function lonelinessCheck(nowMinutes: number): void {
   }
 }
 
+/** The chronic `lonely` state, its feed line and its announcement. */
+function insertLonelyState(agent: typeof agents.$inferSelect, social: number, nowMinutes: number): void {
+  db.insert(agentStates).values({
+    agent_id: agent.id,
+    type: 'lonely',
+    severity: Math.min(1.0, (LONELY_THRESHOLD - social) / LONELY_THRESHOLD),
+    // agentStates.started_at is in game minutes: states.ts expires with
+    // `started_at + duration <= nowMinutes`.
+    started_at: nowMinutes,
+    duration: 2880, // 2 game days
+    source: 'chronic_low_social',
+    metadata: null,
+  }).run();
+
+  logActivity({
+    type: 'drama',
+    initiator: agent.id,
+    templateData: { description: `${agent.name} has become lonely and withdrawn` },
+    metadata: { beat: 'lonely' },
+  });
+  // Announced like the states phase's own `lonely` (states/triggers.ts), so
+  // the memory stream and the replanner know. No ripple rule chains off
+  // `lonely` itself.
+  simEvents.emit('state:triggered', { agentId: agent.id, state: 'lonely', cause: 'chronic_low_social' });
+}
+
 function triggerComfortVisit(
   lonelyAgentId: number,
   allAgents: (typeof agents.$inferSelect)[],
   nowMinutes: number,
 ): void {
+  // Someone is already on their way (the visit from the last streak, still
+  // inside its window): no second visitor.
+  for (const [visitorId, visit] of pendingComfortVisits) {
+    if (visit.lonelyAgentId === lonelyAgentId && getComfortVisit(visitorId, nowMinutes)) return;
+  }
+
   // Find warm agents with positive relationship who might visit
   const rels = db.select().from(relationships).all();
 
