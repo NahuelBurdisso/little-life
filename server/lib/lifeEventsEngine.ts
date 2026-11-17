@@ -7,6 +7,7 @@
  * To add a new death effect: add one entry to DEATH_EFFECTS.
  */
 
+import { graveDeathChancePerMinute } from './sickness';
 import { db } from '../db';
 import { agents, economy, relationships, worldState, agentStates } from '../db/schema';
 import { logActivity } from './activityLogger';
@@ -114,7 +115,13 @@ const DEATH_TRIGGERS: DeathTrigger[] = [
     priority: 2,
     check: (ctx) => {
       const sickState = ctx.activeStates.find(s => s.type === 'sick');
-      return sickState != null && (ctx.nowMinutes - sickState.started_at) > 7200;
+      if (sickState == null) return false;
+      // The old rule alone could never fire: a `sick` state lasts 6-24 game hours.
+      // Kept for an illness that turns for the worse again and again.
+      if (ctx.nowMinutes - sickState.started_at > 7200) return true;
+      // Grave (two turns for the worse) and nobody treating it: lib/sickness.ts.
+      const perMinute = graveDeathChancePerMinute(sickState, ctx.nowMinutes);
+      return perMinute > 0 && Math.random() < chancePerTick(perMinute, ctx.tickSpeed);
     },
   },
   {

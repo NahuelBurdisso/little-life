@@ -41,6 +41,7 @@ import { itemPhrase } from '../../data/economyData';
 import { RowsByAgentSnapshot } from '../../lib/rowsByAgentSnapshot';
 import { gameMinutesToMs } from '../../lib/worldClock';
 import { HEALER_JOBS } from '../../lib/careers';
+import { isGravelyIll, worsen, worsenChancePerMinute } from '../../lib/sickness';
 import { rollStateDuration } from '../../lib/stateDurations';
 import { addMoodModifier } from '../../lib/dailyLife';
 import {
@@ -1641,6 +1642,8 @@ function processStateEffects(
         const healerNearby = allAgents.find((a) =>
           a.id !== agent.id && a.current_location === agent.current_location && isHealerJob(ctx.jobOf(a.id)));
         if (healerNearby) {
+          // Being seen to: stops the illness worsening and lifts the death hazard (lib/sickness.ts).
+          meta.treatedAt = nowMinutes;
           const healerEcon = db.select().from(economyTable).where(eq(economyTable.agent_id, healerNearby.id)).get();
           const hasMedicine = healerEcon && (healerEcon.inventory as any[]).some(
             (i: any) => i.itemId === 'medicine' && i.quantity > 0
@@ -1725,6 +1728,41 @@ function processStateEffects(
             .set({ severity: newSeverity, duration: reducedDuration })
             .where(eq(agentStates.id, state.id))
             .run();
+        }
+
+        // Untreated, an illness can take a turn for the worse (lib/sickness.ts): a
+        // step of severity and half a day more. Above 0.4 the patient heads for the
+        // clinic, so with a healer in town this is a scare; without one, two turns
+        // make it grave and lifeEventsEngine's `untreated_sickness` can take them.
+        const worsenChance = worsenChancePerMinute({
+          treated: healerNearby != null,
+          age: agent.age,
+          rateMultiplier: sicknessMultiplier(getRules()),
+        });
+        if (worsenChance > 0 && Math.random() < chancePerTick(worsenChance, tickSpeed)) {
+          // Re-read: the home-rest branch above may have just written severity/duration.
+          const current = db.select({ severity: agentStates.severity, duration: agentStates.duration })
+            .from(agentStates).where(eq(agentStates.id, state.id)).get();
+          if (current) {
+            const next = worsen({ ...current, metadata: meta });
+            meta = next.metadata;
+            db.update(agentStates)
+              .set({ severity: next.severity, duration: next.duration })
+              .where(eq(agentStates.id, state.id))
+              .run();
+            const grave = isGravelyIll(next);
+            logActivity({
+              type: 'drama',
+              initiator: agent.id,
+              severity: grave ? 0.8 : 0.5,
+              templateData: {
+                description: grave
+                  ? `${agent.name} is gravely ill, and no one is tending to them.`
+                  : `${agent.name}'s illness has taken a turn for the worse.`,
+              },
+              metadata: { beat: 'illness' },
+            });
+          }
         }
 
         // Write accumulated co-location counters once after loop

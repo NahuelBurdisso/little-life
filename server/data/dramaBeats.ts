@@ -24,6 +24,7 @@ export type DramaBeat =
   | 'contest_win'                               // a festival contest decided (lib/townCalendar.ts)
   | 'kiss' | 'kiss_rebuffed'                    // → kiss / heartbreak (lib/intimacy/kiss.ts)
   | 'tryst' | 'caught' | 'scandal'              // → romance / secret / secret (the adult layer, lib/intimacy/)
+  | 'illness'                                   // an untreated illness turning for the worse (lib/sickness.ts); no canvas FX
   | 'release' | 'drunk' | 'outburst' | 'blackmail' | 'lonely'; // small rows that were untagged; no canvas FX (see the table)
 
 export type DramaBeatKind = 'fight' | 'romance' | 'secret' | 'heartbreak' | 'arrest' | 'death' | 'birthday' | 'kiss';
@@ -82,6 +83,8 @@ export const DRAMA_BEAT_KIND: Record<DramaBeat, DramaBeatKind | null> = {
   // release: a sentence served (states.ts); drunk: the tavern's excess, tipsy through gambling
   // (tavernEngine, states.ts); outburst: a public flare-up, a drunken scene or a stab of jealousy;
   // blackmail: leverage exposed or reported; lonely: withdrawal, and the neighbour who visits.
+  // The patient walking to the clinic, or lying at home, is the picture.
+  illness: null,
   release: null,
   drunk: null,
   outburst: null,
