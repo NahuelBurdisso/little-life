@@ -25,7 +25,7 @@
 import { and, eq, like } from 'drizzle-orm';
 import { db } from '../../../db';
 import { agents, agentStates, economy } from '../../../db/schema';
-import { firstName } from '../../../ai/names';
+import { firstName, pronounsFor, type Pronouns } from '../../../ai/names';
 import { startWorldEvent } from '../../../engine/systems/events';
 import { heirsOf } from '../../heirs';
 import { gatherCandidates } from '../../socialCalls/ties';
@@ -58,9 +58,8 @@ function nameOf(id: number): string {
   return db.select({ name: agents.name }).from(agents).where(eq(agents.id, id)).get()?.name ?? 'someone';
 }
 
-function pronoun(id: number): { obj: string; pos: string } {
-  const g = db.select({ g: agents.gender }).from(agents).where(eq(agents.id, id)).get()?.g;
-  return g === 'female' ? { obj: 'her', pos: 'her' } : g === 'male' ? { obj: 'him', pos: 'his' } : { obj: 'them', pos: 'their' };
+function pronoun(id: number): Pronouns {
+  return pronounsFor(db.select({ g: agents.gender }).from(agents).where(eq(agents.id, id)).get()?.g);
 }
 
 /** The mourners of `deadId` (the grieving states the death wrote), still grieving. */
@@ -81,23 +80,23 @@ const CLOSE_TIES: readonly TieKind[] = [...KIN, ...FRIENDS];
  * The eulogy's line, from what the speaker was to the dead. Templates, in the
  * voice of the time: a cheap LLM line is not worth a slot for a feed quote.
  */
-export function eulogyLine(dead: string, tie: TieKind | 'other'): string {
+export function eulogyLine(dead: string, tie: TieKind | 'other', p: Pronouns = pronounsFor(null)): string {
   switch (tie) {
     case 'spouse':
     case 'partner':
     case 'fiance':
-      return `${dead} was my whole life. I don't know how to keep the house without them.`;
+      return `${dead} was my whole life. I don't know how to keep the house without ${p.obj}.`;
     case 'family':
       return `${dead} gave me our children and the best years I had.`;
     case 'housemate':
       return `We shared a roof, ${dead} and I. The place is too quiet now.`;
     case 'best_friend':
-      return `There was never a truer friend than ${dead}. I'll miss them every day I have left.`;
+      return `There was never a truer friend than ${dead}. I'll miss ${p.obj} every day I have left.`;
     case 'friend':
     case 'acquaintance':
       return `${dead} was a good friend to me, and to this town.`;
     case 'coworker':
-      return `I worked beside ${dead} every day. The work won't be the same without them.`;
+      return `I worked beside ${dead} every day. The work won't be the same without ${p.obj}.`;
     default:
       return `${dead} was one of us. The town is smaller today.`;
   }
@@ -173,7 +172,8 @@ export const FUNERAL: GatheringKind = {
     const speaker = [...present].sort((a, b) => regard(b, deadId) - regard(a, deadId) || a - b)[0];
     const cand = inviteTiesOf(deadId, speaker);
     g.payload.eulogistId = speaker;
-    g.payload.eulogy = eulogyLine(dead, cand);
+    // His or her, not "them": the dead have a gender like anyone (the templates had none).
+    g.payload.eulogy = eulogyLine(dead, cand, pronoun(deadId));
   },
   onClose(g, att, nowMin) {
     closeFuneral(g, att, nowMin);
@@ -261,10 +261,23 @@ function adjustGrief(agentId: number, deadId: number, delta: number): void {
   db.update(agentStates).set({ severity: Math.max(0.1, Math.min(1, row.severity + delta)) }).where(eq(agentStates.id, row.id)).run();
 }
 
-/** The evening after the funeral, at the tavern (none in town: no wake). */
+/**
+ * Whether a wake would have anyone at it: the step-3 soaks held wakes nobody came
+ * to (the mourners were the only `should`s, and an empty or excused funeral left
+ * none). One mourner able to come, or a few people who stood at the graveside, is
+ * a table; less is an empty tavern and no wake.
+ */
+export function wakeIsPlausible(mournersAble: number, funeralGoersAble: number): boolean {
+  return mournersAble >= 1 ? mournersAble + funeralGoersAble >= 2 : funeralGoersAble >= 3;
+}
+
+/** The evening after the funeral, at the tavern (none in town, or nobody to come: no wake). */
 function scheduleWake(funeral: Gathering, cameToFuneral: number[], nowMin: number): void {
   const tavern = tavernVenue();
   if (!tavern) return;
+  const mourners = funeral.subjectId != null ? mournersOf(funeral.subjectId).filter((id) => !excused(id)) : [];
+  const goers = cameToFuneral.filter((id) => !mourners.includes(id) && !excused(id));
+  if (!wakeIsPlausible(mourners.length, goers.length)) return;
   let start = dayStartOf(funeral.startMin) + WAKE_HOUR * HOUR;
   if (start < nowMin) start = nowMin + HOUR;
   scheduleGathering({

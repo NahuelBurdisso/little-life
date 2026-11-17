@@ -118,7 +118,12 @@ export function maybeStandRound(nowMin: number, present: ReadonlyMap<number, num
       if (ids.length < ROUND.MIN_DRINKERS + 1) continue;
       const last = lastRoundAt.get(tavernId);
       if (last != null && nowMin - last < ROUND.TAVERN_COOLDOWN_MIN) continue;
-      const cands: RoundCandidate[] = ids.map((id) => {
+      // Not whoever keeps the tavern: a round "bought" at your own bar costs you
+      // nothing (the price goes back into your own till) yet earned a favour from
+      // every drinker and a mood lift — a step-3 soak showed the keeper standing
+      // rounds for free. The keeper is still a drinker when someone else buys.
+      const keeper = db.select({ owner: locations.owner }).from(locations).where(eq(locations.id, tavernId)).get()?.owner ?? null;
+      const cands: RoundCandidate[] = ids.filter((id) => id !== keeper).map((id) => {
         const c = celebrating.get(id);
         const lastBuy = buyerLastAt.get(id);
         return {

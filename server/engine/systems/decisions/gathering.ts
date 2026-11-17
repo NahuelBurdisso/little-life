@@ -49,6 +49,15 @@ export const GATHERING_MUST_SCORE = 6550;
 export const GATHERING_SHOULD_SCORE = 6100;
 export const GATHERING_MAY_SCORE = 3850;
 
+/** A lunch-hour visit (GatheringKind `lunchVisit`): this many game minutes either side of `schedule.lunchTime`... */
+export const LUNCH_SLACK_MIN = 30;
+/** ...and only when not hungry: the hour is their meal, and the market is not one. */
+export const LUNCH_VISIT_MIN_HUNGER = 45;
+
+function inLunchHour(agent: AgentRow, hour: number, minute: number): boolean {
+  return Math.abs(hour * 60 + minute - agent.schedule.lunchTime * 60) <= LUNCH_SLACK_MIN;
+}
+
 /** In no state to go: ill, jailed, too low to leave the house. */
 const NOT_NOW = new Set(['sick', 'arrested', 'depressed']);
 
@@ -97,8 +106,13 @@ export function gatheringPhase(agent: AgentRow, d: DecisionTickContext, tier: Ga
   const me = seekParty(agent, world.time.hour, states);
   if (me.inSleepWindow && !def.wakes) return null;
   const leavesShift = (def.leavesShift ?? ['must']).includes(inv.level);
-  if (!leavesShift && (me.onShift || actionOf(agent) === 'working')) return null;
-  if (!leavesShift && tier === 'should' && isCommuteDue(agent, allLocations, world.time.hour, world.time.minute)) return null;
+  // A short visit in the lunch hour (market day runs through working hours): not
+  // hungry, within LUNCH_SLACK_MIN of their lunch time; once it passes, the shift
+  // check below sends them back to work.
+  const lunch = !leavesShift && def.lunchVisit === true && me.onShift && inLunchHour(agent, world.time.hour, world.time.minute)
+    && (d.needsMap.get(agent.id)?.hunger ?? 0) >= LUNCH_VISIT_MIN_HUNGER;
+  if (!leavesShift && !lunch && (me.onShift || actionOf(agent) === 'working')) return null;
+  if (!leavesShift && !lunch && tier === 'should' && isCommuteDue(agent, allLocations, world.time.hour, world.time.minute)) return null;
 
   if (tier === 'may') {
     const p = def.mayChancePerMin ?? 0;

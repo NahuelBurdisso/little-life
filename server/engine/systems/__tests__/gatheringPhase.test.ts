@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
-import { agents, agentStates, conversationQueue } from '../../../db/schema';
+import { agents, agentStates, conversationQueue, needs } from '../../../db/schema';
 import { gameMinutes } from '../../../lib/gameClock';
 import '../../../lib/gatherings';
 import { clearGatheringState } from '../../../lib/gatherings';
@@ -67,6 +67,17 @@ describe('gatheringPhase: the pull to a gathering and the hold once there', () =
     expect(d!.walkDescription).toBe('Off to Town Square');
     expect(d!.description).toBe('At Town Square');
     expect(gatheringPhase(row(a), ctx(MIDDAY), 'should')).toBeNull();
+  });
+
+  it('a kind with lunch visits takes a working `should` in their lunch hour only, and not when hungry', () => {
+    const LUNCH = { ...EVENING, hour: 12 };
+    const g = open(LUNCH, { lunchVisit: true });
+    invite(g, a, 'should');
+    expect(gatheringPhase(row(a), ctx(LUNCH), 'should')).toMatchObject({ score: GATHERING_SHOULD_SCORE });
+    // Back at work when the hour is up.
+    expect(gatheringPhase(row(a), ctx({ ...LUNCH, hour: 14 }), 'should')).toBeNull();
+    db.update(needs).set({ hunger: 20 }).where(eq(needs.agent_id, a)).run();
+    expect(gatheringPhase(row(a), ctx(LUNCH), 'should')).toBeNull();
   });
 
   it('a `should` beats the plan in free time but never leaves a shift', () => {

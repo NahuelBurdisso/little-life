@@ -15,11 +15,16 @@
  *
  * Nobody is a `must`: shopping never leaves a work shift. A resident with an
  * empty larder or a full one to sell is a `should` (comes in their free time,
- * ahead of the day plan); everyone else a `may`.
+ * ahead of the day plan); everyone else a `may`. The market runs through working
+ * hours, so a working resident may come in their lunch hour (`lunchVisit`, a short
+ * visit back to the shift), and a shopkeeper or producer with goods whose own
+ * workplace is on the square or beside it works the market from their counter
+ * (`alsoPresent`): counted there, no shift lost. The step-3 soaks drew ~2 people.
+ *
  */
 import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
-import { agents, economy } from '../../../db/schema';
+import { agents, economy, locations } from '../../../db/schema';
 import { ITEM_REGISTRY, itemPhrase } from '../../../data/economyData';
 import { firstName } from '../../../ai/names';
 import { addToInventory, getInventoryCount, removeFromInventory, type InventoryItem } from '../../economyEngine';
@@ -152,15 +157,44 @@ function markPickpocket(g: Gathering, present: Shopper[], rng: () => number): bo
   return true;
 }
 
+/** A workplace whose door is this close to the market's counts as a stall on it. */
+const STALL_PX = 6 * 32;
+
+/**
+ * Shopkeepers and producers with goods to sell whose workplace IS the venue or
+ * stands beside it: they work the market from their own counter (no shift lost),
+ * so they count as there while working. Read once, when the market opens.
+ */
+function stallholders(venueId: number): number[] {
+  const locs = db.select({ id: locations.id, door: locations.entry_point }).from(locations).all();
+  const venueDoor = locs.find((l) => l.id === venueId)?.door;
+  if (!venueDoor) return [];
+  const near = new Set(locs.filter((l) => l.id === venueId || Math.hypot(l.door.x - venueDoor.x, l.door.y - venueDoor.y) <= STALL_PX).map((l) => l.id));
+  const workers = db.select({ id: agents.id, workplace: agents.workplace }).from(agents).where(eq(agents.is_active, true)).all()
+    .filter((a) => a.workplace != null && near.has(a.workplace));
+  const goods = new Map(shoppers(workers.map((w) => w.id)).map((s) => [s.id, sellable(s.inventory) != null]));
+  return workers.filter((w) => goods.get(w.id)).map((w) => w.id);
+}
+
 export const MARKET: GatheringKind = {
   id: 'market',
   leadMin: 0,
+  // Working people come in their lunch hour (a short visit); the rest browse an hour.
+  lunchVisit: true,
   stayMin: { should: 60, may: 45 },
+  alsoPresent(g, cands) {
+    const stalls = (g.payload.stallholders as number[] | undefined) ?? [];
+    if (stalls.length === 0) return [];
+    const workplace = new Map(db.select({ id: agents.id, w: agents.workplace }).from(agents).all().map((a) => [a.id, a.w]));
+    return cands.filter((c) => stalls.includes(c.id) && c.action === 'working' && c.current_location != null
+      && c.current_location === workplace.get(c.id)).map((c) => c.id);
+  },
   mayChancePerMin: 0.004,
   encounterPerMin: 0.05,
   // A draw every hour among whoever is there then, until the market has its few stories.
   momentsAt: [60, 120, 180, 240, 300, 360, 420],
   invite(g, nowMin) {
+    g.payload.stallholders = stallholders(g.venueLocationId);
     for (const s of shoppers()) {
       if (s.age < 16 || statesOf(s.id).includes('arrested')) continue;
       const rng = rngFor(`market|${g.id}|${s.id}`);

@@ -93,6 +93,19 @@ export interface GatheringKind {
    * A market-goer browses an hour, a mourner stays to the end.
    */
   stayMin?: Partial<Record<InviteLevel, number>>;
+  /**
+   * Invitees on a work shift may still come in their lunch hour (within 30 game
+   * minutes of `schedule.lunchTime`, and not hungry), back to work when it ends:
+   * a short visit. Market day runs through working hours, and without this a
+   * town of 13 working people never went.
+   */
+  lunchVisit?: boolean;
+  /**
+   * Residents who count as there without standing at the venue (a shopkeeper
+   * working a shop on the square works the market). Asked each pass; `candidates`
+   * are the living with their action and where they are.
+   */
+  alsoPresent?(g: Gathering, candidates: ReadonlyArray<{ id: number; action: string; current_location: number | null }>): number[];
   /** Chance per game minute a free `may` invitee sets off (rolled per tick through chancePerTick). */
   mayChancePerMin?: number;
   /** Chance per game minute that two free people at the venue strike up a gathering chat. Default 0.06. */

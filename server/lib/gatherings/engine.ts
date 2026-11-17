@@ -274,7 +274,8 @@ export function gatheringsPass(input: PassInput): void {
     if (g.status !== 'open') continue;
 
     if (nowMin >= g.startMin) {
-      const present = presentAt(g, input.agents, input.venueDoor);
+      const extra = def.alsoPresent?.(g, input.agents) ?? [];
+      const present = [...new Set([...presentAt(g, input.agents, input.venueDoor), ...extra])];
       markPresent(g, present, nowMin);
       // Holds that ran their course: free again for the rest of the day.
       for (const [id, inv] of g.invited) {

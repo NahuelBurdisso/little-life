@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db';
-import { activityLog, agents, economy, relationshipEvents } from '../../db/schema';
+import { activityLog, agents, economy, locations, relationshipEvents } from '../../db/schema';
 import { clearGatheringState, gatheringsTick } from '../gatherings';
 import { allGatherings, attendanceOf } from '../gatherings/engine';
 import { setGatheringRng } from '../gatherings/common';
@@ -117,6 +117,25 @@ describe('market day', () => {
     expect(db.select().from(economy).where(eq(economy.agent_id, buyer)).get()!.inventory.find((i) => i.itemId === 'bread')?.quantity).toBe(1);
     gatheringsTick(g.endMin);
     expect(textOf('market_day')).toMatch(/Market day on the square drew 2 through the morning\. Ana Gil haggled Bea Ros down to \$4 for a loaf of bread\./);
+  });
+
+  it('a shopkeeper with goods whose shop is on the square works the market from the counter', () => {
+    const town = freshTown({ homes: [2, 2, 2] });
+    // The bakery's door moved next to the square's.
+    const square = db.select().from(locations).where(eq(locations.id, town.square)).get()!;
+    db.update(locations).set({ entry_point: { x: square.entry_point.x + 64, y: square.entry_point.y } }).where(eq(locations.id, town.bakery)).run();
+    const baker = insertResident('Rosa Chen', town.homes[0], { workplace: town.bakery, current_location: town.bakery, current_action: { type: 'working' } }, { money: 20 });
+    const idle = insertResident('Ana Gil', town.homes[1], { workplace: town.tavern, current_location: town.tavern, current_action: { type: 'working' } }, { money: 50 });
+    db.update(economy).set({ inventory: [{ itemId: 'bread', quantity: 8, acquiredAt: 0 }] }).where(eq(economy.agent_id, baker)).run();
+    db.update(economy).set({ inventory: [{ itemId: 'bread', quantity: 8, acquiredAt: 0 }] }).where(eq(economy.agent_id, idle)).run();
+    startWorldEvent('market_day', { triggeredBy: 'calendar', locationId: town.square, enforceLimits: false, announce: false });
+    const g = allGatherings().find((x) => x.kind === 'market')!;
+    gatheringsTick(g.startMin);
+    expect(g.payload.stallholders).toEqual([baker]);
+    gatheringsTick(g.startMin + 30);
+    expect(attendanceOf(g.id)!.attended.has(baker)).toBe(true);
+    expect(attendanceOf(g.id)!.attended.has(idle)).toBe(false);
+    expect(MARKET.lunchVisit).toBe(true);
   });
 
   it('a desperate, unscrupulous soul in the crowd gets the pickpocket errand — the crime path does the rest', () => {

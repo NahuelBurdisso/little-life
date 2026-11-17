@@ -5,7 +5,8 @@ import { activityLog, agents, agentStates, relationshipEvents, worldEvents } fro
 import { clearGatheringState, gatheringsTick } from '../gatherings';
 import { allGatherings, attendanceOf, gatheringRecords } from '../gatherings/engine';
 import { setGatheringRng } from '../gatherings/common';
-import { eulogyLine, funeralStart } from '../gatherings/kinds/funeral';
+import { eulogyLine, funeralStart, wakeIsPlausible } from '../gatherings/kinds/funeral';
+import { pronounsFor } from '../../ai/names';
 import { processAgentDeath, clearHungerTracking } from '../lifeEventsEngine';
 import { clearVacancies } from '../vacancies';
 import { clearPopulationFlow } from '../populationFlow';
@@ -75,7 +76,8 @@ describe('funeral → wake, end to end on the test DB', () => {
     gatheringsTick(g.startMin);
     gatheringsTick(g.startMin + 60);
     expect(g.payload.eulogistId).toBe(widow);
-    expect(g.payload.eulogy).toBe(eulogyLine('Tom', 'spouse'));
+    // His widow speaks of him, not "them".
+    expect(g.payload.eulogy).toBe("Tom was my whole life. I don't know how to keep the house without him.");
     gatheringsTick(g.startMin + 180);
 
     const att = attendanceOf(g.id)!;
@@ -146,5 +148,23 @@ describe('funeral → wake, end to end on the test DB', () => {
     gatheringsTick(start - 45);
     expect(g.status).toBe('scheduled');
     expect(g.startMin).toBe(start + 180);
+  });
+});
+
+describe('eulogy templates', () => {
+  it("use the dead person's pronouns", () => {
+    expect(eulogyLine('Ana', 'best_friend', pronounsFor('female'))).toBe("There was never a truer friend than Ana. I'll miss her every day I have left.");
+    expect(eulogyLine('Tom', 'coworker', pronounsFor('male'))).toBe("I worked beside Tom every day. The work won't be the same without him.");
+    expect(eulogyLine('Sam', 'spouse')).toMatch(/without them\.$/);
+  });
+});
+
+describe('a wake only when someone would come', () => {
+  it('a mourner who can come and one more, or a few from the graveside', () => {
+    expect(wakeIsPlausible(1, 1)).toBe(true);
+    expect(wakeIsPlausible(2, 0)).toBe(true);
+    expect(wakeIsPlausible(1, 0)).toBe(false);
+    expect(wakeIsPlausible(0, 2)).toBe(false);
+    expect(wakeIsPlausible(0, 3)).toBe(true);
   });
 });

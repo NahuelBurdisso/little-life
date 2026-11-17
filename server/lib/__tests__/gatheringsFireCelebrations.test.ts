@@ -9,7 +9,7 @@ import { allGatherings } from '../gatherings/engine';
 import { setGatheringRng } from '../gatherings/common';
 import { fireInviteLevel, fireOutcome, HELPERS_NEEDED } from '../gatherings/kinds/fire';
 import { torchFor } from '../gatherings/kinds/celebration';
-import { ROUND, roundBuyers, standRound } from '../gatherings/kinds/tavernRound';
+import { ROUND, maybeStandRound, roundBuyers, standRound } from '../gatherings/kinds/tavernRound';
 import { startWorldEvent } from '../../engine/systems/events';
 import { clearFavorLedger, getNetFavorBalance } from '../favorEngine';
 import { weddingTriggeredBy } from '../marriage';
@@ -198,5 +198,18 @@ describe('a round for the house', () => {
     const rows = rowsWithBeat('round');
     expect(rows).toHaveLength(3);
     expect((rows[2].template_data as { description: string }).description).toMatch(/Frank Moss, broke as ever, drank theirs too/);
+  });
+
+  it('the keeper never stands a round at their own bar (it would cost them nothing and earn every favour)', () => {
+    const town = freshTown({ homes: [2, 2, 2] });
+    const keeper = insertResident('Kai Ortiz', town.homes[0], {}, { money: 500, mood: 95 });
+    db.update(locations).set({ owner: keeper }).where(eq(locations.id, town.tavern)).run();
+    const buyer = insertResident('Bo Diaz', town.homes[1], {}, { money: 100, mood: 85 });
+    const d1 = insertResident('Dee Lara', town.homes[2], {}, { money: 30 });
+    const d2 = insertResident('Eli Vega', town.homes[2], {}, { money: 30 });
+    expect(maybeStandRound(40_000, new Map([[town.tavern, [keeper, buyer, d1, d2]]]))).toBe(buyer);
+    clearGatheringState();
+    // With nobody else able to, there is no round at all.
+    expect(maybeStandRound(50_000, new Map([[town.tavern, [keeper, d1, d2]]]))).toBeNull();
   });
 });

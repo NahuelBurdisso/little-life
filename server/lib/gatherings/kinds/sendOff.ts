@@ -16,7 +16,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../../../db';
 import { agents } from '../../../db/schema';
-import { firstName } from '../../../ai/names';
+import { firstName, pronounsFor } from '../../../ai/names';
 import { giveCallGift } from '../../giftEngine';
 import { callsMadeTo } from '../../socialCalls/engine';
 import { feel, remember } from '../../socialCalls/effects';
@@ -36,8 +36,7 @@ function nameOf(id: number): string {
 }
 
 function objOf(id: number): string {
-  const g = db.select({ g: agents.gender }).from(agents).where(eq(agents.id, id)).get()?.g;
-  return g === 'female' ? 'her' : g === 'male' ? 'him' : 'them';
+  return pronounsFor(db.select({ g: agents.gender }).from(agents).where(eq(agents.id, id)).get()?.g).obj;
 }
 
 export const SEND_OFF: GatheringKind = {
