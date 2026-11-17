@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import {
-  createHealthTracker, evaluateHealthWarnings, formatHealthTable, percentile, summarizePhases,
+  createHealthTracker, evaluateHealthWarnings, formatCallsTable, formatHealthTable, percentile, summarizePhases,
   type DayHealth,
 } from '../soakHealth';
 import { buildSoakCast } from '../soakCast';
@@ -13,7 +13,7 @@ function day(n: number, over: Partial<DayHealth> = {}): DayHealth {
     statusChanges: 1, statusFlows: {}, factsCreated: 3, secretsCreated: 1, secretsPublic: 0, goalsCompleted: 1,
     goalsAbandoned: 0, proposals: 0, engagements: 0, rejections: 0, weddings: 0, engagementsEnded: 0, deaths: 0,
     arrivals: 0, departures: 0, invisible: 1, invisibleNames: ['A'], invisibleStrict: 2, arcs: 3, arcsHot: 2, arcKinds: {},
-    friendShare: 0.2, meanFriendship: 30, pairsWithRow: 60, statusMix: {}, mood: 60, moodStd: 10, arrests: 0,
+    friendShare: 0.2, meanFriendship: 30, pairsWithRow: 60, statusMix: {}, mood: 60, moodStd: 10, arrests: 0, calls: {},
     tick: { p50: 50, p95: 80, mean: 55, max: 120, ticks: 360 }, phases: {},
     ...over,
   };
@@ -87,6 +87,15 @@ describe('formatHealthTable / summarizePhases', () => {
     expect(t[1]).toMatch(/^-+\+/);
   });
 
+  it('tables the social calls per day by beat, with totals', () => {
+    const t = formatCallsTable([day(1, { calls: { sick_visit: 2 } }), day(2, { calls: { sick_visit: 1, welcome: 1 } })]);
+    expect(t[0]).toMatch(/day \| sick_visit \| welcome \| total/);
+    expect(t[2].replace(/\s+/g, '')).toBe('1|2|0|2');
+    expect(t[3].replace(/\s+/g, '')).toBe('2|1|1|2');
+    expect(t[4].replace(/\s+/g, '')).toBe('all|3|1|4');
+    expect(formatCallsTable([day(1)])).toEqual(['(no social calls)']);
+  });
+
   it('ranks phases by mean and gives each its share of the tick', () => {
     const rows = summarizePhases({ a: [1, 1, 1, 1], b: [10, 10, 10, 30] }, [11, 11, 11, 31]);
     expect(rows.map((r) => r.phase)).toEqual(['b', 'a']);
@@ -128,6 +137,7 @@ describe('createHealthTracker', () => {
     log.run('interaction_resolved', 0.6, 3, null, '[3]', null);      // makes Cy visible, but not "strict"
     log.run('conversation_ended', 0.2, 4, 3, '[4,3]', null);          // below the floor: Di stays invisible
     log.run('proposal', 0.6, 1, 2, '[1,2]', null);
+    log.run('social_call', 0.5, 3, 4, '[3,4]', '{"beat":"sick_visit","callKind":"sick_visit"}');
     sqlite.prepare("UPDATE relationships SET status = 'partners' WHERE id = 1").run();
     sqlite.prepare('INSERT INTO shared_knowledge (id, sensitivity, is_public) VALUES (2, 1, 0), (3, 2, 0)').run();
     sqlite.prepare('UPDATE shared_knowledge SET is_public = 1 WHERE id = 1').run();
@@ -139,9 +149,10 @@ describe('createHealthTracker', () => {
     const d1 = tracker.endDay(1);
 
     expect(d1.population).toBe(4);
-    expect(d1.beats).toEqual({ fight: 1, gossip: 1 });
-    expect(d1.newBeats).toEqual(['fight', 'gossip']);
-    expect(d1.beatsSeenTotal).toBe(2);
+    expect(d1.beats).toEqual({ fight: 1, gossip: 1, sick_visit: 1 });
+    expect(d1.newBeats).toEqual(['fight', 'gossip', 'sick_visit']);
+    expect(d1.beatsSeenTotal).toBe(3);
+    expect(d1.calls).toEqual({ sick_visit: 1 });
     expect(d1.proposals).toBe(1);
     expect(d1.storyTypes).toBe(3); // drama, interaction_resolved, proposal
     expect(d1.statusChanges).toBe(1);
@@ -168,7 +179,8 @@ describe('createHealthTracker', () => {
     sqlite.prepare("INSERT INTO agents VALUES (5, 'Ed', 1)").run();
     const d2 = tracker.endDay(2);
     expect(d2.newBeats).toEqual(['death']);
-    expect(d2.beatsSeenTotal).toBe(3);
+    expect(d2.beatsSeenTotal).toBe(4);
+    expect(d2.calls).toEqual({});
     expect(d2.proposals).toBe(0);
     expect(d2.statusChanges).toBe(0);
     expect(d2.secretsPublic).toBe(0);

@@ -45,7 +45,7 @@ import path from 'path';
 import { buildSoakCast } from './soakCast';
 import { createIntimacyTally, findMinorsInIntimacy, formatIntimacyReport } from './soakIntimacy';
 import {
-  createHealthTracker, evaluateHealthWarnings, formatHealthTable,
+  createHealthTracker, evaluateHealthWarnings, formatCallsTable, formatHealthTable,
   type DayHealth,
 } from './soakHealth';
 
@@ -710,6 +710,17 @@ async function main(): Promise<void> {
   out('invisible = residents with no importance >= 0.6 row today (in brackets: ignoring interaction_resolved);');
   out('arcs = detectStoryArcs, capped at 12 by the chronicle (hot = heat >= 0.25); friends% = pairs friends both ways.');
   for (const r of formatHealthTable(healthDays)) out(r);
+  out('');
+  out('Social calls per day (server/lib/socialCalls): one feed row per visit made, by beat; loan_repaid /');
+  out('loan_unpaid / forgotten_birthday are the calls\' after-effects, not visits.');
+  for (const r of formatCallsTable(healthDays)) out(r);
+  // How the promises ended, per kind: a kind that is scheduled but never made is a
+  // walking problem; one never scheduled is a rare trigger (or a broken producer).
+  const { socialCallTally } = await import('../server/lib/socialCalls/engine');
+  const tally = Object.entries(socialCallTally()).sort(([a], [b]) => a.localeCompare(b));
+  out(tally.length === 0
+    ? 'calls promised: none'
+    : `calls promised/made/expired/dropped: ${tally.map(([k, t]) => `${k} ${t.scheduled}/${t.made}/${t.expired}/${t.dropped}`).join(' · ')}`);
   out('');
   const tickSummary = health.runTickSummary();
   const phaseSummary = health.runPhaseSummary();

@@ -90,6 +90,12 @@ export interface DayHealth {
   moodStd: number;
   /** `arrest` beats today (also in `beats`; broken out because a serial-arrest loop is a failure mode). */
   arrests: number;
+  /**
+   * Social calls today (server/lib/socialCalls), by the feed row's beat: one `social_call` row
+   * per visit made, plus the loan repaid / gone sour and the birthday nobody marked. Also in
+   * `beats`; broken out because the calls must not flood (a handful a day in a small town).
+   */
+  calls: Record<string, number>;
   /** Whole-tick and per-phase wall time in ms. */
   tick: PhaseStat & { max: number; ticks: number };
   phases: Record<string, PhaseStat>;
@@ -176,6 +182,28 @@ export function formatHealthTable(days: readonly DayHealth[]): string[] {
     pad(`${d.tick.p50.toFixed(0)}/${d.tick.p95.toFixed(0)}`, 14),
   ].join(' | '));
   return [head, head.replace(/[^|]/g, '-').replace(/\|/g, '+'), ...rows];
+}
+
+/**
+ * Social calls per day by kind (feed beat), one column per beat the run saw, plus a
+ * total column and a run-total row. Later passes (gatherings, factions) log their own
+ * `social_call` beats and get columns here for free.
+ */
+export function formatCallsTable(days: readonly DayHealth[]): string[] {
+  const kinds = [...new Set(days.flatMap((d) => Object.keys(d.calls ?? {})))].sort();
+  if (kinds.length === 0) return ['(no social calls)'];
+  const width = (k: string) => Math.max(k.length, 3);
+  const head = ['day', ...kinds, 'total'].map((k, i) => (i === 0 ? pad(k, 3) : pad(k, width(k)))).join(' | ');
+  const line = (label: string, get: (k: string) => number) => {
+    const counts = kinds.map(get);
+    return [pad(label, 3), ...kinds.map((k, i) => pad(counts[i], width(k))), pad(counts.reduce((s, n) => s + n, 0), 5)].join(' | ');
+  };
+  return [
+    head,
+    head.replace(/[^|]/g, '-').replace(/\|/g, '+'),
+    ...days.map((d) => line(String(d.day), (k) => d.calls?.[k] ?? 0)),
+    line('all', (k) => days.reduce((s, d) => s + (d.calls?.[k] ?? 0), 0)),
+  ];
 }
 
 /** Run-level p50/p95/mean per phase over every tick of every day, plus each phase's share of the mean tick. */
@@ -280,6 +308,7 @@ export function createHealthTracker(deps: TrackerDeps) {
       const seenStrict = new Set<number>();
       const count = { proposal: 0, engagement: 0, rejection: 0, wedding: 0, engagement_ended: 0 } as Record<string, number>;
       let deaths = 0;
+      const calls: Record<string, number> = {};
       for (const r of rows) {
         if (r.type in count) count[r.type]++;
         let beat: unknown;
@@ -287,6 +316,7 @@ export function createHealthTracker(deps: TrackerDeps) {
         if (typeof beat === 'string') {
           beats[beat] = (beats[beat] ?? 0) + 1;
           if (beat === 'death') deaths++;
+          if (r.type === 'social_call') calls[beat] = (calls[beat] ?? 0) + 1;
         }
         if (r.importance < BEAT_FLOOR) continue;
         storyTypes.add(r.type);
@@ -399,6 +429,7 @@ export function createHealthTracker(deps: TrackerDeps) {
         mood: moodN ? moodSum / moodN : 0,
         moodStd: moodN ? Math.sqrt(Math.max(0, moodSq / moodN - (moodSum / moodN) ** 2)) : 0,
         arrests: beats.arrest ?? 0,
+        calls,
         tick: {
           p50: percentile(dayTotals, 50),
           p95: percentile(dayTotals, 95),
