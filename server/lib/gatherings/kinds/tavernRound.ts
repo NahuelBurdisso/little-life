@@ -37,7 +37,7 @@ export const ROUND = {
   /** The same buyer stands one at most this often. */
   BUYER_COOLDOWN_MIN: 4 * DAY,
   /** Chance per 10-minute pass, once everything else allows one. */
-  CHANCE_PER_PASS: 0.05,
+  CHANCE_PER_PASS: 0.12,
   /** Drinkers needed besides the buyer. */
   MIN_DRINKERS: 2,
   PRICE: 2,

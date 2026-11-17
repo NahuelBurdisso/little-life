@@ -321,7 +321,9 @@ export const WAKE: GatheringKind = {
   },
   onClose(g, att) {
     const dead = String(g.payload.deadName ?? 'someone');
-    const came = [...att.attended].filter(isActive);
+    // The tavern has its regulars: whoever was drinking there anyway is not mourning,
+    // and the dead man's rival at the bar is not "drinking to his memory".
+    const came = [...att.attended].filter((id) => isActive(id) && regard(id, g.subjectId!) >= -10);
     for (const id of came) {
       remember(id, `We drank to ${firstName(dead)} at the tavern tonight and told the old stories.`, 0.2, 6, g.subjectId!);
     }

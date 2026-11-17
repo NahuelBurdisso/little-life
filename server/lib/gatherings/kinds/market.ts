@@ -3,7 +3,7 @@
  * but pulled nobody, so the stalls stood in an empty square. Now residents with
  * shopping to do, things to sell or a free morning drift there over the morning
  * and stay an hour, chats among the stalls get market small talk, and a few
- * concrete things happen per market, drawn among whoever is there:
+ * concrete things happen per market (three at most, drawn hourly among whoever is there):
  *
  *   - a haggle, won or lost: a real item for real money, buyer to seller
  *     (economyTransfers.payResident — money only ever moves between residents);
@@ -40,6 +40,8 @@ const DRIFT_MIN = 4 * HOUR;
 const THIEF_MAX_MONEY = 15;
 const THIEF_MAX_MORALITY = 35;
 const VICTIM_MIN_MONEY = 25;
+/** Things that happen at one market, at most: a few stories, not a ledger. */
+const MAX_HIGHLIGHTS = 3;
 
 interface Shopper {
   id: number;
@@ -156,7 +158,8 @@ export const MARKET: GatheringKind = {
   stayMin: { should: 60, may: 45 },
   mayChancePerMin: 0.004,
   encounterPerMin: 0.05,
-  momentsAt: [90, 210, 330],
+  // A draw every hour among whoever is there then, until the market has its few stories.
+  momentsAt: [60, 120, 180, 240, 300, 360, 420],
   invite(g, nowMin) {
     for (const s of shoppers()) {
       if (s.age < 16 || statesOf(s.id).includes('arrested')) continue;
@@ -168,7 +171,7 @@ export const MARKET: GatheringKind = {
   label: (_g, venue) => ({ walking: `On the way to the market at ${venue}`, there: 'Browsing the market stalls' }),
   topic: () => GATHERING_TOPIC.market,
   moment(g, presentIds, nowMin, index) {
-    if (presentIds.length < 2) return;
+    if (presentIds.length < 2 || highlights(g).length >= MAX_HIGHLIGHTS) return;
     const present = shoppers(presentIds);
     const rng = rngFor(`market-moment|${g.id}|${index}|${nowMin}`);
     // A pickpocket only when the crowd holds both a desperate soul and a full purse;
