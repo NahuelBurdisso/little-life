@@ -38,7 +38,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 ```bash
 npm run dev          # server (tsx watch, :3001) + vite (:5173)
 npm run check        # tsc --noEmit + eslint (errors only) + vitest run (~1.5 min)  ← gate for every change
-npm run lint         # eslint with warnings (the `any` backlog, hook deps)
+npm run lint         # eslint with warnings (hook deps)
 npm test             # vitest only
 npm run deadcode     # orphan files + exports nothing uses (confirm with grep before deleting)
 npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
@@ -125,6 +125,10 @@ directly — keep those free of Node/DB imports.
 ## Conventions
 
 - TypeScript strict, `noUnusedLocals` — dead exports are fine for tsc but please delete them.
+- **No `any`** (`@typescript-eslint/no-explicit-any` is an error). JSON columns are typed in
+  `server/db/schema.ts`, API rows in `src/lib/apiTypes.ts`; pure canvas planners take the `*Lite`
+  slices there. Unknown shape → `unknown` and narrow. In tests: `fakeServices` / `invalid()` from
+  `src/components/canvas/systems/__tests__/kit.ts`, or `Parameters<typeof fn>[0]`.
 - Comments explain *why* (the codebase uses long rationale comments; match that).
 - Keep `docs/` for durable docs; `docs/scratch/` is throwaway probes (screenshots ignored).
 - Design history: `docs/superpowers/specs|plans` (Apr 2026), `docs/living-agents/phase1-3`

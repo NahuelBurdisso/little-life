@@ -2,9 +2,31 @@
 
 Living document. Every session reads it first and updates it last (see `CLAUDE.md`).
 
-**Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors, `eslint` 0 errors (656 warnings, 653 of them
-`no-explicit-any`), vitest 348 files / 4144 tests (Vitest 5, ~54 s). Branch `chore/hygiene-and-debt` off `master`
+**Last verified:** 2026-11-17 — `npm run check` green: `tsc` 0 errors (now also over `scripts/`), `eslint` 0 errors
+(3 warnings, all `react-hooks/exhaustive-deps`; **0 explicit `any`**, and the rule is an error), vitest 348 files /
+4144 tests (Vitest 5, ~54 s). Branch `chore/hygiene-and-debt` off `master`
 (the only other branch; the September feature branches and all agent worktrees are merged and gone).
+
+## No explicit `any` (2026-11-17, same branch)
+
+All 653 are gone, by typing what they hid rather than by suppressing the rule:
+- **JSON columns** say what they hold (`server/db/schema.ts`): `AgentAction` (`current_action`, `action_queue`),
+  `ConversationMessage`, `ActiveLLMEntry`, `DailyPlan`; the rest are `Record<string, unknown>` and narrowed where read.
+- **Cascade payloads** are a `RipplePayload` (`cascadeTypes.ts`); the autoplay `NudgeAction` is a union by kind.
+- **Client rows** come from the router (`src/lib/apiTypes.ts`: `AgentView`, `WorldView`, `LocationView`...). The pure
+  canvas planners take structural slices (`LocationLite`, `WorldEventLite`, `WorldLite`, `AgentLite`...): required
+  where a planner cannot work without the field, optional otherwise, which is also what their tests pass.
+- **Tests**: fixtures are typed; fakes of big classes go through `systems/__tests__/kit.ts` (`fakeServices`,
+  `NO_DATA`, `visibleIn`), deliberately bad input through `invalid()`, private members through a named cast.
+- `scripts/` is in `tsconfig.json` now. Three scripts did not compile (`diagnose.ts` imported a `facts` table that
+  was renamed, `decompose-share.ts`, an unused local in `soak.ts`); fixed.
+
+Found by the compiler on the way, fixed:
+- The relationship graph read a resident's job from `agent.schedule.job`, which does not exist: the job line under
+  every node was always blank. It reads `job_title` now.
+- `EventMenu` had a dead `event.eventType` fallback; `movement.ts` read door-transition coordinates that could be
+  absent on an old save (falls back to the current position); a goal created by a trigger was pushed to the active
+  list as a two-field stub (it is the inserted row now).
 
 ## Hygiene and debt pass (2026-11-17, branch `chore/hygiene-and-debt`)
 
@@ -30,7 +52,7 @@ One commit each, `npm run check` green before every commit.
   5 -> 1 of 13, the rest 30-100; mood 62-74 -> 74-78. (Work at 0.4 overshot: everyone 82-100, mood 83.)
 - **Client:** WS reconnect backs off 0.5 s -> 5 s (`src/lib/wsRetry.ts`, was a flat 1 s: I7); the wizard and the six
   big modals are lazy chunks (`App.tsx`), still mounted as before.
-- **Tooling:** ESLint (`eslint.config.js`: TS syntax rules + React hooks) in the gate, errors only; Vitest 2 -> 5;
+- **Tooling:** ESLint (`eslint.config.js`: TS syntax rules + React hooks) in the gate; Vitest 2 -> 5;
   dependencies updated within their ranges. Vitest 5 gives every test file its own DB copy, so `testSetup.ts` now
   removes them in `teardown` (a run left ~350 files in `data/`).
 

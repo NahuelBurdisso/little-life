@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../../db';
 import {
@@ -110,7 +110,7 @@ function insertAgent(name: string, at: number, personality: PersonalityProfile |
   }).returning({ id: agents.id }).get().id;
 }
 
-const caller = () => nudgeRouter.createCaller({} as any);
+const caller = () => nudgeRouter.createCaller({});
 
 function lastActivity(type: string) {
   return db.select().from(activityLog).where(eq(activityLog.type, type)).orderBy(desc(activityLog.id)).get();
@@ -130,8 +130,8 @@ beforeAll(() => {
   ensureWorld();
 });
 
-let record: any;
-let emit: any;
+let record: MockInstance;
+let emit: MockInstance;
 beforeEach(() => {
   // The memory service writes through an embedding batcher; only the call matters here.
   record = vi.spyOn(memoryService, 'record').mockImplementation(() => {});
@@ -179,7 +179,7 @@ describe('whisper_thought', () => {
     expect(r).toEqual({ success: true, message: expect.stringContaining('Whisper') });
 
     expect(record).toHaveBeenCalledTimes(1);
-    const [who, type, description, metadata, , importance] = record.mock.calls[0] as any[];
+    const [who, type, description, metadata, , importance] = record.mock.calls[0] as unknown[];
     expect(who).toBe(agentId);
     expect(type).toBe('reflection');
     expect(description).toBe(`A thought came to me out of nowhere and I can't shake it: "Maybe I should open my own bakery"`);
@@ -197,7 +197,7 @@ describe('whisper_thought', () => {
 
   it('tells the player when the whisper reworks the agent day', async () => {
     await caller().execute({ action: { type: 'whisper_thought', agentId, text: 'I must find a lighthouse to keep' } });
-    const reason = (emit.mock.calls.find((c: any[]) => c[0] === 'plan:evaluate-replan')![1] as { description: string }).description;
+    const reason = (emit.mock.calls.find((c: unknown[]) => c[0] === 'plan:evaluate-replan')![1] as { description: string }).description;
 
     onPlanReplanned({ agentId, description: reason, blocks: ['walk to the coast'] });
 
@@ -262,7 +262,7 @@ describe('start_rumor', () => {
     const [fact] = rumorsAbout(subject);
     expect(fact.known_by).toEqual(expect.arrayContaining([seeder, listener]));
     const told = lastActivity('drama');
-    expect((told?.template_data as any)?.description).toBe(
+    expect(told?.template_data?.description).toBe(
       'Rumor Sam told Rumor Lena that Rumor Rosa is secretly broke.',
     );
   });
@@ -411,7 +411,7 @@ describe('stir_feeling', () => {
     const rows = statesOf(ana, 'infatuated');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ target_agent_id: ben, source: 'player:stir' });
-    expect((rows[0].metadata as any).holdUntil).toBe(rows[0].started_at + STIR_HOLD_MINUTES);
+    expect(rows[0].metadata?.holdUntil).toBe(rows[0].started_at + STIR_HOLD_MINUTES);
     expect(emit).toHaveBeenCalledWith('state:triggered', expect.objectContaining({ agentId: ana, state: 'infatuated' }));
     const crush = db.select().from(shared_knowledge)
       .where(and(eq(shared_knowledge.type, 'crush'), eq(shared_knowledge.subject_id, ana))).get();
@@ -585,7 +585,7 @@ describe('send_letter', () => {
     await send(friend, factId);
     const row = lastActivity('player_letter')!;
     expect(row.initiator_id).toBe(friend);
-    expect(String((row.template_data as any).description)).toContain('Letter Friend');
+    expect(String(row.template_data.description)).toContain('Letter Friend');
     expect(row.category).toBe('player');
     expect(ACTIVITY_REGISTRY.player_letter).toMatchObject({ category: 'player', base_importance: 0.4, retention: 'medium', newsworthy: false });
     expect(PLAYER_ACTION_TYPES).toContain('player_letter');

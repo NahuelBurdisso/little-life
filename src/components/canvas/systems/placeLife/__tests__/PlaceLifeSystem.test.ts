@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { LocationLite } from '../../../../../lib/apiTypes';
+import type { AgentLite } from '../../../SpritePool';
 
 // A headless stand-in for the bits of PixiJS the system touches, so pools, fades and
 // emitters can be exercised without a GPU or a DOM (same approach as the ambient tests).
 vi.mock('pixi.js', () => {
   class FakeContainer {
-    children: any[] = [];
-    addChild(c: any) {
+    children: FakeSprite[] = [];
+    addChild(c: FakeSprite) {
       if (c.parent) c.parent.children.splice(c.parent.children.indexOf(c), 1);
       c.parent = this;
       this.children.push(c);
@@ -19,12 +21,12 @@ vi.mock('pixi.js', () => {
     tint = 0xffffff;
     blendMode = 'normal';
     eventMode = 'auto';
-    texture: any;
+    texture: unknown;
     destroyed = false;
     scale = { x: 1, y: 1, set(v: number) { this.x = v; this.y = v; } };
     position = { x: 0, y: 0, set(x: number, y: number) { this.x = x; this.y = y; } };
     anchor = { x: 0, y: 0, set(x: number, y?: number) { this.x = x; this.y = y ?? x; } };
-    constructor(t?: any) { this.texture = t; }
+    constructor(t?: unknown) { this.texture = t; }
     destroy() { this.destroyed = true; this.parent?.children.splice(this.parent.children.indexOf(this), 1); }
   }
   return { Sprite: FakeSprite, Container: FakeContainer, Texture: { EMPTY: { empty: true } } };
@@ -34,7 +36,7 @@ vi.mock('../../../stripAtlas', () => ({
 }));
 vi.mock('../../../BuildingRenderer', () => ({
   WINDOW_CENTER_ABOVE_SOUTH_EDGE: 6,
-  southWindowXs: (loc: any) => {
+  southWindowXs: (loc: { position: { x: number; width: number }; entry_point: { x: number } }) => {
     const { x, width } = loc.position;
     return [x + width * 0.28, x + width * 0.72].filter((wx) => Math.abs(wx - loc.entry_point.x) >= 16);
   },
@@ -43,28 +45,26 @@ vi.mock('../../../BuildingRenderer', () => ({
 import * as PIXI from 'pixi.js';
 import { createPlaceLifeSystem } from '../PlaceLifeSystem';
 import { PLACE_FRAMES } from '../placeFrames';
-import type { DataContext, FrameContext } from '../../types';
+import type { CanvasSystem, DataContext, FrameContext } from '../../types';
+import { fakeServices, visibleIn } from '../../__tests__/kit';
 
-const building = (id: number, type: string, x: number, y: number, w = 160, h = 128, extra: any = {}) => ({
+const building = (id: number, type: string, x: number, y: number, w = 160, h = 128, extra: Record<string, unknown> = {}) => ({
   id, type, name: type, position: { x, y, width: w, height: h }, entry_point: { x: x + 80, y: y + h }, ...extra,
 });
-const agent = (id: number, at: number | null, action: any = { type: 'idle' }, extra: any = {}) => ({
+const agent = (id: number, at: number | null, action: AgentLite['current_action'] = { type: 'idle' }, extra: Record<string, unknown> = {}) => ({
   id, current_location: at, current_action: action, activeStates: [], position: { x: 0, y: 0 }, ...extra,
 });
 
-const baseWorld = (over: any = {}) => ({
+const baseWorld = (over: Record<string, unknown> = {}) => ({
   day_phase: 'morning', weather: 'sunny', time: { season: 'summer', hour: 10 },
   map_width: 60, map_height: 40, terrain_tiles: [], road_tiles: [], ...over,
 });
 
-function setup(locations: any[], agents: any[], world = baseWorld()) {
-  const ground = new (PIXI.Container as any)();
-  const over = new (PIXI.Container as any)();
+function setup(locations: LocationLite[], agents: AgentLite[], world = baseWorld()) {
+  const ground = new PIXI.Container();
+  const over = new PIXI.Container();
   const positions: Record<number, { x: number; y: number }> = {};
-  const services: any = {
-    sprites: { getSprite: (id: string) => (positions[+id] ? { container: positions[+id] } : undefined) },
-    bubbles: {},
-  };
+  const services = fakeServices({ getSprite: (id: string) => (positions[+id] ? { container: positions[+id] } : undefined) });
   const sys = createPlaceLifeSystem({ ground, overAgents: over }, services);
   const data: DataContext = { agents, world, events: [], locations, conversations: [], relationships: [], activity: [] };
   const frame = (scale = 1, view = { x: 0, y: 0, w: 1600, h: 1000 }): FrameContext => ({
@@ -74,12 +74,12 @@ function setup(locations: any[], agents: any[], world = baseWorld()) {
 }
 
 const settle = () => new Promise(r => setTimeout(r, 0));
-const visible = (c: any) => c.children.filter((s: any) => s.visible);
-const run = (sys: any, f: () => FrameContext, seconds: number) => {
+const visible = visibleIn;
+const run = (sys: CanvasSystem, f: () => FrameContext, seconds: number) => {
   const fr = f();
   for (let i = 0; i < seconds * 60; i++) sys.update(fr);
 };
-const glows = (ground: any) => visible(ground).filter((s: any) => s.blendMode === 'add');
+const glows = (ground: object) => visible(ground).filter((s) => s.blendMode === 'add');
 
 describe('PlaceLifeSystem', () => {
   beforeEach(() => vi.useRealTimers());
@@ -108,7 +108,7 @@ describe('PlaceLifeSystem', () => {
     const lit = glows(ground);
     expect(lit.length).toBe(2); // the furnace and the vent
     // the furnace glow sits on the forge tile and is tinted orange
-    const furnace = lit.find((g: any) => g.position.x === 96 + 3 * 32 + 16)!;
+    const furnace = lit.find((g) => g.position.x === 96 + 3 * 32 + 16)!;
     expect(furnace.position.y).toBe(200 + 2 * 32 + 16);
     expect(furnace.tint).toBe(0xff7a2a);
     expect(furnace.alpha).toBeGreaterThan(0.1);
@@ -152,7 +152,7 @@ describe('PlaceLifeSystem', () => {
     await settle();
     sys.onData!(data);
     run(sys, frame, 1);
-    const frames = () => visible(ground).map((s: any) => s.texture.frame);
+    const frames = () => visible(ground).map((s) => s.texture.frame);
     expect(frames().length).toBe(1);
     expect(PLACE_FRAMES.signOpen as readonly number[]).toContain(frames()[0]);
     data.world = baseWorld({ time: { season: 'summer', hour: 21 }, day_phase: 'evening' });
@@ -240,14 +240,14 @@ describe('PlaceLifeSystem', () => {
     let dust = 0;
     for (let i = 0; i < 60 * 6; i++) {
       sys.update(fr);
-      dust += visible(ground).filter((s: any) => (PLACE_FRAMES.dust as readonly number[]).includes(s.texture.frame)).length;
+      dust += visible(ground).filter((s) => (PLACE_FRAMES.dust as readonly number[]).includes(s.texture.frame)).length;
     }
     expect(dust).toBeGreaterThan(0);
   });
 
   it('stays within its sprite budget across many polls and a heavy town', async () => {
-    const locs: any[] = [];
-    const agents: any[] = [];
+    const locs: LocationLite[] = [];
+    const agents: AgentLite[] = [];
     for (let i = 0; i < 40; i++) {
       const type = ['shop', 'clinic', 'bakery', 'workshop', 'tavern', 'home', 'pawnshop', 'prison'][i % 8];
       locs.push(building(i + 1, type, 100 + (i % 8) * 220, 100 + Math.floor(i / 8) * 220, 160, 128));

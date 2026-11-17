@@ -59,6 +59,8 @@ import { gameMinutes } from '../../../lib/gameClock';
 import { recordTurnLatency, resetConversationPacing, turnLatencyEstimateMs } from '../../../lib/conversationPacing';
 import { conversationsTick } from '../conversations';
 
+type WorldTime = (typeof worldState.$inferSelect)['time'];
+
 const TAG = 'runnertest';
 
 function world() {
@@ -128,7 +130,7 @@ async function tick(speed: number): Promise<void> {
 describe('conversations through the real task runner (G1 review)', () => {
   let locId = 0;
   let a = 0, b = 0;
-  let saved: { time: any; tick_speed: number } | null = null;
+  let saved: { time: WorldTime; tick_speed: number } | null = null;
 
   beforeAll(() => {
     if (!db.select().from(worldState).get()) {

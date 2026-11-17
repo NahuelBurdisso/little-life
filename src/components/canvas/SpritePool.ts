@@ -32,6 +32,13 @@ export interface AgentData {
   carries_baby?: boolean;
 }
 
+/**
+ * An agent as the pure canvas planners read it: who it is, and whatever else they look at.
+ * `AgentData` is what a sprite needs (a name, a position); a planner that only counts who
+ * is inside a building needs neither, and its tests do not make them up.
+ */
+export type AgentLite = Pick<AgentData, 'id'> & Partial<Omit<AgentData, 'id'>>;
+
 /** An agent whose sprite was dropped by the last `update` (died, removed, world reset). */
 export interface RemovedAgent {
   id: string;

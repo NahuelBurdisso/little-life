@@ -5,11 +5,14 @@ import { worldRouter } from '../routers/world';
 import { clearRulesCache, getRules, RuleOverridesSchema } from '../lib/worldRules';
 import { DEFAULT_LIVE_RULES, STORYTELLERS, matchStoryteller } from '../data/rulesCatalog';
 
+/** A value the schema must refuse, typed as whatever the callee expects so the call compiles. */
+const invalid = <T,>(value: unknown): T => value as T;
+
 /** `world.setRules` and the Storyteller presets built on it. */
 
 let createdWorld = false;
-let saved: { setup_config: Record<string, any> | null; rule_overrides: Record<string, unknown> | null } | null = null;
-const caller = worldRouter.createCaller({} as any);
+let saved: { setup_config: Record<string, unknown> | null; rule_overrides: Record<string, unknown> | null } | null = null;
+const caller = worldRouter.createCaller({});
 
 beforeAll(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -47,9 +50,9 @@ describe('world.setRules', () => {
   });
 
   it('rejects unknown keys, bad values, wrong types and an empty patch', async () => {
-    await expect(caller.setRules({ dramaIntensity: 'apocalypse' } as any)).rejects.toThrow();
-    await expect(caller.setRules({ llmModel: 'gemma' } as any)).rejects.toThrow();
-    await expect(caller.setRules({ deathEnabled: 'no' } as any)).rejects.toThrow();
+    await expect(caller.setRules(invalid({ dramaIntensity: 'apocalypse' }))).rejects.toThrow();
+    await expect(caller.setRules(invalid({ llmModel: 'gemma' }))).rejects.toThrow();
+    await expect(caller.setRules(invalid({ deathEnabled: 'no' }))).rejects.toThrow();
     await expect(caller.setRules({})).rejects.toThrow();
     expect(getRules()).toEqual({ ...DEFAULT_LIVE_RULES, dramaIntensity: 'high' });
   });

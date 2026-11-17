@@ -41,6 +41,8 @@ import {
 } from '../../../lib/conversationPacing';
 import { conversationsTick, endOrphanedLLMConversations } from '../conversations';
 
+type WorldTime = (typeof worldState.$inferSelect)['time'];
+
 /**
  * G1 (playtest #2): at 4x, LLM conversations ate whole nights. The budget was
  * wall-clock (15 s × 10 turns), and an LLM turn takes 20–60 real seconds at any
@@ -230,7 +232,7 @@ async function simulate(
 describe('conversationsTick — game-time conversation budget (G1)', () => {
   let locId = 0;
   let a = 0, b = 0;
-  let savedWorld: { time: any; tick_speed: number; is_paused: boolean } | null = null;
+  let savedWorld: { time: WorldTime; tick_speed: number; is_paused: boolean } | null = null;
   let savedTurns: { max_turns_deep: number; max_turns_standard: number } | null = null;
 
   beforeAll(() => {

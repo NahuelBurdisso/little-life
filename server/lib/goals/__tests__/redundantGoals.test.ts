@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { PersonalityProfile } from '../../personality';
 
 vi.mock('../../../ai/ollama', () => ({ callOllamaChat: vi.fn() }));
 
@@ -75,7 +76,7 @@ function llmProposesBefriend(target: string): void {
         priority: 0.6,
       }],
     }),
-  } as any);
+  } as Awaited<ReturnType<typeof callOllamaChat>>);
 }
 
 function befriendGoals(agentId: number, targetId: number) {
@@ -104,7 +105,7 @@ describe('GoalReviewer — goals that are already settled', () => {
     me = insertAgent(NAMES[0], homeId);
     friend = insertAgent(NAMES[1], homeId);
     other = insertAgent(NAMES[2], homeId);
-    setEffectivePersonality(me, { warmth: 70 } as any);
+    setEffectivePersonality(me, { warmth: 70 } as PersonalityProfile);
     // An active ambition, so review() doesn't spend the mocked LLM reply on one.
     db.insert(aspirations).values({
       agent_id: me,

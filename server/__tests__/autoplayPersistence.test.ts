@@ -18,8 +18,8 @@ import { getRules } from '../lib/worldRules';
 
 let createdWorld = false;
 let saved: { rule_overrides: Record<string, unknown> | null } | null = null;
-const autoplay = autoplayRouter.createCaller({} as any);
-const world = worldRouter.createCaller({} as any);
+const autoplay = autoplayRouter.createCaller({});
+const world = worldRouter.createCaller({});
 
 /** What a fresh process has before anything is loaded. */
 function bootDefaults(): void {

@@ -10,7 +10,7 @@ import { knowledgeRouter } from '../../routers/knowledge';
  * Ranked so the first rows are the ones with a stake for them: a partner's, then close ties'.
  */
 
-const caller = () => knowledgeRouter.createCaller({} as any);
+const caller = () => knowledgeRouter.createCaller({});
 
 let home: number;
 

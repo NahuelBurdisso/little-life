@@ -1,15 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { chimneySmokes, computePlaceStates, readClimate, type PlaceClimate, type PlaceState } from '../placeState';
+import type { AgentLite } from '../../../SpritePool';
 
 const climate = (over: Partial<PlaceClimate> = {}): PlaceClimate => ({
   hour: 10, dayPhase: 'morning', weather: 'sunny', season: 'summer', meeting: false, ...over,
 });
 
-const loc = (id: number, type: string, extra: any = {}) => ({
+const loc = (id: number, type: string, extra: Record<string, unknown> = {}) => ({
   id, type, position: { x: 100 * id, y: 100, width: 160, height: 128 }, entry_point: { x: 100 * id + 80, y: 228 }, ...extra,
 });
 
-const agent = (id: number, at: number | null, action: any = { type: 'idle' }, extra: any = {}) => ({
+const agent = (id: number, at: number | null, action: AgentLite['current_action'] = { type: 'idle' }, extra: Record<string, unknown> = {}) => ({
   id, current_location: at, current_action: action, activeStates: [], ...extra,
 });
 

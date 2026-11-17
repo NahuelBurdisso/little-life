@@ -39,6 +39,8 @@ import { nudgeRouter } from '../../../routers/nudge';
 import { CONFIG } from '../../../lib/constants';
 import { gameMinutes } from '../../../lib/gameClock';
 
+type WorldTime = (typeof worldState.$inferSelect)['time'];
+
 /**
  * Playtest regression: one agent in two conversations at once. The queue held
  * both [Sofia,Omar] and [Omar,Sofia] (each had decided to socialize with the
@@ -163,7 +165,7 @@ function startLive(
   if (tracked) {
     const sched = db.select().from(conversationSchedulerState).get()!;
     db.update(conversationSchedulerState)
-      .set({ active_llm_conversations: [...(sched.active_llm_conversations as any[]), { conversationId: id, startedAt }] })
+      .set({ active_llm_conversations: [...sched.active_llm_conversations, { conversationId: id, startedAt }] })
       .where(eq(conversationSchedulerState.id, sched.id))
       .run();
   }
@@ -179,7 +181,7 @@ describe('conversationsTick — one conversation per agent', () => {
   let a = 0, b = 0, c = 0, d = 0;
   let ids: number[] = [];
 
-  let savedWorld: { time: any; tick_speed: number } | null = null;
+  let savedWorld: { time: WorldTime; tick_speed: number } | null = null;
 
   beforeAll(() => {
     ensureWorld();
@@ -507,7 +509,7 @@ describe('conversationsTick — one conversation per agent', () => {
 
     it('nudge router reports "busy talking — queued" and leaves the talker in their conversation', async () => {
       const liveId = startLive([a, d]);
-      const caller = nudgeRouter.createCaller({} as any);
+      const caller = nudgeRouter.createCaller({});
 
       const res = await caller.execute({ action: { type: 'force_confront', agentA: a, agentB: b } });
 

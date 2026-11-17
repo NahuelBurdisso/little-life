@@ -1,8 +1,8 @@
 import type * as PIXI from "pixi.js";
-import type { SpritePool, AgentData } from "../SpritePool";
+import type { SpritePool, AgentLite } from "../SpritePool";
 import type { BubbleSystem } from "../BubbleSystem";
 import type { ViewRect } from "./view";
-import type { ActivityView, ConversationLite, LocationLite, RelationshipView, WorldEventLite, WorldLite } from '../../../lib/apiTypes';
+import type { ActivityLite, ConversationLite, LocationLite, RelationshipLite, WorldEventLite, WorldLite } from '../../../lib/apiTypes';
 
 /**
  * Pluggable canvas systems: self-contained visual features (ambient life, town event
@@ -33,7 +33,7 @@ export interface CanvasServices {
 
 /** Fresh server data, handed over on every poll. */
 export interface DataContext {
-  agents: AgentData[];
+  agents: AgentLite[];
   /** The world row: day_phase, weather, time { hour, day, season }, map size... */
   world: WorldLite | null | undefined;
   /** Active world events (`world.getActiveEvents` rows). */
@@ -41,19 +41,19 @@ export interface DataContext {
   locations: LocationLite[];
   conversations: ConversationLite[];
   /** `relationships.getGraph` rows: agent_a, agent_b, status, tags, romance_ab... */
-  relationships: RelationshipView[];
+  relationships: RelationshipLite[];
   /**
    * Newest `activity_log` rows, newest first (limit 50): id, type, category,
    * initiator_id, target_id, agent_ids, template_data { description, ... },
    * timestamp (tick), real_timestamp (ms). Diff by `id` to find new rows.
    */
-  activity: ActivityView[];
+  activity: ActivityLite[];
   /**
    * `chronicle.getBrewing` rows (server/lib/brewing.ts): kind, agentIds, text, heat.
    * For `kind: "snap"` the heat is the resident's tension over their snap threshold.
    * Optional so a system's test fixture need not carry it.
    */
-  brewing?: Array<{ id: string; kind: string; agentIds: number[]; text: string; heat: number }>;
+  brewing?: Array<{ id?: string; kind: string; agentIds: number[]; text?: string; heat: number }>;
 }
 
 export interface FrameContext {

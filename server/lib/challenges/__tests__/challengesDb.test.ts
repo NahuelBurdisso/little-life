@@ -26,7 +26,7 @@ import type { Challenge, ChallengeKind } from '../catalog';
  */
 
 const DAY = MINUTES_PER_DAY;
-const caller = challengesRouter.createCaller({} as any);
+const caller = challengesRouter.createCaller({});
 
 let loc = 0;
 const ids: Record<string, number> = {};
@@ -305,7 +305,7 @@ describe('router + hourly check', () => {
  * toast shows.
  */
 describe('aimAtPair', () => {
-  const aims = challengesRouter.createCaller({} as any);
+  const aims = challengesRouter.createCaller({});
   const sorted = (...xs: number[]) => [...xs].sort((x, y) => x - y);
 
   function running(kind: ChallengeKind, id: string): Challenge {

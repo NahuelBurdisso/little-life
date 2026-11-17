@@ -13,7 +13,7 @@ import { CONFIG } from '../constants';
  */
 
 let createdWorld = false;
-let savedConfig: Record<string, any> | null = null;
+let savedConfig: Record<string, unknown> | null = null;
 let starving: number;
 
 function setRules(rules: Record<string, unknown> | null): void {

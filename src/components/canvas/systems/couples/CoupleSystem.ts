@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import type { AgentData } from "../../SpritePool";
+import type { AgentLite } from "../../SpritePool";
 import type { AgentSprite } from "../../AgentSprite";
 import { detailLevel, inView } from "../view";
 import type { CanvasLayers, CanvasServices, CanvasSystem, DataContext, FrameContext, SystemFactory } from "../types";
@@ -98,7 +98,7 @@ class CoupleSystem implements CanvasSystem {
   private glancerList: Glancer[] = [];
   private readonly linkPool: PIXI.Sprite[] = [];
 
-  private readonly byId = new Map<number, AgentData>();
+  private readonly byId = new Map<number, AgentLite>();
   private readonly scratch: CouplePair[] = [];
   private readonly pairKeys = new Set<string>();
   /** Reused for emote positions: `showEmote` reads it immediately. */

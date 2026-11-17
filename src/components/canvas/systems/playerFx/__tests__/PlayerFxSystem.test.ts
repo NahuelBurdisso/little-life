@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as PIXI from 'pixi.js';
+import { fakeServices } from '../../__tests__/kit';
 
 // The atlas loader needs a browser; hand the system blank textures of the right count.
 vi.mock('../../../stripAtlas', () => ({
@@ -28,11 +29,11 @@ function setup() {
     locations: [
       { id: 7, position: { x: 500, y: 500, width: 128, height: 96 }, entry_point: { x: 564, y: 596 } },
     ],
-    conversations: [] as any[], relationships: [], activity: [],
+    conversations: [], relationships: [], activity: [],
   } as unknown as DataContext;
   const sys = createPlayerFxSystem(
     { ground, overAgents },
-    { sprites: { getSprite: (id: string) => agents.get(id), recentlyRemoved: [] } as any, bubbles: { showEmote } as any },
+    fakeServices({ getSprite: (id: string) => agents.get(id), recentlyRemoved: [] }, { showEmote }),
   );
   const frame: FrameContext = { dt: 0, seconds: 0, now: 0, view, data };
   /** Advance `secs` of game time in 50 ms frames. */
@@ -70,7 +71,7 @@ describe('PlayerFxSystem', () => {
     const { sys, data, run, visible } = setup();
     await flush();
     emit('suggest_talk', [1, 3]);
-    (data.conversations as any[]).push({ status: 'active', participants: [3, 1] });
+    data.conversations.push({ status: 'active', participants: [3, 1] });
     run(1);
     expect(visible()).toBeGreaterThan(0);              // still inside the 2 s minimum
     run(2);
@@ -98,7 +99,7 @@ describe('PlayerFxSystem', () => {
     expect(pin).toBeDefined();
     run(20);
     expect(visible()).toBeGreaterThan(2);              // still waiting
-    (data.agents[0] as any).current_location = 7;
+    data.agents[0].current_location = 7;
     run(0.2);
     run(1);
     expect(visible()).toBe(0);
@@ -283,7 +284,7 @@ describe('PlayerFxSystem', () => {
     run(0.3);
     expect(visible()).toBeGreaterThan(0);
     // A parchment tint apart from the whisper's plain wisp, so the two powers read differently.
-    expect(overAgents.children.some(c => c.visible && (c as any).tint === 0xf2d98a)).toBe(true);
+    expect(overAgents.children.some(c => c.visible && (c as PIXI.Sprite).tint === 0xf2d98a)).toBe(true);
     expect(showEmote).not.toHaveBeenCalled();
     run(1);
     expect(showEmote).toHaveBeenCalledWith('2', 'question', { x: 200, y: 300 });

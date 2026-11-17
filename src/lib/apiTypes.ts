@@ -13,8 +13,6 @@ type Out = inferRouterOutputs<AppRouter>;
 
 /** `agents.getActive`: an agent row plus needs, active states, job and thought. */
 export type AgentView = Out['agents']['getActive'][number];
-/** `agents.getAgentSummary`: the resident panel's payload. */
-export type AgentSummary = NonNullable<Out['agents']['getAgentSummary']>;
 /** `world.getState`. */
 export type WorldView = NonNullable<Out['world']['getState']>;
 /** `world.getActiveEvents`. */
@@ -63,3 +61,13 @@ export type WorldLite =
 export type ConversationLite =
   Partial<Omit<ConversationView, 'participants'>>
   & { participants?: ReadonlyArray<number | string> };
+
+/** A relationship row as the canvas reads it: the pair, and whatever else it looks at. */
+export type RelationshipLite =
+  Pick<RelationshipView, 'agent_a' | 'agent_b'>
+  & Partial<Omit<RelationshipView, 'agent_a' | 'agent_b'>>;
+
+/** An activity row as the canvas reads it. */
+export type ActivityLite =
+  Pick<ActivityView, 'id' | 'type'>
+  & Partial<Omit<ActivityView, 'id' | 'type'>>;

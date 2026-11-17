@@ -66,7 +66,8 @@ const rule = (id: string) => rippleRules.find((r) => r.id === id)!;
 /** executeEffects is the unit under test; the probability/cooldown gates in front of it are not. */
 function fireEffects(ruleId: string, agentId: number, metadata: Partial<CascadeMetadata>, payload: unknown): void {
   const engine = new RippleEngine();
-  (engine as any).executeEffects(
+  // Private on purpose; the test reaches in rather than widen the class for it.
+  (engine as unknown as { executeEffects: (...args: unknown[]) => void }).executeEffects(
     rule(ruleId),
     agentId,
     { chainId: 'test', chainDepth: 1, parentRuleId: ruleId, ...metadata },

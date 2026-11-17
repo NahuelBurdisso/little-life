@@ -4,6 +4,11 @@ import { agents, economy, locations, relationships, shared_knowledge, worldState
 import { generateWorld } from '../lib/worldgen';
 import { stopTickLoopAndWait } from '../engine/tick';
 import { eq } from 'drizzle-orm';
+import type { setupRouter as SetupRouter } from '../routers/setup';
+
+/** The slice of the saved wizard config these tests read back. */
+type SavedConfig = { worldgen: { seed?: string; socialPlacement?: boolean; layoutStyle?: string; [key: string]: unknown } };
+type PreviewInput = Parameters<ReturnType<typeof SetupRouter.createCaller>['previewWorld']>[0];
 
 // ─── Minimal valid agent fixture ─────────────────────────────────────────────
 // AgentConfigSchema requires: id, name, age, gender, bio, traits, job,
@@ -118,7 +123,7 @@ describe('initialize DB determinism', () => {
     return {
       agents: MINIMAL_AGENTS,
       relationships: [],
-      world: { season: 'spring' as const, weather: 'sunny', startHour: 9, startDay: 1 },
+      world: { season: 'spring' as const, weather: 'sunny' as const, startHour: 9, startDay: 1 },
       rules: { startingMoney: 50, tickSpeed: 1 },
       worldgen: { sizeTier: 'auto' as const, overrides: {}, seed },
     };
@@ -127,10 +132,10 @@ describe('initialize DB determinism', () => {
   it('same seed → same locations rows across two initialize calls', async () => {
     // Import the router and build a minimal tRPC caller.
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     const seed = 'integration-deterministic';
 
-    await caller.initialize(makeSetupConfig(seed) as any);
+    await caller.initialize(makeSetupConfig(seed));
     const first = db
       .select({
         name: locations.name,
@@ -141,7 +146,7 @@ describe('initialize DB determinism', () => {
       .from(locations)
       .all();
 
-    await caller.initialize(makeSetupConfig(seed) as any);
+    await caller.initialize(makeSetupConfig(seed));
     const second = db
       .select({
         name: locations.name,
@@ -155,7 +160,7 @@ describe('initialize DB determinism', () => {
     expect(second).toEqual(first);
 
     const ws = db.select({ setup_config: worldState.setup_config }).from(worldState).get();
-    expect((ws?.setup_config as any)?.worldgen?.seed).toBe(seed);
+    expect((ws?.setup_config as SavedConfig | null)?.worldgen.seed).toBe(seed);
   });
 });
 
@@ -226,19 +231,19 @@ describe('social home placement through initialize', () => {
   it('restart keeps a legacy config (no socialPlacement key) on its old layout', async () => {
     const { seed, base, placed } = await relabellingSeed();
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     await caller.initialize({
       agents: MINIMAL_AGENTS,
       relationships: RIVALS,
       world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
       rules: { startingMoney: 50, tickSpeed: 1 },
       worldgen: cfg(seed),
-    } as any);
+    });
 
     // New configs persist the flag explicitly, so they are never mistaken for
     // legacy ones.
     const saved = db.select({ setup_config: worldState.setup_config }).from(worldState).get()!
-      .setup_config as any;
+      .setup_config as SavedConfig;
     expect(saved.worldgen.socialPlacement).toBe(true);
     expect(dbHomes()).toEqual(homesOf(placed.locations));
 
@@ -259,11 +264,11 @@ describe('social home placement through initialize', () => {
   it('previewWorld tolerates invalid agent fields', async () => {
     const { seed, base, placed } = await relabellingSeed();
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     const input = (agents: unknown[]) => ({
       ...cfg(seed),
       agentCount: MINIMAL_AGENTS.length,
-      agents: agents as any,
+      agents: agents as PreviewInput['agents'],
       relationships: [...RIVALS, { agentAName: '', junk: true }],
     });
 
@@ -283,13 +288,13 @@ describe('social home placement through initialize', () => {
    */
   async function scenarioThatMatters(seed: string) {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     const preview = (scenario?: object, agents: unknown[] = MINIMAL_AGENTS) => caller.previewWorld({
       ...cfg(seed),
       agentCount: MINIMAL_AGENTS.length,
-      agents: agents as any,
+      agents: agents as PreviewInput['agents'],
       relationships: RIVALS,
-      ...(scenario ? { scenario: scenario as any } : {}),
+      ...(scenario ? { scenario: scenario as PreviewInput['scenario'] } : {}),
     });
     const rowsOnly = homesOf((await preview()).locations);
     for (let i = 0; i < 20; i++) {
@@ -313,7 +318,7 @@ describe('social home placement through initialize', () => {
       rules: { startingMoney: 50, tickSpeed: 1 },
       worldgen: cfg(seed),
       scenario,
-    } as any);
+    });
     expect(dbHomes()).toEqual(withScenario);
   });
 
@@ -330,14 +335,14 @@ describe('social home placement through initialize', () => {
     const { seed, placed } = await relabellingSeed();
 
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     await caller.initialize({
       agents: MINIMAL_AGENTS,
       relationships: RIVALS,
       world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
       rules: { startingMoney: 50, tickSpeed: 1 },
       worldgen: cfg(seed),
-    } as any);
+    });
 
     const rows = dbLocations();
     expect(homesOf(rows)).toEqual(homesOf(placed.locations));
@@ -387,7 +392,7 @@ describe('scenario seeding', () => {
 
   it('persists secrets, rivalries and canonical relationship rows', async () => {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
 
     await caller.initialize({
       agents: MINIMAL_AGENTS,
@@ -397,7 +402,7 @@ describe('scenario seeding', () => {
       worldgen: { sizeTier: 'auto', overrides: {}, seed: 'scenario-db' },
       // trust 20 (→ 2) falls in the `trust <= 3` branch, so rivals are seeded.
       scenario: { drama: 80, romance: 70, crime: 80, trust: 20, seed: 'scenario-db' },
-    } as any);
+    });
 
     const facts = db.select().from(shared_knowledge).all();
     expect(facts.length).toBeGreaterThan(0);
@@ -436,28 +441,28 @@ describe('layout style through initialize and restart', () => {
     await stopTickLoopAndWait();
   });
 
-  const base = (worldgen: object) => ({
+  const base = <W extends object>(worldgen: W) => ({
     agents: MINIMAL_AGENTS,
     relationships: [],
-    world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
+    world: { season: 'spring' as const, weather: 'sunny' as const, startHour: 9, startDay: 1 },
     rules: { startingMoney: 50, tickSpeed: 1 },
     worldgen,
   });
   const savedConfig = () =>
-    db.select({ setup_config: worldState.setup_config }).from(worldState).get()!.setup_config as any;
+    db.select({ setup_config: worldState.setup_config }).from(worldState).get()!.setup_config as SavedConfig;
   const savedRoads = () =>
     db.select({ road_tiles: worldState.road_tiles }).from(worldState).get()!.road_tiles;
 
   it('persists organic and rebuilds the same lanes on restart', async () => {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     const worldgen = { sizeTier: 'auto' as const, overrides: {}, seed: 'layout-organic', layoutStyle: 'organic' as const };
     // Roads depend only on the seed, size and agent count, not on the cast.
     const expected = generateWorld(worldgen, MINIMAL_AGENTS.length);
     const grid = generateWorld({ ...worldgen, layoutStyle: 'grid' }, MINIMAL_AGENTS.length);
     expect(expected.roads).not.toEqual(grid.roads);
 
-    await caller.initialize(base(worldgen) as any);
+    await caller.initialize(base(worldgen));
     expect(savedConfig().worldgen.layoutStyle).toBe('organic');
     expect(savedRoads()).toEqual(expected.roads);
 
@@ -467,12 +472,12 @@ describe('layout style through initialize and restart', () => {
 
   it('restarts a legacy config (no layoutStyle key) as the grid', async () => {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     const worldgen = { sizeTier: 'auto' as const, overrides: {}, seed: 'layout-legacy' };
     const grid = generateWorld(worldgen, MINIMAL_AGENTS.length);
 
     // A config posted without the key is saved with the default spelled out.
-    await caller.initialize(base(worldgen) as any);
+    await caller.initialize(base(worldgen));
     expect(savedConfig().worldgen.layoutStyle).toBe('grid');
     expect(savedRoads()).toEqual(grid.roads);
 
@@ -498,7 +503,7 @@ describe('starting relationships and secrets through initialize', () => {
 
   it('seeds housemates and coworkers, and lets authored rows win on values', async () => {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     const cast = MINIMAL_AGENTS.map((a, i) => ({
       ...a,
       // 1+2 share a house; 3+4 share a workplace; 5 lives and works alone.
@@ -515,7 +520,7 @@ describe('starting relationships and secrets through initialize', () => {
       world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
       rules: { startingMoney: 50, tickSpeed: 1 },
       worldgen: { sizeTier: 'auto', overrides: {}, seed: 'starting-ties' },
-    } as any);
+    });
 
     const idOf = new Map(db.select({ id: agents.id, name: agents.name }).from(agents).all()
       .map((a) => [a.name, a.id]));
@@ -547,7 +552,7 @@ describe('starting relationships and secrets through initialize', () => {
 
   it('does not tell the person seen in a witness secret that they were seen (B17)', async () => {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     // Witness secrets are one draw among many; walk scenario seeds until the
     // high-drama town has one (deterministic, so this always finds the same).
     let checked = 0;
@@ -559,7 +564,7 @@ describe('starting relationships and secrets through initialize', () => {
         rules: { startingMoney: 50, tickSpeed: 1 },
         worldgen: { sizeTier: 'auto', overrides: {}, seed: 'b17' },
         scenario: { drama: 100, romance: 100, crime: 100, trust: 50, seed: `b17-${i}` },
-      } as any);
+      });
       for (const f of db.select().from(shared_knowledge).all()) {
         // Only the secrets-pool sightings: their target is the onlooker. The
         // romance pool's jealousy_seed ("A saw B flirting with C") is also a
@@ -591,7 +596,7 @@ describe('opening drama hooks through initialize', () => {
     const { DEFAULT_WORLD, DEFAULT_RULES, DEFAULT_WORLDGEN, DEFAULT_PRESET } = await import('../../src/components/setup/types');
     const { goals, aspirations, relationshipEvents } = await import('../db/schema');
     const { detectStoryArcs, resetChronicleCache } = await import('../lib/chronicle');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     await caller.initialize({
       agents: getDefaultAgents(),
       relationships: getDefaultRelationships(),
@@ -599,7 +604,7 @@ describe('opening drama hooks through initialize', () => {
       rules: DEFAULT_RULES,
       worldgen: { ...DEFAULT_WORLDGEN, seed: 'hooks-db' },
       scenario: { ...DEFAULT_PRESET.values, seed: 'hooks-db' },
-    } as any);
+    });
     await stopTickLoopAndWait();
 
     const people = db.select({ id: agents.id, name: agents.name, gender: agents.gender, home: agents.home }).from(agents).all();

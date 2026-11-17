@@ -108,7 +108,7 @@ describe('nudge.introduce_agent', () => {
       owner: null, capacity: 4, current_occupants: [], operating_hours: null, services: [], description: 'test',
     }).run();
 
-    const res = await nudgeRouter.createCaller({} as any).execute({
+    const res = await nudgeRouter.createCaller({}).execute({
       action: { type: 'introduce_agent', name: 'Tomas Ortega', bio: '', traits: ['caring'], job: 'bartender' },
     });
     expect(res.success).toBe(true);

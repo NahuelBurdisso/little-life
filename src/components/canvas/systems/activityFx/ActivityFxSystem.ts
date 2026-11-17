@@ -1,6 +1,6 @@
 import * as PIXI from "pixi.js";
 import { actionTypeOf } from "../../SpritePool";
-import type { AgentData } from "../../SpritePool";
+import type { AgentLite } from "../../SpritePool";
 import type { AgentSprite } from "../../AgentSprite";
 import { loadStrip } from "../../stripAtlas";
 import { OUTDOOR_TYPES } from "../../../../../server/lib/worldgen/buildingTemplates";
@@ -190,7 +190,7 @@ class ActivityFxSystem implements CanvasSystem {
   }
 
   /** Remember where the roofline of the building this agent is in is (or that there is none). */
-  private anchorRoof(e: Entry, agent: AgentData): void {
+  private anchorRoof(e: Entry, agent: AgentLite): void {
     const here = agent.current_location;
     const rect = here != null ? this.locationRects.get(here) : undefined;
     const type = here != null ? this.locationTypes.get(here) : undefined;
@@ -201,7 +201,7 @@ class ActivityFxSystem implements CanvasSystem {
     }
   }
 
-  private activityOf(agent: AgentData, all: AgentData[]): ActivityId {
+  private activityOf(agent: AgentLite, all: AgentLite[]): ActivityId {
     const raw = agent.current_action;
     const zone = typeof raw === "object" && raw ? (raw as { zoneActivity?: string }).zoneActivity : undefined;
     const type = actionTypeOf(agent);
@@ -240,7 +240,7 @@ class ActivityFxSystem implements CanvasSystem {
     e.posed = e.sprite;
   }
 
-  private nearRomantic(agent: AgentData, all: AgentData[]): boolean {
+  private nearRomantic(agent: AgentLite, all: AgentLite[]): boolean {
     for (const o of all) {
       if (o.id === agent.id || !isNear(agent, o)) continue;
       if (this.romantic.has(pairKey(agent.id, o.id))) return true;
@@ -249,12 +249,12 @@ class ActivityFxSystem implements CanvasSystem {
   }
 
   /** Watchers turn to look at whoever is on stage, nearest first. */
-  private faceThePerformers(agents: AgentData[]): void {
+  private faceThePerformers(agents: AgentLite[]): void {
     for (const e of this.list) {
       if (!isAudienceActivity(e.activity) || !e.sprite) continue;
       const me = agents.find(a => a.id === e.numId);
       if (!me) continue;
-      let best: AgentData | null = null;
+      let best: AgentLite | null = null;
       let bestD = AUDIENCE_PX;
       for (const o of agents) {
         if (o.id === me.id) continue;
@@ -496,15 +496,15 @@ function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
-function dist(a: AgentData, b: AgentData): number {
+function dist(a: AgentLite, b: AgentLite): number {
   return Math.hypot((a.position?.x ?? 0) - (b.position?.x ?? 0), (a.position?.y ?? 0) - (b.position?.y ?? 0));
 }
 
-function isNear(a: AgentData, b: AgentData): boolean {
+function isNear(a: AgentLite, b: AgentLite): boolean {
   return dist(a, b) < NEAR_PX;
 }
 
-function hasNeighbour(agent: AgentData, all: AgentData[]): boolean {
+function hasNeighbour(agent: AgentLite, all: AgentLite[]): boolean {
   for (const o of all) {
     if (o.id === agent.id) continue;
     if (actionTypeOf(o) === "sleeping") continue;

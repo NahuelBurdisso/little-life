@@ -3,6 +3,8 @@ import * as PIXI from 'pixi.js';
 import { createTalkSystem } from '../TalkSystem';
 import { TALK_RED } from '../talkLinks';
 import type { DataContext, FrameContext } from '../../types';
+import { NO_DATA, fakeServices } from '../../__tests__/kit';
+import type { ConversationLite } from '../../../../../lib/apiTypes';
 
 const view = { x: 0, y: 0, w: 4000, h: 4000, scale: 1 };
 const DT = 0.05;
@@ -24,31 +26,45 @@ function setup() {
   const sprites = new Map<string, ReturnType<typeof fakeSprite>>();
   const sys = createTalkSystem(
     { ground: new PIXI.Container(), overAgents },
-    { sprites: { getSprite: (id: string) => sprites.get(id) } as any, bubbles: {} as any },
+    fakeServices({ getSprite: (id: string) => sprites.get(id) }, {}),
   );
   const g = overAgents.children[0] as PIXI.Graphics;
   let now = 1000;
   const step = (n: number, v = view) => {
     for (let i = 0; i < n; i++) {
       now += DT * 1000;
-      sys.update({ dt: DT * 60, seconds: DT, now, view: v, data: null as any } as FrameContext);
+      sys.update({ dt: DT * 60, seconds: DT, now, view: v, data: NO_DATA } as FrameContext);
     }
   };
-  const data = (conversations: any[]) =>
+  const data = (conversations: ConversationLite[]) =>
     ({ agents: [], world: null, events: [], locations: [], conversations, relationships: [], activity: [] }) as DataContext;
   const add = (id: number, x: number, y: number) => { const s = fakeSprite(x, y); sprites.set(String(id), s); return s; };
   /** What the frame drew: one entry per stroked path (colour, alpha, width) and per filled dot. */
   const drawn = () => {
-    const ins = (g.context as any).instructions as Array<{ action: string; data: any }>;
-    const strokes = ins.filter(i => i.action === 'stroke').map(i => i.data.style as { color: number; alpha: number; width: number });
+    const ins = drawInstructions(g);
+    const strokes = ins.filter(i => i.action === 'stroke').map(i => i.data.style);
     const fills = ins.filter(i => i.action === 'fill');
-    const paths = ins.filter(i => i.action === 'stroke').map(i => i.data.path.instructions.length as number);
+    const paths = ins.filter(i => i.action === 'stroke').map(i => i.data.path.instructions.length);
     return { strokes, fills, paths };
   };
   return { sys, g, sprites, step, data, add, drawn, tick: () => now };
 }
 
-const talk = (id: number, participants: number[], messages: any[] = [], extra: any = {}) =>
+/**
+ * What a Graphics has been told to draw. `context.instructions` is Pixi's internal list,
+ * not part of its public types, so its shape is spelled out here once.
+ */
+interface DrawInstruction {
+  action: string;
+  data: {
+    style: { color: number; alpha: number; width: number };
+    path: { instructions: Array<{ action: string; data: number[] }> };
+  };
+}
+const drawInstructions = (g: PIXI.Graphics) =>
+  (g.context as unknown as { instructions: DrawInstruction[] }).instructions;
+
+const talk = (id: number, participants: number[], messages: Array<{ speakerId: number; text: string; sentiment: number }> = [], extra: Record<string, unknown> = {}) =>
   ({ id, participants, messages, status: 'active', topic: null, trigger_reason: 'chat', max_turns: 4, ...extra });
 const line = (speakerId: number, sentiment = 0) => ({ speakerId, text: 'hi', sentiment });
 
@@ -100,9 +116,9 @@ describe('TalkSystem', () => {
     t.sys.onData!(t.data([talk(1, [1, 2], [line(1)])]));
     t.step(1);
     const dotX = () => {
-      const ins = (t.g.context as any).instructions as Array<{ action: string; data: any }>;
+      const ins = drawInstructions(t.g);
       const circle = ins.find(i => i.action === 'fill')!;
-      return circle.data.path.instructions.find((i: { action: string }) => i.action === 'circle').data[0] as number;
+      return circle.data.path.instructions.find((i) => i.action === 'circle')!.data[0];
     };
     t.sys.onData!(t.data([talk(1, [1, 2], [line(1), line(2)])]));
     t.step(1);

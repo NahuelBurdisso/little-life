@@ -4,6 +4,7 @@ import {
   isAdultAge, isOpenCouple, openCouplePairs, sameHeading, armInArmNow, idleTogetherNow,
   nudgeFor, facingToward, heartDue, nextHeartAt, glanceGapMs, coupleKey,
 } from '../couplePairs';
+import { invalid } from '../../__tests__/kit';
 
 describe('isOpenCouple', () => {
   it('accepts married, engaged and partner tags', () => {
@@ -29,9 +30,9 @@ describe('isAdultAge', () => {
     expect(isAdultAge(18)).toBe(true);
     expect(isAdultAge(17)).toBe(false);
     expect(isAdultAge(undefined)).toBe(false);
-    expect(isAdultAge(null as any)).toBe(false);
+    expect(isAdultAge(invalid(null))).toBe(false);
     expect(isAdultAge(NaN)).toBe(false);
-    expect(isAdultAge('30' as any)).toBe(false);
+    expect(isAdultAge(invalid('30'))).toBe(false);
   });
 });
 
@@ -39,7 +40,7 @@ describe('openCouplePairs', () => {
   const ages = new Map<number, number | undefined>([[1, 30], [2, 28], [3, 16], [4, undefined], [5, 40]]);
   const adult = (id: number) => isAdultAge(ages.get(id));
   it('keeps open adult couples in a stable order and skips everything else', () => {
-    const out = openCouplePairs([
+    const out = openCouplePairs(invalid([
       { agent_a: 2, agent_b: 1, tags: ['married'] },
       { agent_a: 1, agent_b: 5, tags: ['lovers'] },
       { agent_a: 1, agent_b: 3, tags: ['partner'] },
@@ -47,11 +48,11 @@ describe('openCouplePairs', () => {
       { agent_a: 5, agent_b: 5, tags: ['married'] },
       { agent_a: 'x', agent_b: 1, tags: ['married'] },
       null,
-    ] as any, adult);
+    ]), adult);
     expect(out).toEqual([{ a: 1, b: 2, key: '1-2' }]);
   });
   it('reuses the given output array', () => {
-    const buf: any[] = [{ stale: true }];
+    const buf: NonNullable<Parameters<typeof openCouplePairs>[2]> = invalid([{ stale: true }]);
     const out = openCouplePairs([], adult, buf);
     expect(out).toBe(buf);
     expect(out).toHaveLength(0);

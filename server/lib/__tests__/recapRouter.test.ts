@@ -56,7 +56,7 @@ describe('chronicle.getRecap', () => {
       day: 2, season: 'spring', headline: 'Fists at the Mill', articles: [], covers_to_tick: 0, created_at: 0,
     }).run();
 
-    const caller = chronicleRouter.createCaller({} as any);
+    const caller = chronicleRouter.createCaller({});
     const recap = await caller.getRecap({ sinceMinute: 2 * DAY + 200 });
     expect(recap.untilMinute).toBe(3 * DAY + 12 * 60);
     expect(recap.bullets.map((b) => b.text)).toEqual([
@@ -66,7 +66,7 @@ describe('chronicle.getRecap', () => {
   });
 
   it('is empty for a quiet span', async () => {
-    const caller = chronicleRouter.createCaller({} as any);
+    const caller = chronicleRouter.createCaller({});
     expect((await caller.getRecap({ sinceMinute: 3 * DAY })).bullets).toEqual([]);
   });
 });

@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as PIXI from 'pixi.js';
 import { DECOR_FRAME_COUNT } from '../eventDecor';
+import type { WorldEventLite } from '../../../../../lib/apiTypes';
+import { fakeServices, invalid } from '../../__tests__/kit';
 
 vi.mock('../../../stripAtlas', () => ({
   loadStrip: vi.fn(async (_url: string, count: number) => Array.from({ length: count }, () => PIXI.Texture.EMPTY)),
@@ -13,7 +15,7 @@ import type { DataContext, FrameContext } from '../../types';
 const square = { id: 1, type: 'town_square', position: { x: 640, y: 320, width: 384, height: 256 }, entry_point: { x: 832, y: 448 } };
 const bakery = { id: 5, type: 'bakery', position: { x: 576, y: 640, width: 128, height: 96 }, entry_point: { x: 640, y: 736 } };
 
-const data = (events: any[]): DataContext => ({
+const data = (events: WorldEventLite[]): DataContext => ({
   agents: [], world: { map_width: 60, map_height: 40 }, events, locations: [square, bakery],
   conversations: [], relationships: [], activity: [],
 });
@@ -32,7 +34,7 @@ function setup() {
   return { layers, sys };
 }
 const flush = () => new Promise(r => setTimeout(r, 0));
-const count = (c: PIXI.Container) => c.children.reduce((n, ch: any) => n + ch.children.length, 0);
+const count = (c: PIXI.Container) => c.children.reduce((n, ch) => n + ch.children.length, 0);
 
 describe('TownEventSystem', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -91,7 +93,7 @@ describe('TownEventSystem', () => {
   it('ignores undecorated events and survives odd data', async () => {
     const { layers, sys } = setup();
     await flush();
-    sys.onData(data([ev(1, 'storm'), null as any]));
+    sys.onData(data([ev(1, 'storm'), invalid(null)]));
     sys.onData({ ...data([ev(2, 'festival')]), locations: [] , world: null });
     expect(layers.ground.children.length).toBe(0);
     expect(() => sys.update(frame())).not.toThrow();
@@ -186,7 +188,7 @@ describe('wedding followers', () => {
   it('keeps the petals over each newlywed as they move, and hides them when the sprite is gone', async () => {
     const layers = { ground: new PIXI.Container(), overAgents: new PIXI.Container() };
     const positions = new Map<string, { x: number; y: number }>([['3', { x: 100, y: 200 }], ['4', { x: 1500, y: 900 }]]);
-    const services = { sprites: { getSprite: (id: string) => positions.get(id) }, bubbles: {} } as any;
+    const services = fakeServices({ getSprite: (id: string) => positions.get(id) });
     const sys = new TownEventSystem(layers, services);
     await flush();
     sys.onData(data([{ ...ev(1, 'wedding'), triggered_by: 'wedding:3-4', location_id: 1 }]));

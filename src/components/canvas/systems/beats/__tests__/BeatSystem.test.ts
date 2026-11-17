@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as PIXI from 'pixi.js';
 import { BEATS_FRAME_COUNT } from '../beatFrames';
+import type { AgentLite } from '../../../SpritePool';
+import { fakeServices } from '../../__tests__/kit';
 
 // The atlas loader needs a browser; hand the system blank textures instead.
 vi.mock('../../../stripAtlas', async () => {
@@ -38,18 +40,15 @@ function setup() {
   const showEmote = vi.fn();
   const sys = createBeatSystem(
     { ground, overAgents },
-    {
-      sprites: { getSprite: (id: string) => positions.get(id), recentlyRemoved: removed } as any,
-      bubbles: { showEmote } as any,
-    },
+    fakeServices({ getSprite: (id: string) => positions.get(id), recentlyRemoved: removed }, { showEmote }),
   );
-  const data = (activity: any[], agents: any[] = [...positions.keys()].map(id => ({ id: Number(id), position: positions.get(id) }))) =>
+  const data = (activity: DataContext['activity'], agents: AgentLite[] = [...positions.keys()].map(id => ({ id: Number(id), position: positions.get(id) }))) =>
     ({ agents, world: null, events: [], locations: [], conversations: [], relationships: [], activity }) as DataContext;
   return { sys, overAgents, showEmote, data, removed, positions };
 }
 
-const row = (id: number, description: string, a = 1, b = 2) => ({
-  id, type: 'drama', initiator_id: a, target_id: b, agent_ids: [a, b],
+const row = (id: number, description: string, a = 1, b: number | null = 2) => ({
+  id, type: 'drama', initiator_id: a, target_id: b, agent_ids: b == null ? [a] : [a, b],
   real_timestamp: Date.now(), template_data: { description },
 });
 const flush = () => new Promise(r => setTimeout(r, 0));
@@ -93,7 +92,7 @@ describe('BeatSystem', () => {
     await flush();
     let id = 1;
     sys.onData!(data([row(id++, 'boot')]));
-    const rows: any[] = [row(0, 'boot')];
+    const rows = [row(0, 'boot')];
     for (let pair = 0; pair < 12; pair += 1) {
       // Twelve distinct pairs (1-2, 2-3...) so the per-pair dedupe doesn't hide them.
       rows.unshift(row(id++, `x${pair} started a fight with y`, pair + 1, ((pair + 1) % 12) + 1));
@@ -131,7 +130,7 @@ describe('BeatSystem', () => {
     const { sys, overAgents, data, removed } = setup();
     await flush();
     sys.onData!(data([row(1, 'boot')]));
-    sys.onData!(data([row(2, 'Ana has died. Died of natural causes. The town mourns.', 4, null as any), row(1, 'boot')]));
+    sys.onData!(data([row(2, 'Ana has died. Died of natural causes. The town mourns.', 4, null), row(1, 'boot')]));
     expect(overAgents.children).toHaveLength(0);
     removed.push({ id: '4', name: 'Ana', x: 80, y: 100 });
     sys.onData!(data([row(2, 'x'), row(1, 'boot')], []));

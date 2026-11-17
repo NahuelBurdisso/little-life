@@ -142,7 +142,7 @@ describe('alertTier: kisses (lib/intimacy/kiss.ts)', () => {
 });
 
 describe('activity.getAlerts', () => {
-  const caller = () => activityRouter.createCaller({} as any);
+  const caller = () => activityRouter.createCaller({});
 
   it('returns tiered rows after the watermark, oldest first', async () => {
     const { latestId } = await caller().getAlerts({});

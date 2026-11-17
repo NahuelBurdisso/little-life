@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import * as PIXI from 'pixi.js';
 import { createCoupleSystem } from '../CoupleSystem';
 import type { DataContext, FrameContext } from '../../types';
+import { NO_DATA, fakeServices } from '../../__tests__/kit';
+import type { AgentLite } from '../../../SpritePool';
 
 const view = { x: 0, y: 0, w: 4000, h: 4000, scale: 1 };
 const DT = 0.05;
@@ -16,7 +18,7 @@ function fakeSprite(x: number, y: number) {
     get y() { return container.y; },
     lyingBlend: 0,
     facingDir: 1 as 1 | -1,
-    setFacing: vi.fn(function (this: any, d: 1 | -1) { this.facingDir = d; }),
+    setFacing: vi.fn(function (this: { facingDir: 1 | -1 }, d: 1 | -1) { this.facingDir = d; }),
   };
 }
 
@@ -26,10 +28,10 @@ function setup() {
   const showEmote = vi.fn();
   const sys = createCoupleSystem(
     { ground, overAgents: new PIXI.Container() },
-    { sprites: { getSprite: (id: string) => sprites.get(id) } as any, bubbles: { showEmote } as any },
+    fakeServices({ getSprite: (id: string) => sprites.get(id) }, { showEmote }),
   );
   let now = 1000;
-  const frame = (): FrameContext => ({ dt: DT * 60, seconds: DT, now, view, data: null as any });
+  const frame = (): FrameContext => ({ dt: DT * 60, seconds: DT, now, view, data: NO_DATA });
   const step = (n: number, move?: (i: number) => void) => {
     for (let i = 0; i < n; i++) {
       move?.(i);
@@ -37,9 +39,9 @@ function setup() {
       sys.update(frame());
     }
   };
-  const data = (agents: any[], relationships: any[]) =>
+  const data = (agents: AgentLite[], relationships: DataContext['relationships']) =>
     ({ agents, world: null, events: [], locations: [], conversations: [], relationships, activity: [] }) as DataContext;
-  const agent = (id: number, age: number | undefined, extra: any = {}) => ({ id, name: `a${id}`, position: { x: 0, y: 0 }, age, ...extra });
+  const agent = (id: number, age: number | undefined, extra: Record<string, unknown> = {}) => ({ id, name: `a${id}`, position: { x: 0, y: 0 }, age, ...extra });
   return { sys, ground, sprites, showEmote, step, data, agent, add: (id: number, x: number, y: number) => { const s = fakeSprite(x, y); sprites.set(String(id), s); return s; } };
 }
 

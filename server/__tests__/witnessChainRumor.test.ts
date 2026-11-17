@@ -7,6 +7,7 @@ import { WitnessAmplifier } from '../lib/cascade/WitnessAmplifier';
 import { rippleRules } from '../lib/cascade/rippleRules';
 import { simEvents } from '../lib/simEvents';
 import type { PersonalityProfile } from '../lib/personality';
+import type { RipplePayload } from '../lib/cascade/cascadeTypes';
 
 /**
  * Review finding: a witness rumor about a cascade-chained state blamed the
@@ -79,8 +80,8 @@ describe('witness rumors through a cascade chain', () => {
   let insulted: number;
   let bystander: number;
   /** Events the chain itself emitted (anger_lash_out's confrontation). */
-  const emitted: any[] = [];
-  const capture = (p: any) => { if (p?._cascade) emitted.push(p); };
+  const emitted: RipplePayload[] = [];
+  const capture = (p: RipplePayload) => { if (p?._cascade) emitted.push(p); };
 
   beforeAll(() => {
     plaza = insertLocation();

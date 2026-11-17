@@ -4,6 +4,7 @@ import {
   type DecorPlacement,
 } from '../eventDecor';
 import { openAreaPropBoxes } from '../../../zoneProps';
+import { invalid } from '../../__tests__/kit';
 
 const square = { id: 1, type: 'town_square', position: { x: 640, y: 320, width: 384, height: 256 }, entry_point: { x: 832, y: 448 } };
 const market = { id: 2, type: 'market_square', position: { x: 96, y: 96, width: 320, height: 160 }, entry_point: { x: 250, y: 176 } };
@@ -250,7 +251,7 @@ describe('planEventDecor', () => {
   it('copes with empty and malformed input', () => {
     expect(planEventDecor([], LOCS, MAP)).toEqual([]);
     expect(planEventDecor([ev(1, 'festival')], [], null)).toEqual([]);
-    expect(planEventDecor([null, undefined, {}] as any, LOCS, MAP)).toEqual([]);
+    expect(planEventDecor(invalid([null, undefined, {}]), LOCS, MAP)).toEqual([]);
   });
 });
 

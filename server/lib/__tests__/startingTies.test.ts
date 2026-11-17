@@ -131,7 +131,7 @@ describe('foldStartingTies (db:seed path)', () => {
   });
 
   it('creates a row for a pair that has none', () => {
-    const rows: any[] = [];
+    const rows: Parameters<typeof foldStartingTies>[0] = [];
     const ties = buildStartingTies([agent('Ann', 'Home 1'), agent('Bob', 'Home 1')]);
     const ids = new Map([['Ann', 2], ['Bob', 1]]);
     const applied = foldStartingTies(rows, ties, (n) => ids.get(n), new Set(), (lo, hi) => ({

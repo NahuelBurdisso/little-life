@@ -204,7 +204,7 @@ describe('impulsive state gifts', () => {
     const feed = feedGiftsFrom(giver);
     expect(feed).toHaveLength(1);
     expect(feed[0].target_id).toBe(receiver);
-    expect(String((feed[0].template_data as any).description)).toContain(`$${amount}`);
+    expect(String(feed[0].template_data.description)).toContain(`$${amount}`);
   });
 
   it('gives once per episode even after the cooldown has passed', () => {
@@ -500,7 +500,7 @@ describe('conversation gift wealth budget', () => {
  */
 describe('impulsive gift memories and reactions', () => {
   const record = vi.fn();
-  beforeAll(() => initMemoryObserver({ record } as any));
+  beforeAll(() => initMemoryObserver({ record } as unknown as Parameters<typeof initMemoryObserver>[0]));
   beforeEach(() => {
     clearGiftTracking();
     record.mockClear();

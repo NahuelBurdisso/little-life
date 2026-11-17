@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { LocationLite } from '../../../../../lib/apiTypes';
+import type { AgentLite } from '../../../SpritePool';
+import { invalid } from '../../__tests__/kit';
 
 // The real module drags in PixiJS; only its window layout is needed here (same maths).
 vi.mock('../../../BuildingRenderer', () => ({
   WINDOW_CENTER_ABOVE_SOUTH_EDGE: 6,
-  southWindowXs: (loc: any) => {
+  southWindowXs: (loc: { position: { x: number; width: number }; entry_point: { x: number } }) => {
     const { x, width } = loc.position;
     const doorW = 12;
     const xs = width < 70 ? [x + width / 2] : [x + width * 0.28, x + width * 0.72];
@@ -12,7 +15,7 @@ vi.mock('../../../BuildingRenderer', () => ({
 }));
 
 import { bellSpot, chimneyCap, crossSpot, flagSpot, forgeSpot, ovenSpot, signSpot, stageSpot, windowCentres } from '../placeAnchors';
-import { BELL_CROWD, buildPlacePlan, crowdInterval, laundrySpot, type PlaceItem } from '../placePlan';
+import { BELL_CROWD, buildPlacePlan, crowdInterval, laundrySpot, type PlaceItem, type PlanInput } from '../placePlan';
 import { computePlaceStates, type PlaceClimate } from '../placeState';
 
 const climate = (over: Partial<PlaceClimate> = {}): PlaceClimate => ({
@@ -23,11 +26,15 @@ const building = (id: number, type: string, x = 200 * id, y = 300, w = 160, h = 
   id, type, name: type, position: { x, y, width: w, height: h }, entry_point: { x: x + 80, y: y + h },
 });
 
-const agent = (id: number, at: number | null, action: any = { type: 'idle' }, extra: any = {}) => ({
+const agent = (id: number, at: number | null, action: AgentLite['current_action'] = { type: 'idle' }, extra: Record<string, unknown> = {}) => ({
   id, current_location: at, current_action: action, activeStates: [], position: { x: 0, y: 0 }, ...extra,
 });
 
-function plan(locations: any[], agents: any[], c = climate(), isFree?: (b: any, id: number) => boolean): PlaceItem[] {
+/** One member of the PlaceItem union, by its `kind`. */
+type Item<K extends PlaceItem['kind']> = Extract<PlaceItem, { kind: K }>;
+const isKind = <K extends PlaceItem['kind']>(kind: K) => (i: PlaceItem): i is Item<K> => i.kind === kind;
+
+function plan(locations: LocationLite[], agents: AgentLite[], c = climate(), isFree?: PlanInput['isFree']): PlaceItem[] {
   return buildPlacePlan({ locations, states: computePlaceStates(locations, agents, c), agents, climate: c, isFree });
 }
 const kinds = (items: PlaceItem[]) => items.map(i => i.kind);
@@ -41,7 +48,7 @@ describe('anchors', () => {
     expect(out).toEqual({ x: 96 + 160 - 4 - 4 + 2, y: 200 - 8 + 2 });
     chimneyCap(building(1, 'bakery', 0, 100, 160), out);
     expect(out).toEqual({ x: 160 - 6 - 4 + 3, y: 100 - 10 + 2 });
-    expect(chimneyCap({ type: 'home' } as any, out)).toBe(false);
+    expect(chimneyCap(invalid({ type: 'home' }), out)).toBe(false);
   });
 
   it('finds the forge, the oven and the stage from the interior data', () => {
@@ -114,7 +121,7 @@ describe('pubs', () => {
 
   it('gets livelier at night, with some music from a full house', () => {
     const tav = building(1, 'tavern', 1000, 200, 192, 160);
-    const crowd = (c: PlaceClimate, n: number) => plan([tav], Array.from({ length: n }, (_, i) => agent(i + 1, 1)), c).find(i => i.kind === 'crowd') as any;
+    const crowd = (c: PlaceClimate, n: number) => plan([tav], Array.from({ length: n }, (_, i) => agent(i + 1, 1)), c).find(isKind('crowd'))!;
     expect(crowd(climate({ dayPhase: 'night' }), 4).interval).toBeLessThan(crowd(climate(), 4).interval);
     expect(crowd(climate({ dayPhase: 'night' }), 6).notes).toBeGreaterThan(0);
     expect(crowd(climate({ dayPhase: 'night' }), 4).notes).toBe(0);
@@ -125,7 +132,7 @@ describe('pubs', () => {
     const tav = building(1, 'tavern', 1000, 200, 192, 160);
     const items = plan([tav], [agent(1, 1, { type: 'idle', zoneActivity: 'perform' })]);
     expect(items.find(i => i.key === 'stage:1')).toMatchObject({ kind: 'glow', shape: 'wide' });
-    expect((items.find(i => i.kind === 'crowd') as any).notes).toBeGreaterThan(0.5);
+    expect(items.find(isKind('crowd'))!.notes).toBeGreaterThan(0.5);
   });
 
   it('the divebar has no stage to light', () => {
@@ -151,7 +158,7 @@ describe('signs', () => {
 
   it('reads OPEN inside the hours with the staff in, CLOSED outside them or when they are out', () => {
     const shop = { ...building(1, 'shop'), operating_hours: { open: 8, close: 18 } };
-    const sign = (c: PlaceClimate, agents: any[]) => (plan([shop], agents, c)[0] as any).open;
+    const sign = (c: PlaceClimate, agents: AgentLite[]) => (plan([shop], agents, c)[0] as Item<'sign'>).open;
     const clerk = (at: number | null) => agent(1, at, { type: 'working' }, { workplace: 1 });
     expect(sign(climate({ hour: 10 }), [clerk(1)])).toBe(true);
     expect(sign(climate({ hour: 10 }), [clerk(null)])).toBe(false); // clerk is late
@@ -162,8 +169,8 @@ describe('signs', () => {
   it('a clinic with no hours is open around the clock while staffed', () => {
     const c = building(1, 'clinic');
     const doc = (at: number | null) => agent(1, at, { type: 'working' }, { workplace: 1 });
-    expect((plan([c], [doc(1)], climate({ hour: 3 }))[0] as any).open).toBe(true);
-    expect((plan([c], [doc(null)], climate({ hour: 3 }))[0] as any).open).toBe(false);
+    expect((plan([c], [doc(1)], climate({ hour: 3 }))[0] as Item<'sign'>).open).toBe(true);
+    expect((plan([c], [doc(null)], climate({ hour: 3 }))[0] as Item<'sign'>).open).toBe(false);
   });
 });
 
@@ -180,7 +187,7 @@ describe('clinic, town hall, prison', () => {
     const hall = building(1, 'town_hall', 352, 300, 192, 160);
     const get = (c: PlaceClimate, n: number) => {
       const items = plan([hall], Array.from({ length: n }, (_, i) => agent(i + 1, 1)), c);
-      return { flag: items.find(i => i.kind === 'flag') as any, bell: items.find(i => i.kind === 'bell') as any };
+      return { flag: items.find(isKind('flag'))!, bell: items.find(isKind('bell'))! };
     };
     expect(get(climate(), 0).flag.gust).toBe(false);
     expect(get(climate({ weather: 'windy' }), 0).flag.gust).toBe(true);
@@ -216,7 +223,7 @@ describe('homes', () => {
   });
 
   it('windy days make it flap', () => {
-    const item = plan([home], [agent(1, 2)], climate({ weather: 'windy' }), free)[0] as any;
+    const item = plan([home], [agent(1, 2)], climate({ weather: 'windy' }), free)[0] as Item<'laundry'>;
     expect(item.windy).toBe(true);
   });
 
@@ -234,7 +241,7 @@ describe('the farm', () => {
   const farm = building(1, 'farm', 640, 200, 320, 224);
 
   it('keeps chickens in the coop yard by day and puts them to bed at night', () => {
-    const day = plan([farm], []).find(i => i.kind === 'chickens') as any;
+    const day = plan([farm], []).find(isKind('chickens'))!;
     expect(day.count).toBe(3);
     // the yard covers the coop tiles (0-1, 3) of the farm
     expect(day.rect.x).toBeLessThan(640 + 32);
@@ -256,7 +263,7 @@ describe('the farm', () => {
 
   it('a farmyard has two hens of its own', () => {
     const yard = building(4, 'farmyard', 300, 500, 96, 96);
-    const item = plan([yard], []).find(i => i.kind === 'chickens') as any;
+    const item = plan([yard], []).find(isKind('chickens'))!;
     expect(item.count).toBe(2);
     expect(item.rect.x).toBeGreaterThanOrEqual(300);
     expect(item.rect.x + item.rect.width).toBeLessThanOrEqual(396);

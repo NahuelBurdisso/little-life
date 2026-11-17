@@ -48,7 +48,7 @@ function config(extra: object = {}) {
         trustAB: 50, trustBA: 50, familiarity: 60, status: 'partners', tags: ['partner'],
       },
     ],
-    world: { season: 'spring' as const, weather: 'sunny', startHour: 9, startDay: 1 },
+    world: { season: 'spring' as const, weather: 'sunny' as const, startHour: 9, startDay: 1 },
     rules: { startingMoney: 50, tickSpeed: 1 },
     worldgen: { sizeTier: 'auto' as const, overrides: {}, seed: 'seed-adults' },
     ...extra,
@@ -70,7 +70,7 @@ describe('setup.initialize and the adults-only rule', () => {
 
   it('a wizard romance of 80 between a 16-year-old and a 30-year-old is stored as no romance', async () => {
     const { setupRouter } = await import('../routers/setup');
-    await setupRouter.createCaller({} as any).initialize(config() as any);
+    await setupRouter.createCaller({}).initialize(config());
 
     const rel = relOf('Seed Agent 1', 'Seed Agent 2')!;
     expect(rel.romance_ab).toBeLessThanOrEqual(0);
@@ -91,12 +91,12 @@ describe('setup.initialize and the adults-only rule', () => {
 
   it('the romance sliders never cast the minor in a thread or a romantic secret', async () => {
     const { setupRouter } = await import('../routers/setup');
-    const caller = setupRouter.createCaller({} as any);
+    const caller = setupRouter.createCaller({});
     for (const seed of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) {
       await caller.initialize(config({
         relationships: [],
         scenario: { drama: 100, romance: 100, crime: 0, trust: 50, seed },
-      }) as any);
+      }));
 
       const minor = db.select().from(agents).all().find((a) => a.age < 18)!;
       for (const r of db.select().from(relationships).all()) {

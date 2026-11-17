@@ -3,7 +3,7 @@
  * who counts as an open couple, when two people are "arm in arm" or "idle together", how far
  * to pull them together, and the throttles for hearts and glances.
  *
- * Only adults ever show up here. `AgentData.age` is optional on the client, so a missing or
+ * Only adults ever show up here. `AgentLite.age` is optional on the client, so a missing or
  * non-numeric age is treated as a minor: the check fails closed, like the server's
  * `isIntimacyEligible` it mirrors.
  */

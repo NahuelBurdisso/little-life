@@ -153,7 +153,7 @@ describe('goal events through their listeners', () => {
     const loser = insertAgent('Cast Loser', home);
     const rival = insertAgent('Cast Rival', home);
     const fights: Array<{ agentId: number; victimId?: number; action?: string }> = [];
-    const onInteraction = (p: any) => { if (p?.action === 'confrontation') fights.push(p); };
+    const onInteraction = (p: { agentId: number; victimId?: number; action?: string }) => { if (p?.action === 'confrontation') fights.push(p); };
     simEvents.on('interaction:completed', onInteraction);
 
     simEvents.emit('goal:abandoned', { agentId: loser, goalType: 'befriend', ...goalEventCast({ target_id: rival }) });

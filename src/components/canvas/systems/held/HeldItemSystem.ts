@@ -1,6 +1,6 @@
 import * as PIXI from "pixi.js";
 import { actionTypeOf } from "../../SpritePool";
-import type { AgentData, SpritePool } from "../../SpritePool";
+import type { AgentLite, SpritePool } from "../../SpritePool";
 import type { AgentSprite } from "../../AgentSprite";
 import { loadStrip } from "../../stripAtlas";
 import { inView } from "../view";
@@ -156,7 +156,7 @@ class HeldItemSystem implements CanvasSystem {
     sprite.visible = true;
   }
 
-  private itemFor(agent: AgentData, e: Entry): HeldItemId | null {
+  private itemFor(agent: AgentLite, e: Entry): HeldItemId | null {
     const raw = agent.current_action;
     const zone = typeof raw === "object" && raw ? (raw as { zoneActivity?: string }).zoneActivity : undefined;
     const here = agent.current_location ?? null;

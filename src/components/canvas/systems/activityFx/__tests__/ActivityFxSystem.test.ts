@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as PIXI from 'pixi.js';
 import { FX_CELL_COUNT } from '../activityFrames';
+import { NO_DATA, fakeServices } from '../../__tests__/kit';
 
 // The particle atlas is a network load; the roofline behaviour does not depend on its pixels.
 vi.mock('../../../stripAtlas', () => ({
@@ -26,7 +27,7 @@ async function setup(sprite: ReturnType<typeof fakeSprite>) {
   const showEmote = vi.fn();
   const sys = createActivityFxSystem(
     { ground, overAgents: over },
-    { sprites: { getSprite: () => sprite } as any, bubbles: { showEmote } as any },
+    fakeServices({ getSprite: () => sprite }, { showEmote }),
   );
   await Promise.resolve();
   await Promise.resolve();
@@ -38,13 +39,13 @@ async function setup(sprite: ReturnType<typeof fakeSprite>) {
     let most = 0;
     for (let t = 0; t < seconds; t += 0.25) {
       now += 250;
-      sys.update({ dt: 15, seconds: 0.25, now, view, data: null as any });
+      sys.update({ dt: 15, seconds: 0.25, now, view, data: NO_DATA });
       most = Math.max(most, hearts().length);
       for (const h of hearts()) seen.push({ x: h.x, y: h.y });
     }
     return most;
   };
-  const data = (zone: string, at: number | null, loc: any) => ({
+  const data = (zone: string, at: number | null, loc: object) => ({
     agents: [{ id: 1, name: 'a', position: { x: 150, y: 180 }, current_location: at, current_action: { type: 'idle', zoneActivity: zone } }],
     world: null, events: [], locations: [loc], conversations: [], relationships: [], activity: [],
   }) as unknown as DataContext;

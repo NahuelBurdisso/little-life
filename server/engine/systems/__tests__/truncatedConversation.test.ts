@@ -18,6 +18,8 @@ import type { MemoryService } from '../../../lib/memory/MemoryService';
 import { conversationsTick } from '../conversations';
 import { gameMinutes } from '../../../lib/gameClock';
 
+type WorldTime = (typeof worldState.$inferSelect)['time'];
+
 /**
  * B3 regression: Step A of `conversationsTick` computed a `truncated` flag for
  * conversations force-ended by the turn budget, then dropped it on the floor
@@ -142,7 +144,7 @@ describe('conversationsTick — truncated conversations (B3)', () => {
   let homeId = 0;
   const ended: Array<{ agentId: number; truncated?: boolean }> = [];
   const onEnded = (p: { agentId: number; truncated?: boolean }) => ended.push(p);
-  let savedWorld: { time: any; tick_speed: number } | null = null;
+  let savedWorld: { time: WorldTime; tick_speed: number } | null = null;
 
   beforeAll(() => {
     ensureWorld();

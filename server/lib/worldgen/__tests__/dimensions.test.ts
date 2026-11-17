@@ -10,7 +10,7 @@ const EMPTY_CTX: WorldContext = {
 };
 const RNG = makeRng(0);
 
-function run(cfg: any, agentCount: number, extras: any = {}) {
+function run(cfg: Parameters<typeof dimensionsStage.run>[2], agentCount: number, extras: Parameters<typeof dimensionsStage.run>[4] = {}) {
   return dimensionsStage.run(EMPTY_CTX, RNG, cfg, agentCount, extras).dimensions!;
 }
 

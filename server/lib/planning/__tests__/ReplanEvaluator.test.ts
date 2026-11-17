@@ -3,6 +3,10 @@ import { ReplanEvaluator, REPLAN_COOLDOWN_MINUTES } from '../ReplanEvaluator.js'
 import type { ReplanEvent, PlanBlock } from '../types.js';
 import type { PersonalityProfile } from '../../personality.js';
 
+/** `_handleEvent` is private; the cooldown tests call it directly instead of going through the bus. */
+const handle = (evaluator: ReplanEvaluator) =>
+  (event: ReplanEvent) => (evaluator as unknown as { _handleEvent: (e: ReplanEvent) => void })._handleEvent(event);
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ function makeEvent(overrides: Partial<ReplanEvent> = {}): ReplanEvent {
 // Build an evaluator whose shouldReplan we can call directly
 function makeEvaluator(): ReplanEvaluator {
   const mockCache = { get: vi.fn().mockReturnValue(null) };
-  const mockGenerator = { queueReplan: vi.fn() } as any;
+  const mockGenerator = { queueReplan: vi.fn() } as unknown as ConstructorParameters<typeof ReplanEvaluator>[1];
   return new ReplanEvaluator(mockCache, mockGenerator, () => 10, () => 100);
 }
 
@@ -161,7 +165,7 @@ describe('ReplanEvaluator cooldown', () => {
     let gameMinute = 600;
     const generator = { queueReplan: vi.fn() };
     const evaluator = new ReplanEvaluator({ get: () => null }, generator, () => 10, () => gameMinute);
-    const fire = () => (evaluator as any)._handleEvent(makeEvent({ isDramatic: true }));
+    const fire = () => handle(evaluator)(makeEvent({ isDramatic: true }));
 
     fire();
     expect(generator.queueReplan).toHaveBeenCalledTimes(1);
@@ -184,8 +188,8 @@ describe('ReplanEvaluator cooldown', () => {
   it('keeps cooldowns per agent', () => {
     const generator = { queueReplan: vi.fn() };
     const evaluator = new ReplanEvaluator({ get: () => null }, generator, () => 10, () => 600);
-    (evaluator as any)._handleEvent(makeEvent({ agentId: 1, isDramatic: true }));
-    (evaluator as any)._handleEvent(makeEvent({ agentId: 2, isDramatic: true }));
+    handle(evaluator)(makeEvent({ agentId: 1, isDramatic: true }));
+    handle(evaluator)(makeEvent({ agentId: 2, isDramatic: true }));
     expect(generator.queueReplan).toHaveBeenCalledTimes(2);
   });
 });

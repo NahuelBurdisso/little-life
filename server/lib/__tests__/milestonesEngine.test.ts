@@ -92,7 +92,7 @@ describe('proposal outcome mapping', () => {
 
 describe('canProposeNow', () => {
   const at = (x: number, loc: number | null, type = 'idle') =>
-    ({ current_action: { type }, current_location: loc, position: { x, y: 0 } }) as any;
+    ({ current_action: { type }, current_location: loc, position: { x, y: 0 } }) as Parameters<typeof canProposeNow>[0];
 
   it('needs both awake, free and together', () => {
     expect(canProposeNow(at(0, 5), at(900, 5))).toBe(true);        // same building

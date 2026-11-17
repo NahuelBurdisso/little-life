@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { eq, inArray, sql } from 'drizzle-orm';
+import type { PersonalityProfile } from '../../personality';
 
 vi.mock('../../../ai/ollama', () => ({ callOllamaChat: vi.fn() }));
 
@@ -27,7 +28,7 @@ const ids: number[] = [];
 let homeId = 0;
 
 function reply(body: Record<string, unknown>): void {
-  vi.mocked(callOllamaChat).mockResolvedValueOnce({ text: JSON.stringify({ ambition: 'keep', reviews: [], new_goals: [], ...body }) } as any);
+  vi.mocked(callOllamaChat).mockResolvedValueOnce({ text: JSON.stringify({ ambition: 'keep', reviews: [], new_goals: [], ...body }) } as Awaited<ReturnType<typeof callOllamaChat>>);
 }
 
 function newGoal(description: string, category_hint = 'investigative', target_agent: string | null = null) {
@@ -51,7 +52,7 @@ beforeAll(() => {
       home: homeId, created_at: 0, is_active: true,
     }).returning({ id: agents.id }).get().id;
     ids.push(id);
-    setEffectivePersonality(id, { curiosity: 70 } as any);
+    setEffectivePersonality(id, { curiosity: 70 } as PersonalityProfile);
     db.insert(aspirations).values({
       agent_id: id, type: 'knowledge', intensity: 0.7, status: 'active', adopted_at: 0, trigger: 'test', description: 'understand people',
     }).run();
@@ -135,9 +136,9 @@ describe('goal review fixes', () => {
 
   it('a pivot asks for a new approach only, never a new category', () => {
     const prompt = buildPivotPrompt({
-      name: 'Goalfix Marco', age: 30, personality: { curiosity: 70 } as any,
+      name: 'Goalfix Marco', age: 30, personality: { curiosity: 70 } as PersonalityProfile,
       goalDescription: 'Find my gloves.', strategy: 'look', progress: 0, daysActive: 2, recentMemories: [],
-    } as any);
+    } as Parameters<typeof buildPivotPrompt>[0]);
     expect(JSON.stringify(prompt.format)).not.toContain('category');
     expect(prompt.system).not.toContain('category');
   });

@@ -419,7 +419,7 @@ describe('tavern visits', () => {
 
     const feed = feedPurchasesBy(buyer);
     expect(feed).toHaveLength(1);
-    expect(String((feed[0].template_data as any).item)).toContain('a drink at');
+    expect(String(feed[0].template_data.item)).toContain('a drink at');
   });
 
   it('a new visit after leaving is charged again', () => {
@@ -444,7 +444,7 @@ describe('tavern visits', () => {
     const covers = coversBy(buyer);
     expect(covers).toHaveLength(1);
     expect(covers[0].items_exchanged).toBeNull();
-    expect(String((feedPurchasesBy(buyer)[0].template_data as any).item)).toContain('a night out at');
+    expect(String(feedPurchasesBy(buyer)[0].template_data.item)).toContain('a night out at');
   });
 
   it('owners, staff and people at work do not pay', () => {
@@ -680,7 +680,7 @@ describe('treasury settlement', () => {
       eq(economyTransactions.to_agent, poor), eq(economyTransactions.reason, 'town:stipend'),
     )).all()).toHaveLength(1);
     const feed = db.select().from(activityLog).where(eq(activityLog.type, 'system')).all()
-      .map((r) => String((r.template_data as any)?.message ?? ''));
+      .map((r) => String(r.template_data?.message ?? ''));
     expect(feed.some((m) => m.includes(`stipend to Broke ${n}`))).toBe(true);
   });
 
@@ -767,7 +767,7 @@ describe('day change through economyTick', () => {
     expect(econ(rich).money).toBeCloseTo(before - (BASE + rate * (before - allowance)), 2);
     // A strong pull says so in the feed.
     const feed = db.select().from(activityLog).where(eq(activityLog.type, 'system')).all()
-      .map((r) => String((r.template_data as any)?.message ?? ''));
+      .map((r) => String(r.template_data?.message ?? ''));
     expect(feed.some((m) => m.includes('more money in town than it needs'))).toBe(true);
   });
 

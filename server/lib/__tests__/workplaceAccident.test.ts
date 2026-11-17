@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { accidentChancePerMinute, ACCIDENT_HAZARD, checkDeathTriggers } from '../lifeEventsEngine';
 
-const rested = { currentAction: 'working', job: 'farmhand', energy: 70, activeStates: [] as Array<{ type: string; started_at: number; severity: number; metadata: any }> };
+const rested = { currentAction: 'working', job: 'farmhand', energy: 70, activeStates: [] as Array<{ type: string; started_at: number; severity: number; metadata: Record<string, unknown> | null }> };
 
 describe('workplace accident hazard', () => {
   afterEach(() => vi.restoreAllMocks());

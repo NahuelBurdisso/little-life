@@ -3,9 +3,10 @@ import * as PIXI from 'pixi.js';
 import { createFuseSystem } from '../FuseSystem';
 import { fuseTargets, FUSE_HEAT } from '../fuseTargets';
 import type { DataContext, FrameContext } from '../../types';
+import { NO_DATA, fakeServices } from '../../__tests__/kit';
 
 const view = { x: 0, y: 0, w: 2000, h: 2000, scale: 1 };
-const frame = (seconds: number) => ({ dt: seconds * 60, seconds, now: 0, view, data: null as any }) as FrameContext;
+const frame = (seconds: number) => ({ dt: seconds * 60, seconds, now: 0, view, data: NO_DATA }) as FrameContext;
 
 const snap = (id: number, heat: number) => ({ kind: 'snap', agentIds: [id], heat });
 
@@ -34,9 +35,9 @@ describe('FuseSystem', () => {
     const positions = new Map<string, { x: number; y: number }>([['1', { x: 100, y: 200 }], ['2', { x: 300, y: 200 }]]);
     const sys = createFuseSystem(
       { ground: new PIXI.Container(), overAgents },
-      { sprites: { getSprite: (id: string) => positions.get(id) } as any, bubbles: {} as any },
+      fakeServices({ getSprite: (id: string) => positions.get(id) }, {}),
     );
-    const data = (brewing: any[]) =>
+    const data = (brewing: NonNullable<DataContext['brewing']>) =>
       ({ agents: [], world: null, events: [], locations: [], conversations: [], relationships: [], activity: [], brewing }) as DataContext;
     return { sys, overAgents, positions, data };
   }

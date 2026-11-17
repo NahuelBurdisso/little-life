@@ -180,7 +180,7 @@ describe('getTimeline', () => {
     it('activity.getRecent uses the same involvement filter', async () => {
       row({ minute: at(1), initiator: 8, agents: [8, 7] });
       row({ minute: at(1), initiator: 8, agents: [8] });
-      const caller = activityRouter.createCaller({} as any);
+      const caller = activityRouter.createCaller({});
       const rows = await caller.getRecent({ agentId: 7 });
       expect(rows).toHaveLength(1);
     });
@@ -249,7 +249,7 @@ describe('getTimeline', () => {
 
   it('is reachable through the router', async () => {
     row({ minute: at(3) });
-    const caller = activityRouter.createCaller({} as any);
+    const caller = activityRouter.createCaller({});
     const page = await caller.getTimeline({ limit: 10 });
     expect(page.days[0].day).toBe(3);
     // Input defaults: no input at all is valid.

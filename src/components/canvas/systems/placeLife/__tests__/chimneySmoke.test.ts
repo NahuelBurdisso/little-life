@@ -20,7 +20,7 @@ describe('ChimneySmokePlan', () => {
       agents: [
         { id: 1, current_location: 1, current_action: { type: 'eating' } },
         { id: 2, current_location: 2, current_action: { type: 'working' }, workplace: 2 },
-      ] as any,
+      ],
     }));
     expect(plan.smokes(1)).toBe(true);
     expect(plan.smokes(2)).toBe(true);
@@ -29,7 +29,7 @@ describe('ChimneySmokePlan', () => {
 
   it('keeps the last answer until the refresh timer runs out', () => {
     const plan = new ChimneySmokePlan();
-    const busy = data({ agents: [{ id: 1, current_location: 1, current_action: { type: 'eating' } }] as any });
+    const busy = data({ agents: [{ id: 1, current_location: 1, current_action: { type: 'eating' } }] });
     plan.refresh(1000, busy);
     expect(plan.smokes(1)).toBe(true);
     plan.refresh(1200, data());               // everybody left, but too soon to notice

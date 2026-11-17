@@ -32,13 +32,13 @@ describe('setTickTimingObserver', () => {
 
   it('reports each completed tick with its phases in order, then stops when cleared', async () => {
     const { setupRouter } = await import('../../routers/setup');
-    await setupRouter.createCaller({} as any).initialize({
+    await setupRouter.createCaller({}).initialize({
       agents: [agent(1), agent(2), agent(3)],
       relationships: [],
       world: { season: 'spring', weather: 'sunny', startHour: 9, startDay: 1 },
       rules: { startingMoney: 50, tickSpeed: 1 },
       worldgen: { sizeTier: 'auto', overrides: {}, seed: 'tick-timing' },
-    } as any);
+    });
     await stopTickLoopAndWait();
 
     const seen: TickTiming[] = [];

@@ -1,7 +1,7 @@
 import { isOpenAt } from "../../../../../server/lib/gameClock";
 import { inRect, zoneRect, type Rect } from "./zoneGeometry";
 import type { LocationLite, WorldEventLite, WorldLite } from '../../../../lib/apiTypes';
-import type { AgentData } from '../../SpritePool';
+import type { AgentLite } from '../../SpritePool';
 
 /**
  * Who is where doing what, boiled down to one small record per location. Every reactive
@@ -61,13 +61,13 @@ export function readClimate(world: WorldLite | null | undefined, events: WorldEv
   };
 }
 
-function actionParts(a: AgentData): { type: string; activity: string } {
+function actionParts(a: AgentLite): { type: string; activity: string } {
   const ca = a?.current_action;
   if (typeof ca === 'string') return { type: ca, activity: '' };
   return { type: ca?.type ?? 'idle', activity: ca?.zoneActivity ?? '' };
 }
 
-function hasState(a: AgentData, type: string): boolean {
+function hasState(a: AgentLite, type: string): boolean {
   const states = a?.activeStates;
   if (!states) return false;
   for (let i = 0; i < states.length; i++) {
@@ -78,7 +78,7 @@ function hasState(a: AgentData, type: string): boolean {
 }
 
 /** One record per location, in the order given. Called on data polls, not per frame. */
-export function computePlaceStates(locations: LocationLite[], agents: AgentData[], climate: PlaceClimate): PlaceState[] {
+export function computePlaceStates(locations: LocationLite[], agents: AgentLite[], climate: PlaceClimate): PlaceState[] {
   const byId = new Map<number, PlaceState>();
   const out: PlaceState[] = [];
   const stages = new Map<number, Rect>();

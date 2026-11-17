@@ -3,6 +3,9 @@ import * as PIXI from 'pixi.js';
 import { createCurtainSystem } from '../CurtainSystem';
 import { WINDOW_GLASS } from '../../../BuildingRenderer';
 import type { DataContext, FrameContext } from '../../types';
+import { NO_DATA, fakeServices } from '../../__tests__/kit';
+import type { LocationLite } from '../../../../../lib/apiTypes';
+import type { AgentLite } from '../../../SpritePool';
 
 const DT = 0.1;
 const bigView = { x: 0, y: 0, w: 4000, h: 4000, scale: 1 };
@@ -12,13 +15,13 @@ const home = (id: number) => ({
 
 function setup() {
   const ground = new PIXI.Container();
-  const sys = createCurtainSystem({ ground, overAgents: new PIXI.Container() }, {} as any);
+  const sys = createCurtainSystem({ ground, overAgents: new PIXI.Container() }, fakeServices({}));
   const step = (seconds: number, view = bigView) => {
     for (let t = 0; t < seconds - 1e-9; t += DT) {
-      sys.update({ dt: DT * 60, seconds: DT, now: 0, view, data: null as any } as FrameContext);
+      sys.update({ dt: DT * 60, seconds: DT, now: 0, view, data: NO_DATA } as FrameContext);
     }
   };
-  const data = (agents: any[], locations: any[]) =>
+  const data = (agents: AgentLite[], locations: LocationLite[]) =>
     ({ agents, world: null, events: [], locations, conversations: [], relationships: [], activity: [] }) as DataContext;
   const shown = () => ground.children.filter(c => c.visible) as PIXI.Sprite[];
   return { sys, ground, step, data, shown };

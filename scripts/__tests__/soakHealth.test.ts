@@ -191,7 +191,7 @@ describe('createHealthTracker', () => {
       resetChronicleCache: () => { reset++; },
       detectStoryArcs: () => [
         { kind: 'rivalry', heat: 0.9 }, { kind: 'romance', heat: 0.1 }, { kind: 'rivalry', heat: 0.3 },
-      ] as any,
+      ] as ReturnType<Parameters<typeof createHealthTracker>[0]['detectStoryArcs']>,
     });
     sqlite.prepare('UPDATE agents SET is_active = 0 WHERE id = 4').run();
     const d = tracker.endDay(1);

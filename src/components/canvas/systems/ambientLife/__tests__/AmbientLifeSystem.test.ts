@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { AgentLite } from '../../../SpritePool';
 
 // A headless stand-in for the bits of PixiJS the system touches, so the pools, spawning
 // and recycling can be exercised without a GPU or a DOM.
 vi.mock('pixi.js', () => {
   class FakeContainer {
-    children: any[] = [];
-    addChild(c: any) {
+    children: FakeSprite[] = [];
+    addChild(c: FakeSprite) {
       if (c.parent) c.parent.children.splice(c.parent.children.indexOf(c), 1);
       c.parent = this;
       this.children.push(c);
@@ -17,12 +18,12 @@ vi.mock('pixi.js', () => {
     visible = true;
     alpha = 1;
     eventMode = 'auto';
-    texture: any;
+    texture: unknown;
     destroyed = false;
     scale = { x: 1, y: 1 };
     position = { x: 0, y: 0, set(x: number, y: number) { this.x = x; this.y = y; } };
     anchor = { set() {} };
-    constructor(t?: any) { this.texture = t; }
+    constructor(t?: unknown) { this.texture = t; }
     destroy() { this.destroyed = true; this.parent?.children.splice(this.parent.children.indexOf(this), 1); }
   }
   return { Sprite: FakeSprite, Container: FakeContainer, Texture: { EMPTY: { empty: true } } };
@@ -32,12 +33,13 @@ vi.mock('../../../stripAtlas', () => ({
 }));
 vi.mock('../../../BuildingRenderer', () => ({
   WINDOW_CENTER_ABOVE_SOUTH_EDGE: 6,
-  southWindowXs: (loc: any) => [loc.position.x + loc.position.width * 0.28, loc.position.x + loc.position.width * 0.72],
+  southWindowXs: (loc: { position: { x: number; width: number }; entry_point: { x: number } }) => [loc.position.x + loc.position.width * 0.28, loc.position.x + loc.position.width * 0.72],
 }));
 
 import * as PIXI from 'pixi.js';
 import { createAmbientLifeSystem } from '../AmbientLifeSystem';
-import type { DataContext, FrameContext } from '../../types';
+import type { CanvasSystem, DataContext, FrameContext } from '../../types';
+import { fakeServices, visibleIn } from '../../__tests__/kit';
 import { POOL_CAPS, MAX_CRITTERS } from '../ambientPlan';
 
 const home = (id: number, x: number, y: number) => ({
@@ -48,23 +50,20 @@ const locations = [
   ...Array.from({ length: 8 }, (_, i) => home(i + 1, 64 + (i % 4) * 160, 64 + Math.floor(i / 4) * 200)),
   { id: 50, type: 'town_square', name: 'Square', position: { x: 256, y: 420, width: 256, height: 160 }, entry_point: { x: 384, y: 420 } },
 ];
-const terrain: any[] = [];
+const terrain: Array<{ x: number; y: number; kind: string }> = [];
 for (let i = 0; i < 300; i++) {
   terrain.push({ x: 1 + (i * 7) % 38, y: 1 + (i * 13) % 28, kind: ['grass_tuft', 'flowers', 'dirt_patch', 'tree', 'bush'][i % 5] });
 }
 
-const baseWorld = (over: any = {}) => ({
+const baseWorld = (over: Record<string, unknown> = {}) => ({
   day_phase: 'morning', weather: 'sunny', time: { season: 'spring', hour: 10 },
   map_width: 40, map_height: 30, terrain_tiles: terrain, road_tiles: [], ...over,
 });
 
-function setup(world = baseWorld(), agents: any[] = [], agentPos: Record<number, { x: number; y: number }> = {}) {
-  const ground = new (PIXI.Container as any)();
-  const over = new (PIXI.Container as any)();
-  const services: any = {
-    sprites: { getSprite: (id: string) => (agentPos[+id] ? { container: agentPos[+id] } : undefined) },
-    bubbles: {},
-  };
+function setup(world = baseWorld(), agents: AgentLite[] = [], agentPos: Record<number, { x: number; y: number }> = {}) {
+  const ground = new PIXI.Container();
+  const over = new PIXI.Container();
+  const services = fakeServices({ getSprite: (id: string) => (agentPos[+id] ? { container: agentPos[+id] } : undefined) });
   const sys = createAmbientLifeSystem({ ground, overAgents: over }, services);
   const data: DataContext = {
     agents, world, events: [], locations, conversations: [], relationships: [], activity: [],
@@ -77,8 +76,8 @@ function setup(world = baseWorld(), agents: any[] = [], agentPos: Record<number,
 }
 
 const settle = () => new Promise(r => setTimeout(r, 0));
-const visible = (c: any) => c.children.filter((s: any) => s.visible);
-const run = (sys: any, f: () => FrameContext, seconds: number) => {
+const visible = visibleIn;
+const run = (sys: CanvasSystem, f: () => FrameContext, seconds: number) => {
   const fr = f();
   for (let i = 0; i < seconds * 60; i++) sys.update(fr);
 };
@@ -154,15 +153,15 @@ describe('AmbientLifeSystem', () => {
     await settle();
     sys.onData!(data);
     run(sys, frame, 12);
-    const birds = ground.children.filter((s: any) => s.visible && s.texture && [0, 1, 2].includes(s.texture.frame));
+    const birds = visible(ground).filter((s) => s.texture && [0, 1, 2].includes(s.texture.frame));
     expect(birds.length).toBeGreaterThan(0);
     const b = birds[0];
     // The resident steps next to the first bird.
     pos[1].x = b.position.x - 10; pos[1].y = b.position.y;
-    const before = over.children.filter((s: any) => s.visible).length;
+    const before = visible(over).length;
     run(sys, frame, 0.3);
     expect(b.parent).toBe(over);
-    expect(over.children.filter((s: any) => s.visible).length).toBeGreaterThan(before - 1);
+    expect(visible(over).length).toBeGreaterThan(before - 1);
     // ...and a moment later it is gone.
     run(sys, frame, 4);
     expect(b.visible === false || b.parent === ground).toBe(true);
@@ -175,16 +174,16 @@ describe('AmbientLifeSystem', () => {
     await settle();
     sys.onData!(data);
     run(sys, frame, 15);
-    expect(visible(ground).some((s: any) => [0, 1, 2].includes(s.texture.frame))).toBe(true);
+    expect(visible(ground).some((s) => [0, 1, 2].includes(s.texture.frame))).toBe(true);
 
     data.world = baseWorld({ day_phase: 'night', time: { season: 'summer', hour: 23 } });
     sys.onData!(data);
     run(sys, frame, 12);
-    const moths = visible(over).filter((s: any) => [7, 8].includes(s.texture.frame));
+    const moths = visible(over).filter((s) => [7, 8].includes(s.texture.frame));
     expect(moths.length).toBeGreaterThan(0);
     expect(moths.length).toBeLessThanOrEqual(6);
     // No sparrow is left pecking at night.
-    expect(visible(ground).filter((s: any) => [0, 1, 2].includes(s.texture.frame)).length).toBe(0);
+    expect(visible(ground).filter((s) => [0, 1, 2].includes(s.texture.frame)).length).toBe(0);
     // Every moth hovers by one of the lit homes' windows.
     for (const m of moths) {
       const near = locations.slice(0, 3).some(l => Math.abs(m.position.x - (l.position.x + l.position.width * 0.5)) < 50
@@ -201,7 +200,7 @@ describe('AmbientLifeSystem', () => {
     data.world = baseWorld({ weather: 'rainy' });
     sys.onData!(data);
     run(sys, frame, 10);
-    const all = [...visible(ground), ...visible(over)].filter((s: any) => s.texture && s.texture.frame <= 8);
+    const all = [...visible(ground), ...visible(over)].filter((s) => s.texture && s.texture.frame <= 8);
     expect(all.length).toBe(0);
   });
 
@@ -213,8 +212,8 @@ describe('AmbientLifeSystem', () => {
     const far = (): FrameContext => ({ ...frame(), view: { x: 5000, y: 5000, w: 1280, h: 960, scale: 1 } });
     run(sys, far, 2);
     // Anything still shown is inside (or just beside) the new, empty stretch of map.
-    expect(visible(ground).filter((s: any) => s.position.x < 4000).length).toBe(0);
-    expect(visible(over).filter((s: any) => s.position.x < 4000).length).toBe(0);
+    expect(visible(ground).filter((s) => s.position.x < 4000).length).toBe(0);
+    expect(visible(over).filter((s) => s.position.x < 4000).length).toBe(0);
   });
 
   it('frees its sprites on destroy', async () => {

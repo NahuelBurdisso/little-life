@@ -9,9 +9,11 @@ import tseslint from 'typescript-eslint';
  * rules (no type information, so the whole repo lints in seconds) and the React hooks
  * rules, which are the ones that catch real bugs in the client.
  *
- * `no-explicit-any` is a warning, not an error: the codebase had ~300 of them when lint
- * arrived (JSON columns, tRPC payloads). They are debt to pay down file by file, and an
- * error would only have taught everyone to ignore the lint run.
+ * `no-explicit-any` is an error. The codebase had 653 of them when lint arrived; they are
+ * gone (JSON columns are typed in schema.ts, API rows in src/lib/apiTypes.ts), and the rule
+ * keeps them out. When a type really is not known, say `unknown` and narrow it; when a
+ * test hands the code something its types rule out, use `invalid()` (canvas systems'
+ * `__tests__/kit.ts`) so the intent is on the page.
  */
 export default tseslint.config(
   {
@@ -25,7 +27,6 @@ export default tseslint.config(
   {
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
       // tsc reports unused locals and parameters (and honours the `_name` convention).
       '@typescript-eslint/no-unused-vars': 'off',
       // `while (true)` loops with a break are used on purpose in the generators.

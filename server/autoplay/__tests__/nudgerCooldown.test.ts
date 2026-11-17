@@ -39,7 +39,7 @@ let savedMax: number;
 beforeEach(() => {
   nudger = new SmartNudger();
   // execute() starts a real world event; the cooldown is all that is under test.
-  vi.spyOn(SmartNudger.prototype as any, 'execute').mockImplementation(() => {});
+  vi.spyOn(SmartNudger.prototype as unknown as { execute: () => void }, 'execute').mockImplementation(() => {});
   savedMax = CONFIG.AUTOPLAY.MAX_NUDGES_PER_DAY;
   CONFIG.AUTOPLAY.MAX_NUDGES_PER_DAY = 100;
 });

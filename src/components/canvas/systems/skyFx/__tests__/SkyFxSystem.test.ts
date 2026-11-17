@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
 import * as PIXI from 'pixi.js';
+import type { WorldEventLite, WorldLite } from '../../../../../lib/apiTypes';
+import { invalid } from '../../__tests__/kit';
 
 // Node has no canvas: hand the system plain empty textures, it only needs something to tint.
 vi.mock('../skyTextures', () => ({
@@ -13,7 +15,7 @@ import type { DataContext, FrameContext } from '../../types';
 const square = { id: 1, type: 'town_square', position: { x: 640, y: 320, width: 384, height: 256 }, entry_point: { x: 832, y: 448 } };
 const ev = (id: number, type: string) => ({ id, type });
 
-const data = (events: any[], world: any = {}): DataContext => ({
+const data = (events: WorldEventLite[], world: WorldLite = {}): DataContext => ({
   agents: [], world: { map_width: 60, map_height: 40, weather: 'sunny', day_phase: 'afternoon', ...world },
   events, locations: [square], conversations: [], relationships: [], activity: [],
 });
@@ -152,7 +154,7 @@ describe('SkyFxSystem', () => {
 
   it('cleans up on destroy and survives odd data', () => {
     const { sys, root } = setup();
-    expect(() => sys.onData({ ...data([null as any]), world: null, locations: undefined as any })).not.toThrow();
+    expect(() => sys.onData({ ...data([invalid(null)]), world: null, locations: invalid(undefined) })).not.toThrow();
     expect(() => sys.update(frame())).not.toThrow();
     sys.destroy();
     expect(root.destroyed).toBe(true);

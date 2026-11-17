@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildAudioPlaces } from '../audioPlaces';
 import { computePlaceStates, type PlaceClimate } from '../../placeLife/placeState';
+import type { LocationLite } from '../../../../../lib/apiTypes';
+import type { AgentLite } from '../../../SpritePool';
 
 const climate = (over: Partial<PlaceClimate> = {}): PlaceClimate => ({
   hour: 10, dayPhase: 'morning', weather: 'sunny', season: 'summer', meeting: false, ...over,
@@ -10,11 +12,11 @@ const building = (id: number, type: string, x = 200 * id, y = 300, w = 160, h = 
   id, type, name: type, position: { x, y, width: w, height: h }, entry_point: { x: x + 80, y: y + h },
 });
 
-const agent = (id: number, at: number | null, action: any = { type: 'idle' }, extra: any = {}) => ({
+const agent = (id: number, at: number | null, action: AgentLite['current_action'] = { type: 'idle' }, extra: Record<string, unknown> = {}) => ({
   id, current_location: at, current_action: action, activeStates: [], position: { x: 0, y: 0 }, ...extra,
 });
 
-function places(locations: any[], agents: any[], c = climate()) {
+function places(locations: LocationLite[], agents: AgentLite[], c = climate()) {
   return buildAudioPlaces(locations, computePlaceStates(locations, agents, c), c.dayPhase === 'night');
 }
 
@@ -78,7 +80,7 @@ describe('buildAudioPlaces', () => {
   });
 
   it('ignores places with no footprint and other building types', () => {
-    const odd = { id: 9, type: 'workshop', position: { x: 0, y: 0, width: 0, height: 0 } };
+    const odd = { id: 9, type: 'workshop', position: { x: 0, y: 0, width: 0, height: 0 }, entry_point: { x: 0, y: 0 } };
     expect(places([odd, building(4, 'bakery')], [agent(1, 9, { type: 'working' }), agent(2, 4, { type: 'working' })])).toEqual([]);
   });
 });

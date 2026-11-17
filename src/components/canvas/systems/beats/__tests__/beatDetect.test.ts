@@ -239,7 +239,7 @@ describe('detectBeats — dedupe', () => {
   });
 });
 
-const agent = (id: number, over: any = {}) => ({
+const agent = (id: number, over: Record<string, unknown> = {}) => ({
   id, position: { x: id * 10, y: id * 10 }, age: 30, hobbies: [], activeStates: [], ...over,
 });
 

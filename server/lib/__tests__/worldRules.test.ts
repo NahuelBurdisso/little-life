@@ -5,13 +5,16 @@ import { clearRulesCache, getRules, isAdultContent, setRuleOverrides, RuleOverri
 import { clearPerWorldCaches } from '../../engine/worldCaches';
 import { DEFAULT_LIVE_RULES } from '../../data/rulesCatalog';
 
+/** A value the schema must refuse, typed as whatever the callee expects so the call compiles. */
+const invalid = <T,>(value: unknown): T => value as T;
+
 /**
  * getRules(): defaults ← setup_config.rules ← rule_overrides, cached until a
  * world replace or a setRuleOverrides.
  */
 
 let createdWorld = false;
-let saved: { setup_config: Record<string, any> | null; rule_overrides: Record<string, unknown> | null } | null = null;
+let saved: { setup_config: Record<string, unknown> | null; rule_overrides: Record<string, unknown> | null } | null = null;
 
 function writeRow(setupRules: Record<string, unknown> | null, overrides: Record<string, unknown> | null): void {
   db.update(worldState).set({ setup_config: setupRules ? { rules: setupRules } : null, rule_overrides: overrides }).run();
@@ -129,8 +132,8 @@ describe('setRuleOverrides', () => {
   });
 
   it('rejects unknown keys, unknown values and an empty patch', () => {
-    expect(() => setRuleOverrides({ dramaIntensity: 'apocalypse' } as any)).toThrow();
-    expect(() => setRuleOverrides({ llmModel: 'x' } as any)).toThrow();
+    expect(() => setRuleOverrides(invalid({ dramaIntensity: 'apocalypse' }))).toThrow();
+    expect(() => setRuleOverrides(invalid({ llmModel: 'x' }))).toThrow();
     expect(() => setRuleOverrides({})).toThrow();
     expect(RuleOverridesSchema.safeParse({ deathEnabled: 'yes' }).success).toBe(false);
     expect(RuleOverridesSchema.safeParse({ sicknessRate: 'off', deathEnabled: false }).success).toBe(true);
