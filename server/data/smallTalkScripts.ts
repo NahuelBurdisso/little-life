@@ -119,6 +119,13 @@ export interface ChatContext {
    * for the reason are preferred (templateChat.ts `preferredScripts`).
    */
   intent?: string | null;
+  /**
+   * The queue entry's `trigger_reason` ('social_call:sick_visit', 'needs_social'…).
+   * A social call's chat plays the scripts written for that call
+   * (data/socialCallScripts.ts) before anything else: the caller walked over to
+   * say something in particular, and the fallback must not be the weather.
+   */
+  trigger?: string | null;
 }
 
 /** The queued topic is a flirt (perception crush / infatuation, personality pick). */
@@ -162,6 +169,12 @@ export interface OpenerLine extends ScriptLine {
 
 export interface TopicScript {
   id: string;
+  /**
+   * Only for a conversation queued with this `trigger_reason` (the social-call
+   * scripts, data/socialCallScripts.ts); such a script is played first, ahead of
+   * the weighted draw, and is not held to the pair's per-topic cooldown.
+   */
+  trigger?: string;
   /**
    * Also for a hostile pair. Most topics assume goodwill ("Can I buy you a
    * drink?"); a pair that can't stand each other gets the standoff, or at

@@ -342,6 +342,9 @@ function recordParticipantOutcomes(ctx: CompletionContext): void {
       perpetratorId: otherIds[0] ?? null,
       otherName: otherNames.join(' and '),
       summary: fresh.topic ?? '',
+      // What was queued, as the template tier's emit carries it: a social call's
+      // consequence (lib/socialCalls) keys on it whichever tier the visit got.
+      triggerReason: fresh.trigger_reason,
       turns: messages.length,
       sentiment: overallSentiment ?? 0,
       topics: extractTopics(messages.map((m: ConversationMessage) => ({ text: m.text }))),

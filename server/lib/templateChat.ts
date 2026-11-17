@@ -33,6 +33,7 @@ import {
   type TopicScript,
   type Voice,
 } from '../data/smallTalkScripts';
+import { SOCIAL_CALL_SCRIPTS } from '../data/socialCallScripts';
 import type { PersonalityProfile } from './personality';
 
 export type Rng = () => number;
@@ -321,6 +322,15 @@ export function preferredScripts(c: ChatContext): Set<string> {
  */
 export function composeTemplateChat(c: ChatContext, opts: ComposeOptions = {}): TemplateChat | null {
   const rng = opts.rng ?? Math.random;
+  // A social call (lib/socialCalls): the scripts written for why the caller
+  // came, in random order, before anything else. Only when none of them can be
+  // voiced here does the ordinary draw below take over.
+  const calls = callScriptsFor(c);
+  while (calls.length > 0) {
+    const [script] = calls.splice(Math.min(calls.length - 1, Math.floor(rng() * calls.length)), 1);
+    const chat = playScript(script, c, rng, opts.townRecent?.openers);
+    if (chat) return chat;
+  }
   const lastUsed = opts.lastUsed ?? new Map<string, number>();
   const now = opts.nowGameMin ?? 0;
   const eligible = eligibleScripts(c, opts.scripts);
@@ -360,6 +370,12 @@ export function composeTemplateChat(c: ChatContext, opts: ComposeOptions = {}): 
     if (chat) return chat;
   }
   return null;
+}
+
+/** The call scripts this chat's trigger asks for, whose own `when` holds (empty for any other chat). */
+export function callScriptsFor(c: ChatContext, scripts: readonly TopicScript[] = SOCIAL_CALL_SCRIPTS): TopicScript[] {
+  if (!c.trigger) return [];
+  return scripts.filter((s) => s.trigger === c.trigger && s.when(c));
 }
 
 /** `template_usage.template_category` for a script, so it shares the per-pair cooldown table. */

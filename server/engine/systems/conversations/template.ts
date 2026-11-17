@@ -61,7 +61,13 @@ export async function processTimedOutEntry(
   // The reason it was queued ("flirting", "offering help"…) picks scripts
   // written for it, and what other pairs just said is avoided (playtest #3:
   // partners fell back to the same full-moon line as another pair that night).
-  const chatContext = { ...buildTemplateChatContext(agentList, locationId, world), intent: entry.topic ?? null };
+  // The trigger too: a social call (lib/socialCalls) plays the scripts written
+  // for why the caller came (data/socialCallScripts.ts), never the weather.
+  const chatContext = {
+    ...buildTemplateChatContext(agentList, locationId, world),
+    intent: entry.topic ?? null,
+    trigger: entry.trigger_reason,
+  };
   const chat = composeTemplateChat(chatContext, {
     lastUsed: scriptLastUsed(orderedA, orderedB),
     nowGameMin,

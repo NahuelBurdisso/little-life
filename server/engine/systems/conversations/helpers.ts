@@ -16,12 +16,14 @@ import type { AgentRow, ConversationRow, QueueRow, WorldRow, WrapUpReason } from
 
 /**
  * Entries the player (or the autoplay stand-in, just below the player) asked
- * for, and comfort visits someone walked across town for. These must not be
- * silently lost just because a participant happened to be mid-conversation.
+ * for, and comfort visits and social calls (lib/socialCalls) someone walked
+ * across town for. These must not be silently lost just because a participant
+ * happened to be mid-conversation.
  */
 export function isProtectedEntry(entry: QueueRow): boolean {
   return entry.priority >= CONFIG.CONVERSATIONS.PLAYER_NUDGE_PRIORITY - 10
-    || entry.trigger_reason === 'comfort_visit';
+    || entry.trigger_reason === 'comfort_visit'
+    || entry.trigger_reason.startsWith('social_call:');
 }
 
 /** Order-independent key, so [A,B] and [B,A] are recognised as the same pair. */
