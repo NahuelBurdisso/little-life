@@ -14,7 +14,7 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 1. Read [`docs/STATUS.md`](docs/STATUS.md) — current state, open bugs, what's next.
 2. `git status --short | wc -l` — this repo has a history of large uncommitted piles.
    If the tree is dirty with work you didn't do, ask before building on top of it.
-3. `npm run check` (typecheck + tests, ~20 s). Must be green before and after your change.
+3. `npm run check` (typecheck + tests, ~1 min). Must be green before and after your change.
 
 ## End of every session
 
@@ -31,13 +31,13 @@ reflection, planning), Sims-style needs and RimWorld-style drama/art.
 | DB | SQLite via `better-sqlite3` (sync) + Drizzle ORM, WAL mode |
 | Client | React 19, Vite 8, Tailwind 4, Pixi.js 8, React Query (is the store) |
 | LLM | Ollama 0.35 (default, `:11434`) or OpenAI-compatible (llama-server `:8080`). Gemma 4 26B-A4B for everything, qwen3-embedding:0.6b for memory; config in `.env` (copy `.env.example`; `.env` is not tracked), Ollama flags in `start-game.bat` |
-| Tests | Vitest 2, ~210 files / ~2300 tests (server + pure client modules) |
+| Tests | Vitest 5, ~350 files / ~4100 tests (server + pure client modules) |
 
 ## Commands
 
 ```bash
 npm run dev          # server (tsx watch, :3001) + vite (:5173)
-npm run check        # tsc --noEmit + vitest run  ← gate for every change
+npm run check        # tsc --noEmit + vitest run (~1 min)  ← gate for every change
 npm test             # vitest only
 npm run deadcode     # orphan files + exports nothing uses (confirm with grep before deleting)
 npx tsx scripts/diagnose.ts        # dump live DB state (table sizes, world clock)
@@ -118,7 +118,7 @@ directly — keep those free of Node/DB imports.
 - **New tables** go in `schema.ts` + `npm run db:generate`, plus `ALL_TABLES` in
   `db/worldTables.ts` (world replace *and* save load) and `db/seed.ts` if the rows belong to
   one world.
-- Vitest 2 quirk: a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
+- Vitest quirk (seen on 2, not re-checked on 5): a `vi.fn` that throws after `mockReset()` in `beforeEach` fails the test even
   when the throw is caught. Use `mockClear()` + `mockImplementationOnce(() => { throw ... })`.
 
 ## Conventions
