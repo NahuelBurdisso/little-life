@@ -100,7 +100,14 @@ describe('a doctor dies while three residents are sick', () => {
 
     let time: WorldTime = { ...TIME, totalTicks: NOW };
     db.update(worldState).set({ time }).run();
-    for (let i = 0; i < 4; i++) time = tickStates(time); // two game hours
+    // No dice: an untreated illness can also take a turn for the worse (lib/sickness.ts),
+    // which raises severity and adds half a day, and this test measures recovery alone.
+    const noLuck = vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    try {
+      for (let i = 0; i < 4; i++) time = tickStates(time); // two game hours
+    } finally {
+      noLuck.mockRestore();
+    }
 
     const rested = sickOf(atHome)!;
     const roamed = sickOf(out)!;
