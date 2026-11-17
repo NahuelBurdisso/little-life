@@ -434,6 +434,31 @@ export function initMemoryObserver(memoryService: MemoryService): void {
     memoryService.record(agentId, 'observation', describeEvent('economy_theft_caught', { item: itemPhrase(item), location: locationName }), { subtype: 'economy' }, -0.7, 8);
   });
 
+  // A crisis robbery (economy.ts): the victim never learns who it was — the
+  // theft fact is the thief's alone — but they know they were robbed. It used
+  // to leave them nothing; the thief keeps their own side of it.
+  simEvents.on('economy:theft', ({ perpetratorId, victimId, amount }: { perpetratorId?: number; victimId?: number; amount: number }) => {
+    const sum = String(Math.round(amount));
+    if (victimId != null) {
+      memoryService.record(victimId, 'observation',
+        `I was robbed of $${sum}. Times are hard, and somebody in town is desperate enough to steal.`,
+        { subtype: 'economy' }, -0.6, 7);
+    }
+    if (perpetratorId != null) {
+      const victimName = victimId != null ? db.select({ name: agents.name }).from(agents).where(eq(agents.id, victimId)).get()?.name : undefined;
+      memoryService.record(perpetratorId, 'observation',
+        `Times were hard, so I took $${sum}${victimName ? ` from ${victimName}` : ''}. Nobody saw.`,
+        { subtype: 'economy', ...(victimId != null ? { related_agents: [victimId] } : {}) }, -0.3, 6);
+    }
+  });
+
+  // A travelling scammer (economy.ts): `agentId` is the victim.
+  simEvents.on('economy:scam', ({ agentId, amount }: { agentId: number; amount: number }) => {
+    memoryService.record(agentId, 'observation',
+      `A smooth-talking stranger swindled me out of $${Math.round(amount)}. I should have known better.`,
+      { subtype: 'economy' }, -0.5, 6);
+  });
+
   simEvents.on('economy:milestone', ({ agentId, amount, direction }: { agentId: number; amount: number; direction: 'up' | 'down' }) => {
     const templateKey = direction === 'up' ? 'economy_milestone_up' : 'economy_milestone_down';
     const importance = direction === 'down' && amount <= 10 ? 7 : 5;

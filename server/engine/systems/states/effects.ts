@@ -762,12 +762,18 @@ function stealItem(
     db.update(economyTable).set({ inventory: newThiefInv }).where(eq(economyTable.agent_id, agent.id)).run();
   }
 
+  // The cast every theft listener reads: `perpetratorId`/`victimId` for the
+  // ripple rules (theft_confrontation, theft_revenge), reputation and the
+  // victim's drift; `thief`/`victim` for the goal-progress and reputation
+  // listeners of `theft_success`. These two sent only `agentId`, so the shop
+  // owner was never anybody's victim and the thief's name stayed clean.
+  const cast = { agentId: agent.id, perpetratorId: agent.id, victimId: ownerId, thief: agent.id, victim: ownerId, locationId: loc.id };
   if (!caught) {
-    simEvents.emit('economy:theft_success', { agentId: agent.id, item: targetItem.itemId, locationName: loc.name });
+    simEvents.emit('economy:theft_success', { ...cast, item: targetItem.itemId, locationName: loc.name });
   }
 
   if (caught) {
-    simEvents.emit('economy:theft_caught', { agentId: agent.id, item: targetItem.itemId, locationName: loc.name });
+    simEvents.emit('economy:theft_caught', { ...cast, item: targetItem.itemId, locationName: loc.name });
     const witnessIds = witnesses.map((w) => w.id);
     createFact('theft', agent.id, ownerId, 2, [agent.id, ownerId, ...witnessIds], 'witnessed', {
       item: itemPhrase(targetItem.itemId), location: loc.name,

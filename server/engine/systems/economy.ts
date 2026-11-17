@@ -1147,7 +1147,11 @@ export function economyTick(): void {
             createFact('theft', poorest.agent_id, richest.agent_id, 2, [poorest.agent_id], 'committed');
             logActivity({ type: 'drama', initiator: poorest.agent_id, target: richest.agent_id,
               templateData: { description: `${poorAgent.name} stole $${stolen} from ${richAgent.name} during the economic crisis` }, metadata: { beat: 'theft' } });
-            simEvents.emit('economy:theft', { thief: poorest.agent_id, victim: richest.agent_id, amount: stolen });
+            // The standard cast too: the victim's memory (MemoryObserver) is keyed on it.
+            simEvents.emit('economy:theft', {
+              agentId: poorest.agent_id, perpetratorId: poorest.agent_id, victimId: richest.agent_id,
+              thief: poorest.agent_id, victim: richest.agent_id, amount: stolen,
+            });
           }
         }
       } else if (crisisRoll < 0.45) {
@@ -1177,7 +1181,10 @@ export function economyTick(): void {
             if (agent) {
               logActivity({ type: 'drama', initiator: target.agent_id,
                 templateData: { description: `${agent.name} lost $${lost} to a traveling scammer` }, metadata: { beat: 'theft' } });
-              simEvents.emit('economy:scam', { agentId: target.agent_id, amount: lost });
+              // `agentId` is the VICTIM: the scammer is a travelling stranger, not
+              // a resident, so there is nobody in town to blame (reputationEngine
+              // used to dock the victim for it).
+              simEvents.emit('economy:scam', { agentId: target.agent_id, victimId: target.agent_id, amount: lost });
             }
           }
         }

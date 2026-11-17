@@ -56,6 +56,7 @@ export function executeCrime(t: AgentTurn, decision: ScoredAction, d: DecisionTi
               templateData: { description: `${thief.name} stole $${stolenAmount} from ${victimAgent.name} without being noticed` }, metadata: { beat: 'theft' } });
             simEvents.emit('economy:theft_success', {
               agentId: thief.id, thief: thief.id, victim: decision.targetAgentId, amount: stolenAmount,
+              perpetratorId: thief.id, victimId: decision.targetAgentId, locationId: thief.current_location,
               item: `$${stolenAmount}`, locationName: victimAgent.name,
             });
           }
@@ -72,8 +73,11 @@ export function executeCrime(t: AgentTurn, decision: ScoredAction, d: DecisionTi
           // nothing taken, nothing to report
         } else if (caught) {
           createFact('theft', thief.id, null, 2, [thief.id], 'witnessed');
+          // The shop's owner is the victim (theft_confrontation, theft_revenge
+          // and the victim's drift read it); an ownerless shop has none.
           simEvents.emit('economy:theft_caught', {
             agentId: thief.id, perpetratorId: thief.id,
+            ...(shopOwner != null && shopOwner !== thief.id ? { victimId: shopOwner } : {}),
             locationId: thief.current_location,
             item: `$${taken} worth of goods`, locationName: shop?.name ?? 'the shop',
           });

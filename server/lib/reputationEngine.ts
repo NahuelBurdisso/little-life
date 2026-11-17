@@ -132,6 +132,13 @@ export function getReputationSocialModifier(agentId: number): number {
 
 // ─── Initialization & Event Listeners ─────────────────────────────────────────
 
+/** Who stole, as the theft events name them. */
+interface TheftCast {
+  agentId?: number;
+  perpetratorId?: number;
+  thief?: number;
+}
+
 function initReputationSystem(): void {
   if (initialized) return;
   initialized = true;
@@ -143,18 +150,23 @@ function initReputationSystem(): void {
   }
 
   // Listen for events that affect reputation
-  simEvents.on('economy:theft', (p: { thief: number }) => {
-    adjustReputation(p.thief, -10);
+  // Theft emitters name the thief in different fields (crime.ts and
+  // states/effects.ts send the cast, the crisis robbery `thief` too); read any.
+  const thiefOf = (p: TheftCast): number | undefined => p.perpetratorId ?? p.thief ?? p.agentId;
+  simEvents.on('economy:theft', (p: TheftCast) => {
+    const id = thiefOf(p);
+    if (id != null) adjustReputation(id, -10);
   });
-  simEvents.on('economy:theft_caught', (p: { perpetratorId: number }) => {
-    adjustReputation(p.perpetratorId, -15);
+  simEvents.on('economy:theft_caught', (p: TheftCast) => {
+    const id = thiefOf(p);
+    if (id != null) adjustReputation(id, -15);
   });
-  simEvents.on('economy:theft_success', (p: { thief: number }) => {
-    adjustReputation(p.thief, -5); // slight hit even if unseen — rumor mill
+  simEvents.on('economy:theft_success', (p: TheftCast) => {
+    const id = thiefOf(p);
+    if (id != null) adjustReputation(id, -5); // slight hit even if unseen — rumor mill
   });
-  simEvents.on('economy:scam', (p: { agentId: number }) => {
-    adjustReputation(p.agentId, -8);
-  });
+  // No `economy:scam` listener: the scammer is a travelling stranger, and the
+  // one that listened here docked the *victim* (the event's agentId) 8 points.
   simEvents.on('economy:blackmail_paid', (p: { agentId: number }) => {
     adjustReputation(p.agentId, 3); // victim gets sympathy
   });
