@@ -32,9 +32,13 @@ export function executeCrime(t: AgentTurn, decision: ScoredAction, d: DecisionTi
       if (decision.source === 'pickpocket' && decision.targetAgentId) {
         const victimEcon = db.select().from(economy).where(eq(economy.agent_id, decision.targetAgentId)).get();
         const victimAgent = activeAgents.find(a => a.id === decision.targetAgentId);
-        if (victimEcon && victimAgent && victimEcon.money >= stolenAmount) {
+        // Fresh, like the victim's: `thiefEcon` is the snapshot loaded at the
+        // start of the tick, and `snapshot.money + stolen` overwrote any change
+        // made to the thief's money earlier in the same tick.
+        const thiefNow = db.select().from(economy).where(eq(economy.agent_id, thief.id)).get();
+        if (victimEcon && victimAgent && thiefNow && victimEcon.money >= stolenAmount) {
           db.update(economy).set({ money: victimEcon.money - stolenAmount }).where(eq(economy.id, victimEcon.id)).run();
-          db.update(economy).set({ money: thiefEcon.money + stolenAmount }).where(eq(economy.id, thiefEcon.id)).run();
+          db.update(economy).set({ money: thiefNow.money + stolenAmount }).where(eq(economy.id, thiefNow.id)).run();
           if (caught) {
             createFact('theft', thief.id, decision.targetAgentId, 2, [thief.id, decision.targetAgentId], 'witnessed');
             // `item`/`locationName` are what the thief's memory says
