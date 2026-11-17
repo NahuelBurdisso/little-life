@@ -9,6 +9,7 @@ import { getAgentStates } from '../../../lib/states';
 import { createFact } from '../../../lib/gossip';
 import { extractConfidedQuote } from '../../../lib/factText';
 import { pickLoadedLine } from '../../../lib/memory/conversationGist';
+import { gameMinutesToMs } from '../../../lib/worldClock';
 import type { CompletionContext } from './completionContext';
 
 /** Fact: a drunk participant in a negative conversation made a scene. */
@@ -69,17 +70,19 @@ export function recordSecretTold(ctx: CompletionContext): void {
 
 /** Fact: someone keeps ending up in negative conversations, and the town notices. */
 export function recordReputation(ctx: CompletionContext): void {
-  const { overallSentiment, participantIds } = ctx;
+  const { overallSentiment, participantIds, world } = ctx;
   // Reputation: negative conversation + agent has 3+ recent negative conversations
   if (overallSentiment < -0.2) {
     // Filter in SQL: this used to load every ended conversation ever, messages
     // included, each time a negative one finished.
+    // `ended_at` is wall clock: the last game day at the current speed. It was
+    // a fixed 1,440,000 ms, one game day at 1x but four at 4x.
     const recentNegative = db.select({ participants: conversations.participants })
       .from(conversations)
       .where(and(
         eq(conversations.status, 'ended'),
         lt(conversations.sentiment, -0.2),
-        gt(conversations.ended_at, Date.now() - 1440000),
+        gt(conversations.ended_at, Date.now() - gameMinutesToMs(1440, world.tick_speed)),
       ))
       .all();
 
