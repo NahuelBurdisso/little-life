@@ -736,7 +736,7 @@ function refuseProposal(proposer: number, answerer: number, now: number): void {
   pairs.set(pairKey(proposer, answerer), { retryAfter: now + PROPOSAL_RETRY_AFTER_REFUSAL_DAYS * 24 * 60 });
 
   // The proposer's romance takes the fall. A drop past -20 in one event is
-  // what the states phase reads as a heartbreak (states.ts "Heartbroken"), so
+  // what the states phase reads as a heartbreak (states/triggers.ts `triggerHeartbroken`), so
   // the `heartbroken` state, its feed line and its gossip follow on their own.
   // The answerer cools too: a refusal is rarely only about the question.
   db.insert(relationshipEvents).values({

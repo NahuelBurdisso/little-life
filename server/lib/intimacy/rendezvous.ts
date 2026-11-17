@@ -42,7 +42,7 @@ import {
 //        ├─ married and at home together ─▶ nobody needs to ask: if both are
 //        │                                   willing the pair is marked `agreed`
 //        └─ everyone else ─▶ `pendingRendezvous` (asked, unanswered) ─▶ the
-//             asker walks to the other (decisions.ts, score 6300) ─▶ an
+//             asker walks to the other (decisions/seek.ts, score 6300) ─▶ an
 //             `llm_deep` conversation on RENDEZVOUS_TOPIC
 //                 ├─ yes ─▶ pending flips to `agreed` (tryst.ts takes it from here)
 //                 └─ no  ─▶ asker's mood drops, no new invitation for two days

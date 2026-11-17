@@ -5,7 +5,7 @@
  * more than 5 days", which no state ever reached, so sickness was a slow walk and a
  * day in bed and never a stake. Now an untreated illness has a small chance per game
  * minute to worsen: severity up a step and half a day added. That alone sends the
- * patient to the clinic (decisions.ts goes there above severity 0.4), so in a town
+ * patient to the clinic (decisions/schedule.ts goes there above severity 0.4), so in a town
  * with a doctor it is a scare and a reason to be grateful. Two turns for the worse
  * with nobody treating it is grave, and only then is there a death hazard, and only
  * while still untreated. The doctor dying, or sitting in jail, is what makes a fever
