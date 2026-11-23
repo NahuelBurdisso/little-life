@@ -1,5 +1,7 @@
 # Little Life
 
+[![CI](https://github.com/NahuelBurdisso/little-life/actions/workflows/ci.yml/badge.svg)](https://github.com/NahuelBurdisso/little-life/actions/workflows/ci.yml)
+
 A spectator "god game" of a small town around 1900. About a dozen townsfolk, each driven by a
 local LLM (Gemma 4 through Ollama), live their lives on a procedurally generated pixel-art map:
 they get hungry and tired, hold jobs, keep secrets, fall in love, hold grudges and gossip. You
